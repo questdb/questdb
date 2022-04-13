@@ -27,10 +27,14 @@ package io.questdb.griffin;
 import org.junit.Test;
 
 public class ExcelODBCTest extends AbstractGriffinTest {
+
     @Test
-    public void testGetTableDataQ1() throws SqlException {
+    public void testGetTableMetaDataQ1() throws SqlException {
+        compiler.compile("create table mytab (a int, b float)", sqlExecutionContext);
         assertQuery(
-                "nspname\trelname\tattname\tatttypid\ttypname\tattnum\tattlen\tatttypmod\tattnotnull\trelhasrules\trelkind\toid\tpg_get_expr\tswitch\ttyptypmod\trelhasoids\tattidentity\trelhassubclass\n",
+                "nspname\trelname\tattname\tatttypid\ttypname\tattnum\tattlen\tatttypmod\tattnotnull\trelhasrules\trelkind\toid\tpg_get_expr\tswitch\ttyptypmod\trelhasoids\tattidentity\trelhassubclass\n" +
+                        "public\tmytab\ta\t23\tint4\t1\t4\t0\tfalse\tfalse\tr\t1\t\t0\t0\tfalse\t\tfalse\n" +
+                        "public\tmytab\tb\t700\tfloat4\t2\t4\t0\tfalse\tfalse\tr\t1\t\t0\t0\tfalse\t\tfalse\n",
                 "select\n" +
                         "  n.nspname,\n" +
                         "  c.relname,\n" +
@@ -60,7 +64,7 @@ public class ExcelODBCTest extends AbstractGriffinTest {
                         "      (\n" +
                         "        pg_catalog.pg_class c\n" +
                         "        inner join pg_catalog.pg_namespace n on n.oid = c.relnamespace\n" +
-                        "        and c.relname like 'request\\_logs2'\n" +
+                        "        and c.relname like 'mytab'\n" +
                         "        and n.nspname like 'public'\n" +
                         "      )\n" +
                         "      inner join pg_catalog.pg_attribute a on (not a.attisdropped)\n" +
@@ -76,6 +80,81 @@ public class ExcelODBCTest extends AbstractGriffinTest {
                         "  n.nspname,\n" +
                         "  c.relname,\n" +
                         "  attnum;",
+                null,
+                true,
+                sqlExecutionContext,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testGetTablesIndexesQ2() throws SqlException {
+        assertQuery(
+                "attname\tattnum\trelname\tnspname\trelname1\n",
+                "select\n" +
+                        "  ta.attname,\n" +
+                        "  ia.attnum,\n" +
+                        "  ic.relname,\n" +
+                        "  n.nspname,\n" +
+                        "  tc.relname\n" +
+                        "from\n" +
+                        "  pg_catalog.pg_attribute ta,\n" +
+                        "  pg_catalog.pg_attribute ia,\n" +
+                        "  pg_catalog.pg_class tc,\n" +
+                        "  pg_catalog.pg_index i,\n" +
+                        "  pg_catalog.pg_namespace n,\n" +
+                        "  pg_catalog.pg_class ic\n" +
+                        "where\n" +
+                        "  tc.relname = 'telemetry_config'\n" +
+                        "  AND n.nspname = 'public'\n" +
+                        "  AND tc.oid = i.indrelid\n" +
+                        "  AND n.oid = tc.relnamespace\n" +
+                        "  AND i.indisprimary = 't'\n" +
+                        "  AND ia.attrelid = i.indexrelid\n" +
+                        "  AND ta.attrelid = i.indrelid\n" +
+                        "  AND ta.attnum = i.indkey [ ia.attnum -1 ]\n" +
+                        "  AND (NOT ta.attisdropped)\n" +
+                        "  AND (NOT ia.attisdropped)\n" +
+                        "  AND ic.oid = i.indexrelid\n" +
+                        "order by\n" +
+                        "  ia.attnum;",
+                null,
+                true,
+                sqlExecutionContext,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testGetTablesIndexesQ3() throws SqlException {
+        assertQuery(
+                "attname\tattnum\trelname\tnspname\tNULL\n",
+                "select\n" +
+                        " ta.attname,\n" +
+                        " ia.attnum,\n" +
+                        " ic.relname,\n" +
+                        " n.nspname,\n" +
+                        " NULL\n" +
+                        "from\n" +
+                        "  pg_catalog.pg_attribute ta,\n" +
+                        "  pg_catalog.pg_attribute ia,\n" +
+                        "  pg_catalog.pg_class ic,\n" +
+                        "  pg_catalog.pg_index i,\n" +
+                        " pg_catalog.pg_namespace n\n" +
+                        "where\n" +
+                        " ic.relname = 'telemetry_config_pkey'\n" +
+                        " AND n.nspname = 'public'\n" +
+                        " AND ic.oid = i.indexrelid\n" +
+                        " AND n.oid = ic.relnamespace\n" +
+                        " AND ia.attrelid = i.indexrelid\n" +
+                        " AND ta.attrelid = i.indrelid\n" +
+                        " AND ta.attnum = i.indkey [ ia.attnum -1 ]\n" +
+                        " AND (NOT ta.attisdropped)\n" +
+                        " AND (NOT ia.attisdropped)\n" +
+                        "order by\n" +
+                        "  ia.attnum\n",
                 null,
                 true,
                 sqlExecutionContext,

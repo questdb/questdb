@@ -1650,7 +1650,7 @@ class SqlOptimiser {
             // "delete" function, which would be manipulating underlying array
             // on every invocation, we copy retained clauses to new context,
             // which is "result".
-            // hence whenever exists in "positions" we copy clause to "to"
+            // hence, whenever exists in "positions" we copy clause to "to"
             // otherwise copy to "result"
             JoinContext t = p < m && i == positions.getQuick(p) ? to : result;
             int ai = from.aIndexes.getQuick(i);
@@ -2142,7 +2142,7 @@ class SqlOptimiser {
 
             // for sake of clarity, "model" model is the first in the list of
             // joinModels, e.g. joinModels.get(0) == model
-            // only model model is allowed to have "where" clause
+            // only "model" model is allowed to have "where" clause,
             // so we can assume that "where" clauses of joinModel elements are all null (except for element 0).
             // in case one of joinModels is subquery, its entire query model will be set as
             // nestedModel, e.g. "where" clause is still null there as well
@@ -2462,7 +2462,7 @@ class SqlOptimiser {
      * join b on c.x = b.x
      * join c on c.y = a.y
      * <p>
-     * the system that prefers child table with lowest index will attribute c.x = b.x clause to
+     * the system that prefers child table with the lowest index will attribute c.x = b.x clause to
      * table "c" leaving "b" without clauses.
      */
     @SuppressWarnings({"StatementWithEmptyBody"})
@@ -3322,7 +3322,6 @@ class SqlOptimiser {
 
         if (clausesToSteal.size() < zc) {
             QueryModel target = parent.getJoinModels().getQuick(to);
-            target.getDependencies().clear();
             if (jc == null) {
                 target.setContext(jc = contextPool.next());
             }

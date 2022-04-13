@@ -272,6 +272,20 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
     }
 
     @Test
+    public void testShowMaxIdentifierLength() throws SqlException {
+        assertQuery(
+                "max_identifier_length\n" +
+                        "63\n",
+                "show max_identifier_length",
+                null,
+                false,
+                sqlExecutionContext,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testShowTransactionIsolationLevelErr1() throws Exception {
         assertFailure("show transaction", null, 16, "expected 'isolation'");
     }

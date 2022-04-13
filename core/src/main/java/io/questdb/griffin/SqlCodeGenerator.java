@@ -1426,7 +1426,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0(QueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        RecordCursorFactory f = generateLimit(
+        return generateLimit(
                 generateOrderBy(
                         generateLatestBy(
                                 generateFilter(
@@ -1446,9 +1446,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 model,
                 executionContext
         );
-        System.out.println("done");
-
-        return f;
     }
 
     @NotNull

@@ -36,10 +36,7 @@ import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
-import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
-import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
-import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
-import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
@@ -2602,6 +2599,10 @@ public class SqlCompiler implements Closeable {
                 return compiledQuery.of(new ShowTransactionIsolationLevelCursorFactory());
             }
 
+            if (isMaxIdentifierLengthKeyword(tok)) {
+                return compiledQuery.of(new ShowMaxIdentifierLengthCursorFactory());
+            }
+
             if (isStandardConformingStringsKeyword(tok)) {
                 return compiledQuery.of(new ShowStandardConformingStringsCursorFactory());
             }
@@ -2615,7 +2616,6 @@ public class SqlCompiler implements Closeable {
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
                     return compiledQuery.of(new ShowTimeZoneFactory());
                 }
-                // todo: what if or rather what else?!
             }
         }
 

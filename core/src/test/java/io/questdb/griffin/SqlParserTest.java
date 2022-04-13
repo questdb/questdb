@@ -6007,34 +6007,34 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    // todo: this join is seriously broken
     public void testExcelODBCQ3() throws Exception {
         assertQuery(
                 "select-virtual" +
-                        " attname," +
-                        " attnum," +
-                        " relname," +
-                        " nspname," +
-                        " NULL NULL" +
+                        " attname, attnum, relname, nspname, NULL NULL" +
                         " from (select-choose" +
-                        " [ta.attname attname," +
-                        " ia.attnum attnum," +
-                        " ic.relname relname," +
-                        " n.nspname nspname]" +
-                        " ta.attname attname," +
-                        " ia.attnum attnum," +
-                        " ic.relname relname," +
-                        " n.nspname nspname" +
-                        " from (select [attname, attnum, attrelid, attisdropped]" +
+                        " [ta.attname attname, ia.attnum attnum, ic.relname relname, n.nspname nspname]" +
+                        " ta.attname attname, ia.attnum attnum, ic.relname relname, n.nspname nspname" +
+                        " from (select" +
+                        " [attname, attnum, attrelid, attisdropped]" +
                         " from pg_catalog.pg_attribute() ta" +
-                        " join select [indexrelid, indkey, indrelid]" +
+                        " join select" +
+                        " [indexrelid, indkey, indrelid]" +
                         " from pg_catalog.pg_index() i" +
                         " on i.indrelid = ta.attrelid" +
-                        " join (select [attnum, attrelid, attisdropped]" +
+                        " join (select" +
+                        " [attnum, attrelid, attisdropped]" +
                         " from pg_catalog.pg_attribute() ia" +
                         " where not(attisdropped)) ia" +
                         " on ia.attrelid = i.indexrelid" +
                         " post-join-where ta.attnum = [](i.indkey,ia.attnum - 1)" +
+                        " join (select [relname, oid, relnamespace]" +
+                        " from pg_catalog.pg_class() ic" +
+                        " where relname = 'telemetry_config_pkey') ic" +
+                        " on ic.oid = ia.attrelid" +
+                        " join (select [nspname, oid]" +
+                        " from pg_catalog.pg_namespace() n" +
+                        " where nspname = 'public') n" +
+                        " on n.oid = ic.relnamespace" +
                         " where not(attisdropped)) ta) ta" +
                         " order by attnum",
                 "select\n" +

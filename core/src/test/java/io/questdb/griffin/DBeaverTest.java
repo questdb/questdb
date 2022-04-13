@@ -117,8 +117,8 @@ public class DBeaverTest extends AbstractGriffinTest {
 
             assertQuery(
                     "relname\tattrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\tdef_value\tdescription\n" +
-                            "xyz\t1\ta\t1\t23\tfalse\t0\t4\t\tfalse\tfalse\t\t\n" +
-                            "xyz\t1\tt\t2\t1114\tfalse\t0\t-1\t\tfalse\tfalse\t\t\n",
+                            "xyz\t1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\t\t\n" +
+                            "xyz\t1\tt\t2\t1114\tfalse\t0\t-1\t\tfalse\ttrue\t\t\n",
                     "SELECT \n" +
                             "    c.relname,\n" +
                             "    a.*,\n" +

@@ -294,7 +294,7 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testPgAttributeFunc() throws Exception {
         assertQuery(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\tfalse\n",
+                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
                 "pg_catalog.pg_attribute;",
                 "create table x(a int)",
                 null,
@@ -319,15 +319,15 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testPgAttributeFuncWith2Tables() throws Exception {
         assertQuery(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\tfalse\n",
+                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
                 "pg_catalog.pg_attribute order by 1;",
                 "create table x(a int)",
                 null,
                 "create table y(a double, b string)",
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\tfalse\n" +
-                        "2\ta\t1\t701\tfalse\t0\t8\t\tfalse\tfalse\n" +
-                        "2\tb\t2\t1043\tfalse\t0\t-1\t\tfalse\tfalse\n",
+                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n" +
+                        "2\ta\t1\t701\tfalse\t0\t8\t\tfalse\ttrue\n" +
+                        "2\tb\t2\t1043\tfalse\t0\t-1\t\tfalse\ttrue\n",
                 true,
                 false,
                 false
@@ -338,13 +338,13 @@ public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
     public void testPgAttributeFuncWith2TablesLimit1() throws Exception {
         assertQuery(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\tfalse\n",
+                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
                 "pg_catalog.pg_attribute order by 1 limit 1;",
                 "create table x(a int)",
                 null,
                 "create table y(a double, b string)",
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\tfalse\n",
+                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
                 true,
                 false,
                 true
