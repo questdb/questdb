@@ -36,7 +36,7 @@ import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
+import java.sql.Statement;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static org.junit.Assert.fail;
@@ -76,21 +76,34 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
-    @Ignore("DELETE not implemented yet")
     public void testDisallowDelete() throws Exception {
+        // we don't support DELETE yet. this test exists as a reminder to check read-only security context is honoured
+        // when/if DELETE is implemented.
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
-            assertQueryDisallowed("delete from src");
+            try {
+                executeWithPg("delete from src");
+                fail("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
+            } catch (PSQLException e) {
+                // the parser does not support DELETE
+                assertContains(e.getMessage(), "unexpected token: from");
+            }
         });
     }
 
     @Test
-    @Ignore("UPDATE security not implemented yet")
     public void testDisallowUpdate() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
-            assertQueryDisallowed("update src set name = 'bar'");
+            executeInsert("insert into src values ('2022-04-12T17:30:45.145921Z', 'foo')");
+
+            executeWithPg("update src set name = 'bar'");
+
+            // if this asserts fails then it means UPDATE are already implemented
+            // please change this test to check the update throws an exception in the read-only mode
+            // this is in place so we won't forget to test UPDATE honours read-only security context.
+            assertSql("select * from src", "ts\tname\n" +
+                    "2022-04-12T17:30:45.145921Z\tfoo\n");
         });
     }
 
@@ -191,31 +204,27 @@ public class PGSecurityTest extends BasePGTest {
     public void testAllowsSelect() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
-            assertQueryDoesNotThrowException("select * from src");
+            executeWithPg("select * from src");
         });
     }
 
     private void assertQueryDisallowed(String query) throws Exception {
-        try (
-                final PGWireServer ignored = createPGServer(READ_ONLY_CONF);
-                final Connection connection = getConnection(false, true);
-                final PreparedStatement statement = connection.prepareStatement(query)
-        ) {
-            statement.execute();
+        try {
+            executeWithPg(query);
             fail("Query '" + query + "' must fail in the read-only mode!");
-        } catch (PSQLException e) {
+         } catch (PSQLException e) {
             assertContains(e.getMessage(), "Write permission denied");
         }
     }
 
 
-    private void assertQueryDoesNotThrowException(String query) throws Exception {
+    private void executeWithPg(String query) throws Exception {
         try (
                 final PGWireServer ignored = createPGServer(READ_ONLY_CONF);
                 final Connection connection = getConnection(false, true);
-                final PreparedStatement statement = connection.prepareStatement(query)
+                final Statement statement = connection.createStatement();
         ) {
-            statement.execute();
+            statement.execute(query);
         }
     }
 }
