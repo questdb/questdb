@@ -217,12 +217,13 @@ final public class Timestamps {
     }
 
     /**
-     * Floor timestamp to Monday of the same week.
-     * TOOD: Example + add info about time
+     * Floor timestamp to Monday of the same week and set time to 00:00:00.000Z
+     * <br>
+     * Example: Timestamp representing 2008-01-01T04:15:11.123Z (=Tuesday) will be floored to
+     * 2007-12-31T00:00:00.000Z (=Monday of the same week)
      *
-     *
-     * @param micros timestamp to floor to microseconds since epoch
-     * @return timestamp floored to Monday of the same week as the input argument
+     * @param micros timestamp to floor in microseconds since epoch
+     * @return given timestamp floored to Monday of the same week and time set to 00:00:00.000Z
      */
     public static long floorDOW(long micros) {
         long l = previousOrSameDayOfWeek(micros, 1);
@@ -236,10 +237,13 @@ final public class Timestamps {
     }
 
     /**
-     * TODO
+     * Floor timestamp to the first day of the quarter and set time to 00:00:00.000Z
+     * <br>
+     * Example: Timestamp representing 2008-05-21T04:15:11.123Z will be floored to
+     * 2008-04-01T00:00:00.000Z as that's the 1st day of the same quarter as the original date.
      *
-     * @param micros
-     * @return
+     * @param micros timestamp to floor in microseconds since epoch
+     * @return given timestamp floored to the first day of the quarter with time set to 00:00:00.000Z
      */
     public static long floorQuarter(long micros) {
         int year = getYear(micros);
@@ -251,11 +255,13 @@ final public class Timestamps {
     }
 
     /**
+     * Floor timestamp to the first day of the decade and set to time to 00:00:00.000Z
+     * <br>
+     * Example: Timestamp representing 2008-01-01T04:15:11.123Z will be floored to
+     * 2000-01-01T00:00:00.000Z
      *
-     * TODO
-     *
-     * @param micros
-     * @return
+     * @param micros timestamp to floor in microseconds since epoch
+     * @return given timestamp floored to the first day of the decade with time set to 00:00:00.000
      */
     public static long floorDecade(long micros) {
         int year = getYear(micros);
@@ -265,10 +271,13 @@ final public class Timestamps {
     }
 
     /**
-     * TODO
+     * Floor timestamp to the first day of the century and set to time to 00:00:00.000Z
+     * <br>
+     * Example: Timestamp representing 2008-01-01T04:15:11.123Z will be floored to
+     * 2001-01-01T00:00:00.000Z
      *
-     * @param micros
-     * @return
+     * @param micros timestamp to floor in microseconds since epoch
+     * @return given timestamp floored to the first day of the century with time set to 00:00:00.000
      */
     public static long floorCentury(long micros) {
         int year = getYear(micros);
@@ -278,10 +287,13 @@ final public class Timestamps {
     }
 
     /**
-     * TODO
+     * Floor timestamp to the first day of the millenia and set to time to 00:00:00.000Z
+     * <br>
+     * Example: Timestamp representing 2108-01-01T04:15:11.123Z will be floored to
+     * 2001-01-01T00:00:00.000Z
      *
-     * @param micros
-     * @return
+     * @param micros timestamp to floor in microseconds since epoch
+     * @return given timestamp floored to the first day of the millenia with time set to 00:00:00.000
      */
     public static long floorMillennium(long micros) {
         int year = getYear(micros);
