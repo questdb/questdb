@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -37,10 +38,12 @@ public class PGBasicAuthenticator implements PGAuthenticator {
     private final String username;
     private final String password;
     private final DirectByteCharSequence dbcs = new DirectByteCharSequence();
+    private final CairoSecurityContext securityContext;
 
-    public PGBasicAuthenticator(String username, String password) {
+    public PGBasicAuthenticator(String username, String password, boolean readOnlyContext) {
         this.username = username;
         this.password = password;
+        this.securityContext = readOnlyContext ? new CairoSecurityContextImpl(false) : AllowAllCairoSecurityContext.INSTANCE;
     }
 
     @Override
@@ -57,7 +60,7 @@ public class PGBasicAuthenticator implements PGAuthenticator {
 
             // check password
             if (Chars.equals(this.password, dbcs)) {
-                return AllowAllCairoSecurityContext.INSTANCE;
+                return securityContext;
             }
             LOG.error().$("invalid password [user=").$(username).$(']').$();
         } else {
