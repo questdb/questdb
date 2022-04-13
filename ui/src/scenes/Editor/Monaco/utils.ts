@@ -271,12 +271,19 @@ const insertText = ({
  * This function defines these rules.
  */
 const getTextFixes = ({
+  appendAt,
   model,
   position,
 }: {
+  appendAt: AppendQueryOptions["appendAt"]
   model: ReturnType<typeof editor.getModel>
   position: IPosition
-}) => {
+}): {
+  prefix: number
+  suffix: number
+  lineStartOffset: number
+  selectStartOffset: number
+} => {
   const isFirstLine = position.lineNumber === 1
   const isLastLine =
     position.lineNumber === model?.getValue().split("\n").length
@@ -303,61 +310,76 @@ const getTextFixes = ({
     selectStartOffset: 0,
   }
 
-  const rules: Rule[] = [
-    {
-      when: () => model?.getValue() === "",
-      then: () => ({ prefix: 0, suffix: 1, lineStartOffset: 0 }),
-    },
+  const rules: { [key in AppendQueryOptions["appendAt"]]: Rule[] } = {
+    end: [
+      {
+        when: () => isFirstLine,
+        then: () => ({ prefix: 1, suffix: 0 }),
+      },
 
-    {
-      when: () => isFirstLine && lineAtCursor === "",
-      then: () => ({
-        prefix: 0,
-        lineStartOffset: 0,
-        suffix: nextLine === "" ? 0 : 1,
-      }),
-    },
+      {
+        // default case
+        when: () => true,
+        then: () => ({ prefix: 2, suffix: 0, selectStartOffset: 1 }),
+      },
+    ],
 
-    {
-      when: () => isFirstLine && lineAtCursor !== "",
-      then: () => ({
-        prefix: nextLine === "" ? 1 : 2,
-        suffix: 1,
-        selectStartOffset: 1,
-      }),
-    },
+    cursor: [
+      {
+        when: () => model?.getValue() === "",
+        then: () => ({ prefix: 0, suffix: 1, lineStartOffset: 0 }),
+      },
 
-    {
-      when: () => inMiddle && lineAtCursor === "",
-      then: () => ({
-        prefix: 0,
-        suffix: nextLine === "" ? 1 : 2,
-      }),
-    },
+      {
+        when: () => isFirstLine && lineAtCursor === "",
+        then: () => ({
+          prefix: 0,
+          lineStartOffset: 0,
+          suffix: nextLine === "" ? 0 : 1,
+        }),
+      },
 
-    {
-      when: () => inMiddle && lineAtCursor !== "" && nextLine !== "",
-      then: () => ({ prefix: 1, suffix: 2 }),
-    },
+      {
+        when: () => isFirstLine && lineAtCursor !== "",
+        then: () => ({
+          prefix: nextLine === "" ? 1 : 2,
+          suffix: 1,
+          selectStartOffset: 1,
+        }),
+      },
 
-    {
-      when: () => inMiddle && lineAtCursor !== "" && nextLine === "",
-      then: () => ({ prefix: 1, suffix: 1, selectStartOffset: 1 }),
-    },
+      {
+        when: () => inMiddle && lineAtCursor === "",
+        then: () => ({
+          prefix: 0,
+          suffix: nextLine === "" ? 1 : 2,
+        }),
+      },
 
-    {
-      when: () => isLastLine,
-      then: () => ({
-        prefix: lineAtCursor === "" ? 1 : 2,
-        suffix: 1,
-        lineStartOffset: 1,
-        selectStartOffset: lineAtCursor === "" ? 0 : 1,
-      }),
-    },
-  ]
+      {
+        when: () => inMiddle && lineAtCursor !== "" && nextLine !== "",
+        then: () => ({ prefix: 1, suffix: 2 }),
+      },
+
+      {
+        when: () => inMiddle && lineAtCursor !== "" && nextLine === "",
+        then: () => ({ prefix: 1, suffix: 1, selectStartOffset: 1 }),
+      },
+
+      {
+        when: () => isLastLine,
+        then: () => ({
+          prefix: lineAtCursor === "" ? 1 : 2,
+          suffix: 1,
+          lineStartOffset: 1,
+          selectStartOffset: lineAtCursor === "" ? 0 : 1,
+        }),
+      },
+    ],
+  }
 
   const result = (
-    rules.find(({ when }) => when()) ?? { then: () => defaultResult }
+    rules[appendAt].find(({ when }) => when()) ?? { then: () => defaultResult }
   ).then()
 
   return {
@@ -366,13 +388,59 @@ const getTextFixes = ({
   }
 }
 
-export const appendQuery = (editor: IStandaloneCodeEditor, query: string) => {
+const getInsertPosition = ({
+  model,
+  position,
+  lineStartOffset,
+  newQueryLines,
+  appendAt,
+}: {
+  model: ReturnType<typeof editor.getModel>
+  position: IPosition
+  lineStartOffset: number
+  appendAt: AppendQueryOptions["appendAt"]
+  newQueryLines: string[]
+}): {
+  lineStart: number
+  lineEnd: number
+  columnStart: number
+  columnEnd: number
+} => {
+  if (appendAt === "cursor") {
+    return {
+      lineStart: position.lineNumber + lineStartOffset,
+      lineEnd: position.lineNumber + newQueryLines.length,
+      columnStart: 0,
+      columnEnd: newQueryLines[newQueryLines.length - 1].length + 1,
+    }
+  }
+
+  const lineStart =
+    (model?.getValue().split("\n").length ?? 0) + lineStartOffset
+  return {
+    lineStart,
+    lineEnd: lineStart + newQueryLines.length,
+    columnStart: 0,
+    columnEnd: newQueryLines[newQueryLines.length - 1].length + 1,
+  }
+}
+
+type AppendQueryOptions = {
+  appendAt: "cursor" | "end"
+}
+
+export const appendQuery = (
+  editor: IStandaloneCodeEditor,
+  query: string,
+  options: AppendQueryOptions = { appendAt: "cursor" },
+) => {
   const model = editor.getModel()
+
   if (model) {
     const position = editor.getPosition()
 
     if (position) {
-      const newLines = query.split("\n")
+      const newQueryLines = query.split("\n")
 
       const {
         prefix,
@@ -380,21 +448,25 @@ export const appendQuery = (editor: IStandaloneCodeEditor, query: string) => {
         lineStartOffset,
         selectStartOffset,
       } = getTextFixes({
+        appendAt: options.appendAt,
         model,
         position,
       })
 
-      const positionInsert = {
-        lineStart: position.lineNumber + lineStartOffset,
-        lineEnd: position.lineNumber + newLines.length,
-        columnStart: 0,
-        columnEnd: newLines[newLines.length - 1].length + 1,
-      }
+      const positionInsert = getInsertPosition({
+        model,
+        position,
+        lineStartOffset,
+        appendAt: options.appendAt,
+        newQueryLines,
+      })
 
       const positionSelect = {
         lineStart: positionInsert.lineStart + selectStartOffset,
         lineEnd:
-          positionInsert.lineStart + selectStartOffset + (newLines.length - 1),
+          positionInsert.lineStart +
+          selectStartOffset +
+          (newQueryLines.length - 1),
         columnStart: 0,
         columnEnd: positionInsert.columnEnd,
       }
