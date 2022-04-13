@@ -40,6 +40,7 @@ import static java.time.temporal.ChronoField.*;
 import static java.time.temporal.ChronoUnit.*;
 import static java.time.temporal.TemporalAdjusters.firstDayOfMonth;
 import static java.time.temporal.TemporalAdjusters.firstDayOfYear;
+import static java.util.concurrent.TimeUnit.HOURS;
 import static org.junit.Assert.fail;
 
 public class TimestampsBruteForceTest {
@@ -98,10 +99,12 @@ public class TimestampsBruteForceTest {
 
 
     @Test
-    public void testFlooring() {
+    public void testFlooring_MS_SS_MI_HH() {
+        // testing 4 cases at once because it allows us to amortize cost of toEpochMicros()
+        // separating this would make the test(s) run longer by a few 100s of ms.
         ZoneId utc = ZoneId.of("UTC");
         ZonedDateTime current = ZonedDateTime.now(utc).withYear(1999);
-        ZonedDateTime deadline = current.plusYears(10);
+        ZonedDateTime deadline = current.plusYears(1);
 
         long l = 0;
         ThreadLocalRandom random = ThreadLocalRandom.current();
@@ -110,19 +113,128 @@ public class TimestampsBruteForceTest {
             assertEpochMicrosEquals(current.truncatedTo(MILLIS), Timestamps.floorMS(epochMicros));
             assertEpochMicrosEquals(current.truncatedTo(SECONDS), Timestamps.floorSS(epochMicros));
             assertEpochMicrosEquals(current.truncatedTo(MINUTES), Timestamps.floorMI(epochMicros));
-            assertEpochMicrosEquals(current.truncatedTo(HOURS), Timestamps.floorHH(epochMicros));
+            assertEpochMicrosEquals(current.truncatedTo(ChronoUnit.HOURS), Timestamps.floorHH(epochMicros));
+            current = current.plus(random.nextInt(1, 20_000), ChronoUnit.MILLIS);
+            l++;
+        }
+        System.out.println("Tried " + l + " different timestamps.");
+    }
+
+    @Test
+    public void testFlooring_DD() {
+        ZoneId utc = ZoneId.of("UTC");
+        ZonedDateTime current = ZonedDateTime.now(utc).withYear(1999);
+        ZonedDateTime deadline = current.plusYears(40);
+
+        long l = 0;
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        while (current.isBefore(deadline)) {
+            long epochMicros = toEpochMicros(current);
             assertEpochMicrosEquals(current.truncatedTo(DAYS), Timestamps.floorDD(epochMicros));
+            current = current.plus(random.nextInt((int) HOURS.toMillis(1), (int) HOURS.toMillis(12)), MILLIS);
+            l++;
+        }
+        System.out.println("Tried " + l + " different timestamps.");
+    }
 
+    @Test
+    public void testFlooring_DOW() {
+        ZoneId utc = ZoneId.of("UTC");
+        ZonedDateTime current = ZonedDateTime.now(utc).withYear(1999);
+        ZonedDateTime deadline = current.plusYears(40);
+
+        long l = 0;
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        while (current.isBefore(deadline)) {
+            long epochMicros = toEpochMicros(current);
             assertEpochMicrosEquals(current.with(MONDAY).truncatedTo(DAYS), Timestamps.floorDOW(epochMicros));
+            current = current.plus(random.nextInt((int) HOURS.toMillis(1), (int) HOURS.toMillis(12)), MILLIS);
+            l++;
+        }
+        System.out.println("Tried " + l + " different timestamps.");
+    }
+
+    @Test
+    public void testFlooring_MM() {
+        ZoneId utc = ZoneId.of("UTC");
+        ZonedDateTime current = ZonedDateTime.now(utc).withYear(1999);
+        ZonedDateTime deadline = current.plusYears(40);
+
+        long l = 0;
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        while (current.isBefore(deadline)) {
+            long epochMicros = toEpochMicros(current);
             assertEpochMicrosEquals(current.with(firstDayOfMonth()).truncatedTo(DAYS), Timestamps.floorMM(epochMicros));
-            assertEpochMicrosEquals(current.with(firstDayOfYear()).truncatedTo(DAYS), Timestamps.floorYYYY(epochMicros));
+            current = current.plus(random.nextInt((int) HOURS.toMillis(1), (int) HOURS.toMillis(12)), MILLIS);
+            l++;
+        }
+        System.out.println("Tried " + l + " different timestamps.");
+    }
 
-            // truncateTo() is implemented up to DAYS, we have to use custom TemporalAdjuster for longer units
+    @Test
+    public void testFlooring_Quarter() {
+        ZoneId utc = ZoneId.of("UTC");
+        ZonedDateTime current = ZonedDateTime.now(utc).withYear(1999);
+        ZonedDateTime deadline = current.plusYears(40);
+
+        long l = 0;
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        while (current.isBefore(deadline)) {
+            long epochMicros = toEpochMicros(current);
             assertEpochMicrosEquals(current.with(TRUNCATE_TO_QUARTER), Timestamps.floorQuarter(epochMicros));
-            assertEpochMicrosEquals(current.with(TRUNCATE_TO_DECADE), Timestamps.floorDecade(epochMicros));
-            assertEpochMicrosEquals(current.with(TRUNCATE_TO_CENTURY), Timestamps.floorCentury(epochMicros));
 
-            current = current.plus(random.nextInt(1, 10_000), ChronoUnit.MILLIS);
+            current = current.plus(random.nextInt((int) HOURS.toMillis(1), (int) HOURS.toMillis(12)), MILLIS);
+            l++;
+        }
+        System.out.println("Tried " + l + " different timestamps.");
+    }
+
+    @Test
+    public void testFlooring_YYYY() {
+        ZoneId utc = ZoneId.of("UTC");
+        ZonedDateTime current = ZonedDateTime.now(utc).withYear(1999);
+        ZonedDateTime deadline = current.plusYears(40);
+
+        long l = 0;
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        while (current.isBefore(deadline)) {
+            long epochMicros = toEpochMicros(current);
+            assertEpochMicrosEquals(current.with(firstDayOfYear()).truncatedTo(DAYS), Timestamps.floorYYYY(epochMicros));
+            current = current.plus(random.nextInt((int) HOURS.toMillis(1), (int) HOURS.toMillis(12)), MILLIS);
+            l++;
+        }
+        System.out.println("Tried " + l + " different timestamps.");
+    }
+
+    @Test
+    public void testFlooring_DECADE() {
+        ZoneId utc = ZoneId.of("UTC");
+        ZonedDateTime current = ZonedDateTime.now(utc).withYear(1999);
+        ZonedDateTime deadline = current.plusYears(40);
+
+        long l = 0;
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        while (current.isBefore(deadline)) {
+            long epochMicros = toEpochMicros(current);
+            assertEpochMicrosEquals(current.with(TRUNCATE_TO_DECADE), Timestamps.floorDecade(epochMicros));
+            current = current.plus(random.nextInt((int) HOURS.toMillis(1), (int) HOURS.toMillis(12)), MILLIS);
+            l++;
+        }
+        System.out.println("Tried " + l + " different timestamps.");
+    }
+
+    @Test
+    public void testFlooring_CENTURY() {
+        ZoneId utc = ZoneId.of("UTC");
+        ZonedDateTime current = ZonedDateTime.now(utc).withYear(1999);
+        ZonedDateTime deadline = current.plusYears(40);
+
+        long l = 0;
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        while (current.isBefore(deadline)) {
+            long epochMicros = toEpochMicros(current);
+            assertEpochMicrosEquals(current.with(TRUNCATE_TO_CENTURY), Timestamps.floorCentury(epochMicros));
+            current = current.plus(random.nextInt((int) HOURS.toMillis(1), (int) HOURS.toMillis(12)), MILLIS);
             l++;
         }
         System.out.println("Tried " + l + " different timestamps.");
