@@ -108,55 +108,54 @@ public class TimestampsBruteForceTest {
         // testing 4 cases at once because it allows us to amortize cost of toEpochMicros()
         // separating this would make the test(s) run longer by a few 100s of ms.
         testFlooring(2, SECONDS_STEP,
-                (current, epochMicros) -> {
-                    assertEpochMicrosEquals(current.truncatedTo(MILLIS), Timestamps.floorMS(epochMicros));
-                    assertEpochMicrosEquals(current.truncatedTo(SECONDS), Timestamps.floorSS(epochMicros));
-                    assertEpochMicrosEquals(current.truncatedTo(MINUTES), Timestamps.floorMI(epochMicros));
-                    assertEpochMicrosEquals(current.truncatedTo(ChronoUnit.HOURS), Timestamps.floorHH(epochMicros));
+                (expected, tested) -> {
+                    assertEpochMicrosEquals(expected.truncatedTo(MILLIS), Timestamps.floorMS(tested));
+                    assertEpochMicrosEquals(expected.truncatedTo(SECONDS), Timestamps.floorSS(tested));
+                    assertEpochMicrosEquals(expected.truncatedTo(MINUTES), Timestamps.floorMI(tested));
+                    assertEpochMicrosEquals(expected.truncatedTo(ChronoUnit.HOURS), Timestamps.floorHH(tested));
                 });
     }
 
     @Test
     public void testFlooring_DD() {
         testFlooring(40, HOURS_STEP,
-                (current, epochMicros) -> assertEpochMicrosEquals(current.truncatedTo(DAYS), Timestamps.floorDD(epochMicros)));
+                (expected, tested) -> assertEpochMicrosEquals(expected.truncatedTo(DAYS), Timestamps.floorDD(tested)));
     }
 
     @Test
     public void testFlooring_DOW() {
         testFlooring(40, HOURS_STEP,
-                (current, epochMicros) -> assertEpochMicrosEquals(current.with(MONDAY).truncatedTo(DAYS), Timestamps.floorDOW(epochMicros)));
+                (expected, tested) -> assertEpochMicrosEquals(expected.with(MONDAY).truncatedTo(DAYS), Timestamps.floorDOW(tested)));
     }
 
     @Test
     public void testFlooring_MM() {
         testFlooring(40, HOURS_STEP,
-                (current, epochMicros) -> assertEpochMicrosEquals(current.with(firstDayOfMonth()).truncatedTo(DAYS), Timestamps.floorMM(epochMicros)));
+                (expected, tested) -> assertEpochMicrosEquals(expected.with(firstDayOfMonth()).truncatedTo(DAYS), Timestamps.floorMM(tested)));
     }
 
     @Test
     public void testFlooring_Quarter() {
         testFlooring(40, HOURS_STEP,
-                (current, epochMicros) -> assertEpochMicrosEquals(current.with(TRUNCATE_TO_QUARTER), Timestamps.floorQuarter(epochMicros)));
+                (expected, tested) -> assertEpochMicrosEquals(expected.with(TRUNCATE_TO_QUARTER), Timestamps.floorQuarter(tested)));
     }
 
     @Test
     public void testFlooring_YYYY() {
         testFlooring(40, HOURS_STEP,
-                (current, epochMicros) ->  assertEpochMicrosEquals(current.with(firstDayOfYear()).truncatedTo(DAYS), Timestamps.floorYYYY(epochMicros)));
+                (expected, tested) ->  assertEpochMicrosEquals(expected.with(firstDayOfYear()).truncatedTo(DAYS), Timestamps.floorYYYY(tested)));
     }
 
     @Test
     public void testFlooring_DECADE() {
         testFlooring(40, HOURS_STEP,
-                (current, epochMicros) ->  assertEpochMicrosEquals(current.with(TRUNCATE_TO_DECADE), Timestamps.floorDecade(epochMicros)));
-
+                (expected, tested) ->  assertEpochMicrosEquals(expected.with(TRUNCATE_TO_DECADE), Timestamps.floorDecade(tested)));
     }
 
     @Test
     public void testFlooring_CENTURY() {
         testFlooring(40, HOURS_STEP,
-                (current, epochMicros) -> assertEpochMicrosEquals(current.with(TRUNCATE_TO_CENTURY), Timestamps.floorCentury(epochMicros)));
+                (expected, tested) -> assertEpochMicrosEquals(expected.with(TRUNCATE_TO_CENTURY), Timestamps.floorCentury(tested)));
     }
 
     private static void testFlooring(long yearsToTest, Function<ZonedDateTime, ZonedDateTime> stepFunction, BiConsumer<ZonedDateTime, Long> assertFunction) {
