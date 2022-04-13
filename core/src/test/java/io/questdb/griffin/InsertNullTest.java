@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
@@ -70,7 +71,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("create table x (value %s)", type[0]),
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
-                        expectedNullInserts("value\n", type[1], NULL_INSERTS),
+                        expectedNullInserts("value\n", type[1], NULL_INSERTS, true),
                         true,
                         true,
                         true
@@ -95,7 +96,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("create table x (value %s)", type[0]),
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
-                        expectedNullInserts("value\n", type[0], type[1], NULL_INSERTS, true),
+                        expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
                         true,
                         true,
                         type[0].equals("long256")
@@ -120,7 +121,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("create table x (value %s)", type[0]),
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
-                        expectedNullInserts("value\n", type[0], type[1], NULL_INSERTS, false),
+                        expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
                         !type[0].equals("long256"),
                         true,
                         false
@@ -189,7 +190,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("create table x (value %s)", type[0]),
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
-                        expectedNullInserts("value\n", type[0], type[1], NULL_INSERTS, true),
+                        expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
                         true,
                         true,
                         type[0].equals("long256")
@@ -214,7 +215,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                         String.format("create table x (value %s)", type[0]),
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
-                        expectedNullInserts("value\n", type[0], type[1], NULL_INSERTS, false),
+                        expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
                         !type[0].equals("long256"),
                         true,
                         false
@@ -225,27 +226,20 @@ public class InsertNullTest extends AbstractGriffinTest {
         }
     }
 
-    static String expectedNullInserts(String header, String nullValue, int count) {
+    static String expectedNullInserts(String header, String nullValue, int count, boolean expectsOutput) {
         StringSink sb = Misc.getThreadLocalBuilder();
         sb.put(header);
-        for (int i = 0; i < count; i++) {
-            sb.put(nullValue);
-            sb.put("\n");
+        if (expectsOutput) {
+            for (int i = 0; i < count; i++) {
+                sb.put(nullValue).put("\n");
+            }
         }
         return sb.toString();
     }
 
-    static String expectedNullInserts(String header, String type, String nullValue, int count, boolean eq) {
-        StringSink sb = Misc.getThreadLocalBuilder();
-        sb.put(header);
-        boolean NonNullable = type.equalsIgnoreCase("short") || type.equalsIgnoreCase("byte")
-        || type.equalsIgnoreCase("boolean");
-        if ((NonNullable && !eq) || (!NonNullable && eq)) {
-            for (int i = 0; i < count; i++) {
-                sb.put(nullValue);
-                sb.put("\n");
-            }
-        }
-        return sb.toString();
+    private static boolean isNotNullable(String type) {
+        return Chars.equalsLowerCaseAscii(type, "short") ||
+                Chars.equalsLowerCaseAscii(type, "byte") ||
+                Chars.equalsLowerCaseAscii(type, "boolean");
     }
 }
