@@ -96,6 +96,10 @@ public class TableData {
         return sb.toString();
     }
 
+    public synchronized LineData getLine(int rowNo) {
+        return rows.get(rowNo);
+    }
+
     private String getDefaultValue(short colType) {
         switch (colType) {
             case DOUBLE:

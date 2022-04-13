@@ -24,23 +24,29 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.CompiledQueryImpl;
+import io.questdb.griffin.UpdateStatement;
 import io.questdb.std.WeakAutoClosableObjectPool;
 
 public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
-    private CompiledQuery cqUpdate;
+    CompiledQueryImpl compiledQuery;
 
-    public TypesAndUpdate(WeakAutoClosableObjectPool<TypesAndUpdate> parentPool) {
+    public TypesAndUpdate(WeakAutoClosableObjectPool<TypesAndUpdate> parentPool, CairoEngine engine) {
         super(parentPool);
+        compiledQuery = new CompiledQueryImpl(engine);
     }
 
     public CompiledQuery getCompiledQuery() {
-        return cqUpdate;
+        return compiledQuery;
     }
 
-    public void of(CompiledQuery cqUpdate, BindVariableService bindVariableService) {
-        this.cqUpdate = cqUpdate;
+    public void of(UpdateStatement updateStatement, BindVariableService bindVariableService) {
+        // Compiled query from SqlCompiler cannot be used
+        // to store compiled statements because the instance re-used for every new compilation
+        this.compiledQuery.ofUpdate(updateStatement);
         copyTypesFrom(bindVariableService);
     }
 }

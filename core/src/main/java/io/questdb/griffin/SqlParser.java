@@ -950,7 +950,7 @@ public final class SqlParser {
 
     private void parseUpdateClause(GenericLexer lexer, QueryModel updateQueryModel, QueryModel fromModel) throws SqlException {
         CharSequence tok = tok(lexer, "table name or alias");
-        CharSequence tableName = GenericLexer.immutableOf(tok);
+        CharSequence tableName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
         ExpressionNode tableNameExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0);
         updateQueryModel.setTableName(tableNameExpr);
         fromModel.setTableName(tableNameExpr);

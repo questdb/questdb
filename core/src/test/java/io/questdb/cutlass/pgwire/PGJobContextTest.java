@@ -2852,76 +2852,125 @@ nodejs code:
     }
 
     @Test
-    public void testUpdateNoAutoCommit() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                connection.setAutoCommit(false);
+    public void testTimestamp() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, true)) {
 
-                PreparedStatement tbl = connection.prepareStatement("create table x (a int, b int, ts timestamp) timestamp(ts)");
-                tbl.execute();
+                    connection.setAutoCommit(false);
+                    connection.prepareStatement("CREATE TABLE ts (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
+                    connection.prepareStatement("INSERT INTO ts VALUES(0, '2021-09-27T16:45:03.202345Z')").execute();
+                    connection.commit();
+                    connection.setAutoCommit(true);
 
-                PreparedStatement insert = connection.prepareStatement("insert into x values(?, ?, '2022-03-17T00:00:00'::timestamp)");
-                for (int i = 0; i < 10; i++) {
-                    insert.setInt(1, i);
-                    insert.setInt(2, i+100);
-                    insert.execute();
-                }
+                    // select the timestamp that we just inserted
+                    Timestamp ts;
+                    try (PreparedStatement statement = connection.prepareStatement("SELECT ts FROM ts")) {
+                        try (ResultSet rs = statement.executeQuery()) {
+                            assertTrue(rs.next());
+                            ts = rs.getTimestamp("ts");
+                        }
+                    }
 
-                PreparedStatement update = connection.prepareStatement("update x set b=? where a=?");
-                for (int i = 0; i < 10; i++) {
-                    update.setInt(1, i+10);
-                    update.setInt(2, i);
-                    update.execute();
-                }
+                    // NOTE: java.sql.Timestamp takes milliseconds from epoch as constructor parameter,
+                    // which is processed and stored internally coupling ts.getTime() and ts.getNanos():
+                    //   - ts.getTime(): the last 3 digits account for millisecond precision, e.g. 1632761103202L -> 202 milliseconds.
+                    //   - ts.getNanos(): the first 3 digits match the last 3 digits from ts.getTime(), then
+                    //         3 more digits follow for micros, and 3 more for nanos,, e.g. 202345000 -> (202)milli(345)micro(000)nano
+                    assertEquals(1632761103202L, ts.getTime());
+                    assertEquals(202345000, ts.getNanos());
+                    assertEquals("2021-09-27 16:45:03.202345", ts.toString());
 
-                for (int i = 10; i < 15; i++) {
-                    insert.setInt(1, i);
-                    insert.setInt(2, i+100);
-                    insert.execute();
-                }
-
-                PreparedStatement update2 = connection.prepareStatement("update x set a=? where a=?");
-                for (int i = 10; i < 15; i++) {
-                    update2.setInt(1, i+10);
-                    update2.setInt(2, i);
-                    update2.execute();
-                }
-
-                for (int i = 0; i < 5; i++) {
-                    update2.setInt(1, i+10);
-                    update2.setInt(2, i);
-                    update2.execute();
-                }
-
-                for (int i = 0; i < 3; i++) {
-                    update.setInt(1, i+1000);
-                    update.setInt(2, i+10);
-                    update.execute();
-                }
-                connection.commit();
-
-                final String expected = "a[INTEGER],b[INTEGER],ts[TIMESTAMP]\n" +
-                        "10,1000,2022-03-17 00:00:00.0\n" +
-                        "11,1001,2022-03-17 00:00:00.0\n" +
-                        "12,1002,2022-03-17 00:00:00.0\n" +
-                        "13,13,2022-03-17 00:00:00.0\n" +
-                        "14,14,2022-03-17 00:00:00.0\n" +
-                        "5,15,2022-03-17 00:00:00.0\n" +
-                        "6,16,2022-03-17 00:00:00.0\n" +
-                        "7,17,2022-03-17 00:00:00.0\n" +
-                        "8,18,2022-03-17 00:00:00.0\n" +
-                        "9,19,2022-03-17 00:00:00.0\n" +
-                        "20,110,2022-03-17 00:00:00.0\n" +
-                        "21,111,2022-03-17 00:00:00.0\n" +
-                        "22,112,2022-03-17 00:00:00.0\n" +
-                        "23,113,2022-03-17 00:00:00.0\n" +
-                        "24,114,2022-03-17 00:00:00.0\n";
-                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
                     sink.clear();
-                    assertResultSet(expected, sink, resultSet);
+                    try (PreparedStatement ps = connection.prepareStatement("INSERT INTO ts VALUES (?, ?)")) {
+                        int rowId = 1;
+
+                        // Case 1: insert timestamp as we selected it, no modifications
+                        // -> microsecond precision is kept
+                        ps.setInt(1, rowId++);
+                        ps.setTimestamp(2, ts);
+                        ps.execute();
+
+                        // Case 2: we create a timestamp from another, but there is a catch, we must set the nanos too
+                        // -> microsecond precision is kept
+                        Timestamp aTs = new Timestamp(ts.getTime());
+                        aTs.setNanos(ts.getNanos());
+                        ps.setInt(1, rowId++);
+                        ps.setTimestamp(2, aTs);
+                        ps.execute();
+
+                        // Case 3: we create a timestamp from another, and clear the micro precision
+                        // -> microsecond precision is dropped by us
+                        Timestamp bTs = new Timestamp(ts.getTime() * 1000);
+                        bTs.setNanos(202000000);
+                        ps.setInt(1, rowId++);
+                        ps.setTimestamp(2, bTs);
+                        ps.execute();
+
+                        // Case 4: if we forget to setNanos, we get a broken timestamp
+                        // -> this results in a broken timestamp 1970-...
+                        Timestamp kaputTs = new Timestamp(ts.getTime());
+                        ps.setInt(1, rowId++);
+                        ps.setTimestamp(2, kaputTs);
+                        ps.execute();
+
+                        // Case 4: if we setNanos to 0, we also get a broken timestamp! UNLESS we scale up time
+                        // to trick the constructor
+                        // -> microsecond precision is dropped by us, we keep millisecond precision
+                        Timestamp cTs = new Timestamp(ts.getTime() * 1000);
+                        cTs.setNanos(0); // <=== THIS requires ---- ^ ^
+                        ps.setInt(1, rowId++);
+                        ps.setTimestamp(2, cTs);
+                        ps.execute();
+
+                        // Case 5: we use space-age mathematics to produce a long number which is
+                        // equivalent to a QuestDB timestamp WITH MICROSECOND precision, and then
+                        // we can feed it to java.sql.Timestamp without worrying for setNanos.
+                        // -> microsecond precision is lost in this case [*]
+                        long epochMicroNoMillis = (ts.getTime() / 1000) * 1000000;
+                        long actualTimestamp = epochMicroNoMillis + (ts.getNanos() / 1000);
+                        actualTimestamp = (actualTimestamp / 1000) * 1000; // [*] drop micros
+                        Timestamp dTs = new Timestamp(actualTimestamp);
+                        ps.setInt(1, rowId++);
+                        ps.setTimestamp(2, dTs);
+                        ps.execute();
+
+                        // Case 6: the complementary approach to Case 5, where we take a QuestDB
+                        // timestamp WITH microsecond precision and we massage it to extract two
+                        // numbers that can be used to create a java.sql.Timestamp.
+                        // -> microsecond precision is kept
+                        long questdbTs = TimestampFormatUtils.parseTimestamp("2021-09-27T16:45:03.202345Z");
+                        long time = questdbTs / 1000;
+                        int nanos = (int) (questdbTs - (int) (questdbTs / 1e6) * 1e6) * 1000;
+                        assertEquals(1632761103202345L, questdbTs);
+                        assertEquals(1632761103202L, time);
+                        assertEquals(202345000, nanos);
+                        Timestamp eTs = new Timestamp(time);
+                        eTs.setNanos(nanos);
+                        ps.setInt(1, rowId);
+                        ps.setTimestamp(2, eTs);
+                        ps.execute();
+                    }
+
+                    try (PreparedStatement statement = connection.prepareStatement("SELECT id as Case, ts FROM ts ORDER BY id ASC")) {
+                        sink.clear();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            assertResultSet(
+                                    "Case[INTEGER],ts[TIMESTAMP]\n" +
+                                            "0,2021-09-27 16:45:03.202345\n" +
+                                            "1,2021-09-27 16:45:03.202345\n" +
+                                            "2,2021-09-27 16:45:03.202345\n" +
+                                            "3,2021-09-27 16:45:03.202202\n" +
+                                            "4,1970-01-19 21:32:41.103202\n" +
+                                            "5,2021-09-27 16:45:03.202\n" +
+                                            "6,2021-09-27 16:45:03.202\n" +
+                                            "7,2021-09-27 16:45:03.202345\n",
+                                    sink,
+                                    rs
+                            );
+                        }
+                    }
+                    connection.prepareStatement("drop table ts").execute();
                 }
             }
         });
@@ -5875,125 +5924,76 @@ create table tab as (
     }
 
     @Test
-    public void testTimestamp() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, true)) {
+    public void testUpdateNoAutoCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
 
-                    connection.setAutoCommit(false);
-                    connection.prepareStatement("CREATE TABLE ts (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
-                    connection.prepareStatement("INSERT INTO ts VALUES(0, '2021-09-27T16:45:03.202345Z')").execute();
-                    connection.commit();
-                    connection.setAutoCommit(true);
+                PreparedStatement tbl = connection.prepareStatement("create table x (a int, b int, ts timestamp) timestamp(ts)");
+                tbl.execute();
 
-                    // select the timestamp that we just inserted
-                    Timestamp ts;
-                    try (PreparedStatement statement = connection.prepareStatement("SELECT ts FROM ts")) {
-                        try (ResultSet rs = statement.executeQuery()) {
-                            assertTrue(rs.next());
-                            ts = rs.getTimestamp("ts");
-                        }
-                    }
+                PreparedStatement insert = connection.prepareStatement("insert into x values(?, ?, '2022-03-17T00:00:00'::timestamp)");
+                for (int i = 0; i < 10; i++) {
+                    insert.setInt(1, i);
+                    insert.setInt(2, i + 100);
+                    insert.execute();
+                }
 
-                    // NOTE: java.sql.Timestamp takes milliseconds from epoch as constructor parameter,
-                    // which is processed and stored internally coupling ts.getTime() and ts.getNanos():
-                    //   - ts.getTime(): the last 3 digits account for millisecond precision, e.g. 1632761103202L -> 202 milliseconds.
-                    //   - ts.getNanos(): the first 3 digits match the last 3 digits from ts.getTime(), then
-                    //         3 more digits follow for micros, and 3 more for nanos,, e.g. 202345000 -> (202)milli(345)micro(000)nano
-                    assertEquals(1632761103202L, ts.getTime());
-                    assertEquals(202345000, ts.getNanos());
-                    assertEquals("2021-09-27 16:45:03.202345", ts.toString());
+                PreparedStatement updateB = connection.prepareStatement("update x set b=? where a=?");
+                for (int i = 0; i < 10; i++) {
+                    updateB.setInt(1, i + 10);
+                    updateB.setInt(2, i);
+                    updateB.execute();
+                }
 
+                for (int i = 10; i < 15; i++) {
+                    insert.setInt(1, i);
+                    insert.setInt(2, i + 100);
+                    insert.execute();
+                }
+
+                PreparedStatement updateA = connection.prepareStatement("update x set a=? where a=?");
+                for (int i = 10; i < 15; i++) {
+                    updateA.setInt(1, i + 10);
+                    updateA.setInt(2, i);
+                    updateA.execute();
+                }
+
+                for (int i = 0; i < 5; i++) {
+                    updateA.setInt(1, i + 10);
+                    updateA.setInt(2, i);
+                    updateA.execute();
+                }
+
+                for (int i = 0; i < 3; i++) {
+                    updateB.setInt(1, i + 1000);
+                    updateB.setInt(2, i + 10);
+                    updateB.execute();
+                }
+                connection.commit();
+
+                final String expected = "a[INTEGER],b[INTEGER],ts[TIMESTAMP]\n" +
+                        "10,1000,2022-03-17 00:00:00.0\n" +
+                        "11,1001,2022-03-17 00:00:00.0\n" +
+                        "12,1002,2022-03-17 00:00:00.0\n" +
+                        "13,13,2022-03-17 00:00:00.0\n" +
+                        "14,14,2022-03-17 00:00:00.0\n" +
+                        "5,15,2022-03-17 00:00:00.0\n" +
+                        "6,16,2022-03-17 00:00:00.0\n" +
+                        "7,17,2022-03-17 00:00:00.0\n" +
+                        "8,18,2022-03-17 00:00:00.0\n" +
+                        "9,19,2022-03-17 00:00:00.0\n" +
+                        "20,110,2022-03-17 00:00:00.0\n" +
+                        "21,111,2022-03-17 00:00:00.0\n" +
+                        "22,112,2022-03-17 00:00:00.0\n" +
+                        "23,113,2022-03-17 00:00:00.0\n" +
+                        "24,114,2022-03-17 00:00:00.0\n";
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
                     sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("INSERT INTO ts VALUES (?, ?)")) {
-                        int rowId = 1;
-
-                        // Case 1: insert timestamp as we selected it, no modifications
-                        // -> microsecond precision is kept
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, ts);
-                        ps.execute();
-
-                        // Case 2: we create a timestamp from another, but there is a catch, we must set the nanos too
-                        // -> microsecond precision is kept
-                        Timestamp aTs = new Timestamp(ts.getTime());
-                        aTs.setNanos(ts.getNanos());
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, aTs);
-                        ps.execute();
-
-                        // Case 3: we create a timestamp from another, and clear the micro precision
-                        // -> microsecond precision is dropped by us
-                        Timestamp bTs = new Timestamp(ts.getTime() * 1000);
-                        bTs.setNanos(202000000);
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, bTs);
-                        ps.execute();
-
-                        // Case 4: if we forget to setNanos, we get a broken timestamp
-                        // -> this results in a broken timestamp 1970-...
-                        Timestamp kaputTs = new Timestamp(ts.getTime());
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, kaputTs);
-                        ps.execute();
-
-                        // Case 4: if we setNanos to 0, we also get a broken timestamp! UNLESS we scale up time
-                        // to trick the constructor
-                        // -> microsecond precision is dropped by us, we keep millisecond precision
-                        Timestamp cTs = new Timestamp(ts.getTime() * 1000);
-                        cTs.setNanos(0); // <=== THIS requires ---- ^ ^
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, cTs);
-                        ps.execute();
-
-                        // Case 5: we use space-age mathematics to produce a long number which is
-                        // equivalent to a QuestDB timestamp WITH MICROSECOND precision, and then
-                        // we can feed it to java.sql.Timestamp without worrying for setNanos.
-                        // -> microsecond precision is lost in this case [*]
-                        long epochMicroNoMillis = (ts.getTime() / 1000) * 1000000;
-                        long actualTimestamp = epochMicroNoMillis + (ts.getNanos() / 1000);
-                        actualTimestamp = (actualTimestamp / 1000) * 1000; // [*] drop micros
-                        Timestamp dTs = new Timestamp(actualTimestamp);
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, dTs);
-                        ps.execute();
-
-                        // Case 6: the complementary approach to Case 5, where we take a QuestDB
-                        // timestamp WITH microsecond precision and we massage it to extract two
-                        // numbers that can be used to create a java.sql.Timestamp.
-                        // -> microsecond precision is kept
-                        long questdbTs = TimestampFormatUtils.parseTimestamp("2021-09-27T16:45:03.202345Z");
-                        long time = questdbTs / 1000;
-                        int nanos = (int)(questdbTs - (int)(questdbTs / 1e6) * 1e6) * 1000;
-                        assertEquals(1632761103202345L, questdbTs);
-                        assertEquals(1632761103202L, time);
-                        assertEquals(202345000, nanos);
-                        Timestamp eTs = new Timestamp(time);
-                        eTs.setNanos(nanos);
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, eTs);
-                        ps.execute();
-                    }
-
-                    try (PreparedStatement statement = connection.prepareStatement("SELECT id as Case, ts FROM ts ORDER BY id ASC")) {
-                        sink.clear();
-                        try (ResultSet rs = statement.executeQuery()) {
-                            assertResultSet(
-                                    "Case[INTEGER],ts[TIMESTAMP]\n" +
-                                            "0,2021-09-27 16:45:03.202345\n" +
-                                            "1,2021-09-27 16:45:03.202345\n" +
-                                            "2,2021-09-27 16:45:03.202345\n" +
-                                            "3,2021-09-27 16:45:03.202202\n" +
-                                            "4,1970-01-19 21:32:41.103202\n" +
-                                            "5,2021-09-27 16:45:03.202\n" +
-                                            "6,2021-09-27 16:45:03.202\n" +
-                                            "7,2021-09-27 16:45:03.202345\n",
-                                    sink,
-                                    rs
-                            );
-                        }
-                    }
-                    connection.prepareStatement("drop table ts").execute();
+                    assertResultSet(expected, sink, resultSet);
                 }
             }
         });

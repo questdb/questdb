@@ -44,7 +44,4 @@ public interface AsyncWriterCommand {
     default long apply(TableWriter tableWriter) throws SqlException, TableStructureChangesException {
         return apply(tableWriter, false);
     }
-
-    default void free() {
-    }
 }

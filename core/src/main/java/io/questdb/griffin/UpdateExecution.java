@@ -61,7 +61,7 @@ public class UpdateExecution implements Closeable {
     private final LongList cleanupColumnVersionsAsync = new LongList();
     private final MessageBus messageBus;
     private final CairoConfiguration configuration;
-    private final RebuildIndex rebuildIndex;
+    private RebuildIndex rebuildIndex;
     private Path path;
 
     public UpdateExecution(CairoConfiguration configuration, MessageBus messageBus) {
@@ -78,7 +78,7 @@ public class UpdateExecution implements Closeable {
     @Override
     public void close() {
         path = Misc.free(path);
-        rebuildIndex.close();
+        rebuildIndex = Misc.free(rebuildIndex);
     }
 
     public long executeUpdate(TableWriter tableWriter, UpdateStatement updateStatement, SqlExecutionContext executionContext) throws SqlException {
@@ -97,9 +97,8 @@ public class UpdateExecution implements Closeable {
             throw ReaderOutOfDateException.of(tableName);
         }
 
-        // Prepare for update, select the rows to be updated
-        final RecordCursorFactory updateStatementDataCursorFactory = updateStatement.prepareForUpdate();
-
+        // Select the rows to be updated
+        final RecordCursorFactory updateStatementDataCursorFactory = updateStatement.getUpdateToDataCursorFactory();
         RecordMetadata updateMetadata = updateStatementDataCursorFactory.getMetadata();
         int updateColumnCount = updateMetadata.getColumnCount();
 

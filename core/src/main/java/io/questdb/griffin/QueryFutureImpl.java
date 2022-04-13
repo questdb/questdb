@@ -32,6 +32,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -85,6 +86,7 @@ class QueryFutureImpl implements QueryFuture {
 
     @Override
     public void close() {
+        asyncWriterCommand = Misc.free(asyncWriterCommand);
         if (eventSubSeq != null) {
             engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
             eventSubSeq.clear();

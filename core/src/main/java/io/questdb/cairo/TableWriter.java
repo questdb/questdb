@@ -34,10 +34,7 @@ import io.questdb.cairo.vm.MemoryFMCRImpl;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
-import io.questdb.griffin.AlterStatement;
-import io.questdb.griffin.AsyncWriterCommand;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.UpdateStatement;
+import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -148,7 +145,6 @@ public class TableWriter implements Closeable {
     // Publisher source is identified by a long value
     private final LongLongHashMap cmdSequences = new LongLongHashMap();
     private final AlterStatement alterTableStatement = new AlterStatement();
-    private final UpdateStatement updateTableStatement = new UpdateStatement();
     private final ColumnVersionWriter columnVersionWriter;
     private final Metrics metrics;
     private final RingQueue<TableWriterTask> commandQueue;
@@ -192,6 +188,7 @@ public class TableWriter implements Closeable {
     private double commitIntervalFraction;
     private long commitIntervalDefault;
     private long commitInterval;
+    private UpdateExecution updateExecution;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
@@ -841,6 +838,13 @@ public class TableWriter implements Closeable {
         return (masterRef - committedMasterRef) >> 1;
     }
 
+    public UpdateExecution getUpdateExecution() {
+        if (updateExecution == null) {
+            updateExecution = new UpdateExecution(configuration, messageBus);
+        }
+        return updateExecution;
+    }
+
     public boolean inTransaction() {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || columnVersionWriter.hasChanges());
     }
@@ -936,7 +940,7 @@ public class TableWriter implements Closeable {
                     processAsyncWriterCommand(alterTableStatement, cmd, cursor, commandSubSeq, acceptStructureChange);
                     break;
                 case CMD_UPDATE_TABLE:
-                    processAsyncWriterCommand(updateTableStatement, cmd, cursor, commandSubSeq, false);
+                    processAsyncWriterCommand(cmd.getAsyncWriterCommand(), cmd, cursor, commandSubSeq, false);
                     break;
                 default:
                     LOG.error().$("unknown TableWriterTask type, ignored: ").$(cmd.getType()).$();
@@ -2147,6 +2151,7 @@ public class TableWriter implements Closeable {
         Misc.free(columnVersionWriter);
         Misc.free(o3ColumnTopSink);
         Misc.free(commandQueue);
+        updateExecution = Misc.free(updateExecution);
         freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
@@ -3885,7 +3890,6 @@ public class TableWriter implements Closeable {
                     .I$();
             asyncWriterCommand = asyncWriterCommand.deserialize(cmd);
             affectedRowsCount = asyncWriterCommand.apply(this, acceptStructureChange);
-            asyncWriterCommand.free();
         } catch (TableStructureChangesException ex) {
             LOG.info()
                     .$("cannot complete async cmd, table structure change is not allowed [type=").$(cmdType)
@@ -3901,7 +3905,7 @@ public class TableWriter implements Closeable {
                     .$(", tableName=").$(tableName)
                     .$(", ex=").$(ex)
                     .I$();
-            error = "error on processing async cmd, see QuestDB server logs for details";
+            error = ex.getMessage();
         } finally {
             sequence.done(cursor);
         }

@@ -26,77 +26,26 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.tasks.TableWriterTask;
 
 import java.io.Closeable;
-import java.util.ServiceLoader;
 
 public class UpdateStatement extends AsyncWriterCommandBase implements Closeable {
     private RecordCursorFactory updateToDataCursorFactory;
-    private QueryModel selectQueryModel;
-    private QueryModel updateQueryModel;
-    private SqlCodeGenerator codeGenerator;
-    private UpdateExecution updateExecution;
-    private SqlExecutionContext executionContext;
-    private CairoEngine engine;
+    private final SqlExecutionContext executionContext;
 
-    public UpdateStatement of(
+    public UpdateStatement(
             String tableName,
             int tableId,
             long tableVersion,
             int tableNamePosition,
-            QueryModel selectQueryModel,
-            QueryModel updateQueryModel,
-            SqlCodeGenerator codeGenerator,
-            UpdateExecution updateExecution,
             SqlExecutionContext executionContext,
-            CairoEngine engine
+            RecordCursorFactory updateToDataCursorFactory
     ) {
         init(TableWriterTask.CMD_UPDATE_TABLE, "UPDATE", tableName, tableId, tableVersion, tableNamePosition);
-        this.selectQueryModel = selectQueryModel;
-        this.updateQueryModel = updateQueryModel;
-
-        this.codeGenerator = codeGenerator;
-        this.updateExecution = updateExecution;
-
         this.executionContext = executionContext;
-        this.engine = engine;
-        return this;
-    }
-
-    private void of(
-            String tableName,
-            int tableId,
-            long tableVersion,
-            int tableNamePosition,
-            QueryModel selectQueryModel,
-            QueryModel updateQueryModel,
-            SqlExecutionContext executionContext,
-            CairoEngine engine
-    ) {
-        CairoConfiguration configuration = engine.getConfiguration();
-        FunctionParser functionParser = new FunctionParser(
-                configuration,
-                new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader()))
-        );
-        SqlCodeGenerator codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
-        functionParser.setSqlCodeGenerator(codeGenerator);
-
-        UpdateExecution updateExecution = new UpdateExecution(configuration, engine.getMessageBus());
-        of(tableName, tableId, tableVersion, tableNamePosition, selectQueryModel, updateQueryModel, codeGenerator, updateExecution, executionContext, engine);
-    }
-
-    @Override
-    public void free() {
-        codeGenerator.close();
-        updateExecution.close();
-        close();
+        this.updateToDataCursorFactory = updateToDataCursorFactory;
     }
 
     @Override
@@ -105,51 +54,25 @@ public class UpdateStatement extends AsyncWriterCommandBase implements Closeable
     }
 
     @Override
+    public AsyncWriterCommand deserialize(TableWriterTask task) {
+        return task.getAsyncWriterCommand();
+    }
+
+    @Override
     public long apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException {
-        return updateExecution.executeUpdate(tableWriter, this, executionContext);
+        if (updateToDataCursorFactory != null) {
+            return tableWriter.getUpdateExecution().executeUpdate(tableWriter, this, executionContext);
+        }
+        return 0L;
+    }
+
+    public RecordCursorFactory getUpdateToDataCursorFactory() {
+        return updateToDataCursorFactory;
     }
 
     @Override
     public void serialize(TableWriterTask task) {
         super.serialize(task);
-        final UpdateStatement clone = new UpdateStatement();
-        clone.of(tableName, getTableId(), getTableVersion(), tableNamePosition, selectQueryModel, updateQueryModel, executionContext, engine);
-        task.setAsyncWriterCommand(clone);
-    }
-
-    @Override
-    public AsyncWriterCommand deserialize(TableWriterTask task) {
-        return task.getAsyncWriterCommand();
-    }
-
-    public RecordCursorFactory prepareForUpdate() throws SqlException {
-        final IntList tableColumnTypes = selectQueryModel.getUpdateTableColumnTypes();
-        final ObjList<CharSequence> tableColumnNames = selectQueryModel.getUpdateTableColumnNames();
-
-        updateToDataCursorFactory = codeGenerator.generate(selectQueryModel, executionContext);
-        if (!updateToDataCursorFactory.supportsUpdateRowId(tableName)) {
-            // in theory this should never happen because all valid UPDATE statements should result in
-            // a query plan with real row ids but better to check to prevent data corruption
-            throw SqlException.$(updateQueryModel.getModelPosition(), "Invalid execution plan for UPDATE statement");
-        }
-
-        // Check that updateDataFactoryMetadata match types of table to be updated exactly
-        final RecordMetadata updateDataFactoryMetadata = updateToDataCursorFactory.getMetadata();
-        for (int i = 0, n = updateDataFactoryMetadata.getColumnCount(); i < n; i++) {
-            int virtualColumnType = updateDataFactoryMetadata.getColumnType(i);
-            CharSequence updateColumnName = updateDataFactoryMetadata.getColumnName(i);
-            int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
-            int tableColumnType = tableColumnTypes.get(tableColumnIndex);
-
-            if (virtualColumnType != tableColumnType) {
-                if (!ColumnType.isSymbol(tableColumnType) || virtualColumnType != ColumnType.STRING) {
-                    // get column position
-                    ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
-                    int position = setRhs.position;
-                    throw SqlException.inconvertibleTypes(position, virtualColumnType, "", tableColumnType, updateColumnName);
-                }
-            }
-        }
-        return updateToDataCursorFactory;
+        task.setAsyncWriterCommand(this);
     }
 }

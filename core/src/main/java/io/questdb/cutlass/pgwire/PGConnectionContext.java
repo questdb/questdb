@@ -233,7 +233,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
         final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1; // 8
         this.typesAndInsertCache = new AssociativeCache<>(insertBlockCount, insertRowCount);
-        this.typesAndUpdatePool = new WeakAutoClosableObjectPool<>(TypesAndUpdate::new, configuration.getUpdatePoolCapacity()); // 64
+        this.typesAndUpdatePool = new WeakAutoClosableObjectPool<>(parent -> new TypesAndUpdate(parent, engine), configuration.getUpdatePoolCapacity()); // 64
         final boolean enableUpdateCache = configuration.isUpdateCacheEnabled();
         final int updateBlockCount = enableUpdateCache ? configuration.getUpdateCacheBlockCount() : 1; // 8
         final int updateRowCount = enableUpdateCache ? configuration.getUpdateCacheRowCount() : 1; // 8
@@ -1311,21 +1311,24 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
         TableWriter writer = null;
         try {
-            writer = getWriter(
-                    sqlExecutionContext.getCairoSecurityContext(),
-                    updateStatement.getTableName(),
-                    "Update table execute"
-            );
-            rowCount = updateStatement.apply(writer);
-        } catch (EntryUnavailableException busyException) {
-            try (QueryFuture queryFuture = cqUpdate.executeAsync(updateStatement, tempSequence, false)) {
-                queryFuture.await();
-                rowCount = queryFuture.getAffectedRowsCount();
+            try {
+                writer = getWriter(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        updateStatement.getTableName(),
+                        "Update table execute"
+                );
+                rowCount = updateStatement.apply(writer);
+            } catch (EntryUnavailableException busyException) {
+                try (QueryFuture queryFuture = cqUpdate.executeAsync(updateStatement, tempSequence, false)) {
+                    queryFuture.await();
+                    rowCount = queryFuture.getAffectedRowsCount();
+                }
+            } catch (TableStructureChangesException e) {
+                assert false : "This must never happen for UPDATE, tableName=" + updateStatement.getTableName();
             }
-        } catch (TableStructureChangesException e) {
-            assert false : "This must never happen for UPDATE, tableName=" + updateStatement.getTableName();
-        } finally {
+        } catch (Throwable th) {
             updateStatement.close();
+            throw th;
         }
         return writer;
     }
@@ -1914,7 +1917,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case CompiledQuery.UPDATE:
                 queryTag = TAG_UPDATE;
                 typesAndUpdate = typesAndUpdatePool.pop();
-                typesAndUpdate.of(cq, bindVariableService);
+                typesAndUpdate.of(cq.getUpdateStatement(), bindVariableService);
                 if (bindVariableService.getIndexedVariableCount() > 0) {
                     LOG.debug().$("cache update [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
                     // we can add update to cache right away because it is local to the connection

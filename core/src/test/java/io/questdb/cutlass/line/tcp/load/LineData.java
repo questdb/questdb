@@ -24,9 +24,11 @@
 
 package io.questdb.cutlass.line.tcp.load;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.BoolList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
 
@@ -40,12 +42,20 @@ public class LineData {
     private final BoolList tagFlags = new BoolList();
 
     private final LowerCaseCharSequenceIntHashMap nameToIndex = new LowerCaseCharSequenceIntHashMap();
+    private int tagsCount;
 
     public LineData(long timestampMicros) {
         timestampNanos = timestampMicros * 1000;
         final StringSink timestampSink = new StringSink();
         TimestampFormatUtils.appendDateTimeUSec(timestampSink, timestampMicros);
         addColumn("timestamp", timestampSink);
+    }
+
+    public void addColumn(CharSequence colName, CharSequence colValue) {
+        if (tagsCount == 0) {
+            tagsCount = names.size();
+        }
+        add(colName, colValue, false);
     }
 
     public long getTimestamp() {
@@ -56,15 +66,25 @@ public class LineData {
         add(tagName, tagValue, true);
     }
 
-    public void addColumn(CharSequence colName, CharSequence colValue) {
-        add(colName, colValue, false);
+    public String generateRandomUpdate(CharSequence tableName, Rnd rnd, short[] colTypes) {
+        int field = rnd.nextInt(values.size() - 1) + 1;
+        double value = 500.0 + rnd.nextInt(1000);
+        String valueStr = String.valueOf(value);
+        values.set(field, valueStr);
+
+        boolean quote = field < tagsCount || colTypes[field - tagsCount] == ColumnType.STRING;
+        if (quote) {
+            return String.format("update \"%s\" set %s='%s' where timestamp=CAST(%dL as timestamp)", tableName, names.getQuick(field), valueStr, timestampNanos / 1000);
+        } else {
+            return String.format("update \"%s\" set %s=%s where timestamp=CAST(%dL as timestamp)", tableName, names.getQuick(field), valueStr, timestampNanos / 1000);
+        }
     }
 
     private void add(CharSequence name, CharSequence value, boolean isTag) {
         names.add(name);
         values.add(value);
         tagFlags.add(isTag);
-        nameToIndex.putIfAbsent(name, names.size() -1);
+        nameToIndex.putIfAbsent(name, names.size() - 1);
     }
 
     public String toLine(final CharSequence tableName) {

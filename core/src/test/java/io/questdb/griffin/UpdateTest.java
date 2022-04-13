@@ -32,25 +32,23 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
 
 public class UpdateTest extends AbstractGriffinTest {
     private final SCSequence eventSubSequence = new SCSequence();
 
-    private UpdateExecution updateExecution;
+    private static UpdateExecution updateExecution;
 
-    @Before
-    public void setUpUpdates() {
+    @BeforeClass
+    public static void setUpUpdates() {
+        // Make updateExecution static to test re-usabbility of the object
         updateExecution = new UpdateExecution(configuration, engine.getMessageBus());
     }
 
-    @After
-    public void tearDownUpdate() {
+    @AfterClass
+    public static void tearDownUpdate() {
         updateExecution = Misc.free(updateExecution);
     }
 
@@ -285,6 +283,54 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-01T00:00:01.000000Z\t2\n" +
                     "1970-01-01T00:00:02.000000Z\tNaN\n" +
                     "1970-01-01T00:00:03.000000Z\tNaN\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\n");
+        });
+    }
+
+    @Test
+    public void testUpdateAsyncMode() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5))" +
+                    " timestamp(ts)", sqlExecutionContext);
+
+            CyclicBarrier barrier = new CyclicBarrier(2);
+
+            final Thread th = new Thread(() -> {
+                try {
+                    TableWriter tableWriter = engine.getWriter(
+                            sqlExecutionContext.getCairoSecurityContext(),
+                            "up",
+                            "test");
+                    barrier.await(); // table is locked
+                    barrier.await(); // update is on writer async cmd queue
+                    tableWriter.tick();
+                    tableWriter.close();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    Assert.fail();
+                }
+            });
+            th.start();
+
+            barrier.await(); // table is locked
+            try (QueryFuture queryFuture = executeUpdate("UPDATE up SET x = 123 WHERE x > 1 and x < 4")) {
+                Assert.assertEquals(QueryFuture.QUERY_NO_RESPONSE, queryFuture.getStatus());
+                Assert.assertEquals(0, queryFuture.getAffectedRowsCount());
+                barrier.await(); // update is on writer async cmd queue
+                queryFuture.await(10000000); // 10 seconds timeout
+                Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
+                Assert.assertEquals(2, queryFuture.getAffectedRowsCount());
+            }
+            th.join();
+
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n" +
+                    "1970-01-01T00:00:01.000000Z\t123\n" +
+                    "1970-01-01T00:00:02.000000Z\t123\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\n" +
                     "1970-01-01T00:00:04.000000Z\t5\n");
         });
     }
@@ -1212,44 +1258,25 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateWithSymbolJoin() throws Exception {
+    public void testUpdateNonPartitionedTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
-                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " (select timestamp_sequence(0, 1000000) ts," +
                     " x" +
-                    " from long_sequence(5)), index(symCol)" +
+                    " from long_sequence(5))" +
                     " timestamp(ts)", sqlExecutionContext);
 
-            assertSql("up", "symCol\tts\tx\n" +
-                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+            try (QueryFuture queryFuture = executeUpdate("UPDATE up SET x = 123 WHERE x > 1 and x < 5")) {
+                Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
+                Assert.assertEquals(3, queryFuture.getAffectedRowsCount());
+            }
 
-            compiler.compile("create table t2 as" +
-                    " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
-                    " x" +
-                    " from long_sequence(5)), index(symCol2)" +
-                    " timestamp(ts)", sqlExecutionContext);
-
-            assertSql("t2", "symCol2\tts\tx\n" +
-                    "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
-                    "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
-
-            QueryFuture queryFuture = executeUpdate("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2");
-            Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
-            Assert.assertEquals(1, queryFuture.getAffectedRowsCount());
-
-            assertSql("up", "symCol\tts\tx\n" +
-                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
-                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "VTJ\t1970-01-01T00:00:04.000000Z\t5\n");
+            assertSql("up", "ts\tx\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n" +
+                    "1970-01-01T00:00:01.000000Z\t123\n" +
+                    "1970-01-01T00:00:02.000000Z\t123\n" +
+                    "1970-01-01T00:00:03.000000Z\t123\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\n");
         });
     }
 
@@ -1262,9 +1289,10 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)", sqlExecutionContext);
 
-            QueryFuture queryFuture = executeUpdate("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'");
-            Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
-            Assert.assertEquals(2, queryFuture.getAffectedRowsCount());
+            try (QueryFuture queryFuture = executeUpdate("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'")) {
+                Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
+                Assert.assertEquals(2, queryFuture.getAffectedRowsCount());
+            }
 
             assertSql("up", "symCol\tts\tx\n" +
                     "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
@@ -1412,71 +1440,65 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateNonPartitionedTable() throws Exception {
+    public void testUpdateTableNameContainsSpace() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table up as" +
+            compiler.compile("create table \"віт ер\" as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
-                    " x" +
+                    " cast(x as int) x" +
                     " from long_sequence(5))" +
-                    " timestamp(ts)", sqlExecutionContext);
+                    " timestamp(ts) partition by DAY", sqlExecutionContext);
 
-            QueryFuture queryFuture = executeUpdate("UPDATE up SET x = 123 WHERE x > 1 and x < 5");
-            Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
-            Assert.assertEquals(3, queryFuture.getAffectedRowsCount());
+            executeUpdate("UPDATE \"віт ер\" SET X = null WHERE ts > '1970-01-01T00:00:01' and ts < '1970-01-01T00:00:04'");
 
-            assertSql("up", "ts\tx\n" +
+            assertSql("\"віт ер\"", "ts\tx\n" +
                     "1970-01-01T00:00:00.000000Z\t1\n" +
-                    "1970-01-01T00:00:01.000000Z\t123\n" +
-                    "1970-01-01T00:00:02.000000Z\t123\n" +
-                    "1970-01-01T00:00:03.000000Z\t123\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\n" +
+                    "1970-01-01T00:00:02.000000Z\tNaN\n" +
+                    "1970-01-01T00:00:03.000000Z\tNaN\n" +
                     "1970-01-01T00:00:04.000000Z\t5\n");
         });
     }
 
     @Test
-    public void testUpdateAsyncMode() throws Exception {
+    public void testUpdateWithSymbolJoin() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
-                    " (select timestamp_sequence(0, 1000000) ts," +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
-                    " from long_sequence(5))" +
+                    " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)", sqlExecutionContext);
 
-            CyclicBarrier barrier = new CyclicBarrier(2);
+            assertSql("up", "symCol\tts\tx\n" +
+                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
 
-            final Thread th = new Thread(() -> {
-                try {
-                    TableWriter tableWriter = engine.getWriter(
-                            sqlExecutionContext.getCairoSecurityContext(),
-                            "up",
-                            "test");
-                    barrier.await(); // table is locked
-                    barrier.await(); // update is on writer async cmd queue
-                    tableWriter.tick();
-                    tableWriter.close();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    Assert.fail();
-                }
-            });
-            th.start();
+            compiler.compile("create table t2 as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)), index(symCol2)" +
+                    " timestamp(ts)", sqlExecutionContext);
 
-            barrier.await(); // table is locked
-            QueryFuture queryFuture = executeUpdate("UPDATE up SET x = 123 WHERE x > 1 and x < 4");
-            Assert.assertEquals(QueryFuture.QUERY_NO_RESPONSE, queryFuture.getStatus());
-            Assert.assertEquals(0, queryFuture.getAffectedRowsCount());
-            barrier.await(); // update is on writer async cmd queue
-            queryFuture.await(10000000); // 10 seconds timeout
-            Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
-            Assert.assertEquals(2, queryFuture.getAffectedRowsCount());
-            th.join();
+            assertSql("t2", "symCol2\tts\tx\n" +
+                    "XUX\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "IBB\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "IBB\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
 
-            assertSql("up", "ts\tx\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\n" +
-                    "1970-01-01T00:00:01.000000Z\t123\n" +
-                    "1970-01-01T00:00:02.000000Z\t123\n" +
-                    "1970-01-01T00:00:03.000000Z\t4\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\n");
+            try (QueryFuture queryFuture = executeUpdate("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2")) {
+                Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
+                Assert.assertEquals(1, queryFuture.getAffectedRowsCount());
+            }
+
+            assertSql("up", "symCol\tts\tx\n" +
+                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "WCP\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "VTJ\t1970-01-01T00:00:04.000000Z\t5\n");
         });
     }
 

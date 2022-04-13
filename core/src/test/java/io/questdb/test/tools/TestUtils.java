@@ -420,7 +420,7 @@ public final class TestUtils {
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 long actualMemByTag = Unsafe.getMemUsedByTag(i);
                 if (memoryUsageByTag[i] != actualMemByTag) {
-                    Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
+                    Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
                     Assert.assertTrue(actualMemByTag > -1);
                 }
             }

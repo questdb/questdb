@@ -136,25 +136,29 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     private QueryFuture executeUpdate(SCSequence eventSubSeq) throws SqlException {
-        try (
-                TableWriter writer = engine.getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        updateStatement.getTableName(),
-                        "Update table execute"
-                )
-        ) {
-            affectedRowsCount = updateStatement.apply(writer);
-            return DONE;
-        } catch (EntryUnavailableException busyException) {
-            if (eventSubSeq == null) {
-                throw busyException;
+        try {
+            try (
+                    TableWriter writer = engine.getWriter(
+                            sqlExecutionContext.getCairoSecurityContext(),
+                            updateStatement.getTableName(),
+                            "Update table execute"
+                    )
+            ) {
+                affectedRowsCount = updateStatement.apply(writer);
+                updateStatement.close();
+                return DONE;
+            } catch (EntryUnavailableException busyException) {
+                if (eventSubSeq == null) {
+                    throw busyException;
+                }
+                return executeAsync(updateStatement, eventSubSeq, false);
+            } catch (TableStructureChangesException e) {
+                assert false : "This must never happen for UPDATE, tableName=" + updateStatement.getTableName();
+                return DONE;
             }
-            return executeAsync(updateStatement, eventSubSeq, false);
-        } catch (TableStructureChangesException e) {
-            assert false : "This must never happen for UPDATE, tableName=" + updateStatement.getTableName();
-            return DONE;
-        } finally {
+        } catch (Throwable th) {
             updateStatement.close();
+            throw th;
         }
     }
 

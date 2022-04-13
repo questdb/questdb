@@ -35,10 +35,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
