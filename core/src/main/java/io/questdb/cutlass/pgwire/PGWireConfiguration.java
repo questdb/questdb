@@ -44,6 +44,8 @@ public interface PGWireConfiguration extends WorkerPoolAwareConfiguration {
 
     String getDefaultUsername();
 
+    boolean readOnlySecurityContext();
+
     IODispatcherConfiguration getDispatcherConfiguration();
 
     default boolean getDumpNetworkTraffic() {
