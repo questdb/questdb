@@ -30,7 +30,6 @@ public class CairoSecurityContextImpl implements CairoSecurityContext {
     private final boolean canWrite;
 
     public CairoSecurityContextImpl(boolean canWrite) {
-        super();
         this.canWrite = canWrite;
     }
 
