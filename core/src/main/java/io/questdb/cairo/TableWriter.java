@@ -1595,7 +1595,6 @@ public class TableWriter implements Closeable {
                     case ColumnType.SHORT:
                     case ColumnType.FLOAT:
                     case ColumnType.LONG256:
-                        // Consider Symbols as fixed, check data file size
                     case ColumnType.GEOBYTE:
                     case ColumnType.GEOSHORT:
                     case ColumnType.GEOINT:
