@@ -865,7 +865,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         if (expectedTimestamp == null) {
             Assert.assertEquals("Expected -1 as timestamp index", -1, factory.getMetadata().getTimestampIndex());
         } else {
-
             boolean expectAscendingOrder = true;
             String tsDesc = expectedTimestamp.toString();
             int position = tsDesc.indexOf("###");
@@ -894,7 +893,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     @NotNull
     protected static CompiledQuery compile(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         CompiledQuery cc = compiler.compile(query, executionContext);
-        cc.execute(null).await();
+        try (QueryFuture future = cc.execute(null)) {
+            future.await();
+        }
         return cc;
     }
 

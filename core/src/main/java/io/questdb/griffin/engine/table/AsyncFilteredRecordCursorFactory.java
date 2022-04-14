@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReducer;
@@ -45,25 +46,34 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
 
     private final RecordCursorFactory base;
+    private final RecordMetadata baseMetadata;
     private final AsyncFilteredRecordCursor cursor;
     private final Function filter;
     private final PageFrameSequence<Function> frameSequence;
     private final SCSequence collectSubSeq = new SCSequence();
-    private final Function limitHiFunction;
+    private final Function limitLoFunction;
 
     public AsyncFilteredRecordCursorFactory(
             CairoConfiguration configuration,
             MessageBus messageBus,
             RecordCursorFactory base,
             Function filter,
-            @Nullable Function limitHiFunction
+            @Nullable Function limitLoFunction
     ) {
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
+        if (base.hasDescendingOrder()) {
+            // Copy metadata and erase timestamp index in case of ORDER BY DESC.
+            GenericRecordMetadata copy = GenericRecordMetadata.copyOf(base.getMetadata());
+            copy.setTimestampIndex(-1);
+            this.baseMetadata = copy;
+        } else {
+            this.baseMetadata = base.getMetadata();
+        }
         this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
         this.filter = filter;
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER);
-        this.limitHiFunction = limitHiFunction;
+        this.limitLoFunction = limitLoFunction;
     }
 
     @Override
@@ -75,16 +85,16 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public boolean followedLimitAdvice() {
-        return limitHiFunction != null;
+        return limitLoFunction != null;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         long rowsRemaining;
         final int order;
-        if (limitHiFunction != null) {
-            limitHiFunction.init(frameSequence.getSymbolTableSource(), executionContext);
-            rowsRemaining = limitHiFunction.getLong(null);
+        if (limitLoFunction != null) {
+            limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
+            rowsRemaining = limitLoFunction.getLong(null);
             // on negative limit we will be looking for positive number of rows
             // while scanning table from the highest timestamp to the lowest
             if (rowsRemaining > -1) {
@@ -103,7 +113,7 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordMetadata getMetadata() {
-        return base.getMetadata();
+        return baseMetadata;
     }
 
     @Override

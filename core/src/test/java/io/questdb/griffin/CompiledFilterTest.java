@@ -95,8 +95,6 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    // todo: somehow JIT filter exposes timestamp, even though timestamp order is descending
-    //     perhaps order by clause changes JIT factory behaviour
     public void testMultiplePartitionsOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
@@ -116,16 +114,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
                     "2\t1970-01-01T00:00:00.100000Z\n" +
                     "1\t1970-01-01T00:00:00.000000Z\n";
 
-            assertQuery(
-                    expected,
-                    query,
-                    null,
-                    null,
-                    true,
-                    true,
-                    true
-            );
-//            assertSql(query, expected);
+            assertSql(query, expected);
             assertSqlRunWithJit(query);
         });
     }

@@ -27,8 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -760,10 +760,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final CompiledFilter jitFilter = new CompiledFilter();
                     jitFilter.compile(jitIRMem, jitOptions);
 
+                    final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+
                     LOG.info()
                             .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
-                    return new AsyncJitFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, bindVarFunctions, f, jitFilter);
+                    return new AsyncJitFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, bindVarFunctions, f, jitFilter, limitLoFunction);
                 } catch (SqlException | LimitOverflowException ex) {
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
@@ -777,12 +779,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         if (factory.supportPageFrameCursor()) {
-            Function limitLoFunction;
-            if (model.getLimitAdviceLo() != null && model.getLimitAdviceHi() == null) {
-                limitLoFunction = toLimitFunction(executionContext, model.getLimitAdviceLo(), LongConstant.ZERO);
-            } else {
-                limitLoFunction = null;
-            }
+            final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
             return new AsyncFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, f, limitLoFunction);
         }
         return new FilteredRecordCursorFactory(factory, f);
@@ -3152,6 +3149,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @NotNull
     private Function getLoFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         return toLimitFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
+    }
+
+    @Nullable
+    private Function getLimitLoFunctionOnly(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        if (model.getLimitAdviceLo() != null && model.getLimitAdviceHi() == null) {
+            return toLimitFunction(executionContext, model.getLimitAdviceLo(), LongConstant.ZERO);
+        }
+        return null;
     }
 
     private int getTimestampIndex(QueryModel model, RecordCursorFactory factory) throws SqlException {

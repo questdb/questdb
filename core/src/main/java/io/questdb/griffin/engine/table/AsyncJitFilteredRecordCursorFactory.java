@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReducer;
@@ -44,14 +45,16 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
 public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory {
 
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
 
     private final RecordCursorFactory base;
+    private final RecordMetadata baseMetadata;
     private final Function filter;
     private final CompiledFilter compiledFilter;
     private final AsyncFilteredRecordCursor cursor;
@@ -59,6 +62,7 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
     private final FilterAtom atom;
     private final PageFrameSequence<FilterAtom> frameSequence;
     private final SCSequence collectSubSeq = new SCSequence();
+    private final Function limitLoFunction;
 
     public AsyncJitFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -66,11 +70,20 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
             @NotNull RecordCursorFactory base,
             @NotNull ObjList<Function> bindVarFunctions,
             @NotNull Function filter,
-            @NotNull CompiledFilter compiledFilter
+            @NotNull CompiledFilter compiledFilter,
+            @Nullable Function limitLoFunction
     ) {
         assert !(base instanceof FilteredRecordCursorFactory);
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;
+        if (base.hasDescendingOrder()) {
+            // Copy metadata and erase timestamp index in case of ORDER BY DESC.
+            GenericRecordMetadata copy = GenericRecordMetadata.copyOf(base.getMetadata());
+            copy.setTimestampIndex(-1);
+            this.baseMetadata = copy;
+        } else {
+            this.baseMetadata = base.getMetadata();
+        }
         this.filter = filter;
         this.compiledFilter = compiledFilter;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
@@ -78,6 +91,7 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
                 configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
         this.atom = new FilterAtom(filter, compiledFilter, bindVarMemory, bindVarFunctions);
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER);
+        this.limitLoFunction = limitLoFunction;
     }
 
     @Override
@@ -90,18 +104,36 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
     }
 
     @Override
+    public boolean followedLimitAdvice() {
+        return limitLoFunction != null;
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(
-                collectSubSeq,
-                execute(executionContext, collectSubSeq, ORDER_ASC),
-                Long.MAX_VALUE
-        );
+        long rowsRemaining;
+        final int order;
+        if (limitLoFunction != null) {
+            limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
+            rowsRemaining = limitLoFunction.getLong(null);
+            // on negative limit we will be looking for positive number of rows
+            // while scanning table from the highest timestamp to the lowest
+            if (rowsRemaining > -1) {
+                order = ORDER_ASC;
+            } else {
+                order = ORDER_DESC;
+                rowsRemaining = -rowsRemaining;
+            }
+        } else {
+            rowsRemaining = Long.MAX_VALUE;
+            order = ORDER_ANY;
+        }
+        cursor.of(collectSubSeq, execute(executionContext, collectSubSeq, order), rowsRemaining);
         return this.cursor;
     }
 
     @Override
     public RecordMetadata getMetadata() {
-        return base.getMetadata();
+        return baseMetadata;
     }
 
     @Override
