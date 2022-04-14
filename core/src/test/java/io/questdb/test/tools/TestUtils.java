@@ -581,7 +581,7 @@ public final class TestUtils {
                 case ColumnType.SYMBOL:
                     sql.append("rnd_symbol(4,4,4,2) ").append(colName);
                     if (tableModel.isIndexed(i)) {
-                        indexes.append(",index(").append(colName).append(" capacity ").append(tableModel.getIndexBlockCapacity(i)).append(") ");
+                        indexes.append(",index(").append(colName).append(") ");
                     }
                     break;
                 case ColumnType.BOOLEAN:
