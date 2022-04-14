@@ -137,7 +137,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         // factory is closed without using cursor
         if (collectSubSeq != null) {
             messageBus.getPageFrameCollectFanOut(shard).remove(collectSubSeq);
-            LOG.info().$("removed [seq=").$(collectSubSeq).I$();
+            LOG.debug().$("removed [seq=").$(collectSubSeq).I$();
             collectSubSeq.clear();
         }
         this.dispatchStartIndex.set(0);

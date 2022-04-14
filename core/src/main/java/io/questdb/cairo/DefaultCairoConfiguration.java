@@ -596,6 +596,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMaxNegativeLimit() {
+        return 10_000;
+    }
+
+    @Override
     public int getSqlPageFrameMinRows() {
         return 1_000;
     }

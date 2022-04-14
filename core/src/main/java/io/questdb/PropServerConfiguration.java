@@ -109,6 +109,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
     private final int sqlModelPoolCapacity;
+    private final int sqlMaxNegativeLimit;
     private final long sqlSortKeyPageSize;
     private final int sqlSortKeyMaxPages;
     private final long sqlSortLightValuePageSize;
@@ -658,6 +659,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlMapMaxPages = getIntSize(properties, env, "cairo.sql.map.max.pages", Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, "cairo.sql.map.max.resizes", Integer.MAX_VALUE);
             this.sqlModelPoolCapacity = getInt(properties, env, "cairo.model.pool.capacity", 1024);
+            this.sqlMaxNegativeLimit = getInt(properties, env, "cairo.sql.max.negative.limit", 10_000);
             this.sqlSortKeyPageSize = getLongSize(properties, env, "cairo.sql.sort.key.page.size", 4 * 1024 * 1024);
             this.sqlSortKeyMaxPages = getIntSize(properties, env, "cairo.sql.sort.key.max.pages", Integer.MAX_VALUE);
             this.sqlSortLightValuePageSize = getLongSize(properties, env, "cairo.sql.sort.light.value.page.size", 8 * 1048576);
@@ -2142,6 +2144,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlModelPoolCapacity() {
             return sqlModelPoolCapacity;
+        }
+
+        @Override
+        public int getSqlMaxNegativeLimit() {
+            return sqlMaxNegativeLimit;
         }
 
         @Override

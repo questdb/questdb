@@ -298,6 +298,8 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
+    int getSqlMaxNegativeLimit();
+
     int getSqlPageFrameMinRows();
 
     int getSqlPageFrameMaxRows();

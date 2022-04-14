@@ -58,11 +58,14 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
     private final Function filter;
     private final CompiledFilter compiledFilter;
     private final AsyncFilteredRecordCursor cursor;
+    private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
     private final MemoryCARW bindVarMemory;
     private final FilterAtom atom;
     private final PageFrameSequence<FilterAtom> frameSequence;
     private final SCSequence collectSubSeq = new SCSequence();
     private final Function limitLoFunction;
+    private final int maxNegativeLimit;
+    private DirectLongList negativeLimitRows;
 
     public AsyncJitFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -87,11 +90,13 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
         this.filter = filter;
         this.compiledFilter = compiledFilter;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
+        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor();
         this.bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
         this.atom = new FilterAtom(filter, compiledFilter, bindVarMemory, bindVarFunctions);
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER);
         this.limitLoFunction = limitLoFunction;
+        this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
     }
 
     @Override
@@ -101,6 +106,7 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
         Misc.free(compiledFilter);
         Misc.free(bindVarMemory);
         Misc.free(frameSequence);
+        Misc.free(negativeLimitRows);
     }
 
     @Override
@@ -127,8 +133,20 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
             rowsRemaining = Long.MAX_VALUE;
             order = ORDER_ANY;
         }
+
+        if (order == ORDER_DESC) {
+            if (rowsRemaining > maxNegativeLimit) {
+                throw SqlException.position(0).put("absolute LIMIT value is too large, maximum allowed value: ").put(maxNegativeLimit);
+            }
+            if (negativeLimitRows == null) {
+                negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
+            }
+            negativeLimitCursor.of(collectSubSeq, execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
+            return negativeLimitCursor;
+        }
+
         cursor.of(collectSubSeq, execute(executionContext, collectSubSeq, order), rowsRemaining);
-        return this.cursor;
+        return cursor;
     }
 
     @Override

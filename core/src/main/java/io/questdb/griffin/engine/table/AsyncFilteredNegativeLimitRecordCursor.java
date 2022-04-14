@@ -36,32 +36,40 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Rows;
 
-class AsyncFilteredRecordCursor implements RecordCursor {
+/**
+ * Used to handle the LIMIT -N clause with the descending timestamp order case. To do so, this cursor
+ * accumulates the row ids in a buffer and only then starts the iteration. That's necessary to preserve
+ * the timestamp-based order in the result set. The buffer is filled in from bottom to top.
+ *
+ * Here is an illustration of the described problem:
+ * <pre>
+ * row iteration order    frames                      frame iteration order
+ *         |            [ row 0   <- frame 0 start           /\
+ *         |              row 1                              |
+ *         |              row 2 ] <- frame 0 end             |
+ *         |            [ row 3   <- frame 1 start           |
+ *        \/              row 4 ] <- frame 1 end             |
+ * </pre>
+ */
+class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
-    private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
+    private static final Log LOG = LogFactory.getLog(AsyncFilteredNegativeLimitRecordCursor.class);
 
-    private final Function filter;
-    private final boolean hasDescendingOrder;
     private final PageAddressCacheRecord record;
     private PageAddressCacheRecord recordB;
     private SCSequence collectSubSeq;
     private RingQueue<PageFrameReduceTask> reduceQueue;
+    // Buffer used to accumulate all filtered row ids.
     private DirectLongList rows;
-    private long cursor = -1;
-    private long frameRowIndex;
-    private long frameRowCount;
-    private int frameIndex;
+    private long rowIndex;
+    private long rowCount;
     private int frameLimit;
     private PageFrameSequence<?> frameSequence;
     // Artificial limit on remaining rows to be returned from this cursor.
-    // It is typically copied from LIMIT clause on SQL statement
-    private long rowsRemaining;
-    // the OG rows remaining, used to reset the counter when re-running cursor from top();
-    private long ogRowsRemaining;
+    // It is typically copied from LIMIT clause on SQL statement.
+    private long rowLimit;
 
-    public AsyncFilteredRecordCursor(Function filter, boolean hasDescendingOrder) {
-        this.filter = filter;
-        this.hasDescendingOrder = hasDescendingOrder;
+    public AsyncFilteredNegativeLimitRecordCursor() {
         this.record = new PageAddressCacheRecord();
     }
 
@@ -69,12 +77,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public void close() {
         LOG.debug()
                 .$("closing [shard=").$(frameSequence.getShard())
-                .$(", frameIndex=").$(frameIndex)
                 .$(", frameCount=").$(frameLimit)
-                .$(", cursor=").$(cursor)
                 .I$();
 
-        collectCursor(true);
         if (frameLimit > -1) {
             frameSequence.await();
         }
@@ -93,32 +98,14 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        // we have rows in the current frame we still need to dispatch
-        if (frameRowIndex < frameRowCount) {
-            record.setRowIndex(rows.get(rowIndex()));
-            frameRowIndex++;
-            return checkLimit();
-        }
-
-        // Release previous queue item.
-        // There is no identity check here because this check
-        // had been done when 'cursor' was assigned
-        collectCursor(false);
-
-        // do we have more frames?
-        if (frameIndex < frameLimit) {
-            fetchNextFrame();
-            if (frameRowCount > 0) {
-                record.setRowIndex(rows.get(rowIndex()));
-                frameRowIndex++;
-                return checkLimit();
-            }
+        if (rowIndex < rows.getCapacity()) {
+            long rowId = rows.get(rowIndex);
+            record.setRowIndex(Rows.toLocalRowID(rowId));
+            record.setFrameIndex(Rows.toPartitionIndex(rowId));
+            rowIndex++;
+            return true;
         }
         return false;
-    }
-
-    private long rowIndex() {
-        return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
     }
 
     @Override
@@ -138,46 +125,22 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void toTop() {
-        // check if we at the top already and there is nothing to do
-        if (frameIndex == 0 && frameRowIndex == 0) {
-            return;
-        }
-        filter.toTop();
-        frameSequence.toTop();
-        rowsRemaining = ogRowsRemaining;
-        if (frameLimit > -1) {
-            frameIndex = -1;
-            fetchNextFrame();
-        }
+        rowIndex = rows.getCapacity() - rowCount;
     }
 
     @Override
     public long size() {
-        return -1;
+        return rowCount;
     }
 
-    private boolean checkLimit() {
-        if (--rowsRemaining < 0) {
-            frameSequence.setValid(false);
-            return false;
-        }
-        return true;
-    }
-
-    private void collectCursor(boolean forceCollect) {
-        if (cursor > -1) {
-            unsafeCollectCursor(forceCollect);
-        }
-    }
-
-    private void fetchNextFrame() {
+    private void fetchAllFrames() {
+        int frameIndex = -1;
         do {
-            this.cursor = collectSubSeq.next();
+            long cursor = collectSubSeq.next();
             if (cursor > -1) {
                 PageFrameReduceTask task = reduceQueue.get(cursor);
                 PageFrameSequence<?> thatFrameSequence = task.getFrameSequence();
                 if (thatFrameSequence == this.frameSequence) {
-
                     LOG.debug()
                             .$("collected [shard=").$(frameSequence.getShard())
                             .$(", frameIndex=").$(task.getFrameIndex())
@@ -185,19 +148,21 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .$(", valid=").$(frameSequence.isValid())
                             .$(", cursor=").$(cursor)
                             .I$();
-                    this.rows = task.getRows();
-                    this.frameRowCount = rows.size();
-                    this.frameIndex = task.getFrameIndex();
-                    if (this.frameRowCount > 0 && frameSequence.isValid()) {
-                        this.frameRowIndex = 0;
-                        record.setFrameIndex(task.getFrameIndex());
-                        break;
-                    } else {
-                        // It is necessary to clear 'cursor' value
-                        // because we updated frameIndex and loop can exit due to lack of frames.
-                        // Non-update of 'cursor' could cause double-free.
-                        unsafeCollectCursor(false);
+
+                    frameIndex = task.getFrameIndex();
+                    final DirectLongList frameRows = task.getRows();
+                    final long frameRowCount = frameRows.size();
+
+                    if (frameRowCount > 0 && rowCount < rowLimit + 1 && frameSequence.isValid()) {
+                        // Copy rows into the buffer.
+                        for (long i = frameRowCount - 1; i > -1 && rowCount < rowLimit; i--, rowCount++) {
+                            rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
+                        }
                     }
+                    // It is necessary to clear 'cursor' value
+                    // because we updated frameIndex and loop can exit due to lack of frames.
+                    // Non-update of 'cursor' could cause double-free.
+                    unsafeCollectCursor(cursor);
                 } else {
                     // not our task, nothing to collect
                     collectSubSeq.done(cursor);
@@ -205,28 +170,28 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             } else {
                 frameSequence.stealDispatchWork();
             }
-        } while (this.frameIndex < frameLimit);
+        } while (frameIndex < frameLimit);
     }
 
-    void of(SCSequence collectSubSeq, PageFrameSequence<?> frameSequence, long rowsRemaining) throws SqlException {
+    void of(SCSequence collectSubSeq, PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) throws SqlException {
         this.collectSubSeq = collectSubSeq;
         this.frameSequence = frameSequence;
         this.reduceQueue = frameSequence.getPageFrameReduceQueue();
-        this.frameIndex = -1;
         this.frameLimit = frameSequence.getFrameCount() - 1;
-        this.ogRowsRemaining = rowsRemaining;
-        this.rowsRemaining = rowsRemaining;
+        this.rowLimit = rowLimit;
+        this.rows = negativeLimitRows;
+        this.rowIndex = negativeLimitRows.getCapacity();
+        this.rowCount = 0;
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
         // when frameCount is 0 our collect sequence is not subscribed
         // we should not be attempting to fetch queue using it
         if (frameLimit > -1) {
-            fetchNextFrame();
+            fetchAllFrames();
         }
     }
 
-    private void unsafeCollectCursor(boolean forceCollect) {
-        reduceQueue.get(cursor).collected(forceCollect);
+    private void unsafeCollectCursor(long cursor) {
+        reduceQueue.get(cursor).collected(false);
         collectSubSeq.done(cursor);
-        cursor = -1;
     }
 }
