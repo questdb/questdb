@@ -84,19 +84,8 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
-    public void testDisallowUpdate() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
-            executeInsert("insert into src values ('2022-04-12T17:30:45.145921Z', 'foo')");
-
-            executeWithPg("update src set name = 'bar'");
-
-            // if this asserts fails then it means UPDATE are already implemented
-            // please change this test to check the update throws an exception in the read-only mode
-            // this is in place so we won't forget to test UPDATE honours read-only security context.
-            assertSql("select * from src", "ts\tname\n" +
-                    "2022-04-12T17:30:45.145921Z\tfoo\n");
-        });
+    public void testDisallowCreateTable() throws Exception {
+        assertMemoryLeak(() -> assertQueryDisallowed("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY"));
     }
 
     @Test
@@ -108,9 +97,23 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
-    public void testDisallowCreateTable() throws Exception {
+    public void testDisallowUpdate() throws Exception {
         assertMemoryLeak(() -> {
-            assertQueryDisallowed("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY");
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+            executeInsert("insert into src values ('2022-04-12T17:30:45.145921Z', 'foo')");
+
+            try {
+                executeWithPg("update src set name = 'bar'");
+            } catch (PSQLException e) {
+                // the parser does not support DELETE
+                assertContains(e.getMessage(), "Write permission denied");
+            }
+
+            // if this asserts fails then it means UPDATE are already implemented
+            // please change this test to check the update throws an exception in the read-only mode
+            // this is in place so we won't forget to test UPDATE honours read-only security context.
+            assertSql("select * from src", "ts\tname\n" +
+                    "2022-04-12T17:30:45.145921Z\tfoo\n");
         });
     }
 
@@ -211,12 +214,11 @@ public class PGSecurityTest extends BasePGTest {
         }
     }
 
-
     private void executeWithPg(String query) throws Exception {
         try (
                 final PGWireServer ignored = createPGServer(READ_ONLY_CONF);
                 final Connection connection = getConnection(false, true);
-                final Statement statement = connection.createStatement();
+                final Statement statement = connection.createStatement()
         ) {
             statement.execute(query);
         }
