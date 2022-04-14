@@ -124,6 +124,7 @@ public class MemorySRImpl extends MemoryPARWImpl {
     private void releaseCurrentPage() {
         if (pageAddress != 0) {
             ff.munmap(pageAddress, getExtendSegmentSize(), memoryTag);
+            pageAddress = 0;
         }
     }
 

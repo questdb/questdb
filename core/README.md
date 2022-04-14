@@ -71,8 +71,16 @@ mvn -pl !benchmarks clean deploy -DskipTests -P build-web-console,maven-central-
 
 ### Run QuestDB
 
+To run with the Web Console, you need to rebuild to include the pre-packaged
+`/core/src/main/resources/io/questdb/site/public.zip`.
+
+``bash
+mvn clean package --batch-mode --quiet -DskipTests -P build-web-console,build-binaries
+```
+
+Then, create a database root directory and run QuestDb
+
 ```bash
-# Create a database root directory and run QuestDB
 mkdir <root_directory>
 java -jar core/target/questdb-<software_version>.jar -d <root_directory>
 ```

@@ -26,16 +26,11 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 public class TimestampFloorFunctionFactory implements FunctionFactory {
     @Override
@@ -48,121 +43,23 @@ public class TimestampFloorFunctionFactory implements FunctionFactory {
         final char c = args.getQuick(0).getChar(null);
         switch (c) {
             case 'd':
-                return new TimestampFloorDDFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorDDFunction(args.getQuick(1));
             case 'M':
-                return new TimestampFloorMMFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorMMFunction(args.getQuick(1));
             case 'y':
-                return new TimestampFloorYYYYFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorYYYYFunction(args.getQuick(1));
             case 'h':
-                return new TimestampFloorHHFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorHHFunction(args.getQuick(1));
             case 'm':
-                return new TimestampFloorMIFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorMIFunction(args.getQuick(1));
             case 's':
-                return new TimestampFloorSSFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorSSFunction(args.getQuick(1));
             case 'T':
-                return new TimestampFloorMSFunction(args.getQuick(1));
+                return new TimestampFloorFunctions.TimestampFloorMSFunction(args.getQuick(1));
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid kind 'null'");
             default:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid kind '").put(c).put('\'');
-        }
-    }
-
-    private abstract static class AbstractTimestampFloorFunction extends TimestampFunction implements UnaryFunction {
-        private final Function arg;
-
-        public AbstractTimestampFloorFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-
-        @Override
-        final public long getTimestamp(Record rec) {
-            long micros = arg.getTimestamp(rec);
-            return micros == Numbers.LONG_NaN ? Numbers.LONG_NaN : floor(micros);
-        }
-
-        abstract protected long floor(long timestamp);
-    }
-
-    public static class TimestampFloorDDFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorDDFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorDD(timestamp);
-        }
-    }
-
-    public static class TimestampFloorMMFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorMMFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMM(timestamp);
-        }
-    }
-
-    public static class TimestampFloorYYYYFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorYYYYFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorYYYY(timestamp);
-        }
-    }
-
-    public static class TimestampFloorHHFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorHHFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorHH(timestamp);
-        }
-    }
-
-    public static class TimestampFloorMIFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorMIFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMI(timestamp);
-        }
-    }
-
-    public static class TimestampFloorSSFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorSSFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorSS(timestamp);
-        }
-    }
-
-    public static class TimestampFloorMSFunction extends AbstractTimestampFloorFunction {
-        public TimestampFloorMSFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMS(timestamp);
         }
     }
 }

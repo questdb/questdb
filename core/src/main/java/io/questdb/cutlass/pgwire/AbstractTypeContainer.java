@@ -26,13 +26,14 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.CleanClosable;
 import io.questdb.std.IntList;
 import io.questdb.std.WeakAutoClosableObjectPool;
 
-public abstract class AbstractTypeContainer<T extends CleanClosable> implements CleanClosable {
-    protected final IntList types = new IntList();
-    protected final WeakAutoClosableObjectPool<T> parentPool;
+import java.io.Closeable;
+
+abstract class AbstractTypeContainer<T extends Closeable> implements Closeable {
+    private final IntList types = new IntList();
+    private final WeakAutoClosableObjectPool<T> parentPool;
 
     public AbstractTypeContainer(WeakAutoClosableObjectPool<T> parentPool) {
         this.parentPool = parentPool;
@@ -41,7 +42,7 @@ public abstract class AbstractTypeContainer<T extends CleanClosable> implements 
     @SuppressWarnings("unchecked")
     @Override
     public void close() {
-        getTypes().clear();
+        types.clear();
         this.parentPool.push((T) this);
     }
 
@@ -51,13 +52,9 @@ public abstract class AbstractTypeContainer<T extends CleanClosable> implements 
         }
     }
 
-    public IntList getTypes() {
-        return types;
-    }
-
-    protected void copyTypesFrom(BindVariableService bindVariableService) {
+    void copyTypesFrom(BindVariableService bindVariableService) {
         for (int i = 0, n = bindVariableService.getIndexedVariableCount(); i < n; i++) {
-            getTypes().add(bindVariableService.getFunction(i).getType());
+            types.add(bindVariableService.getFunction(i).getType());
         }
     }
 }

@@ -141,14 +141,15 @@ public final class Rosti {
 
     public static native void keyedIntMaxIntWrapUp(long pRosti, int valueOffset, int valueAtNull);
 
+    public static native void keyedHourSumLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
+    // sum long256
+    public static native void keyedHourSumLong256(long pRosti, long pKeys, long pLong256, long count, int valueOffset);
+
+    public static native void keyedHourSumLongLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
     // sum long
-    public static native void keyedIntSumLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native void keyedIntSumLongLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native void keyedHourSumLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
-
-    public static native void keyedHourSumLongLong(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+    public static native void keyedIntSumLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
 
     public static native void keyedIntSumLongMerge(long pRostiA, long pRostiB, int valueOffset);
 
@@ -157,6 +158,14 @@ public final class Rosti {
     public static native void keyedIntSumLongWrapUp(long pRosti, int valueOffset, long valueAtNull, long valueAtNullCount);
 
     public static native void keyedIntSumLongLongWrapUp(long pRosti, int valueOffset, long valueAtNull, long valueAtNullCount);
+
+    public static native void keyedIntSumLong256(long pRosti, long pKeys, long pLong, long count, int valueOffset);
+
+    public static native void keyedIntSumLong256Merge(long pRostiA, long pRostiB, int valueOffset);
+
+    public static native void keyedIntSumLong256WrapUp(long pRosti, int valueOffset, long v0, long v1, long v2, long v3, long valueAtNullCount);
+
+    public static native void keyedIntSumLongLong(long pRosti, long pKeys, long pLong, long count, int valueOffset);
 
     // avg long
     public static native void keyedIntAvgLongWrapUp(long pRosti, int valueOffset, double valueAtNull, long valueAtNullCount);

@@ -60,6 +60,7 @@
     "resize-observer-polyfill": "1.5.1",
     "rxjs": "6.5.5",
     "slim-select": "1.26.0",
+    "sql-formatter": "^4.0.2",
     "styled-components": "5.1.1",
     "styled-icons": "10.2.1",
     "throttle-debounce": "2.2.1"

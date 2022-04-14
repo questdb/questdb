@@ -32,139 +32,80 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
-import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-
-import java.io.Closeable;
-
-import static io.questdb.cairo.TableUtils.lockName;
 
 /**
  * Rebuild index independently of TableWriter
  * Main purpose is for support cases when table data is corrupt and TableWriter cannot be opened
  */
-public class RebuildIndex implements Closeable, Mutable {
-    private static final int ALL = -1;
-    private final Path path = new Path();
+public class RebuildIndex extends RebuildColumnBase {
+    private static final Log LOG = LogFactory.getLog(RebuildIndex.class);
+    private final MemoryMR indexMem = Vm.getMRInstance();
+    private final SymbolColumnIndexer indexer = new SymbolColumnIndexer();
     private final MemoryMAR ddlMem = Vm.getMARInstance();
 
-    private int rootLen;
-    private CairoConfiguration configuration;
-    private long lockFd;
-    private final MemoryMR indexMem = Vm.getMRInstance();
-    private static final Log LOG = LogFactory.getLog(RebuildIndex.class);
-    private TableReaderMetadata metadata;
-    private final SymbolColumnIndexer indexer = new SymbolColumnIndexer();
-    private final StringSink tempStringSink = new StringSink();
-
-    public RebuildIndex of(CharSequence tablePath, CairoConfiguration configuration) {
-        this.path.concat(tablePath);
-        this.rootLen = tablePath.length();
-        this.configuration = configuration;
-        return this;
+    public RebuildIndex() {
+        super();
+        columnTypeErrorMsg = "Column is not indexed";
     }
 
     @Override
     public void clear() {
-        path.trimTo(0);
-        tempStringSink.clear();
+        super.clear();
+        ddlMem.close();
+        indexer.clear();
     }
 
-    public void rebuildAll() {
-        rebuildPartitionColumn(null, null);
+    @Override
+    public void close() {
+        super.close();
+        Misc.free(indexer);
     }
 
-    public void rebuildColumn(CharSequence columnName) {
-        rebuildPartitionColumn(null, columnName);
+    @Override
+    protected boolean checkColumnType(TableReaderMetadata metadata, int rebuildColumnIndex) {
+        return metadata.isColumnIndexed(rebuildColumnIndex);
     }
 
-    public void rebuildPartition(CharSequence rebuildPartitionName) {
-        rebuildPartitionColumn(rebuildPartitionName, null);
-    }
+    protected void rebuildColumn(
+            CharSequence columnName,
+            CharSequence partitionName,
+            int indexValueBlockCapacity,
+            long partitionSize,
+            FilesFacade ff,
+            ColumnVersionReader columnVersionReader,
+            int columnIndex,
+            long partitionTimestamp,
+            long partitionNameTxn
+    ) {
+        path.trimTo(rootLen).concat(partitionName);
+        TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+        LOG.info().$("testing partition path").$(path).$();
+        final int plen = path.length();
 
-    public void rebuildPartitionColumn(CharSequence rebuildPartitionName, CharSequence rebuildColumn) {
-        FilesFacade ff = configuration.getFilesFacade();
-        path.trimTo(rootLen);
-        path.concat(TableUtils.META_FILE_NAME);
-        if (metadata == null) {
-            metadata = new TableReaderMetadata(ff);
-        }
-        metadata.of(path.$(), ColumnType.VERSION);
-        try {
-            lock(ff);
+        if (ff.exists(path.$())) {
+            try (final MemoryMR roMem = indexMem) {
+                long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
+                removeIndexFiles(columnName, ff, columnNameTxn);
+                TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
 
-            // Resolve column id if the column name specified
-            int rebuildColumnIndex = ALL;
-            if (rebuildColumn != null) {
-                rebuildColumnIndex = metadata.getColumnIndexQuiet(rebuildColumn, 0, rebuildColumn.length());
-                if (rebuildColumnIndex < 0) {
-                    throw CairoException.instance(0).put("Column does not exist");
-                }
-            }
+                if (columnVersionReader.getColumnTopPartitionTimestamp(columnIndex) <= partitionTimestamp) {
+                    LOG.info().$("indexing [path=").utf8(path).I$();
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
+                    createIndexFiles(columnName, indexValueBlockCapacity, plen, ff, columnNameTxn);
 
-            path.trimTo(rootLen);
-            int partitionBy = metadata.getPartitionBy();
-            DateFormat partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
-
-            try (TxReader txReader = new TxReader(ff).ofRO(path, partitionBy)) {
-                txReader.unsafeLoadAll();
-                path.trimTo(rootLen);
-
-
-                path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path)) {
-                    final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
-                    columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
-                    path.trimTo(rootLen);
-
-                    if (PartitionBy.isPartitioned(partitionBy)) {
-                        // Resolve partition timestamp if partition name specified
-                        long rebuildPartitionTs = ALL;
-                        if (rebuildPartitionName != null) {
-                            rebuildPartitionTs = PartitionBy.parsePartitionDirName(rebuildPartitionName, partitionBy);
-                        }
-
-                        for (int partitionIndex = txReader.getPartitionCount() - 1; partitionIndex > -1; partitionIndex--) {
-                            long partitionTimestamp = txReader.getPartitionTimestamp(partitionIndex);
-                            if (rebuildPartitionTs == ALL || partitionTimestamp == rebuildPartitionTs) {
-                                long partitionSize = txReader.getPartitionSize(partitionIndex);
-                                rebuildIndex(
-                                        rebuildColumnIndex,
-                                        ff,
-                                        indexer,
-                                        metadata,
-                                        partitionDirFormatMethod,
-                                        tempStringSink,
-                                        partitionTimestamp,
-                                        partitionSize,
-                                        columnVersionReader);
-                            }
-                        }
-                    } else {
-                        long partitionSize = txReader.getTransientRowCount();
-                        rebuildIndex(
-                                rebuildColumnIndex,
-                                ff,
-                                indexer,
-                                metadata,
-                                partitionDirFormatMethod,
-                                tempStringSink,
-                                Long.MIN_VALUE,
-                                partitionSize,
-                                columnVersionReader
-                        );
+                    if (partitionSize > columnTop) {
+                        TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
+                        final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
+                        roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
+                        indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                        indexer.index(roMem, columnTop, partitionSize);
+                        indexer.clear();
                     }
                 }
             }
-        } finally {
-            metadata.close();
-            indexer.clear();
-            path.trimTo(rootLen);
-            lockName(path);
-            releaseLock(ff);
+        } else {
+            LOG.info().$("partition does not exit ").$(path).$();
         }
     }
 
@@ -202,88 +143,6 @@ public class RebuildIndex implements Closeable, Mutable {
         }
     }
 
-    private void rebuildIndex(
-            SymbolColumnIndexer indexer,
-            CharSequence columnName,
-            CharSequence partitionName,
-            int indexValueBlockCapacity,
-            long partitionSize,
-            FilesFacade ff,
-            ColumnVersionReader columnVersionReader,
-            int columnIndex,
-            long partitionTimestamp
-    ) {
-        path.trimTo(rootLen).concat(partitionName);
-        final int plen = path.length();
-
-        if (ff.exists(path.$())) {
-            try (final MemoryMR roMem = indexMem) {
-                long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
-                removeIndexFiles(columnName, ff, columnNameTxn);
-                TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
-
-                if (columnVersionReader.getColumnTopPartitionTimestamp(columnIndex) <= partitionTimestamp) {
-                    LOG.info().$("indexing [path=").utf8(path).I$();
-                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
-                    createIndexFiles(columnName, indexValueBlockCapacity, plen, ff, columnNameTxn);
-
-                    if (partitionSize > columnTop) {
-                        TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
-                        final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
-                        roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
-                        indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);
-                        indexer.index(roMem, columnTop, partitionSize);
-                    }
-                }
-            }
-        }
-    }
-
-    private void rebuildIndex(
-            int rebuildColumnIndex,
-            FilesFacade ff,
-            SymbolColumnIndexer indexer,
-            TableReaderMetadata metadata,
-            DateFormat partitionDirFormatMethod,
-            StringSink sink,
-            long partitionTimestamp,
-            long partitionSize,
-            ColumnVersionReader columnVersionReader
-    ) {
-        sink.clear();
-        partitionDirFormatMethod.format(partitionTimestamp, null, null, sink);
-
-        if (rebuildColumnIndex == ALL) {
-            for (int columnIndex = metadata.getColumnCount() - 1; columnIndex > -1; columnIndex--) {
-                if (metadata.isColumnIndexed(columnIndex)) {
-                    rebuildIndexForColumn(metadata, columnIndex, indexer, sink, partitionSize, ff, columnVersionReader, partitionTimestamp);
-                }
-            }
-        } else {
-            if (metadata.isColumnIndexed(rebuildColumnIndex)) {
-                rebuildIndexForColumn(metadata, rebuildColumnIndex, indexer, sink, partitionSize, ff, columnVersionReader, partitionTimestamp);
-            } else {
-                throw CairoException.instance(0).put("Column is not indexed");
-            }
-        }
-    }
-
-    private void rebuildIndexForColumn(TableReaderMetadata metadata, int columnIndex, SymbolColumnIndexer indexer, StringSink sink, long partitionSize, FilesFacade ff, ColumnVersionReader columnVersionReader, long partitionTimestamp) {
-        CharSequence columnName = metadata.getColumnName(columnIndex);
-        int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
-        int writerIndex = metadata.getWriterIndex(columnIndex);
-        rebuildIndex(indexer, columnName, sink, indexValueBlockCapacity, partitionSize, ff, columnVersionReader, writerIndex, partitionTimestamp);
-    }
-
-    private void removeIndexFiles(CharSequence columnName, FilesFacade ff, long columnNameTxn) {
-        final int plen = path.length();
-        BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
-        removeFile(path, ff);
-
-        BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn);
-        removeFile(path, ff);
-    }
-
     private void removeFile(Path path, FilesFacade ff) {
         LOG.info().$("deleting ").utf8(path).$();
         if (!ff.remove(this.path)) {
@@ -296,38 +155,12 @@ public class RebuildIndex implements Closeable, Mutable {
         }
     }
 
-    private void lock(FilesFacade ff) {
-        try {
-            path.trimTo(rootLen);
-            lockName(path);
-            this.lockFd = TableUtils.lock(ff, path);
-        } finally {
-            path.trimTo(rootLen);
-        }
+    private void removeIndexFiles(CharSequence columnName, FilesFacade ff, long columnNameTxn) {
+        final int plen = path.length();
+        BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
+        removeFile(path, ff);
 
-        if (this.lockFd == -1L) {
-            throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
-        }
-    }
-
-    @Override
-    public void close() {
-        this.path.close();
-        Misc.free(metadata);
-    }
-
-    private void releaseLock(FilesFacade ff) {
-        if (lockFd != -1L) {
-            ff.close(lockFd);
-            try {
-                path.trimTo(rootLen);
-                lockName(path);
-                if (ff.exists(path) && !ff.remove(path)) {
-                    throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
-                }
-            } finally {
-                path.trimTo(rootLen);
-            }
-        }
+        BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn);
+        removeFile(path, ff);
     }
 }

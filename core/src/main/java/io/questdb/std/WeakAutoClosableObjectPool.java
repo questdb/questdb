@@ -27,51 +27,18 @@ package io.questdb.std;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
-import java.util.ArrayDeque;
 
-/**
- * Weak object pool can be used in multi-threaded environment. While
- * weak object pool is a factory of new instances, when object is popped
- * out of pool there is no reference to tie this object back to pool.
- * <p>
- * In multi-threaded environment weak pools must be local to thread and
- * objects they create can travel between pools, e.g. one thread gets
- * object from pool and last thread to finish with this object then
- * returns it to its own local pool.
- */
-public class WeakAutoClosableObjectPool<T extends CleanClosable> implements Closeable {
-
-    private final ArrayDeque<T> cache;
+public class WeakAutoClosableObjectPool<T extends Closeable> extends WeakObjectPoolBase<T> {
     private final AutoClosableObjectFactory<T> factory;
-    private final int size;
 
-    public WeakAutoClosableObjectPool(@NotNull AutoClosableObjectFactory<T> factory, int size) {
-        this.cache = new ArrayDeque<>();
+    public WeakAutoClosableObjectPool(@NotNull AutoClosableObjectFactory<T> factory, int initSize) {
+        super(initSize);
         this.factory = factory;
-        this.size = size;
         fill();
     }
 
     @Override
-    public void close() {
-        while (cache.size() > 0) {
-            Misc.free(cache.pop());
-        }
-    }
-
-    public T pop() {
-        final T obj = cache.poll();
-        return obj == null ? factory.newInstance(this) : obj;
-    }
-
-    public void push(T obj) {
-        assert obj != null;
-        cache.push(obj);
-    }
-
-    private void fill() {
-        for (int i = 0; i < size; i++) {
-            cache.add(factory.newInstance(this));
-        }
+    T newInstance() {
+        return factory.newInstance(this);
     }
 }

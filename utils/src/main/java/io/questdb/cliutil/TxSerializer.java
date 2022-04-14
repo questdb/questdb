@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
@@ -64,6 +65,7 @@ public class TxSerializer {
      *  Command line arguments: -s <json_path> <txn_path> | -d <txn_path>
      */
     public static void main(String[] args) throws IOException {
+        LogFactory.configureSync();
         if (args.length < 2 || args.length > 3) {
             printUsage();
             return;

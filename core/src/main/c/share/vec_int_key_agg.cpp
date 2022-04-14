@@ -1,4 +1,5 @@
 /*******************************************************************************
+
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
@@ -200,7 +201,15 @@ static void kIntSumLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong
         if (PREDICT_FALSE(res.second)) {
             *reinterpret_cast<int32_t *>(dest) = key;
             if (PREDICT_FALSE(val == L_MIN)) {
-                *reinterpret_cast<T *>(dest + value_offset) = 0;
+                // here is a very dirty workaround for segfault
+                // clang generates optimized code and aligned (movdqa) instruction for __int128 v = 0
+                // but the rosti storage is dense and the value offset may be unaligned properly
+                if (std::is_same_v<T, __int128>) {
+                    *reinterpret_cast<int64_t *>(dest + value_offset) = 0;
+                    *reinterpret_cast<int64_t *>(dest + value_offset + sizeof(int64_t)) = 0;
+                } else {
+                    *reinterpret_cast<T *>(dest + value_offset) = 0;
+                }
                 *reinterpret_cast<jlong *>(dest + count_offset) = 0;
             } else {
                 *reinterpret_cast<T *>(dest + value_offset) = val;
@@ -211,6 +220,163 @@ static void kIntSumLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong
                 *reinterpret_cast<T *>(dest + value_offset) += val;
                 *reinterpret_cast<jlong *>(dest + count_offset) += 1;
             }
+        }
+    }
+}
+
+struct long256_t {
+    uint64_t l0;
+    uint64_t l1;
+    uint64_t l2;
+    uint64_t l3;
+
+    long256_t(uint64_t v0, uint64_t v1, uint64_t v2, uint64_t v3)
+        : l0(v0), l1(v1), l2(v2), l3(v3)
+    {
+    }
+
+    bool is_null() const {
+        return l0 == L_MIN && l1 == L_MIN && l2 == L_MIN && l3 == L_MIN;
+    }
+
+    void operator+=(const long256_t& rhs) {
+        if (rhs.is_null()) {
+            this->l0 = L_MIN;
+            this->l1 = L_MIN;
+            this->l2 = L_MIN;
+            this->l3 = L_MIN;
+        } else {
+            // The sum will overflow if both top bits are set (x & y) or if one of them
+            // is (x | y), and a carry from the lower place happened. If such a carry
+            // happens, the top bit will be 1 + 0 + 1 = 0 (& ~sum).
+            uint64_t carry = 0;
+            uint64_t l0_ = this->l0 + rhs.l0 + carry;
+            carry = ((this->l0 & rhs.l0) | ((this->l0 | rhs.l0) & ~l0_)) >> 63;
+
+            uint64_t l1_ = this->l1 + rhs.l1 + carry;
+            carry = ((this->l1 & rhs.l1) | ((this->l1 | rhs.l1) & ~l1_)) >> 63;
+
+            uint64_t l2_ = this->l2 + rhs.l2 + carry;
+            carry = ((this->l2 & rhs.l2) | ((this->l2 | rhs.l2) & ~l2_)) >> 63;
+
+            uint64_t l3_ = this->l3 + rhs.l3 + carry;
+            //carry = ((this->l3 & rhs.l3) | ((this->l3 | rhs.l3) & ~l3_)) >> 63;
+
+            this->l0 = l0_;
+            this->l1 = l1_;
+            this->l2 = l2_;
+            this->l3 = l3_;
+        }
+    }
+};
+
+static void kIntSumLong256(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong count, jint valueOffset) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+
+    const auto *pl = reinterpret_cast<long256_t *>(pLong);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    const auto count_offset = map->value_offsets_[valueOffset + 1];
+    for (int i = 0; i < count; i++) {
+        MM_PREFETCH_T0(pl + i + 8);
+        const int32_t key = to_int(pKeys, i);
+        const long256_t& val = pl[i];
+        auto res = find(map, key);
+        auto dest = map->slots_ + res.first;
+        long256_t& dst = *reinterpret_cast<long256_t *>(dest + value_offset);
+        if (PREDICT_FALSE(res.second)) {
+            *reinterpret_cast<int32_t *>(dest) = key;
+            if (PREDICT_FALSE(val.is_null())) {
+                *reinterpret_cast<jlong *>(dest + count_offset) = 0;
+                dst = long256_t(0,0,0,0);
+            } else {
+                dst = val;
+                *reinterpret_cast<jlong *>(dest + count_offset) = 1;
+            }
+        } else {
+            if (PREDICT_TRUE(!val.is_null())) {
+                dst += val;
+                *reinterpret_cast<jlong *>(dest + count_offset) += 1;
+            }
+        }
+    }
+}
+
+static void kIntSumLong256Merge(jlong pRostiA, jlong pRostiB, jint valueOffset) {
+    auto map_a = reinterpret_cast<rosti_t *>(pRostiA);
+    auto map_b = reinterpret_cast<rosti_t *>(pRostiB);
+    const auto value_offset = map_b->value_offsets_[valueOffset];
+    const auto count_offset = map_b->value_offsets_[valueOffset + 1];
+    const auto capacity = map_b->capacity_;
+    const auto ctrl = map_b->ctrl_;
+    const auto shift = map_b->slot_size_shift_;
+    const auto slots = map_b->slots_;
+
+    for (size_t i = 0; i < capacity; i++) {
+        ctrl_t c = ctrl[i];
+        if (c > -1) {
+            auto src = slots + (i << shift);
+            auto key = *reinterpret_cast<int32_t *>(src);
+            auto val = *reinterpret_cast<long256_t *>(src + value_offset);
+            auto count = *reinterpret_cast<jlong *>(src + count_offset);
+
+            auto res = find(map_a, key);
+            auto dest = map_a->slots_ + res.first;
+
+            if (PREDICT_FALSE(res.second)) {
+                *reinterpret_cast<int32_t *>(dest) = key;
+            }
+
+            // when maps have non-null values, their count is >0 and val is not MIN
+            // on other hand
+            long256_t& dst = *reinterpret_cast<long256_t *>(dest + value_offset);
+            const jlong old_count = *reinterpret_cast<jlong *>(dest + count_offset);
+            if (old_count > 0 && count > 0) {
+                dst += val;
+                *reinterpret_cast<jlong *>(dest + count_offset) += count;
+            } else {
+                *reinterpret_cast<long256_t *>(dest + value_offset) = val;
+                *reinterpret_cast<jlong *>(dest + count_offset) = count;
+            }
+        }
+    }
+}
+
+static void kIntSumLong256WrapUp(jlong pRosti, jint valueOffset, jlong n0, jlong n1, jlong n2, jlong n3, jlong valueAtNullCount) {
+    auto map = reinterpret_cast<rosti_t *>(pRosti);
+    const auto value_offset = map->value_offsets_[valueOffset];
+    const auto count_offset = map->value_offsets_[valueOffset + 1];
+    const auto capacity = map->capacity_;
+    const auto ctrl = map->ctrl_;
+    const auto shift = map->slot_size_shift_;
+    const auto slots = map->slots_;
+
+    for (size_t i = 0; i < capacity; i++) {
+        ctrl_t c = ctrl[i];
+        if (c > -1) {
+            const auto src = slots + (i << shift);
+            auto count = *reinterpret_cast<jlong *>(src + count_offset);
+            long256_t& srcv = *reinterpret_cast<long256_t *>(src + value_offset);
+            if (PREDICT_FALSE(count == 0)) {
+                srcv = long256_t(L_MIN, L_MIN, L_MIN, L_MIN);
+            }
+        }
+    }
+
+    // populate null value
+    if (valueAtNullCount > 0) {
+        auto nullKey = reinterpret_cast<int32_t *>(map->slot_initial_values_)[0];
+        auto res = find(map, nullKey);
+        // maps must have identical structure to use "shift" from map B on map A
+        auto dest = map->slots_ + res.first;
+        long256_t& dst = *reinterpret_cast<long256_t *>(dest + value_offset);
+        if (PREDICT_FALSE(res.second)) {
+            *reinterpret_cast<int32_t *>(dest) = nullKey;
+            dst = long256_t(n0, n1, n2, n3);
+            *reinterpret_cast<jlong *>(dest + count_offset) = valueAtNullCount;
+        } else {
+            long256_t valueAtNull(n0, n1, n2, n3);
+            dst += valueAtNull;
+            *reinterpret_cast<jlong *>(dest + count_offset) += valueAtNullCount;
         }
     }
 }
@@ -1284,6 +1450,30 @@ JNIEXPORT void JNICALL
 Java_io_questdb_std_Rosti_keyedIntSumLongLongWrapUp(JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset,
                                                 jlong valueAtNull, jlong valueAtNullCount) {
     kIntSumLongWrapUp<accumulator_t>(pRosti, valueOffset, valueAtNull, valueAtNullCount);
+}
+// sum long256
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_keyedHourSumLong256(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                           jlong count, jint valueOffset) {
+    kIntSumLong256(int64_to_hour, pRosti, pKeys, pLong, count, valueOffset);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_keyedIntSumLong256(JNIEnv *env, jclass cl, jlong pRosti, jlong pKeys, jlong pLong,
+                                          jlong count, jint valueOffset) {
+    kIntSumLong256(to_int, pRosti, pKeys, pLong, count, valueOffset);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_keyedIntSumLong256Merge(JNIEnv *env, jclass cl, jlong pRostiA, jlong pRostiB,
+                                               jint valueOffset) {
+    kIntSumLong256Merge(pRostiA, pRostiB, valueOffset);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Rosti_keyedIntSumLong256WrapUp(JNIEnv *env, jclass cl, jlong pRosti, jint valueOffset,
+                                                jlong v0, jlong v1, jlong v2, jlong v3, jlong valueAtNullCount) {
+    kIntSumLong256WrapUp(pRosti, valueOffset, v0, v1, v2, v3, valueAtNullCount);
 }
 
 // MIN long

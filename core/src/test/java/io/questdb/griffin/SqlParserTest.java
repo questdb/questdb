@@ -41,6 +41,22 @@ import org.junit.Test;
 public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
+    public void testSampleByEndingWithSemicolon() throws SqlException {
+        assertQuery(
+                "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
+                "SELECT first(ts) FROM t1 SAMPLE BY 15m ALIGN TO CALENDAR;",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testSampleByEndingWithWhitespace() throws SqlException {
+        assertQuery(
+                "select-group-by first(ts) first from (select [ts] from t1) sample by 15m align to calendar with offset '00:00'",
+                "SELECT first(ts) FROM t1 SAMPLE BY 15m ALIGN TO CALENDAR",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+    }
+
+    @Test
     public void testPushWhereThroughUnionAll() throws SqlException {
         assertQuery(
                 "select-choose sm from (select-group-by [sum(x) sm] sum(x) sm from (select-choose [x] x from (select [x] from t1) union all select-choose [x] x from (select [x] from t2)) where sm = 1)",
@@ -2988,6 +3004,124 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testInvalidTableName() throws Exception {
         assertSyntaxError("orders join customer on customerId = customerId", 12, "does not exist",
                 modelOf("orders").col("customerId", ColumnType.INT));
+    }
+
+    @Test
+    public void testInvalidIsNull() throws Exception {
+        assertSyntaxError(
+                "a where x is 12",
+                10,
+                "IS must be followed by NULL",
+                modelOf("a").col("x", ColumnType.INT)
+        );
+        assertSyntaxError(
+                "a where a.x is 12",
+                12,
+                "IS must be followed by NULL",
+                modelOf("a").col("x", ColumnType.INT)
+        );
+        assertSyntaxError(
+                "a where x is",
+                10,
+                "IS must be followed by [NOT] NULL",
+                modelOf("a").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testInvalidIsNotNull() throws Exception {
+        assertSyntaxError(
+                "a where x is not 12",
+                10,
+                "IS NOT must be followed by NULL",
+                modelOf("a").col("x", ColumnType.INT)
+        );
+        assertSyntaxError(
+                "a where a.x is not 12",
+                12,
+                "IS NOT must be followed by NULL",
+                modelOf("a").col("x", ColumnType.INT)
+        );
+        assertSyntaxError(
+                "a where x is not",
+                10,
+                "IS NOT must be followed by NULL",
+                modelOf("a").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testExpressionIsNull() throws Exception {
+        assertQuery(
+                "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x where coalesce(x,42) = null)",
+                "tab1 join tab2 on tab1.x = tab2.y where coalesce(tab1.x, 42) is null",
+                modelOf("tab1").timestamp("ts").col("x", ColumnType.INT),
+                modelOf("tab2").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testExpressionIsNotNull() throws Exception {
+        assertQuery(
+                "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x where coalesce(x,42) != null)",
+                "tab1 join tab2 on tab1.x = tab2.y where coalesce(tab1.x, 42) is not null",
+                modelOf("tab1").timestamp("ts").col("x", ColumnType.INT),
+                modelOf("tab2").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testLiteralIsNull() throws Exception {
+        assertQuery(
+                "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x where x = null)",
+                "tab1 join tab2 on tab1.x = tab2.y where tab1.x is null",
+                modelOf("tab1").timestamp("ts").col("x", ColumnType.INT),
+                modelOf("tab2").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testLiteralIsNotNull() throws Exception {
+        assertQuery(
+                "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x where x != null)",
+                "tab1 join tab2 on tab1.x = tab2.y where tab1.x is not null",
+                modelOf("tab1").timestamp("ts").col("x", ColumnType.INT),
+                modelOf("tab2").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testConstantIsNull() throws Exception {
+        assertQuery(
+                "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x const-where null = null)",
+                "tab1 join tab2 on tab1.x = tab2.y where null is null",
+                modelOf("tab1").timestamp("ts").col("x", ColumnType.INT),
+                modelOf("tab2").col("y", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x const-where 'null' = null)",
+                "tab1 join tab2 on tab1.x = tab2.y where 'null' is null",
+                modelOf("tab1").timestamp("ts").col("x", ColumnType.INT),
+                modelOf("tab2").col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testConstantIsNotNull() throws Exception {
+        assertQuery(
+                "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x const-where null != null)",
+                "tab1 join tab2 on tab1.x = tab2.y where null is not null",
+                modelOf("tab1").timestamp("ts").col("x", ColumnType.INT),
+                modelOf("tab2").col("y", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose tab1.ts ts, tab1.x x, tab2.y y from (select [ts, x] from tab1 timestamp (ts) join select [y] from tab2 on tab2.y = tab1.x const-where 'null' != null)",
+                "tab1 join tab2 on tab1.x = tab2.y where 'null' is not null",
+                modelOf("tab1").timestamp("ts").col("x", ColumnType.INT),
+                modelOf("tab2").col("y", ColumnType.INT)
+        );
     }
 
     @Test

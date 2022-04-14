@@ -244,7 +244,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 traverseAlgo.traverse(node, this);
             } catch (SqlException e) {
                 // release parsed functions
-                Misc.free(functionStack.poll());
+                for (int i = functionStack.size(); i > 0; i--) {
+                    Misc.free(functionStack.poll());
+                }
                 positionStack.clear();
                 throw e;
             }

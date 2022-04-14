@@ -316,7 +316,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveRandomColumns() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+        Rnd rnd = TestUtils.generateRandom();
         final String allColumns = "int:INT\n" +
                 "short:SHORT\n" +
                 "byte:BYTE\n" +

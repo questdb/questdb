@@ -28,8 +28,8 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
@@ -55,6 +55,8 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT
  */
 public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
+    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
+
     public static final String TAG_SET = "SET";
     public static final String TAG_BEGIN = "BEGIN";
     public static final String TAG_COMMIT = "COMMIT";
@@ -63,10 +65,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final String TAG_OK = "OK";
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
+
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
-    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
+
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
 
@@ -209,7 +212,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.serverVersion = configuration.getServerVersion();
-        this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword());
+        this.authenticator = new PGBasicAuthenticator(configuration.getDefaultUsername(), configuration.getDefaultPassword(), configuration.readOnlySecurityContext());
         this.locale = configuration.getDefaultDateLocale();
         this.sqlExecutionContext = sqlExecutionContext;
         this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
@@ -318,17 +321,20 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     @Override
-
     public void close() {
         clear();
-        this.fd = -1;
-        sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
-        Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-        Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-        Misc.free(typesAndSelectCache);
-        Misc.free(path);
-        Misc.free(utf8Sink);
-        Misc.free(circuitBreaker);
+        // fd == -1 is only when context is closed
+        // when context is initialized fd == 0
+        if (this.fd != -1) {
+            this.fd = -1;
+            sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
+            Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+            Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+            Misc.free(typesAndSelectCache);
+            Misc.free(path);
+            Misc.free(utf8Sink);
+            Misc.free(circuitBreaker);
+        }
     }
 
     @Override
@@ -1686,12 +1692,21 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         validateParameterCounts(parameterFormatCount, parameterValueCount, parsePhaseBindVariableCount);
 
         lo += Short.BYTES;
-        if (parameterValueCount > 0) {
-            if (this.parsePhaseBindVariableCount == parameterValueCount) {
-                lo = bindValuesUsingSetters(lo, msgLimit, parameterValueCount);
-            } else {
-                lo = bindValuesAsStrings(lo, msgLimit, parameterValueCount);
+
+        try {
+            if (parameterValueCount > 0) {
+                if (this.parsePhaseBindVariableCount == parameterValueCount) {
+                    lo = bindValuesUsingSetters(lo, msgLimit, parameterValueCount);
+                } else {
+                    lo = bindValuesAsStrings(lo, msgLimit, parameterValueCount);
+                }
             }
+        } catch (SqlException e) {
+            if (typesAndSelect != null) {
+                Misc.free(typesAndSelect);
+                typesAndSelect = null;
+            }
+            throw e;
         }
 
         if (typesAndSelect != null) {
@@ -2019,7 +2034,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         //query text
         lo = hi + 1;
         hi = getStringLength(lo, msgLimit, "bad query text length");
-
+        //TODO: parsePhaseBindVariableCount have to be checked before parseQueryText and fed into it to serve as type hints !  
         parseQueryText(lo, hi, compiler);
 
         //parameter type count
