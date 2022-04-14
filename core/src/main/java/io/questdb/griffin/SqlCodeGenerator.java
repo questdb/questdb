@@ -119,11 +119,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final LongList prefixes = new LongList();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    private final ObjectPool<ExpressionNode> expressionNodePool;
 
     public SqlCodeGenerator(
             CairoEngine engine,
             CairoConfiguration configuration,
-            FunctionParser functionParser
+            FunctionParser functionParser,
+            ObjectPool<ExpressionNode> expressionNodePool
     ) {
         this.engine = engine;
         this.configuration = configuration;
@@ -135,6 +137,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Pre-touch JIT IR memory to avoid false positive memleak detections.
         jitIRMem.putByte((byte) 0);
         jitIRMem.truncate();
+        this.expressionNodePool = expressionNodePool;
     }
 
     @Override
@@ -2202,6 +2205,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && columnExpr.rhs.type == LITERAL
             ) {
                 specialCaseKeys = true;
+                QueryModel.backupWhereClause(expressionNodePool, model);
                 factory = generateSubQuery(nested, executionContext);
                 pageFramingSupported = factory.supportPageFrameCursor();
                 if (pageFramingSupported) {
@@ -2233,6 +2237,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (factory == null) {
+                if (specialCaseKeys) {
+                    QueryModel.restoreWhereClause(model);
+                }
                 factory = generateSubQuery(model, executionContext);
                 pageFramingSupported = factory.supportPageFrameCursor();
             }
@@ -2328,6 +2335,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // release factory we created unnecessarily
                 Misc.free(factory);
                 // create factory on top level model
+                QueryModel.restoreWhereClause(model);
                 factory = generateSubQuery(model, executionContext);
                 // and reset metadata
                 metadata = factory.getMetadata();

@@ -291,6 +291,7 @@ public enum PropertyKey {
     PG_NET_SEND_BUF_SIZE("pg.net.send.buf.size"),
     PG_PASSWORD("pg.password"),
     PG_USER("pg.user"),
+    PG_SECURITY_READONLY("pg.security.readonly"),
     PG_MAX_BLOB_SIZE_ON_QUERY("pg.max.blob.size.on.query"),
     PG_RECV_BUFFER_SIZE("pg.recv.buffer.size"),
     PG_SEND_BUFFER_SIZE("pg.send.buffer.size"),
