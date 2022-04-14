@@ -80,6 +80,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         commit(CommitMode.NOSYNC, denseSymbolMapWriters);
     }
 
+    public void bumpTruncateVersion() {
+        truncateVersion++;
+    }
+
     public void cancelRow() {
         if (transientRowCount == 1 && txPartitionCount > 1) {
             // we have to undo creation of partition
