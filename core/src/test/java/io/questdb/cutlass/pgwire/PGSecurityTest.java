@@ -32,7 +32,6 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.postgresql.util.PSQLException;
 
-import java.io.IOException;
 import java.sql.Connection;
 import java.sql.Statement;
 
@@ -41,21 +40,20 @@ import static org.junit.Assert.fail;
 
 public class PGSecurityTest extends BasePGTest {
 
-    @ClassRule
-    public static TemporaryFolder backup = new TemporaryFolder();
-
     private static final PGWireConfiguration READ_ONLY_CONF = new DefaultPGWireConfiguration() {
         @Override
         public boolean readOnlySecurityContext() {
             return true;
         }
     };
+    @ClassRule
+    public static TemporaryFolder backup = new TemporaryFolder();
 
     @Test
-    public void testDisallowDrop() throws Exception {
+    public void testAllowsSelect() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
-            assertQueryDisallowed("drop table src");
+            executeWithPg("select * from src");
         });
     }
 
@@ -65,6 +63,11 @@ public class PGSecurityTest extends BasePGTest {
             compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
             assertQueryDisallowed("alter table src add column newCol string");
         });
+    }
+
+    @Test
+    public void testDisallowCreateTable() throws Exception {
+        assertMemoryLeak(() -> assertQueryDisallowed("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY"));
     }
 
     @Test
@@ -84,8 +87,11 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
-    public void testDisallowCreateTable() throws Exception {
-        assertMemoryLeak(() -> assertQueryDisallowed("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY"));
+    public void testDisallowDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
+            assertQueryDisallowed("drop table src");
+        });
     }
 
     @Test
@@ -93,6 +99,48 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
             assertQueryDisallowed("insert into src values (now(), 'foo')");
+        });
+    }
+
+    @Test
+    public void testDisallowInsertAsSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            assertQueryDisallowed("insert into src select now(), name from src");
+        });
+    }
+
+    @Test
+    public void testDisallowSnapshotComplete() throws Exception {
+        // snapshot is not supported on windows at all
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
+            compiler.compile("snapshot prepare", sqlExecutionContext);
+            try {
+                assertQueryDisallowed("snapshot complete");
+            } finally {
+                compiler.compile("snapshot complete", sqlExecutionContext);
+            }
+        });
+    }
+
+    @Test
+    public void testDisallowSnapshotPrepare() throws Exception {
+        // snapshot is not supported on windows at all
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
+            assertQueryDisallowed("snapshot prepare");
+        });
+    }
+
+    @Test
+    public void testDisallowTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
+            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
+            assertQueryDisallowed("truncate table src");
         });
     }
 
@@ -118,52 +166,10 @@ public class PGSecurityTest extends BasePGTest {
     }
 
     @Test
-    public void testDisallowInsertAsSelect() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
-            assertQueryDisallowed("insert into src select now(), name from src");
-        });
-    }
-
-    @Test
     public void testDisallowVacuum() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
             assertQueryDisallowed("vacuum partitions src");
-        });
-    }
-
-    @Test
-    public void testDisallowTruncate() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            compiler.compile("insert into src values (now(), 'foo')", sqlExecutionContext);
-            assertQueryDisallowed("truncate table src");
-        });
-    }
-
-    @Test
-    public void testDisallowSnapshotComplete() throws Exception {
-        // snapshot is not supported on windows at all
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
-        assertMemoryLeak(() -> {
-            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            compiler.compile("snapshot prepare", sqlExecutionContext);
-            try {
-                assertQueryDisallowed("snapshot complete");
-            } finally {
-                compiler.compile("snapshot complete", sqlExecutionContext);
-            }
-        });
-    }
-
-    @Test
-    public void testDisallowSnapshotPrepare() throws Exception {
-        // snapshot is not supported on windows at all
-        assertMemoryLeak(() -> {
-            compiler.compile("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day", sqlExecutionContext);
-            assertQueryDisallowed("snapshot prepare");
         });
     }
 
@@ -197,19 +203,11 @@ public class PGSecurityTest extends BasePGTest {
         });
     }
 
-    @Test
-    public void testAllowsSelect() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
-            executeWithPg("select * from src");
-        });
-    }
-
     private void assertQueryDisallowed(String query) throws Exception {
         try {
             executeWithPg(query);
             fail("Query '" + query + "' must fail in the read-only mode!");
-         } catch (PSQLException e) {
+        } catch (PSQLException e) {
             assertContains(e.getMessage(), "Write permission denied");
         }
     }
