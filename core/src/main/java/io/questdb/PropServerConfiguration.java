@@ -290,7 +290,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
     private boolean httpFrozenClock;
-    private boolean readOnlySecurityContext;
+    private boolean httpReadOnlySecurityContext;
     private long maxHttpQueryResponseRowLimit;
     private boolean interruptOnClosedConnection;
     private int pgNetConnectionLimit;
@@ -307,6 +307,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgConnectionPoolInitialCapacity;
     private String pgPassword;
     private String pgUsername;
+    private boolean pgReadOnlySecurityContext;
     private int pgMaxBlobSizeOnQuery;
     private int pgRecvBufferSize;
     private int pgSendBufferSize;
@@ -542,7 +543,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
                 this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
                 this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
-                this.readOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
+                this.httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
                 this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
                 this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
 
@@ -596,6 +597,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgConnectionPoolInitialCapacity = getInt(properties, env, PropertyKey.PG_CONNECTION_POOL_CAPACITY, 64);
                 this.pgPassword = getString(properties, env, PropertyKey.PG_PASSWORD, "quest");
                 this.pgUsername = getString(properties, env, PropertyKey.PG_USER, "admin");
+                this.pgReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.PG_SECURITY_READONLY, false);
                 this.pgMaxBlobSizeOnQuery = getIntSize(properties, env, PropertyKey.PG_MAX_BLOB_SIZE_ON_QUERY, 512 * 1024);
                 this.pgRecvBufferSize = getIntSize(properties, env, PropertyKey.PG_RECV_BUFFER_SIZE, 1024 * 1024);
                 this.pgSendBufferSize = getIntSize(properties, env, PropertyKey.PG_SEND_BUFFER_SIZE, 1024 * 1024);
@@ -1518,7 +1520,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean readOnlySecurityContext() {
-            return readOnlySecurityContext;
+            return httpReadOnlySecurityContext;
         }
     }
 
@@ -2786,6 +2788,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public String getDefaultUsername() {
             return pgUsername;
+        }
+
+        @Override
+        public boolean readOnlySecurityContext() {
+            return pgReadOnlySecurityContext;
         }
 
         @Override
