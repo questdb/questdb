@@ -3392,7 +3392,9 @@ nodejs code:
         });
     }
 
-    @Test//NOTE: this test needs updating once limit issue is fixed!
+    // TODO: this test needs updating
+    @Ignore
+    @Test
     public void testUnexpectedAssertionErrorDisconnectsClient() throws Exception {
         assertMemoryLeak(() -> {
             try (final PGWireServer ignored = createPGServer(1);
@@ -3410,14 +3412,13 @@ nodejs code:
                 } catch (PSQLException e) {
                     Assert.assertEquals("An I/O error occurred while sending to the backend.", e.getMessage());
                 }
-
             }
         });
     }
 
-    @Test
     //checks that function parser error doesn't persist and affect later queries issued through the same connection
-    public void testParseErrorDoesntCorruptConnection() throws Exception {
+    @Test
+    public void testParseErrorDoesNotCorruptConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final PGWireServer ignored = createPGServer(2);
                  final Connection connection = getConnection(false, false)) {
