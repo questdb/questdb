@@ -66,6 +66,7 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     ) {
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
+        // TODO: revisit timestamp index returned for ORDER BY DESC queries with no filter; see OrderByDescRowSkippingTest
         if (base.hasDescendingOrder()) {
             // Copy metadata and erase timestamp index in case of ORDER BY DESC.
             GenericRecordMetadata copy = GenericRecordMetadata.copyOf(base.getMetadata());
