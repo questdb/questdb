@@ -47,7 +47,7 @@ public final class IntervalUtils {
             int periodCount,
             short operation,
             LongList out) {
-        addHiLoInterval(lo, hi, period, periodType, periodCount, (short) 0, (short) 0, operation, out);
+        addHiLoInterval(lo, hi, period, periodType, periodCount, IntervalDynamicIndicator.NONE, IntervalOperation.NONE, operation, out);
     }
 
     public static void addHiLoInterval(
@@ -78,33 +78,33 @@ public final class IntervalUtils {
                                        short dynamicIndicator,
                                        short operation,
                                        LongList out) {
-        addHiLoInterval(lo, hi, 0, (char) 0, 1, adjustment, dynamicIndicator, operation, out);
+        addHiLoInterval(lo, hi, 0, PeriodType.NONE, 1, adjustment, dynamicIndicator, operation, out);
     }
 
     public static void addHiLoInterval(long lo, long hi, short operation, LongList out) {
-        addHiLoInterval(lo, hi, 0, (char) 0, 1, operation, out);
+        addHiLoInterval(lo, hi, 0, PeriodType.NONE, 1, operation, out);
     }
 
     public static void apply(LongList temp, long lo, long hi, int period, char periodType, int count) {
         temp.add(lo, hi);
         if (count > 1) {
             switch (periodType) {
-                case 'y':
+                case PeriodType.YEAR:
                     addYearIntervals(period, count, temp);
                     break;
-                case 'M':
+                case PeriodType.MONTH:
                     addMonthInterval(period, count, temp);
                     break;
-                case 'h':
+                case PeriodType.HOUR:
                     addMillisInterval(period * Timestamps.HOUR_MICROS, count, temp);
                     break;
-                case 'm':
+                case PeriodType.MINUTE:
                     addMillisInterval(period * Timestamps.MINUTE_MICROS, count, temp);
                     break;
-                case 's':
+                case PeriodType.SECOND:
                     addMillisInterval(period * Timestamps.SECOND_MICROS, count, temp);
                     break;
-                case 'd':
+                case PeriodType.DAY:
                     addMillisInterval(period * Timestamps.DAY_MICROS, count, temp);
                     break;
             }
@@ -120,7 +120,7 @@ public final class IntervalUtils {
         int count = getEncodedPeriodCount(intervals, index);
 
         intervals.setPos(index);
-        if (periodType == 0) {
+        if (periodType == PeriodType.NONE) {
             intervals.extendAndSet(index + 1, hi);
             intervals.setQuick(index, lo);
             return;
@@ -578,12 +578,12 @@ public final class IntervalUtils {
 
                 replaceHiLoInterval(low, hi, period, type, count, operation, out);
                 switch (type) {
-                    case 'y':
-                    case 'M':
-                    case 'h':
-                    case 'm':
-                    case 's':
-                    case 'd':
+                    case PeriodType.YEAR:
+                    case PeriodType.MONTH:
+                    case PeriodType.HOUR:
+                    case PeriodType.MINUTE:
+                    case PeriodType.SECOND:
+                    case PeriodType.DAY:
                         break;
                     default:
                         throw SqlException.$(position, "Unknown period: " + type + " at " + (p - 1));

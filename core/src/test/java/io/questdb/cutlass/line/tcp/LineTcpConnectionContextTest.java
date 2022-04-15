@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
@@ -430,6 +431,44 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
                             "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n" +
                             "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\n";
+                    assertTable(expected, table);
+                }, null, null);
+    }
+
+    @Test
+    public void testCairoExceptionOnCommit() throws Exception {
+        String table = "commitException";
+        configOverrideMaxUncommittedRows = 1;
+        netMsgBufferSize.set(60);
+        runInContext(
+                new FilesFacadeImpl() {
+                    @Override
+                    public long openRW(LPSZ name, long opts) {
+                        if (Chars.endsWith(name, "1970-01-01.1" + Files.SEPARATOR + "temperature.d")) {
+                            return -1;
+                        }
+                        return super.openRW(name, opts);
+                    }
+                },
+                () -> {
+                    recvBuffer =
+                            table + ",location=us-midwest temperature=82 99000\n" +
+                                    table + ",location=us-midwest temperature=83 90000\n" +
+                                    table + ",location=us-eastcoast temperature=81,broken=23 80000\n" +
+                                    table + ",location=us-midwest temperature=85 70000\n" +
+                                    table + ",location=us-eastcoast temperature=89 60000\n" +
+                                    table + ",location=us-eastcoast temperature=80 50000\n" +
+                                    table + ",location=us-westcost temperature=82 40000\n";
+                    do {
+                        handleContextIO();
+                    } while (!disconnected && recvBuffer.length() > 0);
+
+                    Assert.assertTrue(disconnected);
+                    Assert.assertTrue(recvBuffer.length() > 0);
+                    closeContext();
+
+                    String expected = "location\ttemperature\ttimestamp\n" +
+                            "us-midwest\t82.0\t1970-01-01T00:00:00.000099Z\n";
                     assertTable(expected, table);
                 }, null, null);
     }

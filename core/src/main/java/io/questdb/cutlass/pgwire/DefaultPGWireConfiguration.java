@@ -82,6 +82,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public boolean readOnlySecurityContext() {
+        return false;
+    }
+
+    @Override
     public IODispatcherConfiguration getDispatcherConfiguration() {
         return ioDispatcherConfiguration;
     }

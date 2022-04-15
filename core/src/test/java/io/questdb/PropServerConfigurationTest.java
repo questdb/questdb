@@ -49,9 +49,7 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 
 public class PropServerConfigurationTest {
 
@@ -281,6 +279,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
+        Assert.assertEquals(2048, configuration.getCairoConfiguration().getWriterCommandQueueSlotSize());
         Assert.assertEquals(500_000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
         Assert.assertEquals(30_000_000, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
         Assert.assertEquals(1023, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
@@ -505,6 +504,17 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
     }
+    @Test(expected = ServerConfigurationException.class)
+    public void testsIncorrectPropertyKeyError() throws IOException, JsonException, ServerConfigurationException {
+
+        InputStream inputStream = PropServerConfigurationTest.class.getResourceAsStream("/server.conf");
+        Properties properties = new Properties();
+        properties.load(inputStream);
+        properties.setProperty("this.will.throw", "Test");
+        properties.setProperty("this.will.also", "throw");
+
+        PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+    }
 
     @Test
     public void testSetAllFromFile() throws IOException, ServerConfigurationException, JsonException {
@@ -633,6 +643,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(64, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
             Assert.assertEquals(2001, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
             Assert.assertEquals(16, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
+            Assert.assertEquals(4096, configuration.getCairoConfiguration().getWriterCommandQueueSlotSize());
             Assert.assertEquals(333000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
             Assert.assertEquals(7770001, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
             Assert.assertEquals(15, configuration.getCairoConfiguration().getWriterTickRowsCountMod());

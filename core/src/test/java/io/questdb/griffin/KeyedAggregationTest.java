@@ -52,13 +52,63 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
 
     @Test
     public void testHourFiltered() throws Exception {
-        assertQuery(
-                "hour\tcount\n" +
-                        "0\t36000\n" +
-                        "1\t36000\n" +
-                        "2\t28000\n",
+        assertQuery("hour\tcount\n" +
+                        "0\t17902\n" +
+                        "1\t17892\n" +
+                        "2\t14056\n",
                 "select hour(ts), count() from tab where val < 0.5",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_double() val from long_sequence(100000))",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testHourFilteredJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = "hour\tcount\n" +
+                    "0\t122\n";
+
+            compiler.compile("create table x as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(100))", sqlExecutionContext);
+            compiler.compile("create table y as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(200))", sqlExecutionContext);
+            compiler.compile("create table z as (select timestamp_sequence(0, 1000000) ts, rnd_int(0,100,0) val from long_sequence(300))", sqlExecutionContext);
+
+            assertQuery(expected, "select hour(ts), count from " +
+                    "(select z.ts, z.val from x join y on y.val = x.val join z on (val) where x.val > 50)" +
+                    " where val > 70 order by 1", null, true, true);
+        });
+    }
+
+    @Test
+    public void testHourFilteredUnion() throws Exception {
+        assertQuery("hour\tcount\n" +
+                        "0\t7\n" +
+                        "1\t2\n" +
+                        "2\t4\n" +
+                        "3\t1\n" +
+                        "4\t3\n" +
+                        "5\t4\n" +
+                        "6\t1\n" +
+                        "7\t4\n" +
+                        "8\t3\n" +
+                        "9\t3\n" +
+                        "10\t4\n" +
+                        "11\t2\n" +
+                        "12\t1\n" +
+                        "13\t3\n" +
+                        "14\t5\n" +
+                        "15\t4\n" +
+                        "16\t3\n" +
+                        "18\t3\n" +
+                        "19\t3\n" +
+                        "20\t5\n" +
+                        "21\t4\n" +
+                        "22\t1\n" +
+                        "23\t2\n",
+
+                "select hour(ts), count from " +
+                        "(select * from tab where ts in '1970-01-01' union all  select * from tab where ts in '1970-04-26')" +
+                        "where val < 0.5 order by 1",
+                "create table tab as (select timestamp_sequence(0, 1000000000) ts, rnd_double() val from long_sequence(100000))",
                 null, true, true, true
         );
     }
@@ -85,6 +135,19 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
                         "2\t28000\t10444993989\t-992\t889982\t445586.53594129946\n",
                 "select hour(ts), count(), sum(val), min(val), max(val), avg(val) from tab order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_long(-998, 889991, 2) val from long_sequence(100000))",
+                null, true, true, true
+        );
+    }
+
+    @Test
+    public void testHourLong256() throws Exception {
+        assertQuery(
+                "hour\tcount\tsum\n" +
+                        "0\t36000\t0x464fffffffffffff7360\n" +
+                        "1\t36000\t0x464fffffffffffff7360\n" +
+                        "2\t28000\t0x36afffffffffffff92a0\n",
+                "select hour(ts), count(), sum(val) from tab order by 1",
+                "create table tab as (select timestamp_sequence(0, 100000) ts, cast(9223372036854775807 as long256) val from long_sequence(100000))",
                 null, true, true, true
         );
     }

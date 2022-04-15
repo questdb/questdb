@@ -100,11 +100,18 @@ public class ServerMain {
         readServerConfiguration(rootDirectory, properties, log, buildInformation);
         final CairoConfiguration cairoConfiguration = configuration.getCairoConfiguration();
 
+        final boolean httpEnabled = configuration.getHttpServerConfiguration().isEnabled();
+        final boolean httpReadOnly = configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext();
+        final String httpReadOnlyHint = httpEnabled && httpReadOnly ? " [read-only]" : "";
+        final boolean pgEnabled = configuration.getPGWireConfiguration().isEnabled();
+        final boolean pgReadOnly = configuration.getPGWireConfiguration().readOnlySecurityContext();
+        final String pgReadOnlyHint = pgEnabled && pgReadOnly ? " [read-only]" : "";
+
         log.advisory().$("Server config : ").$(configurationFile.getAbsoluteFile()).$();
         log.advisory().$("Config changes applied:").$();
-        log.advisory().$("  http.enabled : ").$(configuration.getHttpServerConfiguration().isEnabled()).$();
+        log.advisory().$("  http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
         log.advisory().$("  tcp.enabled  : ").$(configuration.getLineTcpReceiverConfiguration().isEnabled()).$();
-        log.advisory().$("  pg.enabled   : ").$(configuration.getPGWireConfiguration().isEnabled()).$();
+        log.advisory().$("  pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
 
         log.advisory().$("open database [id=").$(cairoConfiguration.getDatabaseIdLo()).$('.').$(cairoConfiguration.getDatabaseIdHi()).$(']').$();
         log.advisory().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();

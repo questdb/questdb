@@ -77,6 +77,7 @@ io.questdb.griffin.engine.functions.math.AddLongFunctionFactory
 io.questdb.griffin.engine.functions.math.AddFloatFunctionFactory
 io.questdb.griffin.engine.functions.math.AddDoubleFunctionFactory
 io.questdb.griffin.engine.functions.date.AddLongToTimestampFunctionFactory
+io.questdb.griffin.engine.functions.math.AddLong256FunctionFactory
 
 # '-' operator
 io.questdb.griffin.engine.functions.math.NegIntFunctionFactory
@@ -204,6 +205,7 @@ io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory
+io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory
 
 # cast functions
 
@@ -426,6 +428,7 @@ io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.SumFloatGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.SumIntGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.SumLongGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.SumLong256GroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.KSumDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.NSumDoubleGroupByFunctionFactory
 

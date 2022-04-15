@@ -334,7 +334,7 @@ public interface CairoConfiguration {
 
     int getWriterCommandQueueCapacity();
 
-    int getWriterCommandQueueSlotSize();
+    long getWriterCommandQueueSlotSize();
 
     long getWriterFileOpenOpts();
 

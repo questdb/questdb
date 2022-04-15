@@ -144,7 +144,7 @@ public class SqlCompiler implements Closeable {
                         : new FunctionFactoryCache(engine.getConfiguration(), ServiceLoader.load(
                         FunctionFactory.class, FunctionFactory.class.getClassLoader()))
         );
-        this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser);
+        this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
 
         // we have cyclical dependency here
         functionParser.setSqlCodeGenerator(codeGenerator);
@@ -1017,10 +1017,6 @@ public class SqlCompiler implements Closeable {
 
         return lexer.getPosition();
     }
-
-    private boolean isSemicolon(CharSequence token) {
-        return Chars.equals(token, ';');
-    }    
     
     public void filterPartitions(
             Function function,
@@ -2736,6 +2732,7 @@ public class SqlCompiler implements Closeable {
             int tableNamePos = lexer.lastTokenPosition();
             CharSequence eol = SqlUtil.fetchNext(lexer);
             if (eol == null || Chars.equals(eol, ';')) {
+                executionContext.getCairoSecurityContext().checkWritePermission();
                 tableExistsOrFail(lexer.lastTokenPosition(), tableName, executionContext);
                 try (TableReader rdr = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
                     int partitionBy = rdr.getMetadata().getPartitionBy();

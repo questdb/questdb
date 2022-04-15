@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -380,6 +380,9 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         private class RostiRecord implements Record {
             private long pRow;
 
+            private final Long256Impl long256A = new Long256Impl();
+            private final Long256Impl long256B = new Long256Impl();
+
             public void of(long pRow) {
                 this.pRow = pRow;
             }
@@ -440,17 +443,28 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
 
             @Override
             public void getLong256(int col, CharSink sink) {
-
+                Long256Impl v = (Long256Impl) getLong256A(col);
+                v.toSink(sink);
             }
 
             @Override
             public Long256 getLong256A(int col) {
-                return null;
+                return getLong256Value(long256A, col);
             }
 
             @Override
             public Long256 getLong256B(int col) {
-                return null;
+                return getLong256Value(long256B, col);
+            }
+
+            public Long256 getLong256Value(Long256 dst, int col) {
+                final long offset = getValueOffset(col);
+                final long l0 = Unsafe.getUnsafe().getLong(offset);
+                final long l1 = Unsafe.getUnsafe().getLong(offset + Long.BYTES);
+                final long l2 = Unsafe.getUnsafe().getLong(offset + 2 * Long.BYTES);
+                final long l3 = Unsafe.getUnsafe().getLong(offset + 3 + Long.BYTES);
+                dst.setAll(l0, l1, l2, l3);
+                return dst;
             }
 
             @Override

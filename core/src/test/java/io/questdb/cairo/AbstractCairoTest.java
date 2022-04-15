@@ -37,8 +37,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -67,6 +69,8 @@ public class AbstractCairoTest {
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String inputRoot = null;
     protected static FilesFacade ff;
+    protected static CharSequence backupDir;
+    protected static DateFormat backupDirTimestampFormat;
     protected static long configOverrideCommitLagMicros = -1;
     protected static int configOverrideMaxUncommittedRows = -1;
     protected static Metrics metrics = Metrics.enabled();
@@ -87,6 +91,7 @@ public class AbstractCairoTest {
     protected static boolean hideTelemetryTable = false;
     private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
+    protected static long writerCommandQueueSlotSize = 2048L;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -112,6 +117,22 @@ public class AbstractCairoTest {
             @Override
             public int getBinaryEncodingMaxLength() {
                 return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
+            }
+
+            @Override
+            public CharSequence getBackupRoot() {
+                if (backupDir != null) {
+                    return backupDir;
+                }
+                return super.getBackupRoot();
+            }
+
+            @Override
+            public DateFormat getBackupDirTimestampFormat() {
+                if (backupDirTimestampFormat != null) {
+                    return backupDirTimestampFormat;
+                }
+                return super.getBackupDirTimestampFormat();
             }
 
             @Override
@@ -236,6 +257,11 @@ public class AbstractCairoTest {
             public int getWriterCommandQueueCapacity() {
                 return writerCommandQueueCapacity;
             }
+
+            @Override
+            public long getWriterCommandQueueSlotSize() {
+                return writerCommandQueueSlotSize;
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -246,6 +272,8 @@ public class AbstractCairoTest {
     public static void tearDownStatic() {
         snapshotAgent = Misc.free(snapshotAgent);
         engine = Misc.free(engine);
+        backupDir = null;
+        backupDirTimestampFormat = null;
     }
 
     @Before
@@ -278,6 +306,11 @@ public class AbstractCairoTest {
         snapshotRecoveryEnabled = null;
         hideTelemetryTable = false;
         writerCommandQueueCapacity = 4;
+    }
+
+    protected static void configureForBackups() throws IOException {
+        backupDir = temp.newFolder().getAbsolutePath();
+        backupDirTimestampFormat = new TimestampFormatCompiler().compile("ddMMMyyyy");
     }
 
     protected static void assertMemoryLeak(TestUtils.LeakProneCode code) throws Exception {

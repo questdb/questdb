@@ -1485,6 +1485,59 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFilterTimestamps() throws Exception {
+        // ts
+        // 2022-03-22 10:00:00.0
+        // 2022-03-23 10:00:00.0
+        // 2022-03-24 10:00:00.0
+        // 2022-03-25 10:00:00.0
+        // 2022-03-26 10:00:00.0
+        // 2022-03-27 10:00:00.0
+        // 2022-03-28 10:00:00.0
+        // 2022-03-29 10:00:00.0
+        // 2022-03-30 10:00:00.0
+        // 2022-03-31 10:00:00.0
+        currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
+        assertQuery(
+                "min\tmax\n" +
+                        "\t\n",
+                "SELECT min(ts), max(ts)\n" +
+                        "FROM tab\n" +
+                        "WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, systimestamp())",
+                "CREATE TABLE tab AS (\n" +
+                        "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
+                        "    FROM long_sequence(10)\n" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                null,
+                null,
+                false,
+                false,
+                true
+        );
+
+        compiler.compile("drop table tab", sqlExecutionContext);
+
+        assertQuery(
+                "min\tmax\n" +
+                        "\t\n",
+                "SELECT min(ts), max(ts)\n" +
+                        " FROM tab\n" +
+                        " WHERE ts >= '2022-03-23T08:00:00.000000Z' AND ts < '2022-03-25T10:00:00.000000Z' AND ts > dateadd('d', -10, now())",
+                "CREATE TABLE tab AS (\n" +
+                        "    SELECT dateadd('d', CAST(-(10-x) AS INT) , '2022-03-31T10:00:00.000000Z') AS ts \n" +
+                        "    FROM long_sequence(10)\n" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                null,
+                null,
+                null,
+                false,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testFilterSingleNonExistingSymbolAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery(null,

@@ -22,20 +22,23 @@
  *
  ******************************************************************************/
 
-import React, { useCallback } from "react"
+import React from "react"
 import styled, { css } from "styled-components"
 import { FileCode } from "@styled-icons/remix-line/FileCode"
 
 import { Text, TransitionDuration } from "components"
-import { QueryShape } from "types"
+import type { Query } from "types"
 import { color } from "utils"
+
+type MouseAction = (event: React.MouseEvent<HTMLDivElement, MouseEvent>) => void
 
 type Props = Readonly<{
   active: boolean
   hidePicker: () => void
-  onHover: (query?: QueryShape) => void
-  onAdd: (query: QueryShape) => void
-  query: QueryShape
+  onMouseEnter: MouseAction
+  onMouseLeave: MouseAction
+  onClick: MouseAction
+  query: Query
 }>
 
 const activeStyles = css`
@@ -59,7 +62,7 @@ const Wrapper = styled.div<{ active: boolean }>`
   }
 `
 
-const Query = styled(Text)`
+const Value = styled(Text)`
   flex: 1 1 auto;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -78,37 +81,25 @@ const Name = styled(Text)`
   flex: 0 0 auto;
 `
 
-const Row = ({ active, onHover, onAdd, query }: Props) => {
-  const handleClick = useCallback(() => {
-    onAdd(query)
-  }, [query, onAdd])
-  const handleMouseEnter = useCallback(() => {
-    onHover(query)
-  }, [query, onHover])
-  const handleMouseLeave = useCallback(() => {
-    onHover()
-  }, [onHover])
+const Row = ({ active, onMouseEnter, onMouseLeave, onClick, query }: Props) => (
+  <Wrapper
+    active={active}
+    onClick={onClick}
+    onMouseEnter={onMouseEnter}
+    onMouseLeave={onMouseLeave}
+  >
+    <FileIcon size="12px" />
 
-  return (
-    <Wrapper
-      active={active}
-      onClick={handleClick}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-    >
-      <FileIcon size="12px" />
+    {query.name && (
+      <Name color="draculaForeground" size="sm">
+        {query.name}
+      </Name>
+    )}
 
-      {query.name && (
-        <Name color="draculaForeground" size="sm">
-          {query.name}
-        </Name>
-      )}
-
-      <Query color="draculaForeground" size="sm">
-        {query.value}
-      </Query>
-    </Wrapper>
-  )
-}
+    <Value color="draculaForeground" size="sm">
+      {query.value}
+    </Value>
+  </Wrapper>
+)
 
 export default Row
