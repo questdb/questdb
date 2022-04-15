@@ -78,6 +78,11 @@ public final class QueryCache implements Closeable {
         log("remove", sql);
     }
 
+    public void clear() {
+        cache.clear();
+        LOG.info().$("cleared").$();
+    }
+
     private void log(CharSequence action, CharSequence sql) {
         LOG.info().$(action).$(" [thread=").$(Thread.currentThread().getName()).$(", sql=").utf8(sql).$(']').$();
     }
