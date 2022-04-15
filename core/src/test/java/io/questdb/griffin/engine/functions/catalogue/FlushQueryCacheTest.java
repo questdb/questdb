@@ -25,7 +25,8 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.std.Os;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.SCSequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -41,9 +42,43 @@ public class FlushQueryCacheTest extends AbstractGriffinTest {
                 "flush_query_cache\n" +
                         "true\n"
         ));
-        // this sleep to allow async logger to print out the values,
-        // although we don't assert them it is less awkward than calling
-        // the dump and see no output in the logs
-        Os.sleep(500);
+    }
+
+    @Test
+    public void testFullQueue() throws Exception {
+        assertMemoryLeak(() -> {
+            // Subscribe to the FanOut, so that we have some consumers.
+            final SCSequence queryCacheEventSubSeq = new SCSequence();
+            final FanOut queryCacheEventFanOut = messageBus.getQueryCacheEventFanOut();
+            queryCacheEventFanOut.and(queryCacheEventSubSeq);
+
+            try {
+                int queueSize = configuration.getQueryCacheEventQueueCapacity();
+
+                for (int i = 0; i < queueSize; i++) {
+                    TestUtils.assertSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "select flush_query_cache",
+                            sink,
+                            "flush_query_cache\n" +
+                                    "true\n"
+                    );
+                }
+
+                // The queue is full now, so we expect false value to be returned.
+                TestUtils.assertSql(
+                        compiler,
+                        sqlExecutionContext,
+                        "select flush_query_cache",
+                        sink,
+                        "flush_query_cache\n" +
+                                "false\n"
+                );
+            } finally {
+                messageBus.getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
+                queryCacheEventSubSeq.clear();
+            }
+        });
     }
 }

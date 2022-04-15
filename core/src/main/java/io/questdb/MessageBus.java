@@ -96,7 +96,5 @@ public interface MessageBus extends Closeable {
 
     MPSequence getQueryCacheEventPubSeq();
 
-    RingQueue<QueryCacheTask> getQueryCacheEventQueue();
-
     FanOut getQueryCacheEventFanOut();
 }

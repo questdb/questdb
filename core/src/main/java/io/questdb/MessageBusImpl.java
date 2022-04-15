@@ -67,7 +67,6 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence tableWriterEventPubSeq;
     private final FanOut tableWriterEventSubSeq;
 
-    private final RingQueue<QueryCacheTask> queryCacheEventQueue;
     private final MPSequence queryCacheEventPubSeq;
     private final FanOut queryCacheEventSubSeq;
 
@@ -125,8 +124,7 @@ public class MessageBusImpl implements MessageBus {
         this.tableWriterEventSubSeq = new FanOut();
         this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
 
-        this.queryCacheEventQueue = new RingQueue<>(QueryCacheTask::new, configuration.getQueryCacheEventQueueCapacity());
-        this.queryCacheEventPubSeq = new MPSequence(this.queryCacheEventQueue.getCycle());
+        this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
         this.queryCacheEventSubSeq = new FanOut();
         this.queryCacheEventPubSeq.then(this.queryCacheEventSubSeq).then(this.queryCacheEventPubSeq);
     }
@@ -274,11 +272,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MPSequence getQueryCacheEventPubSeq() {
         return queryCacheEventPubSeq;
-    }
-
-    @Override
-    public RingQueue<QueryCacheTask> getQueryCacheEventQueue() {
-        return queryCacheEventQueue;
     }
 
     @Override
