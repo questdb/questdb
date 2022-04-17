@@ -23,7 +23,6 @@
  ******************************************************************************/
 
 package io.questdb;
-import io.questdb.std.Numbers;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -147,6 +146,7 @@ public enum PropertyKey {
     CAIRO_LATESTBY_QUEUE_CAPACITY("cairo.latestby.queue.capacity"),
     CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY("cairo.o3.partition.purge.list.initial.capacity"),
     CAIRO_O3_ENABLED("cairo.o3.enabled"),
+    CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY("cairo.query.cache.event.queue.capacity"),
     CIRCUIT_BREAKER_THROTTLE("circuit.breaker.throttle"),
     CIRCUIT_BREAKER_BUFFER_SIZE("circuit.breaker.buffer.size"),
     HTTP_MIN_ENABLED("http.min.enabled"),

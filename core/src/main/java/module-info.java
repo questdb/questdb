@@ -218,6 +218,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory,
+            io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndBinCCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory,
@@ -559,6 +560,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.TableMetadataCursorFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory,
             
 //            PostgreSQL advisory locks functions
             io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll,            
