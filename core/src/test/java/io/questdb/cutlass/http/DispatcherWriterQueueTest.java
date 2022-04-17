@@ -105,7 +105,7 @@ public class DispatcherWriterQueueTest {
                 )
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
                 .withAlterTableStartWaitTimeout(30_000_000)
-                .withAlterTableMaxtWaitTimeout(50_000_000)
+                .withAlterTableMaxWaitTimeout(50_000_000)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
@@ -157,7 +157,7 @@ public class DispatcherWriterQueueTest {
                 )
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
                 .withAlterTableStartWaitTimeout(30_000_000)
-                .withAlterTableMaxtWaitTimeout(50_000_000)
+                .withAlterTableMaxWaitTimeout(50_000_000)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
@@ -191,7 +191,7 @@ public class DispatcherWriterQueueTest {
                 )
 
                 .withAlterTableStartWaitTimeout(500_000)
-                .withAlterTableMaxtWaitTimeout(500_000)
+                .withAlterTableMaxWaitTimeout(500_000)
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override

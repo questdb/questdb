@@ -132,7 +132,7 @@ public class HttpQueryTestBuilder {
             }
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {
@@ -248,7 +248,7 @@ public class HttpQueryTestBuilder {
         });
     }
 
-    public HttpQueryTestBuilder withAlterTableMaxtWaitTimeout(long maxWriterWaitTimeout) {
+    public HttpQueryTestBuilder withAlterTableMaxWaitTimeout(long maxWriterWaitTimeout) {
         this.maxWriterWaitTimeout = maxWriterWaitTimeout;
         return this;
     }

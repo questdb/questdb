@@ -70,4 +70,8 @@ public class PGJobContext implements Closeable {
             BadProtocolException {
         context.handleClientOperation(compiler, selectAndTypesCache, selectAndTypesPool, operation);
     }
+
+    public void flushQueryCache() {
+        selectAndTypesCache.clear();
+    }
 }

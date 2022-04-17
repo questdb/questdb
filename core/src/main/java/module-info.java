@@ -564,6 +564,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.TableMetadataCursorFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory,
             
 //            PostgreSQL advisory locks functions
             io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll,            

@@ -81,6 +81,7 @@ public class AbstractCairoTest {
     protected static int rndFunctionMemoryMaxPages = -1;
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
+    protected static int queryCacheEventQueueCapacity = -1;
 
     @Rule
     public TestName testName = new TestName();
@@ -259,6 +260,11 @@ public class AbstractCairoTest {
             @Override
             public long getWriterCommandQueueSlotSize() {
                 return writerCommandQueueSlotSize;
+            }
+
+            @Override
+            public int getQueryCacheEventQueueCapacity() {
+                return queryCacheEventQueueCapacity < 0 ? super.getQueryCacheEventQueueCapacity() : queryCacheEventQueueCapacity;
             }
         };
         engine = new CairoEngine(configuration, metrics);
