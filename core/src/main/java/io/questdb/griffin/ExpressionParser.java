@@ -51,6 +51,9 @@ class ExpressionParser {
     private static final int BRANCH_RIGHT_BRACKET = 16;
     private static final int BRANCH_DOT_DEREFERENCE = 17;
     private static final int BRANCH_GEOHASH = 18;
+    private static final int BRANCH_TIMESTAMP_AT = 19;
+    private static final int BRANCH_TIMESTAMP_TIME = 20;
+    private static final int BRANCH_TIMESTAMP_ZONE = 21;
 
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
@@ -588,6 +591,8 @@ class ExpressionParser {
                             } else {
                                 throw SqlException.$(operator.position, "unexpected operator");
                             }
+                        } else if (SqlKeywords.isAtKeyword(tok)) {
+                            thisBranch = BRANCH_TIMESTAMP_AT;
                         } else {
                             processDefaultBranch = true;
                         }
@@ -679,7 +684,36 @@ class ExpressionParser {
                                 if (SqlKeywords.isQuote(tok)) {
                                     throw SqlException.$(position, "unclosed quoted string?");
                                 }
-                                opStack.push(expressionNodePool.next().of(ExpressionNode.CONSTANT, GenericLexer.immutableOf(tok), 0, position));
+
+                                ExpressionNode constNode = expressionNodePool.next().of(ExpressionNode.CONSTANT,
+                                        GenericLexer.immutableOf(tok),
+                                        0,
+                                        position
+                                );
+
+                                switch (prevBranch) {
+                                    case BRANCH_TIMESTAMP_AT:
+                                    case BRANCH_TIMESTAMP_TIME:
+                                        throw SqlException.$(position, "did you mean 'at time zone' ?");
+                                    case BRANCH_TIMESTAMP_ZONE:
+                                        argStackDepth = onNode(
+                                                listener,
+                                                constNode,
+                                                argStackDepth
+                                        );
+
+                                        // replace const node with 'to_timezone' function node
+                                        constNode = expressionNodePool.next().of(ExpressionNode.FUNCTION,
+                                                "to_timezone",
+                                                Integer.MIN_VALUE,
+                                                position
+                                        );
+                                        constNode.paramCount = 2;
+                                        // fall thru
+                                    default:
+                                        opStack.push(constNode);
+                                        break;
+                                }
                                 break;
                             } else {
                                 if (opStack.size() > 0 && prevBranch == BRANCH_LITERAL && thisChar == '\'') {
@@ -754,6 +788,9 @@ class ExpressionParser {
                                 throw SqlException.$(position, "constant is not allowed here");
                             }
                             break;
+                        } else if (SqlKeywords.isTimeKeyword(tok) && prevBranch == BRANCH_TIMESTAMP_AT) {
+                            thisBranch = BRANCH_TIMESTAMP_TIME;
+                            break;
                         }
                         processDefaultBranch = true;
                         break;
@@ -817,6 +854,11 @@ class ExpressionParser {
                                         )
                                 );
                             }
+                            break;
+                        }
+                    case 'z':
+                        if (prevBranch == BRANCH_TIMESTAMP_TIME && SqlKeywords.isZoneKeyword(tok)) {
+                            thisBranch = BRANCH_TIMESTAMP_ZONE;
                             break;
                         }
                     default:
@@ -1073,6 +1115,13 @@ class ExpressionParser {
                         break;
                     }
                 }
+            }
+
+            switch (thisBranch) {
+                case BRANCH_TIMESTAMP_AT:
+                case BRANCH_TIMESTAMP_TIME:
+                case BRANCH_TIMESTAMP_ZONE:
+                    throw SqlException.$(lexer.lastTokenPosition(), "did you mean 'at time zone <tz>'?");
             }
 
             while ((node = opStack.pop()) != null) {

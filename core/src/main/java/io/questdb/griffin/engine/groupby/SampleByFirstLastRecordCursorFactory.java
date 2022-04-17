@@ -153,7 +153,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             if (ast.rhs != null) {
                 if (SqlKeywords.isLastFunction(ast.token)) {
                     firstLastIndex[i] = LAST_OUT_INDEX;
-                } else if (SqlKeywords.isFirstFunction(ast.token)) {
+                } else if (SqlKeywords.isFirstKeyword(ast.token)) {
                     firstLastIndex[i] = FIRST_OUT_INDEX;
                 } else {
                     throw SqlException.$(ast.position, "expected first() or last() functions but got ").put(ast.token);
