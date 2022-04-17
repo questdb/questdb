@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -47,6 +48,9 @@ public class EqShortFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        if (args.getQuick(0).isNullConstant() || args.getQuick(1).isNullConstant()) {
+            return BooleanConstant.FALSE;
+        }
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
@@ -61,9 +65,6 @@ public class EqShortFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            if (left.isNullConstant() || right.isNullConstant()) {
-                return negated;
-            }
             return negated != (left.getShort(rec) == right.getShort(rec));
         }
 

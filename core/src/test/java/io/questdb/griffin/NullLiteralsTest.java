@@ -40,9 +40,9 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                 null,
                 "insert into tab_short values(NULL)",
                 "v\n",
+                false,
                 true,
-                true,
-                false
+                true
         );
     }
 
@@ -78,7 +78,7 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                         "0\n",
                 true,
                 true,
-                false
+                true
         );
     }
 
@@ -107,9 +107,9 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                 null,
                 "insert into tab_byte values(NULL)",
                 "v\n",
+                false,
                 true,
-                true,
-                false
+                true
         );
     }
 
@@ -145,7 +145,7 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                         "0\n",
                 true,
                 true,
-                false
+                true
         );
     }
 
@@ -174,9 +174,9 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                 null,
                 "insert into tab_boolean values(NULL)",
                 "v\n",
+                false,
                 true,
-                true,
-                false
+                true
         );
     }
 
@@ -212,7 +212,7 @@ public class NullLiteralsTest extends AbstractGriffinTest {
                         "false\n",
                 true,
                 true,
-                false
+                true
         );
     }
 

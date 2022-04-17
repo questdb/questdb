@@ -97,7 +97,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
-                        true,
+                        !isNotNullable(type[0]),
                         true,
                         type[0].equals("long256")
                 );
@@ -124,7 +124,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
                         !type[0].equals("long256"),
                         true,
-                        false
+                        isNotNullable(type[0])
                 );
             } finally {
                 tearDown();
@@ -191,7 +191,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
-                        true,
+                        !isNotNullable(type[0]),
                         true,
                         type[0].equals("long256")
                 );
@@ -218,7 +218,7 @@ public class InsertNullTest extends AbstractGriffinTest {
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, isNotNullable(type[0])),
                         !type[0].equals("long256"),
                         true,
-                        false
+                        isNotNullable(type[0])
                 );
             } finally {
                 tearDown();
