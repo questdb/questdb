@@ -156,6 +156,7 @@ class ExpressionParser {
             int caseCount = 0;
             int argStackDepth = 0;
             int castAsCount = 0;
+            int castBraceCount = 0;
             int betweenStartCaseCount = 0;
 
             ExpressionNode node;
@@ -227,7 +228,7 @@ class ExpressionParser {
                             break OUT;
                         }
 
-                        if (castBraceCountStack.peek() == braceCount) {
+                        if (castBraceCount > 0 && castBraceCountStack.peek() == castBraceCount) {
                             throw SqlException.$(position, "',' is not expected here");
                         }
 
@@ -423,8 +424,13 @@ class ExpressionParser {
 
                         // check if this brace was opened after 'cast'
                         if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == -1) {
-                            castBraceCountStack.update(braceCount + 1);
+                            castBraceCountStack.update(castBraceCount + 1);
                         }
+                        // if this brace is inside a 'cast', use the helper counter to parse inner braces
+                        if (castBraceCountStack.size() > 0) {
+                            castBraceCount++;
+                        }
+
                         braceCount++;
                         break;
 
@@ -442,7 +448,7 @@ class ExpressionParser {
                         int localParamCount = (prevBranch == BRANCH_LEFT_PARENTHESIS ? 0 : paramCount + 1);
                         final boolean thisWasCast;
 
-                        if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == braceCount) {
+                        if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == castBraceCount) {
                             if (castAsCount == 0) {
                                 throw SqlException.$(position, "'as' missing");
                             }
@@ -452,6 +458,10 @@ class ExpressionParser {
                             thisWasCast = true;
                         } else {
                             thisWasCast = false;
+                        }
+
+                        if (castBraceCount > 0) {
+                            castBraceCount--;
                         }
 
                         braceCount--;

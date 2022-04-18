@@ -74,7 +74,7 @@ mvn -pl !benchmarks clean deploy -DskipTests -P build-web-console,maven-central-
 To run with the Web Console, you need to rebuild to include the pre-packaged
 `/core/src/main/resources/io/questdb/site/public.zip`.
 
-``bash
+```bash
 mvn clean package --batch-mode --quiet -DskipTests -P build-web-console,build-binaries
 ```
 

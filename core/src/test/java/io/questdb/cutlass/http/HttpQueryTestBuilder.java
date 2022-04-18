@@ -248,7 +248,7 @@ public class HttpQueryTestBuilder {
         });
     }
 
-    public HttpQueryTestBuilder withAlterTableMaxtWaitTimeout(long maxWriterWaitTimeout) {
+    public HttpQueryTestBuilder withAlterTableMaxWaitTimeout(long maxWriterWaitTimeout) {
         this.maxWriterWaitTimeout = maxWriterWaitTimeout;
         return this;
     }

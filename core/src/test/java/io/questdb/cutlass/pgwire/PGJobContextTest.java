@@ -38,6 +38,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.MPSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
@@ -5917,45 +5919,6 @@ create table tab as (
                 "rnd_double(4) расход, ",
                 "s[VARCHAR],i[INTEGER],расход[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[VARCHAR]\n"
         );
-    }
-
-    @Test
-    public void testFlushQueryCache() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    PGWireServer ignored = createPGServer(2);
-                    Connection connection = getConnection(false, true);
-                    Statement statement = connection.createStatement()
-            ) {
-                statement.executeUpdate("CREATE TABLE test\n" +
-                        "AS(\n" +
-                        "    SELECT\n" +
-                        "        x id,\n" +
-                        "        timestamp_sequence(0L, 100000L) ts\n" +
-                        "    FROM long_sequence(1000) x)\n" +
-                        "TIMESTAMP(ts)\n" +
-                        "PARTITION BY DAY");
-
-                long memInitial = Unsafe.getMemUsed();
-
-                String sql = "SELECT *\n" +
-                        "FROM test t1 JOIN test t2 \n" +
-                        "ON t1.id = t2.id\n" +
-                        "LIMIT 1";
-                statement.execute(sql);
-
-                long memAfterJoin = Unsafe.getMemUsed();
-                Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
-
-                statement.execute("SELECT flush_query_cache()");
-
-                // We need to wait until PG Wire workers process the message.
-                Os.sleep(50);
-
-                long memAfterFlush = Unsafe.getMemUsed();
-                Assert.assertTrue("flush_query_cache() should release native memory", memAfterFlush < memAfterJoin);
-            }
-        });
     }
 
     private static void toSink(InputStream is, CharSink sink) throws IOException {
