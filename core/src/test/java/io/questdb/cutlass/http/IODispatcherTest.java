@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -1562,7 +1564,7 @@ public class IODispatcherTest {
             }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -2207,7 +2209,7 @@ public class IODispatcherTest {
             }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -2830,7 +2832,7 @@ public class IODispatcherTest {
 
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4045,7 +4047,7 @@ public class IODispatcherTest {
 
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4251,7 +4253,7 @@ public class IODispatcherTest {
             }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -4341,7 +4343,7 @@ public class IODispatcherTest {
             }, Metrics.disabled());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4452,7 +4454,7 @@ public class IODispatcherTest {
                     return 10_000;
                 }
             }, metrics);
-                 HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)
+                 HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -5200,6 +5202,7 @@ public class IODispatcherTest {
     public void testSCPConnectDownloadDisconnect() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
@@ -5217,7 +5220,10 @@ public class IODispatcherTest {
                     return false;
                 }
             }, Metrics.disabled());
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
+            try (
+                    MessageBus messageBus = new MessageBusImpl(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, false)
+            ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5239,8 +5245,6 @@ public class IODispatcherTest {
                         final int diskBufferLen = 1024 * 1024;
 
                         writeRandomFile(path, rnd, 122222212222L);
-
-//                        httpServer.getStartedLatch().await();
 
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                         try {
@@ -5368,6 +5372,7 @@ public class IODispatcherTest {
     public void testSCPFullDownload() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
@@ -5385,7 +5390,10 @@ public class IODispatcherTest {
                     return false;
                 }
             }, Metrics.disabled());
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
+            try (
+                    MessageBus messageBus = new MessageBusImpl(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, false)
+            ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -5524,6 +5532,7 @@ public class IODispatcherTest {
     public void testSCPHttp10() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
                     NetworkFacadeImpl.INSTANCE,
                     baseDir,
@@ -5549,7 +5558,10 @@ public class IODispatcherTest {
                     return false;
                 }
             }, Metrics.disabled());
-            try (HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, false)) {
+            try (
+                    MessageBus messageBus = new MessageBusImpl(configuration);
+                    HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, false)
+            ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -6004,7 +6016,6 @@ public class IODispatcherTest {
                     serverHaltLatch.countDown();
                 }).start();
 
-
                 long fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
@@ -6158,7 +6169,6 @@ public class IODispatcherTest {
                     }
                     serverHaltLatch.countDown();
                 }).start();
-
 
                 long fd = Net.socketTcp(true);
                 try {
@@ -6341,7 +6351,6 @@ public class IODispatcherTest {
         final int N = 100;
         final int serverThreadCount = 2;
         final int senderCount = 2;
-
 
         assertMemoryLeak(() -> {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();

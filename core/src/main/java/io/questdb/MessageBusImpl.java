@@ -33,6 +33,8 @@ import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
 public class MessageBusImpl implements MessageBus {
+    private final CairoConfiguration configuration;
+
     private final RingQueue<ColumnIndexerTask> indexerQueue;
     private final MPSequence indexerPubSeq;
     private final MCSequence indexerSubSeq;
@@ -68,7 +70,10 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final MPSequence tableWriterEventPubSeq;
     private final FanOut tableWriterEventSubSeq;
-    private final CairoConfiguration configuration;
+
+    private final MPSequence queryCacheEventPubSeq;
+    private final FanOut queryCacheEventSubSeq;
+
     private final int pageFrameReduceShardCount;
     private final MPSequence[] pageFrameReducePubSeq;
     private final MCSequence[] pageFrameReduceSubSeq;
@@ -125,11 +130,14 @@ public class MessageBusImpl implements MessageBus {
                 configuration.getWriterCommandQueueSlotSize(),
                 configuration.getWriterCommandQueueCapacity(),
                 MemoryTag.NATIVE_REPL
-
         );
         this.tableWriterEventPubSeq = new MPSequence(this.tableWriterEventQueue.getCycle());
         this.tableWriterEventSubSeq = new FanOut();
         this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
+
+        this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
+        this.queryCacheEventSubSeq = new FanOut();
+        this.queryCacheEventPubSeq.then(this.queryCacheEventSubSeq).then(this.queryCacheEventPubSeq);
 
         this.pageFrameReduceShardCount = configuration.getPageFrameReduceShardCount();
 
@@ -343,5 +351,15 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getVectorAggregateSubSeq() {
         return vectorAggregateSubSeq;
+    }
+
+    @Override
+    public MPSequence getQueryCacheEventPubSeq() {
+        return queryCacheEventPubSeq;
+    }
+
+    @Override
+    public FanOut getQueryCacheEventFanOut() {
+        return queryCacheEventSubSeq;
     }
 }

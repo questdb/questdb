@@ -733,4 +733,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return circuitBreakerConfiguration;
     }
+
+    @Override
+    public int getQueryCacheEventQueueCapacity() {
+        return 4;
+    }
 }

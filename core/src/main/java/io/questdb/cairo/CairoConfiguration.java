@@ -351,4 +351,6 @@ public interface CairoConfiguration {
     int getPageFrameReduceColumnListCapacity();
 
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
+
+    int getQueryCacheEventQueueCapacity();
 }
