@@ -111,6 +111,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             final int workerId = getWorkerId();
             final PageAddressCacheRecord rec = records[workerId];
             final SqlExecutionCircuitBreaker circuitBreaker = circuitBreakers[workerId];
+            boolean allFramesReduced = reduceCounter.get() == frameCount;
             // we were asked to steal work from dispatch0 queue and beyond, as much as we can
             if (PageFrameReduceJob.consumeQueue(queue, pageFrameReduceSubSeq, rec, circuitBreaker)) {
                 long cursor = collectSubSeq.next();
@@ -121,6 +122,14 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                         tsk.collected(true);
                     }
                     collectSubSeq.done(cursor);
+                } else if (cursor == -1 && allFramesReduced) {
+                    // The collect queue is empty while we know that all frames were reduced. We're almost done.
+                    if (doneLatch.getCount() == 0) {
+                        // Looks like not all the frames were dispatched, so no one reached the very last frame and
+                        // reset the sequence via calling PageFrameReduceTask#collected(). Let's do it ourselves.
+                        reset();
+                    }
+                    break;
                 } else {
                     Os.pause();
                 }

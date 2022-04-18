@@ -59,8 +59,6 @@ public class PageFrameReduceTask implements Closeable {
     }
 
     public void collected(boolean forceCollect) {
-        // TODO: check is asc order for page frame indexes is still safe assumption
-
         final long frameCount = frameSequence.getFrameCount();
         // We have to reset capacity only on max all queue items
         // What we are avoiding here is resetting capacity on 1000 frames given our queue size

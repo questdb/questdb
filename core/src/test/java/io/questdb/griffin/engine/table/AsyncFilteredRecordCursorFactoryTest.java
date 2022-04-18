@@ -38,7 +38,10 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Misc;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 
@@ -46,6 +49,9 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() {
+        // We intentionally use a small capacity for the reduce queue to exhibit various edge cases.
+        pageFrameReduceQueueCapacity = 4;
+
         jitMode = SqlJitMode.JIT_MODE_DISABLED;
         AbstractGriffinTest.setUpStatic();
     }
@@ -55,8 +61,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         testNoLimit(SqlJitMode.JIT_MODE_DISABLED, io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class);
     }
 
-    // TODO: there seems to be a race somewhere, so that PageFrameReduceTask are not correctly collected
-    @Ignore
     @Test
     public void testNoLimitJit() throws Exception {
         // Disable the test on ARM64.

@@ -137,8 +137,8 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public PageFrameSequence<Function> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int direction) throws SqlException {
-        return frameSequence.dispatch(base, executionContext, collectSubSeq, filter, direction);
+    public PageFrameSequence<Function> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
+        return frameSequence.dispatch(base, executionContext, collectSubSeq, filter, order);
     }
 
     @Override
