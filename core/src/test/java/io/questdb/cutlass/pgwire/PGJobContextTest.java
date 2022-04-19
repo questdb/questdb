@@ -38,6 +38,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.MPSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
@@ -5510,7 +5512,6 @@ create table tab as (
     @Test
     public void testSlowClient2() throws Exception {
         assertMemoryLeak(() -> {
-            final int delayedAttempts = 1000;
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
             PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
                 @Override

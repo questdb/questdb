@@ -334,4 +334,6 @@ public interface CairoConfiguration {
     boolean isParallelIndexingEnabled();
 
     boolean isSqlJitDebugEnabled();
+
+    int getQueryCacheEventQueueCapacity();
 }
