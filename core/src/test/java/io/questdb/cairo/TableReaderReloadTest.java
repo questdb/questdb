@@ -56,6 +56,21 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         testReloadAfterTruncate(PartitionBy.YEAR, 365 * 50000000000L);
     }
 
+    @Test
+    public void testTruncateInsertReloadDay() {
+        testTruncateInsertReload(PartitionBy.DAY, 3000000000L);
+    }
+
+    @Test
+    public void testTruncateInsertReloadMonth() {
+        testTruncateInsertReload(PartitionBy.MONTH, 50000000000L);
+    }
+
+    @Test
+    public void testTruncateInsertReloadNone() {
+        testTruncateInsertReload(PartitionBy.NONE, 1000000L);
+    }
+
     private void assertTable(Rnd rnd, long buffer, RecordCursor cursor, Record record) {
         while (cursor.hasNext()) {
             Assert.assertEquals(rnd.nextInt(), record.getInt(0));
@@ -130,6 +145,49 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                 Assert.assertTrue(reader.reload());
 
                 rnd.reset();
+                cursor = reader.getCursor();
+                assertTable(rnd, buffer, cursor, record);
+            }
+        }
+    }
+
+    private void testTruncateInsertReload(int partitionBy, long increment) {
+        if (Os.type == Os.WINDOWS) {
+            return;
+        }
+
+        final Rnd rnd = new Rnd();
+        final int bufferSize = 1024;
+        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, partitionBy)) {
+            model.timestamp();
+            CairoTestUtils.create(model);
+        }
+
+        long timestamp = 0;
+        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
+
+            try (TableReader reader = new TableReader(configuration, "all")) {
+                Assert.assertFalse(reader.reload());
+            }
+
+            populateTable(rnd, buffer, timestamp, increment, writer);
+            rnd.reset();
+
+            try (TableReader reader = new TableReader(configuration, "all")) {
+                RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
+                assertTable(rnd, buffer, cursor, record);
+
+                writer.truncate();
+
+                // Write different data
+                rnd.reset(123, 123);
+                populateTable(rnd, buffer, timestamp, increment / 2, writer);
+                Assert.assertTrue(reader.reload());
+
+                // Assert the data is what was written the second time
+                rnd.reset(123, 123);
                 cursor = reader.getCursor();
                 assertTable(rnd, buffer, cursor, record);
             }
