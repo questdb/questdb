@@ -7168,20 +7168,20 @@ create table tab as (
                         micros += 1000;
                     }
                 }
-//
-//                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
-//                    sink.clear();
-//                    assertResultSet(expectedAll, sink, resultSet);
-//                }
-//
-//                TestUtils.assertEquals(expectedAll, sink);
-//
-//                // exercise parameters on select statement
-//                execSelectWithParam(select, 9);
-//                TestUtils.assertEquals("9\n", sink);
-//
-//                execSelectWithParam(select, 11);
-//                TestUtils.assertEquals("11\n", sink);
+
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedAll, sink, resultSet);
+                }
+
+                TestUtils.assertEquals(expectedAll, sink);
+
+                // exercise parameters on select statement
+                execSelectWithParam(select, 9);
+                TestUtils.assertEquals("9\n", sink);
+
+                execSelectWithParam(select, 11);
+                TestUtils.assertEquals("11\n", sink);
 
             }
         });
