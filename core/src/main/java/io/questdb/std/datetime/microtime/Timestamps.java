@@ -284,7 +284,7 @@ final public class Timestamps {
      * 2001-01-01T00:00:00.000Z
      *
      * @param micros timestamp to floor in microseconds since epoch
-     * @return given timestamp floored to the first day of the millenia with time set to 00:00:00.000
+     * @return given timestamp floored to the first day of the millennia with time set to 00:00:00.000
      */
     public static long floorMillennium(long micros) {
         int year = getYear(micros);
@@ -340,6 +340,10 @@ final public class Timestamps {
         return (int) ((micros - yearMicros) / DAY_MICROS) + 1;
     }
 
+    public static int getDayOfTheWeekOfEndOfYear(int year) {
+        return (year + Math.abs(year / 4) + Math.abs(year / 100) + Math.abs(year / 400)) % 7;
+    }
+
     public static int getDayOfWeek(long micros) {
         // 1970-01-01 is Thursday.
         long d;
@@ -368,13 +372,6 @@ final public class Timestamps {
         return 1 + (int) ((d + 4) % 7);
     }
 
-    public static int getDayOfYear(long micros) {
-        final int year = getYear(micros);
-        final boolean leap = isLeapYear(year);
-        final long yearStart = yearMicros(year, leap);
-        return (int) ((micros - yearStart) / DAY_MICROS) + 1;
-    }
-
     public static long getDaysBetween(long a, long b) {
         return Math.abs(a - b) / DAY_MICROS;
     }
@@ -394,6 +391,17 @@ final public class Timestamps {
         return getYear(micros) / 10;
     }
 
+    public static int getDow(long micros) {
+        return getDayOfWeekSundayFirst(micros) - 1;
+    }
+
+    public static int getDoy(long micros) {
+        final int year = getYear(micros);
+        final boolean leap = isLeapYear(year);
+        final long yearStart = yearMicros(year, leap);
+        return (int) ((micros - yearStart) / DAY_MICROS) + 1;
+    }
+
     public static int getHourOfDay(long micros) {
         if (micros > -1) {
             return (int) ((micros / HOUR_MICROS) % DAY_HOURS);
@@ -406,12 +414,31 @@ final public class Timestamps {
         return Math.abs(a - b) / HOUR_MICROS;
     }
 
+    public static long getMicrosOfMinute(long micros) {
+        if (micros > -1) {
+            return micros % MINUTE_MICROS;
+        } else {
+            return MINUTE_MICROS - 1 + (micros + 1) % MINUTE_MICROS;
+        }
+    }
+
     public static int getMicrosOfSecond(long micros) {
         if (micros > -1) {
             return (int) (micros % MILLI_MICROS);
         } else {
             return (int) (MILLI_MICROS - 1 + ((micros + 1) % MILLI_MICROS));
         }
+    }
+
+    // Years in the 1900s are in the second millennium. The third millennium started January 1, 2001.
+    public static int getMillennium(long micros) {
+        int year = getYear(micros);
+        int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;
+        return millenniumFirstYear / 1000 + 1;
+    }
+
+    public static long getMillisOfMinute(long micros) {
+        return getMicrosOfMinute(micros) / 1000;
     }
 
     public static int getMillisOfSecond(long micros) {
@@ -432,6 +459,12 @@ final public class Timestamps {
 
     public static long getMinutesBetween(long a, long b) {
         return Math.abs(a - b) / MINUTE_MICROS;
+    }
+
+    public static int getMonthOfYear(long micros) {
+        final int y = Timestamps.getYear(micros);
+        final boolean leap = Timestamps.isLeapYear(y);
+        return getMonthOfYear(micros, y, leap);
     }
 
     /**
@@ -505,6 +538,12 @@ final public class Timestamps {
         }
     }
 
+    // The quarter of the year (1–4) that the date is in
+    public static int getQuarter(long micros) {
+        final int month = getMonthOfYear(micros);
+        return ((month - 1) / 3) + 1;
+    }
+
     public static int getSecondOfMinute(long micros) {
         if (micros > -1) {
             return (int) ((micros / SECOND_MICROS) % MINUTE_SECONDS);
@@ -515,6 +554,45 @@ final public class Timestamps {
 
     public static long getSecondsBetween(long a, long b) {
         return Math.abs(a - b) / SECOND_MICROS;
+    }
+
+    // https://en.wikipedia.org/wiki/ISO_week_date
+    public static int getWeek(long micros) {
+        int w = (10 + getDoy(micros) - getDayOfWeek(micros)) / 7;
+        int y = getYear(micros);
+        if (w < 1) {
+            return getWeeks(y - 1);
+        }
+
+        if (w > getWeeks(y)) {
+            return 1;
+        }
+
+        return w;
+    }
+
+    // Each ISO 8601 week-numbering year begins with the Monday of the week containing the 4th of January,
+    // so in early January or late December the ISO year may be different from the Gregorian year.
+    // See the getWeek() method for more information.
+    public static int getIsoYear(long micros) {
+        int w = (10 + getDoy(micros) - getDayOfWeek(micros)) / 7;
+        int y = getYear(micros);
+        if (w < 1) {
+            return y - 1;
+        }
+
+        if (w > getWeeks(y)) {
+            return y + 1;
+        }
+
+        return y;
+    }
+
+    public static int getWeeks(int y) {
+        if (getDayOfTheWeekOfEndOfYear(y) == 4 || getDayOfTheWeekOfEndOfYear(y - 1) == 3) {
+            return 53;
+        }
+        return 52;
     }
 
     public static long getWeeksBetween(long a, long b) {

@@ -834,20 +834,6 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'n';
     }
 
-    public static boolean isJulianKeyword(CharSequence tok) {
-        if (tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'j'
-                && (tok.charAt(i++) | 32) == 'u'
-                && (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i) | 32) == 'n';
-    }
-
     public static boolean isLastFunction(CharSequence tok) {
         if (tok.length() != 4) {
             return false;
@@ -1011,6 +997,7 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'u'
                 && (tok.charAt(i)) == 'm';
     }
 
@@ -1022,9 +1009,9 @@ public class SqlKeywords {
         int i = 0;
         return (tok.charAt(i++) | 32) == 'm'
                 && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i++) | 32) == 'r'
-                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'i'
                 && (tok.charAt(i++) | 32) == 's'
                 && (tok.charAt(i++) | 32) == 'e'
                 && (tok.charAt(i++) | 32) == 'c'
@@ -1049,7 +1036,7 @@ public class SqlKeywords {
     }
 
     public static boolean isMonthKeyword(CharSequence tok) {
-        if (tok.length() != 6) {
+        if (tok.length() != 5) {
             return false;
         }
 

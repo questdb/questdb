@@ -86,51 +86,47 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (SqlKeywords.isIsoDowKeyword(part)) {
-            return null;
+            return new IsoDowFunction(arg);
         }
 
         if (SqlKeywords.isIsoYearKeyword(part)) {
-            return null;
-        }
-
-        if (SqlKeywords.isJulianKeyword(part)) {
-            return null;
+            return new IsoYearFunction(arg);
         }
 
         if (SqlKeywords.isMicrosecondsKeyword(part)) {
-            return null;
+            return new MicrosecondsFunction(arg);
         }
 
         if (SqlKeywords.isMillenniumKeyword(part)) {
-            return null;
+            return new MillenniumFunction(arg);
         }
 
         if (SqlKeywords.isMillisecondsKeyword(part)) {
-            return null;
+            return new MillisecondsFunction(arg);
         }
 
         if (SqlKeywords.isMinuteKeyword(part)) {
-            return null;
+            return new MinuteOfHourFunctionFactory.MinuteFunction(arg);
         }
 
         if (SqlKeywords.isMonthKeyword(part)) {
-            return null;
+            return new MonthOfYearFunctionFactory.MonthOfYearFunction(arg);
         }
 
         if (SqlKeywords.isQuarterKeyword(part)) {
-            return null;
+            return new QuarterFunction(arg);
         }
 
         if (SqlKeywords.isSecondKeyword(part)) {
-            return null;
+            return new SecondOfMinuteFunctionFactory.SecondOfMinuteFunc(arg);
         }
 
         if (SqlKeywords.isWeekKeyword(part)) {
-            return null;
+            return new WeekFunction(arg);
         }
 
         if (SqlKeywords.isYearKeyword(part)) {
-            return null;
+            return new YearFunctionFactory.YearFunction(arg);
         }
 
         throw SqlException.position(argPositions.getQuick(0)).put("unsupported part '").put(part).put('\'');
@@ -202,7 +198,7 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
             if (value != Numbers.LONG_NaN) {
-                return Timestamps.getDayOfWeekSundayFirst(value) - 1;
+                return Timestamps.getDow(value);
             }
             return Numbers.INT_NaN;
         }
@@ -226,7 +222,55 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
             if (value != Numbers.LONG_NaN) {
-                return Timestamps.getDayOfYear(value);
+                return Timestamps.getDoy(value);
+            }
+            return Numbers.INT_NaN;
+        }
+    }
+
+    static final class WeekFunction extends IntFunction implements UnaryFunction {
+
+        private final Function arg;
+
+        public WeekFunction(Function arg) {
+            super();
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getWeek(value);
+            }
+            return Numbers.INT_NaN;
+        }
+    }
+
+    static final class IsoYearFunction extends IntFunction implements UnaryFunction {
+
+        private final Function arg;
+
+        public IsoYearFunction(Function arg) {
+            super();
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getIsoYear(value);
             }
             return Numbers.INT_NaN;
         }
@@ -255,4 +299,125 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             return Numbers.LONG_NaN;
         }
     }
+
+    static final class MicrosecondsFunction extends LongFunction implements UnaryFunction {
+
+        private final Function arg;
+
+        public MicrosecondsFunction(Function arg) {
+            super();
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getMicrosOfMinute(value);
+            }
+            return Numbers.LONG_NaN;
+        }
+    }
+
+    static final class MillisecondsFunction extends LongFunction implements UnaryFunction {
+
+        private final Function arg;
+
+        public MillisecondsFunction(Function arg) {
+            super();
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getMillisOfMinute(value);
+            }
+            return Numbers.LONG_NaN;
+        }
+    }
+
+    static final class IsoDowFunction extends IntFunction implements UnaryFunction {
+
+        private final Function arg;
+
+        public IsoDowFunction(Function arg) {
+            super();
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getDayOfWeek(value);
+            }
+            return Numbers.INT_NaN;
+        }
+    }
+
+    static final class MillenniumFunction extends IntFunction implements UnaryFunction {
+
+        private final Function arg;
+
+        public MillenniumFunction(Function arg) {
+            super();
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getMillennium(value);
+            }
+            return Numbers.INT_NaN;
+        }
+    }
+
+    static final class QuarterFunction extends IntFunction implements UnaryFunction {
+
+        private final Function arg;
+
+        public QuarterFunction(Function arg) {
+            super();
+            this.arg = arg;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public int getInt(Record rec) {
+            final long value = arg.getTimestamp(rec);
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getQuarter(value);
+            }
+            return Numbers.INT_NaN;
+        }
+    }
+
 }
