@@ -49,6 +49,12 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpStatic() {
+        // Some tests, e.g. testNoLimitJit, may lead to only a fraction of the page frames being
+        // reduced in the middle of the test. When that happens, row id and column lists' capacities
+        // don't get reset to initial values, so the memory leak check fails. So, we use a single
+        // shard only to let subsequent query executions within the same test release the memory.
+        // TODO: come up with a better solution
+        pageFrameReduceShardCount = 1;
         // We intentionally use a small capacity for the reduce queue to exhibit various edge cases.
         pageFrameReduceQueueCapacity = 4;
 
@@ -257,10 +263,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 while (true) {
                     long cursor = subSeq.nextBully();
                     PageFrameReduceTask task = queue.get(cursor);
-                    if (task.getFrameSequence() == frameSequence) {
+                    PageFrameSequence<?> taskSequence = task.getFrameSequence();
+                    if (taskSequence == frameSequence) {
                         frameCount++;
                         task.collected();
-                        if (frameCount == task.getFrameSequence().getFrameCount()) {
+                        if (frameCount == taskSequence.getFrameCount()) {
                             subSeq.done(cursor);
                             break;
                         }

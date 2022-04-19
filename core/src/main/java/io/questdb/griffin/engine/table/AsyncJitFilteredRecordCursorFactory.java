@@ -201,7 +201,9 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
         // Use JIT-compiled filter.
 
         final long columnCount = pageAddressCache.getColumnCount();
-        columns.setCapacity(columnCount);
+        if (columns.getCapacity() < columnCount) {
+            columns.setCapacity(columnCount);
+        }
         columns.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columns.add(pageAddressCache.getPageAddress(task.getFrameIndex(), columnIndex));

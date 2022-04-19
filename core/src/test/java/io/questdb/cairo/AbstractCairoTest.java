@@ -85,6 +85,7 @@ public class AbstractCairoTest {
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
     protected static int queryCacheEventQueueCapacity = -1;
+    protected static int pageFrameReduceShardCount = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
 
     @Rule
@@ -268,6 +269,11 @@ public class AbstractCairoTest {
             @Override
             public int getQueryCacheEventQueueCapacity() {
                 return queryCacheEventQueueCapacity < 0 ? super.getQueryCacheEventQueueCapacity() : queryCacheEventQueueCapacity;
+            }
+
+            @Override
+            public int getPageFrameReduceShardCount() {
+                return pageFrameReduceShardCount < 0 ? super.getPageFrameReduceShardCount() : pageFrameReduceShardCount;
             }
 
             @Override

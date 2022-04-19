@@ -311,6 +311,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 PageFrameSequence<?> pageFrameSequence = pageFrameDispatchQueue.get(cursor).getFrameSequence();
 
                 if (pageFrameSequence == this) {
+                    pageFrameDispatchQueue.get(cursor).of(null);
                     dispatchSubSeq.done(cursor);
                     break;
                 }
@@ -319,6 +320,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 // they can end up being partially dispatched. This is done because we
                 // cannot afford to enter infinite loop here
                 PageFrameDispatchJob.handleTask(pageFrameSequence, rec, messageBus, true, circuitBreaker);
+                pageFrameDispatchQueue.get(cursor).of(null);
                 dispatchSubSeq.done(cursor);
             } else {
                 if (dispatchStartIndex.get() < frameCount) {

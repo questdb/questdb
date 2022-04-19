@@ -104,6 +104,7 @@ public class PageFrameDispatchJob implements Job, Closeable {
                         circuitBreakers[workerId]
                 );
             } finally {
+                dispatchQueue.get(dispatchCursor).of(null);
                 dispatchSubSeq.done(dispatchCursor);
             }
             return true;

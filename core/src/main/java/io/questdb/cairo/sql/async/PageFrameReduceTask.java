@@ -74,6 +74,8 @@ public class PageFrameReduceTask implements Closeable {
         if (frameIndex + 1 == frameCount) {
             frameSequence.reset();
         }
+
+        frameSequence = null;
     }
 
     public DirectLongList getColumns() {
