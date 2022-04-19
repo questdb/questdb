@@ -6949,6 +6949,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    @Test
+    public void testInvalidTypeUsedAsDesignatedTimestamp() throws Exception {
+        assertSyntaxError(
+                "CREATE TABLE ts_test ( close_date date ) timestamp(close_date);",
+                51,
+                "TIMESTAMP column expected [actual=DATE]"
+        );
+    }
+
     private void assertCreateTable(String expected, String ddl, TableModel... tableModels) throws SqlException {
         assertModel(expected, ddl, ExecutionModel.CREATE_TABLE, tableModels);
     }

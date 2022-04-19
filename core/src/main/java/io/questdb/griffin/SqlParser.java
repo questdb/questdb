@@ -502,7 +502,11 @@ public final class SqlParser {
         ExpressionNode timestamp = parseTimestamp(lexer, tok);
         if (timestamp != null) {
             // ignore index, validate column
-            getCreateTableColumnIndex(model, timestamp.token, timestamp.position);
+            int timestampIdx = getCreateTableColumnIndex(model, timestamp.token, timestamp.position);
+            int timestampType = model.getColumnType(timestampIdx);
+            if (timestampType != ColumnType.TIMESTAMP && timestampType != -1) { //type can be -1 for create table as select because types aren't known yet
+                throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
+            }
             model.setTimestamp(timestamp);
             tok = optTok(lexer);
         }
