@@ -506,16 +506,24 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
     }
-    @Test(expected = ServerConfigurationException.class)
-    public void testsIncorrectPropertyKeyError() throws IOException, JsonException, ServerConfigurationException {
 
-        InputStream inputStream = PropServerConfigurationTest.class.getResourceAsStream("/server.conf");
+    public void testValidationIsOffByDefault() throws IOException, JsonException, ServerConfigurationException {
         Properties properties = new Properties();
-        properties.load(inputStream);
-        properties.setProperty("this.will.throw", "Test");
-        properties.setProperty("this.will.also", "throw");
-
+        properties.setProperty("this.will.not.throw", "Test");
+        properties.setProperty("this.will.also.not", "throw");
         new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testValidation() throws IOException, JsonException, ServerConfigurationException {
+        try (InputStream inputStream = PropServerConfigurationTest.class.getResourceAsStream("/server.conf")) {
+            Properties properties = new Properties();
+            properties.load(inputStream);
+            properties.setProperty("this.will.throw", "Test");
+            properties.setProperty("this.will.also", "throw");
+
+            new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        }
     }
 
     @Test

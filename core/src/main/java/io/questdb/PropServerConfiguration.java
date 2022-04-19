@@ -380,7 +380,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
-        validateProperties(properties);
+        if (getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_ENABLED, false)) {
+            validateProperties(properties);
+        }
 
         this.log = log;
 
