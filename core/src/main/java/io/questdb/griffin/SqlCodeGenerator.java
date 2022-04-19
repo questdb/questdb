@@ -764,11 +764,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     jitFilter.compile(jitIRMem, jitOptions);
 
                     final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                    final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
 
                     LOG.info()
                             .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
-                    return new AsyncJitFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, bindVarFunctions, f, jitFilter, limitLoFunction);
+                    return new AsyncJitFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, bindVarFunctions, f, jitFilter, limitLoFunction, limitLoPos);
                 } catch (SqlException | LimitOverflowException ex) {
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
@@ -783,7 +784,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (factory.supportPageFrameCursor()) {
             final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
-            return new AsyncFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, f, limitLoFunction);
+            final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+            return new AsyncFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, f, limitLoFunction, limitLoPos);
         }
         return new FilteredRecordCursorFactory(factory, f);
     }
@@ -996,7 +998,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 executionContext.getMessageBus(),
                                 master,
                                 functionParser.parseFunction(filter, master.getMetadata(), executionContext),
-                                null
+                                null,
+                                0
                         );
                     } else {
                         master = new FilteredRecordCursorFactory(master, functionParser.parseFunction(filter, master.getMetadata(), executionContext));

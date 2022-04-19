@@ -642,7 +642,7 @@ public class LimitTest extends AbstractGriffinTest {
                 ") timestamp(timestamp)", sqlExecutionContext);
 
         String expectedMessage = "absolute LIMIT value is too large, maximum allowed value: " + maxLimit;
-        int expectedPosition = 0;
+        int expectedPosition = 34;
 
         String query = "select * from y where i > 0 limit -" + (maxLimit + 1);
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {

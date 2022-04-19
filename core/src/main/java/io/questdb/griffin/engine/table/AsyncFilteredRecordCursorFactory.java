@@ -54,6 +54,7 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     private final PageFrameSequence<Function> frameSequence;
     private final SCSequence collectSubSeq = new SCSequence();
     private final Function limitLoFunction;
+    private final int limitLoPos;
     private final int maxNegativeLimit;
     private DirectLongList negativeLimitRows;
 
@@ -62,7 +63,8 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
             MessageBus messageBus,
             RecordCursorFactory base,
             Function filter,
-            @Nullable Function limitLoFunction
+            @Nullable Function limitLoFunction,
+            int limitLoPos
     ) {
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
@@ -80,6 +82,7 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
         this.filter = filter;
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER);
         this.limitLoFunction = limitLoFunction;
+        this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
     }
 
@@ -118,7 +121,7 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
 
         if (order == ORDER_DESC) {
             if (rowsRemaining > maxNegativeLimit) {
-                throw SqlException.position(0).put("absolute LIMIT value is too large, maximum allowed value: ").put(maxNegativeLimit);
+                throw SqlException.position(limitLoPos).put("absolute LIMIT value is too large, maximum allowed value: ").put(maxNegativeLimit);
             }
             if (negativeLimitRows == null) {
                 negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
