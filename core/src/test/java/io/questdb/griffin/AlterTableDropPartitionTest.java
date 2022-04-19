@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -269,6 +270,39 @@ public class AlterTableDropPartitionTest extends AbstractGriffinTest {
                 assertPartitionResult("count\n0\n", "2020-01-01");
                 Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(path));
             }
+        });
+    }
+
+    @Test
+    public void testDropPartitionWithColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "x";
+            try (TableModel tm = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)) {
+                tm.col("inn", ColumnType.INT).timestamp("ts");
+                createPopulateTable(tm, 100, "2022-02-24", 3);
+            }
+
+            compile("alter table x add column lo LONG");
+            compile("insert into x " +
+                    "select x, timestamp_sequence('2022-02-26T23:59:59', 1000000), x " +
+                    "from long_sequence(199)");
+
+            compile("alter table x drop partition list '2022-02-26'");
+            compile("insert into x " +
+                    "select x, timestamp_sequence('2022-02-26T12', 10*60*1000000), x " +
+                    "from long_sequence(10)");
+
+            assertSql("x where ts in '2022-02-26'", "inn\tts\tlo\n" +
+                    "1\t2022-02-26T12:00:00.000000Z\t1\n" +
+                    "2\t2022-02-26T12:10:00.000000Z\t2\n" +
+                    "3\t2022-02-26T12:20:00.000000Z\t3\n" +
+                    "4\t2022-02-26T12:30:00.000000Z\t4\n" +
+                    "5\t2022-02-26T12:40:00.000000Z\t5\n" +
+                    "6\t2022-02-26T12:50:00.000000Z\t6\n" +
+                    "7\t2022-02-26T13:00:00.000000Z\t7\n" +
+                    "8\t2022-02-26T13:10:00.000000Z\t8\n" +
+                    "9\t2022-02-26T13:20:00.000000Z\t9\n" +
+                    "10\t2022-02-26T13:30:00.000000Z\t10\n");
         });
     }
 
