@@ -248,6 +248,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.YearFunctionFactory,
             io.questdb.griffin.engine.functions.date.MonthOfYearFunctionFactory,
             io.questdb.griffin.engine.functions.date.DaysPerMonthFunctionFactory,
+            io.questdb.griffin.engine.functions.date.ExtractFromTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.date.MicrosOfSecondFunctionFactory,
             io.questdb.griffin.engine.functions.date.MillisOfSecondFunctionFactory,
             io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory,

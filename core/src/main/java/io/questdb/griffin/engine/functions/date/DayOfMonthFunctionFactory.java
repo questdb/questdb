@@ -46,14 +46,14 @@ public class DayOfMonthFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new Func(arg);
+        return new DayOfMonthFunction(arg);
     }
 
-    private static final class Func extends IntFunction implements UnaryFunction {
+    static final class DayOfMonthFunction extends IntFunction implements UnaryFunction {
 
         private final Function arg;
 
-        public Func(Function arg) {
+        public DayOfMonthFunction(Function arg) {
             super();
             this.arg = arg;
         }

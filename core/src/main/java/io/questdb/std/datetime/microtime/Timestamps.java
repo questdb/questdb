@@ -43,6 +43,7 @@ final public class Timestamps {
     public static final long SECOND_MICROS = 1000000;
     public static final int SECOND_MILLIS = 1000;
     public static final long MILLI_MICROS = 1000;
+    public static final long FIRST_CENTURY_MICROS = -62135596800000000L;
     public static final int STATE_INIT = 0;
     public static final int STATE_UTC = 1;
     public static final int STATE_GMT = 2;
@@ -168,7 +169,7 @@ final public class Timestamps {
         boolean l;
         return yearMicros(y = getYear(micros), l = isLeapYear(y))
                 + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
-                + (getDayOfMonth(micros, y, m, l)) * DAY_MICROS ;
+                + (getDayOfMonth(micros, y, m, l)) * DAY_MICROS;
     }
 
     public static long ceilHH(long micros) {
@@ -187,6 +188,10 @@ final public class Timestamps {
                 + (getDaysPerMonth(m, l)) * DAY_MICROS;
     }
 
+    public static long ceilMS(long micros) {
+        return floorMS(micros) + MILLI_MICROS;
+    }
+
     public static long ceilSS(long micros) {
         return floorSS(micros) + SECOND_MICROS;
     }
@@ -203,17 +208,25 @@ final public class Timestamps {
         return toMicros(year, 12, 31, 23, 59) + 59 * SECOND_MILLIS + 999999L;
     }
 
+    /**
+     * Floor timestamp to the first day of the century and set to time to 00:00:00.000Z
+     * <br>
+     * Example: Timestamp representing 2008-01-01T04:15:11.123Z will be floored to
+     * 2001-01-01T00:00:00.000Z
+     *
+     * @param micros timestamp to floor in microseconds since epoch
+     * @return given timestamp floored to the first day of the century with time set to 00:00:00.000
+     */
+    public static long floorCentury(long micros) {
+        int year = getYear(micros);
+        int centuryFirstYear = (((year + 99) / 100) * 100) - 99;
+        boolean leapYear = isLeapYear(centuryFirstYear);
+        return yearMicros(centuryFirstYear, leapYear);
+    }
+
     public static long floorDD(long micros) {
         long result = micros - getTimeMicros(micros);
         return Math.min(result, micros);
-    }
-
-    public static long floorHH(long micros) {
-        return micros - micros % HOUR_MICROS;
-    }
-
-    public static long floorMI(long micros) {
-        return micros - micros % MINUTE_MICROS;
     }
 
     /**
@@ -230,10 +243,54 @@ final public class Timestamps {
         return floorDD(l);
     }
 
+    /**
+     * Floor timestamp to the first day of the decade and set to time to 00:00:00.000Z
+     * <br>
+     * Example: Timestamp representing 2008-01-01T04:15:11.123Z will be floored to
+     * 2000-01-01T00:00:00.000Z
+     *
+     * @param micros timestamp to floor in microseconds since epoch
+     * @return given timestamp floored to the first day of the decade with time set to 00:00:00.000
+     */
+    public static long floorDecade(long micros) {
+        int year = getYear(micros);
+        int decadeFirstYear = (year / 10) * 10;
+        boolean leapYear = isLeapYear(decadeFirstYear);
+        return yearMicros(decadeFirstYear, leapYear);
+    }
+
+    public static long floorHH(long micros) {
+        return micros - micros % HOUR_MICROS;
+    }
+
+    public static long floorMI(long micros) {
+        return micros - micros % MINUTE_MICROS;
+    }
+
     public static long floorMM(long micros) {
         int y;
         boolean l;
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
+    }
+
+    public static long floorMS(long micros) {
+        return micros - micros % MILLI_MICROS;
+    }
+
+    /**
+     * Floor timestamp to the first day of the millennia and set to time to 00:00:00.000Z
+     * <br>
+     * Example: Timestamp representing 2108-01-01T04:15:11.123Z will be floored to
+     * 2001-01-01T00:00:00.000Z
+     *
+     * @param micros timestamp to floor in microseconds since epoch
+     * @return given timestamp floored to the first day of the millenia with time set to 00:00:00.000
+     */
+    public static long floorMillennium(long micros) {
+        int year = getYear(micros);
+        int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;
+        boolean leapYear = isLeapYear(millenniumFirstYear);
+        return yearMicros(millenniumFirstYear, leapYear);
     }
 
     /**
@@ -254,69 +311,27 @@ final public class Timestamps {
         return yearMicros(year, leapYear) + monthOfYearMicros(month, leapYear);
     }
 
-    /**
-     * Floor timestamp to the first day of the decade and set to time to 00:00:00.000Z
-     * <br>
-     * Example: Timestamp representing 2008-01-01T04:15:11.123Z will be floored to
-     * 2000-01-01T00:00:00.000Z
-     *
-     * @param micros timestamp to floor in microseconds since epoch
-     * @return given timestamp floored to the first day of the decade with time set to 00:00:00.000
-     */
-    public static long floorDecade(long micros) {
-        int year = getYear(micros);
-        int decadeFirstYear = (year / 10) * 10;
-        boolean leapYear = isLeapYear(decadeFirstYear);
-        return yearMicros(decadeFirstYear, leapYear);
-    }
-
-    /**
-     * Floor timestamp to the first day of the century and set to time to 00:00:00.000Z
-     * <br>
-     * Example: Timestamp representing 2008-01-01T04:15:11.123Z will be floored to
-     * 2001-01-01T00:00:00.000Z
-     *
-     * @param micros timestamp to floor in microseconds since epoch
-     * @return given timestamp floored to the first day of the century with time set to 00:00:00.000
-     */
-    public static long floorCentury(long micros) {
-        int year = getYear(micros);
-        int centuryFirstYear = (((year + 99) / 100) * 100) - 99;
-        boolean leapYear = isLeapYear(centuryFirstYear);
-        return yearMicros(centuryFirstYear, leapYear);
-    }
-
-    /**
-     * Floor timestamp to the first day of the millenia and set to time to 00:00:00.000Z
-     * <br>
-     * Example: Timestamp representing 2108-01-01T04:15:11.123Z will be floored to
-     * 2001-01-01T00:00:00.000Z
-     *
-     * @param micros timestamp to floor in microseconds since epoch
-     * @return given timestamp floored to the first day of the millenia with time set to 00:00:00.000
-     */
-    public static long floorMillennium(long micros) {
-        int year = getYear(micros);
-        int millenniumFirstYear = (((year + 999) / 1000) * 1000) - 999;
-        boolean leapYear = isLeapYear(millenniumFirstYear);
-        return yearMicros(millenniumFirstYear, leapYear);
-    }
-
     public static long floorSS(long micros) {
         return micros - micros % SECOND_MICROS;
-    }
-
-    public static long floorMS(long micros) {
-        return micros - micros % MILLI_MICROS;
-    }
-
-    public static long ceilMS(long micros) {
-        return floorMS(micros) + MILLI_MICROS;
     }
 
     public static long floorYYYY(long micros) {
         int y;
         return yearMicros(y = getYear(micros), isLeapYear(y));
+    }
+
+    public static int getCentury(long micros) {
+        final int year = getYear(micros);
+        int century = year / 100;
+
+        if (year > century * 100) {
+            century++;
+        }
+
+        if (micros >= Timestamps.FIRST_CENTURY_MICROS) {
+            return century;
+        }
+        return century - 1;
     }
 
     public static int getDayOfMonth(long micros, int year, int month, boolean leap) {
@@ -353,6 +368,13 @@ final public class Timestamps {
         return 1 + (int) ((d + 4) % 7);
     }
 
+    public static int getDayOfYear(long micros) {
+        final int year = getYear(micros);
+        final boolean leap = isLeapYear(year);
+        final long yearStart = yearMicros(year, leap);
+        return (int) ((micros - yearStart) / DAY_MICROS) + 1;
+    }
+
     public static long getDaysBetween(long a, long b) {
         return Math.abs(a - b) / DAY_MICROS;
     }
@@ -366,6 +388,10 @@ final public class Timestamps {
      */
     public static int getDaysPerMonth(int m, boolean leap) {
         return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
+    }
+
+    public static int getDecade(long micros) {
+        return getYear(micros) / 10;
     }
 
     public static int getHourOfDay(long micros) {

@@ -130,6 +130,20 @@ class ExpressionParser {
         return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
     }
 
+    private boolean isExtractFunctionOnStack() {
+        boolean found = false;
+        for (int i = 0, n = opStack.size(); i < n; i++) {
+            ExpressionNode peek = opStack.peek(i);
+            if (Chars.equals(peek.token, '(')) {
+                if ((i + 1) < n && SqlKeywords.isExtractKeyword(opStack.peek(i + 1).token)) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        return found;
+    }
+
     private boolean isTypeQualifier() {
         return opStack.size() >= 2 && SqlKeywords.isColonColonKeyword(opStack.peek(1).token);
     }
@@ -1054,28 +1068,58 @@ class ExpressionParser {
                             opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.unquote(tok), Integer.MIN_VALUE, position));
                         }
                     } else {
-                        ExpressionNode last;
+                        ExpressionNode last = this.opStack.peek();
                         // Handle `timestamp with time zone`
-                        if ((last = this.opStack.peek()) != null && SqlKeywords.isTimestampKeyword(last.token) && SqlKeywords.isWithKeyword(tok)) {
-                            CharSequence withTok = GenericLexer.immutableOf(tok);
-                            int withTokPosition = lexer.getPosition();
-                            tok = SqlUtil.fetchNext(lexer);
-                            if (tok != null && SqlKeywords.isTimeKeyword(tok)) {
+                        if (last != null) {
+                            if (SqlKeywords.isTimestampKeyword(last.token) && SqlKeywords.isWithKeyword(tok)) {
+                                CharSequence withTok = GenericLexer.immutableOf(tok);
+                                int withTokPosition = lexer.getPosition();
                                 tok = SqlUtil.fetchNext(lexer);
-                                if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
-                                    CharSequence zoneTok = GenericLexer.immutableOf(tok);
-                                    int zoneTokPosition = lexer.getTokenHi();
+                                if (tok != null && SqlKeywords.isTimeKeyword(tok)) {
                                     tok = SqlUtil.fetchNext(lexer);
-                                    // Next token is string literal, or we are in 'as' part of cast function
-                                    boolean isInActiveCastAs = (castBraceCountStack.size() > 0 && (castBraceCountStack.size() == castAsCount));
-                                    if (tok != null && (isInActiveCastAs || tok.charAt(0) == '\'')) {
-                                        lexer.backTo(zoneTokPosition, zoneTok);
-                                        continue;
+                                    if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
+                                        CharSequence zoneTok = GenericLexer.immutableOf(tok);
+                                        int zoneTokPosition = lexer.getTokenHi();
+                                        tok = SqlUtil.fetchNext(lexer);
+                                        // Next token is string literal, or we are in 'as' part of cast function
+                                        boolean isInActiveCastAs = (castBraceCountStack.size() > 0 && (castBraceCountStack.size() == castAsCount));
+                                        if (tok != null && (isInActiveCastAs || tok.charAt(0) == '\'')) {
+                                            lexer.backTo(zoneTokPosition, zoneTok);
+                                            continue;
+                                        }
+                                        throw SqlException.$(zoneTokPosition, "String literal expected after 'timestamp with time zone'");
                                     }
-                                    throw SqlException.$(zoneTokPosition, "String literal expected after 'timestamp with time zone'");
+                                }
+                                lexer.backTo(withTokPosition, withTok);
+                            } else if (SqlKeywords.isFromKeyword(tok)) {
+                                // check if this is "extract(something from ...)"
+                                // we can do this by analyzing opStack
+                                if (opStack.size() > 2) {
+                                    ExpressionNode member = opStack.peek(0);
+                                    if (member.type == ExpressionNode.LITERAL) {
+                                        if (Chars.equals(opStack.peek(1).token, '(')) {
+                                            if (SqlKeywords.isExtractKeyword(opStack.peek(2).token)) {
+                                                // in this case "from" keyword acts as ',' in function call
+                                                member.type = ExpressionNode.MEMBER_ACCESS;
+                                                argStackDepth = onNode(
+                                                        listener,
+                                                        member,
+                                                        argStackDepth
+                                                );
+                                                opStack.pop();
+                                                paramCount++;
+                                                thisBranch = BRANCH_COMMA;
+                                                continue;
+                                            }
+                                        }
+                                    } else {
+                                        boolean found = isExtractFunctionOnStack();
+                                        if (found) {
+                                            throw SqlException.$(member.position, "did you mean 'hour'?");
+                                        }
+                                    }
                                 }
                             }
-                            lexer.backTo(withTokPosition, withTok);
                         }
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
