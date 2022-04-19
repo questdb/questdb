@@ -870,13 +870,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.isStringAsTagSupported = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_AS_TAG_SUPPORTED, false);
                 String floatDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_FLOAT_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.DOUBLE));
                 this.floatDefaultColumnType = ColumnType.tagOf(floatDefaultColumnTypeName);
-                if (this.floatDefaultColumnType == -1) {
+                if (floatDefaultColumnType != ColumnType.DOUBLE && floatDefaultColumnType != ColumnType.FLOAT) {
                     log.info().$("invalid default column type for float ").$(floatDefaultColumnTypeName).$("), will use DOUBLE").$();
                     this.floatDefaultColumnType = ColumnType.DOUBLE;
                 }
                 String integerDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_INTEGER_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.LONG));
                 this.integerDefaultColumnType = ColumnType.tagOf(integerDefaultColumnTypeName);
-                if (this.integerDefaultColumnType == -1) {
+                if (integerDefaultColumnType != ColumnType.LONG && integerDefaultColumnType != ColumnType.INT && integerDefaultColumnType != ColumnType.SHORT && integerDefaultColumnType != ColumnType.BYTE) {
                     log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$("), will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }

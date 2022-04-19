@@ -829,4 +829,112 @@ public class PropServerConfigurationTest {
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertEquals(SqlJitMode.JIT_MODE_DISABLED, configuration.getCairoConfiguration().getSqlJitMode());
     }
+
+    @Test
+    public void testDefaultAddColumnTypeForFloat() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+
+        // default
+        PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
+
+        // empty
+        properties.setProperty("line.float.default.column.type", "");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
+
+        // double
+        properties.setProperty("line.float.default.column.type", "DOUBLE");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
+
+        // float
+        properties.setProperty("line.float.default.column.type", "FLOAT");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.FLOAT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
+
+        // lowercase
+        properties.setProperty("line.float.default.column.type", "double");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
+
+        // camel case
+        properties.setProperty("line.float.default.column.type", "Float");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.FLOAT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
+
+        // not allowed
+        properties.setProperty("line.float.default.column.type", "STRING");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
+
+        // not allowed
+        properties.setProperty("line.float.default.column.type", "SHORT");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
+
+        // non existent type
+        properties.setProperty("line.float.default.column.type", "FLAT");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
+    }
+
+    @Test
+    public void testDefaultAddColumnTypeForInteger() throws ServerConfigurationException, JsonException {
+        Properties properties = new Properties();
+
+        // default
+        PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+
+        // empty
+        properties.setProperty("line.integer.default.column.type", "");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+
+        // long
+        properties.setProperty("line.integer.default.column.type", "LONG");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+
+        // int
+        properties.setProperty("line.integer.default.column.type", "INT");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.INT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+
+        // short
+        properties.setProperty("line.integer.default.column.type", "SHORT");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.SHORT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+
+        // byte
+        properties.setProperty("line.integer.default.column.type", "BYTE");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.BYTE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+
+        // lowercase
+        properties.setProperty("line.integer.default.column.type", "int");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.INT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+
+        // camel case
+        properties.setProperty("line.integer.default.column.type", "Short");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.SHORT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+
+        // not allowed
+        properties.setProperty("line.integer.default.column.type", "SYMBOL");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+
+        // not allowed
+        properties.setProperty("line.integer.default.column.type", "FLOAT");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+
+        // non existent type
+        properties.setProperty("line.integer.default.column.type", "BITE");
+        configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+    }
 }
