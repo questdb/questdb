@@ -56,6 +56,7 @@ public class TxSerializer {
     static long TX_OFFSET_STRUCT_VERSION = TX_OFFSET_STRUCT_VERSION_64;
     static long TX_OFFSET_MIN_TIMESTAMP = TX_OFFSET_MIN_TIMESTAMP_64;
     static long TX_OFFSET_MAX_TIMESTAMP = TX_OFFSET_MAX_TIMESTAMP_64;
+    static long TX_OFFSET_TRUNCATE_VERSION = TX_OFFSET_TRUNCATE_VERSION_64;
     static FilesFacade ff = new FilesFacadeImpl();
 
     /*
@@ -131,6 +132,7 @@ public class TxSerializer {
                 rwTxMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT, tx.TX_OFFSET_MAP_WRITER_COUNT);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION, tx.TX_OFFSET_PARTITION_TABLE_VERSION);
                 rwTxMem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, tx.TX_OFFSET_COLUMN_VERSION);
+                rwTxMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION, tx.TX_OFFSET_TRUNCATE_VERSION);
 
                 if (tx.TX_OFFSET_MAP_WRITER_COUNT != 0) {
                     int isym = 0;
@@ -183,6 +185,7 @@ public class TxSerializer {
                 tx.TX_OFFSET_MAP_WRITER_COUNT = roTxMem.getInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT);
                 tx.TX_OFFSET_PARTITION_TABLE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION);
                 tx.TX_OFFSET_COLUMN_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64);
+                tx.TX_OFFSET_TRUNCATE_VERSION = roTxMem.getLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION);
 
                 int symbolsCount = tx.TX_OFFSET_MAP_WRITER_COUNT;
                 tx.SYMBOLS = new ArrayList<>();
@@ -232,7 +235,6 @@ public class TxSerializer {
         System.out.println("usage: " + TxSerializer.class.getName() + " -s <json_path> <txn_path> | -d <json_path>");
     }
 
-    @SuppressWarnings("ReadWriteStringCanBeUsed")
     private void serializeFile(String jsonFile, String target) throws IOException {
         String json = new String(Files.readAllBytes(Paths.get(jsonFile)), StandardCharsets.UTF_8);
         serializeJson(json, target);

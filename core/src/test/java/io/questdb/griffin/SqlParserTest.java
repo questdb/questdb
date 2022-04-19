@@ -377,6 +377,39 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testBracedArithmeticsInsideCast() throws SqlException {
+        assertQuery(
+                "select-virtual cast(500000000000L + case(x > 400,x - 1,x),timestamp) ts from (select [x] from long_sequence(1000))",
+                "select cast((500000000000L + case when x > 400 then x - 1 else x end) as timestamp) ts from long_sequence(1000)",
+                modelOf("ts").col("ts", ColumnType.TIMESTAMP)
+        );
+        assertQuery(
+                "select-virtual cast(500000000000L + case(x > 400,x - 1 / 4 * 1000L + 4 - x - 1 % 4 * 89,x),timestamp) ts from (select [x] from long_sequence(1000))",
+                "select cast(" +
+                        "(500000000000L + " +
+                        "  case when x > 400 " +
+                        "    then ((x - 1) / 4) * 1000L + (4 - (x - 1) % 4) * 89 " +
+                        "  else x end) " +
+                        "as timestamp) ts from long_sequence(1000)",
+                modelOf("ts").col("ts", ColumnType.TIMESTAMP)
+        );
+        assertQuery(
+                "select-virtual x - 1 - x t1 from (select [x] from long_sequence(1000))",
+                "select (x - (1 - x)) as t1 from long_sequence(1000)",
+                modelOf("t1").col("t1", ColumnType.LONG)
+        );
+    }
+
+    @Test
+    public void testNestedCast() throws SqlException {
+        assertQuery(
+                "select-virtual cast(cast(1 + x / 2,int),timestamp) ts from (select [x] from long_sequence(1000))",
+                "select cast(cast((1 + x) / 2 as int) as timestamp) ts from long_sequence(1000)",
+                modelOf("ts").col("ts", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testBetweenUnfinished() throws Exception {
         assertSyntaxError("select tt from x where t between '2020-01-01'",
                 25,
