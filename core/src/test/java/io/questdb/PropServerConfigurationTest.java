@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SqlJitMode;
@@ -284,6 +285,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(500_000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
         Assert.assertEquals(30_000_000, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
         Assert.assertEquals(1023, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
+        Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
+        Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
@@ -713,6 +716,8 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(PartitionBy.MONTH, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
             Assert.assertEquals(5_000, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
             Assert.assertEquals(16, configuration.getCairoConfiguration().getPartitionPurgeListCapacity());
+            Assert.assertEquals(ColumnType.FLOAT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
+            Assert.assertEquals(ColumnType.INT, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
 
             Assert.assertTrue(configuration.getCairoConfiguration().getTelemetryConfiguration().getEnabled());
             Assert.assertEquals(512, configuration.getCairoConfiguration().getTelemetryConfiguration().getQueueCapacity());
