@@ -51,7 +51,6 @@ public class UpdateExecution implements Closeable {
     private final FilesFacade ff;
     private final int rootLen;
     private final IntList updateColumnIndexes = new IntList();
-    private final LongList updateColumnTops = new LongList();
     private final ObjList<MemoryCMR> baseMemory = new ObjList<>();
     private final ObjList<MemoryCMARW> updateMemory = new ObjList<>();
     private final long dataAppendPageSize;
@@ -111,10 +110,6 @@ public class UpdateExecution implements Closeable {
             updateColumnIndexes.add(tableColumnIndex);
         }
 
-        // Linearized matrix of adjusted column tops for all partitions and updated columns
-        // | ts0, c0, c1, ... , cN | ... | tsM, c0, c1, ... , cN |
-        updateColumnTops.setAll(tableWriter.getPartitionCount() * (updateColumnCount + 1), -1L);
-
         // Create update memory list of all columns to be updated
         initUpdateMemory(writerMetadata, updateColumnCount);
 
@@ -153,6 +148,7 @@ public class UpdateExecution implements Closeable {
                                 updateMemory,
                                 startPartitionRowId,
                                 firstUpdatedPartitionRowId);
+                        updateEffectiveColumnTops(tableWriter, currentPartitionIndex, updateColumnIndexes, updateColumnCount, firstUpdatedPartitionRowId);
                     }
 
                     openPartitionColumnsForRead(tableWriter, baseMemory, partitionIndex, updateColumnIndexes);
@@ -171,7 +167,8 @@ public class UpdateExecution implements Closeable {
                         updateMemory,
                         startPartitionRowId,
                         partitionRowId,
-                        masterRecord);
+                        masterRecord,
+                        firstUpdatedPartitionRowId);
 
                 startPartitionRowId = ++partitionRowId;
                 rowsUpdated++;
@@ -187,6 +184,7 @@ public class UpdateExecution implements Closeable {
                         updateMemory,
                         startPartitionRowId,
                         firstUpdatedPartitionRowId);
+                updateEffectiveColumnTops(tableWriter, currentPartitionIndex, updateColumnIndexes, updateColumnCount, firstUpdatedPartitionRowId);
             }
         } finally {
             Misc.freeObjList(baseMemory);
@@ -195,7 +193,6 @@ public class UpdateExecution implements Closeable {
             updateMemory.clear();
         }
         if (currentPartitionIndex > -1) {
-            updateColumnTops(tableWriter, updateColumnTops, updateColumnIndexes);
             rebuildIndexes(tableName, writerMetadata, tableWriter);
             tableWriter.commit();
             tableWriter.openLastPartition();
@@ -247,6 +244,32 @@ public class UpdateExecution implements Closeable {
         }
     }
 
+    private static void updateEffectiveColumnTops(
+            TableWriter tableWriter,
+            int partitionIndex,
+            IntList updateColumnIndexes,
+            int columnCount,
+            long firstUpdatedPartitionRowId
+    ) {
+        final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
+
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            final int updateColumnIndex = updateColumnIndexes.get(columnIndex);
+            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, updateColumnIndex, -1);
+            long effectiveColumnTop = calculatedEffectiveColumnTop(firstUpdatedPartitionRowId, columnTop);
+            if (effectiveColumnTop > -1L) {
+                tableWriter.upsertColumnVersion(partitionTimestamp, updateColumnIndex, effectiveColumnTop);
+            }
+        }
+    }
+
+    private static long calculatedEffectiveColumnTop(long firstUpdatedPartitionRowId, long columnTop) {
+        if (columnTop > -1L) {
+            return Math.min(firstUpdatedPartitionRowId, columnTop);
+        }
+        return firstUpdatedPartitionRowId;
+    }
+
     private void copyColumnValues(
             TableWriter tableWriter,
             int partitionIndex,
@@ -260,7 +283,6 @@ public class UpdateExecution implements Closeable {
         final TableWriterMetadata metadata = tableWriter.getMetadata();
         final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
         final long partitionSize = tableWriter.getPartitionSize(partitionIndex);
-
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             MemoryCMR baseFixedColumnFile = baseMemory.get(2 * columnIndex);
             MemoryCMARW updatedFixedColumnFile = updateMemory.get(2 * columnIndex);
@@ -268,12 +290,12 @@ public class UpdateExecution implements Closeable {
             MemoryCMARW updatedVariableColumnFile = updateMemory.get(2 * columnIndex + 1);
 
             final int updateColumnIndex = updateColumnIndexes.get(columnIndex);
-            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, updateColumnIndex, -1);
-
+            final long existingColumnTop = tableWriter.getColumnTop(partitionTimestamp, updateColumnIndex, -1);
+            final long columnTop = calculatedEffectiveColumnTop(firstUpdatedPartitionRowId, existingColumnTop);
             int columnType = metadata.getColumnType(updateColumnIndex);
-            int typeSize = getFixedColumnSize(columnType);
 
             if (partitionSize > startPartitionRowId) {
+                int typeSize = getFixedColumnSize(columnType);
                 fillUpdatesGap(
                         startPartitionRowId,
                         partitionSize,
@@ -282,17 +304,10 @@ public class UpdateExecution implements Closeable {
                         baseVariableColumnFile,
                         updatedVariableColumnFile,
                         columnTop,
+                        existingColumnTop,
                         columnType,
                         typeSize
                 );
-            }
-
-            int partitionPos = partitionIndex * (columnCount + 1);
-            updateColumnTops.set(partitionPos, partitionTimestamp);
-            if (columnTop > -1L) {
-                updateColumnTops.set(partitionPos + columnIndex + 1, Math.min(columnTop, firstUpdatedPartitionRowId));
-            } else {
-                updateColumnTops.set(partitionPos + columnIndex + 1, firstUpdatedPartitionRowId);
             }
         }
     }
@@ -450,10 +465,23 @@ public class UpdateExecution implements Closeable {
         path.trimTo(pathTrimToLen);
     }
 
-    private void fillUpdatesGap(long beginRowId, long endRowId, MemoryCMR basePrimaryColumnFile, MemoryCMARW updatedFixedColumnFile, MemoryCMR baseVariableColumnFile, MemoryCMARW updatedVariableColumnFile, long columnTop, int columnType, int typeSize) {
+    private void fillUpdatesGap(
+            long beginRowId,
+            long endRowId,
+            MemoryCMR basePrimaryColumnFile,
+            MemoryCMARW updatedFixedColumnFile,
+            MemoryCMR baseVariableColumnFile,
+            MemoryCMARW updatedVariableColumnFile,
+            long newColumnTop,
+            long existingColumnTop,
+            int columnType,
+            int typeSize
+    ) {
+        assert newColumnTop <= existingColumnTop || existingColumnTop < 0;
 
-        if (columnTop == -1) {
+        if (existingColumnTop == -1) {
             if (beginRowId > 0) {
+                // Column did not exist at the partition
                 fillUpdatesGapWithNull(
                         beginRowId,
                         endRowId,
@@ -465,7 +493,8 @@ public class UpdateExecution implements Closeable {
             }
         }
 
-        if (columnTop == 0) {
+        if (existingColumnTop == 0) {
+            // Column fully exists in the partition
             copyRecords(
                     beginRowId,
                     endRowId,
@@ -478,11 +507,11 @@ public class UpdateExecution implements Closeable {
             );
         }
 
-        if (columnTop > 0) {
-            if (beginRowId >= columnTop) {
+        if (existingColumnTop > 0) {
+            if (beginRowId >= existingColumnTop) {
                 copyRecords(
-                        beginRowId - columnTop,
-                        endRowId - columnTop,
+                        beginRowId - existingColumnTop,
+                        endRowId - existingColumnTop,
                         basePrimaryColumnFile,
                         updatedFixedColumnFile,
                         baseVariableColumnFile,
@@ -491,7 +520,8 @@ public class UpdateExecution implements Closeable {
                         typeSize
                 );
             } else {
-                if (endRowId <= columnTop) {
+                // beginRowId < existingColumnTop
+                if (endRowId <= existingColumnTop) {
                     if (beginRowId > 0) {
                         fillUpdatesGapWithNull(
                                 beginRowId,
@@ -503,17 +533,20 @@ public class UpdateExecution implements Closeable {
                         );
                     }
                 } else {
-                    fillUpdatesGapWithNull(
-                            beginRowId,
-                            columnTop,
-                            updatedFixedColumnFile,
-                            updatedVariableColumnFile,
-                            columnType,
-                            typeSize
-                    );
+                    // beginRowId < existingColumnTop &&  existingColumnTop < endRowId
+                    if (beginRowId > newColumnTop) {
+                        fillUpdatesGapWithNull(
+                                beginRowId,
+                                existingColumnTop,
+                                updatedFixedColumnFile,
+                                updatedVariableColumnFile,
+                                columnType,
+                                typeSize
+                        );
+                    }
                     copyRecords(
                             0,
-                            endRowId - columnTop,
+                            endRowId - existingColumnTop,
                             basePrimaryColumnFile,
                             updatedFixedColumnFile,
                             baseVariableColumnFile,
@@ -657,7 +690,8 @@ public class UpdateExecution implements Closeable {
             ObjList<MemoryCMARW> updateMemory,
             long startPartitionRowId,
             long partitionRowId,
-            Record masterRecord
+            Record masterRecord,
+            long firstUpdatedRowId
     ) throws SqlException {
         final TableWriterMetadata metadata = tableWriter.getMetadata();
         final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
@@ -668,8 +702,8 @@ public class UpdateExecution implements Closeable {
             MemoryCMARW updatedVariableColumnFile = updateMemory.get(2 * columnIndex + 1);
 
             final int updateColumnIndex = updateColumnIndexes.get(columnIndex);
-            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, updateColumnIndex, -1);
-
+            final long existingColumnTop = tableWriter.getColumnTop(partitionTimestamp, updateColumnIndex, -1);
+            final long columnTop = calculatedEffectiveColumnTop(firstUpdatedRowId, existingColumnTop);
             int columnType = metadata.getColumnType(updateColumnIndex);
             int typeSize = getFixedColumnSize(columnType);
 
@@ -682,6 +716,7 @@ public class UpdateExecution implements Closeable {
                         baseVariableColumnFile,
                         updatedVariableColumnFile,
                         columnTop,
+                        existingColumnTop,
                         columnType,
                         typeSize
                 );

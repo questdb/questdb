@@ -25,12 +25,12 @@
 package io.questdb.cutlass.line.tcp.load;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.BoolList;
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
-import io.questdb.std.ObjList;
-import io.questdb.std.Rnd;
+import io.questdb.cutlass.line.tcp.ColumnNameType;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
+
+import java.util.List;
 
 public class LineData {
     private final long timestampNanos;
@@ -66,18 +66,42 @@ public class LineData {
         add(tagName, tagValue, true);
     }
 
-    public String generateRandomUpdate(CharSequence tableName, Rnd rnd, short[] colTypes) {
-        int field = rnd.nextInt(values.size() - 1) + 1;
+    public String generateRandomUpdate(CharSequence tableName, List<ColumnNameType> metadata, Rnd rnd) {
+        int columnType;
+        CharSequence name;
+        int fieldIndex;
+
+        OUT:
+        while (true) {
+            for (int i = 0; i < metadata.size(); i++) {
+                name = metadata.get(i).columnName;
+                columnType = metadata.get(i).columnType;
+
+                for (int j = 0; j < names.size(); j++) {
+                    fieldIndex = j;
+                    if (Chars.equals(name, names.getQuick(j))) {
+                        break OUT;
+                    }
+                }
+            }
+        }
+
         double value = 500.0 + rnd.nextInt(1000);
         String valueStr = String.valueOf(value);
-        values.set(field, valueStr);
+        values.set(fieldIndex, valueStr);
 
-        boolean quote = field < tagsCount || colTypes[field - tagsCount] == ColumnType.STRING;
+        boolean quote = columnType == ColumnType.STRING || columnType == ColumnType.SYMBOL;
         if (quote) {
-            return String.format("update \"%s\" set %s='%s' where timestamp=CAST(%dL as timestamp)", tableName, names.getQuick(field), valueStr, timestampNanos / 1000);
+            return String.format("update \"%s\" set %s='%s' where timestamp='%s'", tableName, names.getQuick(fieldIndex), valueStr, TimestampsToString(timestampNanos / 1000));
         } else {
-            return String.format("update \"%s\" set %s=%s where timestamp=CAST(%dL as timestamp)", tableName, names.getQuick(field), valueStr, timestampNanos / 1000);
+            return String.format("update \"%s\" set %s=%s where timestamp='%s'", tableName, names.getQuick(fieldIndex), valueStr, TimestampsToString(timestampNanos / 1000));
         }
+    }
+
+    private String TimestampsToString(long uSecs) {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        TimestampFormatUtils.USEC_UTC_FORMAT.format(uSecs, null, null, sink);
+        return sink.toString();
     }
 
     private void add(CharSequence name, CharSequence value, boolean isTag) {

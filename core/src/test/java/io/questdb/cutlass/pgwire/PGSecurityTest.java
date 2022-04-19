@@ -25,10 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.std.Os;
-import org.junit.Assume;
-import org.junit.ClassRule;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.postgresql.util.PSQLException;
 
@@ -152,6 +149,7 @@ public class PGSecurityTest extends BasePGTest {
 
             try {
                 executeWithPg("update src set name = 'bar'");
+                Assert.fail("Should not be possible to update in Read-only mode");
             } catch (PSQLException e) {
                 // the parser does not support DELETE
                 assertContains(e.getMessage(), "Write permission denied");

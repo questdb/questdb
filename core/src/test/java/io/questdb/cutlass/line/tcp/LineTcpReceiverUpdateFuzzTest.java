@@ -24,6 +24,9 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
@@ -36,12 +39,15 @@ import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Hashtable;
+import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTest {
@@ -83,12 +89,22 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         runTest();
     }
 
+    @Test
+    public void testInsertUpdateWithColumnAdds() throws Exception {
+        initLoadParameters(50, 1, 2, 3, 75);
+        initUpdateParameters(15, 1);
+        initFuzzParameters(-1, -1, 2, 2, -1, false, false, false, false);
+        runTest();
+    }
+
     private void executeUpdate(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String sql, SCSequence waitSequence) throws SqlException {
         while (true) {
             try {
                 CompiledQuery cc;
                 cc = compiler.compile(sql, sqlExecutionContext);
-                cc.execute(waitSequence).await(10 * Timestamps.SECOND_MICROS);
+                try (QueryFuture qf = cc.execute(waitSequence)) {
+                    qf.await(10 * Timestamps.SECOND_MICROS);
+                }
                 return;
             } catch (ReaderOutOfDateException ex) {
                 // retry, e.g. continue
@@ -119,19 +135,20 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         }
     }
 
-    @Override
-    protected void waitDone() {
-        updatesDone.await();
-
-        SCSequence waitSequence = new SCSequence();
-        SqlCompiler compiler = compilers[0];
-        SqlExecutionContext executionContext = executionContexts[0];
-        for (String sql : updatesSql) {
-            try {
-                executeUpdate(compiler, executionContext, sql, waitSequence);
-            } catch (SqlException e) {
-                LOG.error().$("update failed").$((Throwable) e).$();
+    private List<ColumnNameType> getMetaData(Hashtable<CharSequence, ArrayList<ColumnNameType>> readerColumns, CharSequence tableName) {
+        if (readerColumns.contains(tableName)) {
+            return readerColumns.get(tableName);
+        }
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            TableReaderMetadata metadata = reader.getMetadata();
+            ArrayList<ColumnNameType> columns = new ArrayList<>();
+            for (int i = metadata.getColumnCount() - 1; i > -1L; i--) {
+                if (i != metadata.getTimestampIndex()) {
+                    columns.add(new ColumnNameType(metadata.getColumnName(i), metadata.getColumnType(i)));
+                }
             }
+            readerColumns.put(tableName, columns);
+            return columns;
         }
     }
 
@@ -159,10 +176,11 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     }
 
     private void startUpdateThread(final int threadId, SOCountDownLatch updatesDone) {
-        Rnd rnd = TestUtils.generateRandom();
+        Rnd rnd = new Rnd(7268482583166L, 1650364149333L);
         new Thread(() -> {
             String sql = "";
             try {
+                Hashtable<CharSequence, ArrayList<ColumnNameType>> readers = new Hashtable<>();
                 SCSequence waitSequence = new SCSequence();
                 SqlCompiler compiler = compilers[threadId];
                 SqlExecutionContext executionContext = executionContexts[threadId];
@@ -172,10 +190,14 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
 
                 for (int j = 0; j < numOfUpdates; j++) {
                     final CharSequence tableName = pickCreatedTableName(rnd);
+                    List<ColumnNameType> metadata = getMetaData(readers, tableName);
                     final TableData table = tables.get(tableName);
                     int lineNo = rnd.nextInt(table.size());
+
+                    Collections.shuffle(metadata);
                     LineData line = table.getLine(lineNo);
-                    sql = line.generateRandomUpdate(tableName, rnd, colTypes);
+
+                    sql = line.generateRandomUpdate(tableName, metadata, rnd);
                     executeUpdate(compiler, executionContext, sql, waitSequence);
                     this.updatesSql.add(sql);
                 }
@@ -186,5 +208,25 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 updatesDone.countDown();
             }
         }).start();
+    }
+
+    @Override
+    protected void waitDone() {
+        updatesDone.await();
+
+        SCSequence waitSequence = new SCSequence();
+        SqlCompiler compiler = compilers[0];
+        SqlExecutionContext executionContext = executionContexts[0];
+        for (String sql : updatesSql) {
+            try {
+                executeUpdate(compiler, executionContext, sql, waitSequence);
+            } catch (SqlException e) {
+                LOG.error().$("update failed").$((Throwable) e).$();
+            }
+        }
+
+        for (String sql : updatesSql) {
+            LOG.info().$(sql).$();
+        }
     }
 }
