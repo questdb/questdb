@@ -29,7 +29,7 @@ import java.util.ArrayList;
 import static io.questdb.cairo.TableUtils.TX_BASE_HEADER_SIZE;
 import static io.questdb.cairo.TableUtils.getPartitionTableIndexOffset;
 
-public class TxFileStruct {
+class TxFileStruct {
     public long TX_OFFSET_COLUMN_VERSION;
     public long TX_OFFSET_TXN;
     public long TX_OFFSET_TRANSIENT_ROW_COUNT;
@@ -39,6 +39,7 @@ public class TxFileStruct {
     public long TX_OFFSET_DATA_VERSION;
     public long TX_OFFSET_STRUCT_VERSION;
     public long TX_OFFSET_PARTITION_TABLE_VERSION;
+    public long TX_OFFSET_TRUNCATE_VERSION;
     public int TX_OFFSET_MAP_WRITER_COUNT;
     public ArrayList<SymbolInfo> SYMBOLS;
     public int ATTACHED_PARTITION_SIZE;
