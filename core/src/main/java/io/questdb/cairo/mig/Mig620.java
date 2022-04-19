@@ -59,6 +59,7 @@ public class Mig620 {
     private static final int TX_BASE_HEADER_SIZE_MIG = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_MIG + 4 + TX_BASE_HEADER_SECTION_PADDING_MIG, 64);
 
     private static final long TX_OFFSET_COLUMN_VERSION_MIG = 64;
+    private static final long TX_OFFSET_TRUNCATE_VERSION_MIG = 72;
     private static final long PARTITION_NAME_TX_OFFSET_MIG = 2;
     private static final int COLUMN_VERSION_FILE_HEADER_SIZE_MIG = 40;
     private static final int CV_OFFSET_VERSION_64 = 0;
@@ -247,6 +248,7 @@ public class Mig620 {
 
     private static void migrateTxn(MemoryMARW txMemory, int symbolCount, int partitionTableSize, long existingTotalSize, long txn) {
         txMemory.putInt(TX_OFFSET_COLUMN_VERSION_MIG, 0);
+        txMemory.putInt(TX_OFFSET_TRUNCATE_VERSION_MIG, 0);
 
         long pageAddress = txMemory.getPageAddress(0);
         Vect.memmove(pageAddress + TX_BASE_HEADER_SIZE_MIG, pageAddress, existingTotalSize);

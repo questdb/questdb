@@ -560,6 +560,7 @@ public final class TestUtils {
         }
 
         StringBuilder sql = new StringBuilder();
+        StringBuilder indexes = new StringBuilder();
         sql.append("create table ").append(tableName).append(" as (").append(Misc.EOL).append("select").append(Misc.EOL);
         for (int i = 0; i < tableModel.getColumnCount(); i++) {
             int colType = ColumnType.tagOf(tableModel.getColumnType(i));
@@ -582,6 +583,9 @@ public final class TestUtils {
                     break;
                 case ColumnType.SYMBOL:
                     sql.append("rnd_symbol(4,4,4,2) ").append(colName);
+                    if (tableModel.isIndexed(i)) {
+                        indexes.append(",index(").append(colName).append(") ");
+                    }
                     break;
                 case ColumnType.BOOLEAN:
                     sql.append("rnd_boolean() ").append(colName);
@@ -614,6 +618,7 @@ public final class TestUtils {
 
         sql.append(Misc.EOL + "from long_sequence(").append(totalRows).append(")");
         sql.append(")" + Misc.EOL);
+        sql.append(indexes);
         if (tableModel.getTimestampIndex() != -1) {
             CharSequence timestampCol = tableModel.getColumnName(tableModel.getTimestampIndex());
             sql.append(" timestamp(").append(timestampCol).append(")");

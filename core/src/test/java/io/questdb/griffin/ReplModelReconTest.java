@@ -719,10 +719,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
     }
 
     @Test
-    // this test fails because master and slave cannot reconcile the situation
-    // where column by the same name was first removed and then re-added. We need more information on
-    // column metadata to help us reconcile this. Until this time the test exists but fails. When
-    // new information is added on column metadata - the test can be uncommented and completed
     public void testOrderedRemoveAndReAddColumnSameNameNotLast() throws Exception {
         assertMemoryLeak(() -> {
             compile(

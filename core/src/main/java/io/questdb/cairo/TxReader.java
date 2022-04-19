@@ -47,6 +47,7 @@ public class TxReader implements Closeable, Mutable {
     protected long maxTimestamp;
     protected long txn;
     protected int symbolColumnCount;
+    protected long truncateVersion;
     protected long dataVersion;
     protected long structureVersion;
     protected long fixedRowCount;
@@ -185,6 +186,10 @@ public class TxReader implements Closeable, Mutable {
         return transientRowCount;
     }
 
+    public long getTruncateVersion() {
+        return truncateVersion;
+    }
+
     public long getTxn() {
         return txn;
     }
@@ -210,6 +215,7 @@ public class TxReader implements Closeable, Mutable {
             this.partitionTableVersion = getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
             final long prevColumnVersion = this.columnVersion;
             this.columnVersion = unsafeReadColumnVersion();
+            this.truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
             this.symbolColumnCount = this.symbolsSize / 8;
 
             unsafeLoadSymbolCounts(symbolColumnCount);
@@ -440,6 +446,7 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_STRUCT_VERSION_64, structureVersion);
         mem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
+        mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         int symbolMapCount = symbolCountSnapshot.size();

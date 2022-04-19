@@ -99,6 +99,60 @@ public class TruncateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testTruncateWithColumnTop() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    compile(
+                            "create table testTruncateWithColumnTop as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                                    " timestamp_sequence(0, 100000000) k " +
+                                    " from long_sequence(100)" +
+                                    ") timestamp (k) partition by day"
+                    );
+
+                    compile("alter table testTruncateWithColumnTop add column colum_with_top int");
+
+                    compile(
+                            "insert into testTruncateWithColumnTop " +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                                    " timestamp_sequence('1970-01-01T12', 10000) k," +
+                                    " x as colum_with_top " +
+                                    " from long_sequence(1000)"
+                    );
+
+                    assertQuery(
+                            "count\n" +
+                                    "1100\n",
+                            "select count() from testTruncateWithColumnTop",
+                            null,
+                            false,
+                            true
+                    );
+
+                    Assert.assertEquals(TRUNCATE, compiler.compile("truncate table testTruncateWithColumnTop", sqlExecutionContext).getType());
+
+                    compile(
+                            "insert into testTruncateWithColumnTop " +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                                    " timestamp_sequence('1970-01-01T12', 10000) k, " +
+                                    " x as colum_with_top " +
+                                    " from long_sequence(1000)"
+                    );
+
+                    assertSql("select colum_with_top from testTruncateWithColumnTop limit -2", "colum_with_top\n" +
+                            "999\n" +
+                            "1000\n");
+                }
+        );
+    }
+
+    @Test
     public void testHappyPath() throws Exception {
         assertMemoryLeak(
                 () -> {

@@ -51,13 +51,13 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     @Override
-    public void close() {
-        mem.close(false);
+    public void clear() {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public void clear() {
-        throw new UnsupportedOperationException();
+    public void close() {
+        mem.close(false);
     }
 
     @Override
@@ -90,6 +90,15 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         if (recordIndex >= 0) {
             getCachedList().setQuick(recordIndex + 3, 0);
             hasChanges = true;
+        }
+    }
+
+    public void truncate() {
+        LongList cachedList = getCachedList();
+        if (cachedList.size() > 0) {
+            cachedList.clear();
+            hasChanges = true;
+            commit();
         }
     }
 

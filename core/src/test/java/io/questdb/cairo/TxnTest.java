@@ -387,7 +387,7 @@ public class TxnTest extends AbstractCairoTest {
                 start.await();
                 for (int j = 0; j < iterations; j++) {
                     if (j % truncateIteration == 0) {
-                        txWriter.truncate();
+                        txWriter.truncate(0);
                         LOG.info().$("writer truncated at ").$(txWriter.getTxn()).$();
                         // Create last partition back.
                         txWriter.maxTimestamp = (maxPartitionCount + 1) * Timestamps.HOUR_MICROS;

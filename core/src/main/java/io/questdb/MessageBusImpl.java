@@ -66,6 +66,10 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final MPSequence tableWriterEventPubSeq;
     private final FanOut tableWriterEventSubSeq;
+
+    private final MPSequence queryCacheEventPubSeq;
+    private final FanOut queryCacheEventSubSeq;
+
     private final CairoConfiguration configuration;
     private final RingQueue<ColumnVersionPurgeTask> columnVersionPurgeQueue;
     private final SCSequence columnVersionPurgeSubSeq;
@@ -118,11 +122,14 @@ public class MessageBusImpl implements MessageBus {
                 configuration.getWriterCommandQueueSlotSize(),
                 configuration.getWriterCommandQueueCapacity(),
                 MemoryTag.NATIVE_REPL
-
         );
         this.tableWriterEventPubSeq = new MPSequence(this.tableWriterEventQueue.getCycle());
         this.tableWriterEventSubSeq = new FanOut();
         this.tableWriterEventPubSeq.then(this.tableWriterEventSubSeq).then(this.tableWriterEventPubSeq);
+
+        this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
+        this.queryCacheEventSubSeq = new FanOut();
+        this.queryCacheEventPubSeq.then(this.queryCacheEventSubSeq).then(this.queryCacheEventPubSeq);
 
         this.columnVersionPurgeQueue = new RingQueue<>(ColumnVersionPurgeTask::new, configuration.getColumnVersionPurgeQueueCapacity());
         this.columnVersionPurgeSubSeq = new SCSequence();
@@ -283,5 +290,15 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getVectorAggregateSubSeq() {
         return vectorAggregateSubSeq;
+    }
+
+    @Override
+    public MPSequence getQueryCacheEventPubSeq() {
+        return queryCacheEventPubSeq;
+    }
+
+    @Override
+    public FanOut getQueryCacheEventFanOut() {
+        return queryCacheEventSubSeq;
     }
 }

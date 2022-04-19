@@ -122,8 +122,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.alterStartFullTimeoutNs = engine.getConfiguration().getWriterAsyncCommandMaxTimeout() * 1000;
     }
 
-
-
     @Override
     public void close() {
         Misc.free(compiler);

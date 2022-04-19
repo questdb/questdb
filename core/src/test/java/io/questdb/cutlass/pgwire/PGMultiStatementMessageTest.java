@@ -24,8 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -38,14 +36,11 @@ import java.sql.*;
 import java.util.Arrays;
 
 import static org.junit.Assert.*;
-import static org.junit.Assert.assertEquals;
 
 /**
  * Class contains tests of PostgreSQL simple query statements containing multiple commands separated by ';'
  */
 public class PGMultiStatementMessageTest extends BasePGTest {
-
-    private static final Log LOG = LogFactory.getLog(PGMultiStatementMessageTest.class);
 
     //https://github.com/questdb/questdb/issues/1777
     //all of these commands are no-op (at the moment)

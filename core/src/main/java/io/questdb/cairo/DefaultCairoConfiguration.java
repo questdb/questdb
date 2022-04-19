@@ -716,4 +716,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public boolean isParallelIndexingEnabled() {
         return true;
     }
+
+    @Override
+    public int getQueryCacheEventQueueCapacity() {
+        return 4;
+    }
 }

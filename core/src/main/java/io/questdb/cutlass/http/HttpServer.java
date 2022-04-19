@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -35,9 +36,7 @@ import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.EagerThreadSetup;
-import io.questdb.mp.Job;
-import io.questdb.mp.WorkerPool;
+import io.questdb.mp.*;
 import io.questdb.network.IOContextFactory;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
@@ -61,7 +60,7 @@ public class HttpServer implements Closeable {
     private final WorkerPool workerPool;
     private final WaitProcessor rescheduleContext;
 
-    public HttpServer(HttpMinServerConfiguration configuration, Metrics metrics, WorkerPool pool, boolean localPool) {
+    public HttpServer(HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool, boolean localPool) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
 
@@ -85,6 +84,11 @@ public class HttpServer implements Closeable {
 
         for (int i = 0; i < workerCount; i++) {
             final int index = i;
+
+            final SCSequence queryCacheEventSubSeq = new SCSequence();
+            final FanOut queryCacheEventFanOut = messageBus.getQueryCacheEventFanOut();
+            queryCacheEventFanOut.and(queryCacheEventSubSeq);
+
             pool.assign(i, new Job() {
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
                 private final IORequestProcessor<HttpConnectionContext> processor =
@@ -92,6 +96,14 @@ public class HttpServer implements Closeable {
 
                 @Override
                 public boolean run(int workerId) {
+                    long seq = queryCacheEventSubSeq.next();
+                    if (seq > -1) {
+                        // Queue is not empty, so flush query cache.
+                        LOG.info().$("flushing HTTP server query cache [worker=").$(workerId).$(']').$();
+                        QueryCache.getInstance().clear();
+                        queryCacheEventSubSeq.done(seq);
+                    }
+
                     boolean useful = dispatcher.processIOQueue(processor);
                     useful |= rescheduleContext.runReruns(selector);
 
@@ -105,6 +117,8 @@ public class HttpServer implements Closeable {
                 Misc.free(selectors.getQuick(index));
                 httpContextFactory.closeContextPool();
                 Misc.free(QueryCache.getInstance());
+                messageBus.getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
+                queryCacheEventSubSeq.clear();
             });
         }
     }
@@ -293,7 +307,7 @@ public class HttpServer implements Closeable {
             DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
-        final HttpServer s = new HttpServer(configuration, metrics, workerPool, localPool);
+        final HttpServer s = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, localPool);
         QueryCache.configure(configuration);
         HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 configuration.getJsonQueryProcessorConfiguration(),
@@ -314,7 +328,7 @@ public class HttpServer implements Closeable {
             DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
-        final HttpServer s = new HttpServer(configuration, metrics, workerPool, localPool);
+        final HttpServer s = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool, localPool);
         s.bind(new HttpRequestProcessorFactory() {
             @Override
             public HttpRequestProcessor newInstance() {
