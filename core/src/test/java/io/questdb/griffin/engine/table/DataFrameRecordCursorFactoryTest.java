@@ -147,7 +147,24 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPageFrameBwdCursorNoColTops() throws Exception {
+        // pageFrameMaxSize < rowCount
+        testBwdPageFrameCursor(64, 8, -1);
+        testBwdPageFrameCursor(65, 8, -1);
+        // pageFrameMaxSize == rowCount
+        testBwdPageFrameCursor(64, 64, -1);
+        // pageFrameMaxSize > rowCount
+        testBwdPageFrameCursor(63, 64, -1);
+    }
+
+    @Test
     public void testPageFrameBwdCursorWithColTops() throws Exception {
+        // pageFrameMaxSize < rowCount
+        testBwdPageFrameCursor(64, 8, 3);
+        testBwdPageFrameCursor(64, 8, 8);
+        testBwdPageFrameCursor(65, 8, 11);
+        // pageFrameMaxSize == rowCount
+        testBwdPageFrameCursor(64, 64, 32);
         // pageFrameMaxSize > rowCount
         testBwdPageFrameCursor(63, 64, 61);
     }
@@ -173,7 +190,12 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
             final Rnd rnd = new Rnd();
             final long increment = 1000000 * 60L * 4;
 
-            // prepare the data
+            // memoize Rnd output to be able to iterate it in backwards direction
+            int[] rndInts = new int[rowCount];
+            long[] rndLongs = new long[rowCount];
+            CharSequence[] rndStrs = new CharSequence[rowCount];
+
+            // prepare the data, writing rows in the backward direction
             long timestamp = 0;
             try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
                 int iIndex = writer.getColumnIndex("i");
@@ -188,10 +210,13 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                     }
 
                     TableWriter.Row row = writer.newRow(timestamp += increment);
-                    row.putInt(iIndex, rnd.nextInt());
+                    rndInts[i] = rnd.nextInt();
+                    row.putInt(iIndex, rndInts[i]);
                     if (startTopAt > 0 && i >= startTopAt) {
-                        row.putLong(jIndex, rnd.nextLong());
-                        row.putStr(sIndex, rnd.nextChars(32));
+                        rndLongs[i] = rnd.nextLong();
+                        row.putLong(jIndex, rndLongs[i]);
+                        rndStrs[i] = rnd.nextChars(32).toString();
+                        row.putStr(sIndex, rndStrs[i]);
                     }
                     row.append();
                 }
@@ -232,8 +257,7 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
 
                 Assert.assertTrue(factory.supportPageFrameCursor());
 
-                rnd.reset();
-                long ts = 0;
+                long ts = (rowCount + 1) * increment;
                 int rowIndex = rowCount - 1;
                 final DirectCharSequence dcs = new DirectCharSequence();
                 try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_DESC)) {
@@ -250,27 +274,16 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                         long iStrColAddr = frame.getIndexPageAddress(3);
                         long dStrColAddr = frame.getPageAddress(3);
 
-                        for (long i = 0; i < len; i++) {
-                            System.out.print(Unsafe.getUnsafe().getInt(intColAddr + i * 4L));
-                            System.out.print(", ");
-                            System.out.print(Unsafe.getUnsafe().getLong(tsColAddr + i * 8L));
-                            System.out.print(", ");
-
-//                            Assert.assertEquals(rnd.nextInt(), Unsafe.getUnsafe().getInt(intColAddr + i * 4L));
-//                            Assert.assertEquals(ts += increment, Unsafe.getUnsafe().getLong(tsColAddr + i * 8L));
+                        for (long i = len - 1; i > -1; i--) {
+                            Assert.assertEquals(rndInts[rowIndex], Unsafe.getUnsafe().getInt(intColAddr + i * 4L));
+                            Assert.assertEquals(ts -= increment, Unsafe.getUnsafe().getLong(tsColAddr + i * 8L));
 
                             if (startTopAt > 0 && rowIndex >= startTopAt) {
-                                System.out.print(Unsafe.getUnsafe().getLong(longColAddr + i * 8L));
-                                System.out.print(", ");
-//                                Assert.assertEquals(rnd.nextLong(), Unsafe.getUnsafe().getLong(longColAddr + i * 8L));
+                                Assert.assertEquals(rndLongs[rowIndex], Unsafe.getUnsafe().getLong(longColAddr + i * 8L));
                                 final long strOffset = Unsafe.getUnsafe().getLong(iStrColAddr + i * 8);
                                 dcs.of(dStrColAddr + strOffset + 4, dStrColAddr + Unsafe.getUnsafe().getLong(iStrColAddr + i * 8 + 8));
-                                System.out.print(dcs);
-//                                TestUtils.assertEquals(rnd.nextChars(32), dcs);
-                            } else {
-                                System.out.print(", ");
+                                TestUtils.assertEquals(rndStrs[rowIndex], dcs);
                             }
-                            System.out.println();
                             rowIndex--;
                         }
                     }

@@ -87,18 +87,12 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
-        if (order == ORDER_ASC || order == ORDER_ANY) {
-            if (framingSupported) {
-                return initFwdPageFrameCursor(executionContext, dataFrameCursor);
-            } else {
-                return null;
-            }
-        }
-
         if (framingSupported) {
+            if (order == ORDER_ASC || order == ORDER_ANY) {
+                return initFwdPageFrameCursor(executionContext, dataFrameCursor);
+            }
             return initBwdPageFrameCursor(executionContext, dataFrameCursor);
         }
-
         return null;
     }
 
