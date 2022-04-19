@@ -61,8 +61,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
-    private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
+    private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
+    private static final Map<String, String> OBSOLETE_SETTINGS = new HashMap<>();
+    private static final Map<PropertyKey, String> DEPRECATED_SETTINGS = new HashMap<>();
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
@@ -72,6 +74,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final LineUdpReceiverConfiguration lineUdpReceiverConfiguration = new PropLineUdpReceiverConfiguration();
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     private final TelemetryConfiguration telemetryConfiguration = new PropTelemetryConfiguration();
+    private final boolean configValidationEnabled;
     private final int commitMode;
     private final boolean httpServerEnabled;
     private final int createAsSelectRetryCount;
@@ -380,11 +383,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             Log log,
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
-        if (getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_ENABLED, false)) {
-            validateProperties(properties);
-        }
 
+        this.configValidationEnabled = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_ENABLED, false);
         this.log = log;
+
+        validateProperties(properties);
 
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
 
@@ -3007,24 +3010,111 @@ public class PropServerConfiguration implements ServerConfiguration {
         WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
         WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
         WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
+
+        // OBSOLETE_SETTINGS;
+        // DEPRECATED_SETTINGS;
+
     }
 
-    private void validateProperties(Properties properties) throws ServerConfigurationException{
-        Set<String> propertyNames = properties.stringPropertyNames();
-        Set<String> incorrectNames = new HashSet<>();
-        boolean prop;
+    private static class ValidationResult {
+        public final boolean isError;
+        public final String message;
 
-        for (String keys : propertyNames) {
-            prop = PropertyKey.getByString(keys).isPresent();
-            if (!prop) {
-                incorrectNames.add(keys);
+        public ValidationResult(boolean isError, String message)
+        {
+            this.isError = isError;
+            this.message = message;
+        }
+    }
+
+    private static ValidationResult validate(Properties properties) {
+        Set<String> propertyNames = properties.stringPropertyNames();
+
+        // Settings that used to be valid but no longer are.
+        Map<String, String> obsolete = new HashMap<>();
+
+        // Settings that are still valid but are now superseded by newer ones.
+        Map<String, String> deprecated = new HashMap<>();
+
+        // Settings that are not valid. Either typos, or valid in future versions (in case of rollback).
+        Set<String> incorrect = new HashSet<>();
+
+        for (String propName : propertyNames) {
+            Optional<PropertyKey> prop = PropertyKey.getByString(propName);
+            if (prop.isPresent()) {
+                String deprecationMsg = DEPRECATED_SETTINGS.get(prop.get());
+                if (deprecationMsg != null) {
+                    deprecated.put(propName, deprecationMsg);
+                }
+            }
+            else {
+                String obsoleteMsg = OBSOLETE_SETTINGS.get(propName);
+                if (obsoleteMsg != null) {
+                    obsolete.put(propName, obsoleteMsg);
+                }
+                else {
+                    incorrect.add(propName);
+                }
             }
         }
-        if (!incorrectNames.isEmpty()){
-            if(incorrectNames.size() == 1){
-                throw new ServerConfigurationException(incorrectNames.toString());
+
+        if (obsolete.isEmpty() && deprecated.isEmpty() && incorrect.isEmpty())
+            return null;
+
+        boolean isError = false;
+
+        StringBuilder sb = new StringBuilder("Configuration errors:\n");
+
+        if (!incorrect.isEmpty())
+        {
+            isError = true;
+            sb.append("    Incorrect settings (not recognised, probable typos):\n");
+            for (String key : incorrect)
+            {
+                sb.append("        * ");
+                sb.append(key);
+                sb.append('\n');
             }
-            throw new ServerConfigurationException("The following keys are incorrect: " + incorrectNames);
+        }
+
+        if (!obsolete.isEmpty())
+        {
+            isError = true;
+            sb.append("    Obsolete settings (no longer recognized):\n");
+            for (Map.Entry<String, String> entry : obsolete.entrySet()) {
+                sb.append("        * ");
+                sb.append(entry.getKey());
+                sb.append(": ");
+                sb.append(entry.getValue());
+                sb.append('\n');
+            }
+        }
+
+        if (!deprecated.isEmpty())
+        {
+            sb.append("    Deprecated settings (will be removed in future versions):\n");
+            for (Map.Entry<String, String> entry : deprecated.entrySet()) {
+                sb.append("        * ");
+                sb.append(entry.getKey());
+                sb.append(": ");
+                sb.append(entry.getValue());
+                sb.append('\n');
+            }
+        }
+
+        return new ValidationResult(isError, sb.toString());
+    }
+
+    private void validateProperties(Properties properties) throws ServerConfigurationException {
+        ValidationResult validation = validate(properties);
+        if (validation != null)
+        {
+            if (configValidationEnabled && validation.isError) {   
+                throw new ServerConfigurationException(validation.message);
+            }
+            else {
+                log.advisory().$(validation.message).$();
+            }
         }
     }
 }
