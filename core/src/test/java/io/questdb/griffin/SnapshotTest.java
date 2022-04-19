@@ -108,8 +108,14 @@ public class SnapshotTest extends AbstractGriffinTest {
                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
 
                 String tableName = "t";
-                compile("create table " + tableName + " as " +
-                        "(select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))", sqlExecutionContext);
+                compile("create table " + tableName + " (a STRING, b LONG)");
+
+                // Bump truncate version by truncating non-empty table
+                compile("insert into " + tableName + " VALUES('abasd', 1L)");
+                compile("truncate table " + tableName);
+
+                compile("insert into " + tableName +
+                        " select * from (select rnd_str(5,10,2) a, x b from long_sequence(20))", sqlExecutionContext);
                 if (generateColTops) {
                     compile("alter table " + tableName + " add column c int", sqlExecutionContext);
                 }
@@ -164,6 +170,8 @@ public class SnapshotTest extends AbstractGriffinTest {
                                     Assert.assertEquals(txReader0.getStructureVersion(), txReader1.getStructureVersion());
                                     Assert.assertEquals(txReader0.getDataVersion(), txReader1.getDataVersion());
                                     Assert.assertEquals(txReader0.getPartitionTableVersion(), txReader1.getPartitionTableVersion());
+                                    Assert.assertEquals(1, txReader0.getTruncateVersion());
+                                    Assert.assertEquals(txReader0.getTruncateVersion(), txReader1.getTruncateVersion());
                                     for (int i = 0; i < txReader0.getSymbolColumnCount(); i++) {
                                         Assert.assertEquals(txReader0.getSymbolValueCount(i), txReader1.getSymbolValueCount(i));
                                     }
