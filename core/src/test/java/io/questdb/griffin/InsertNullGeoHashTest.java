@@ -147,7 +147,7 @@ public class InsertNullGeoHashTest extends AbstractGriffinTest {
                         String.format(
                                 "insert into geohash select null from long_sequence(%d)",
                                 expectedEmptyLines),
-                        expectedNullInserts("geohash\n", "", expectedEmptyLines),
+                        expectedNullInserts("geohash\n", "", expectedEmptyLines, true),
                         supportsRandomAccess,
                         true,
                         expectedEmptyLines > 0,
