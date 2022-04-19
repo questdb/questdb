@@ -42,6 +42,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
     private final TableWriter cleanUpLogWriter;
     private final String updateCompleteColumnName;
     private final TxnScoreboard txnScoreboard;
+    private final TxReader txReader;
     private final LongList completedRecordIds = new LongList();
     private final MicrosecondClock microClock;
     private final int updateCompleteColumnWriterIndex;
@@ -58,6 +59,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
         path.of(configuration.getRoot());
         pathRootLen = path.length();
         txnScoreboard = new TxnScoreboard(filesFacade, configuration.getTxnScoreboardEntryCount());
+        txReader = new TxReader(filesFacade);
         microClock = configuration.getMicrosecondClock();
         longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
     }
@@ -237,6 +239,13 @@ public class ColumnVersionPurgeExecution implements Closeable {
                         return true;
                     }
 
+                    txReader.ofRO(path.trimTo(pathTableLen), task.getPartitionBy());
+                    txReader.unsafeLoadAll();
+                    if ((int) txReader.getTruncateVersion() != task.getTruncateVersion()) {
+                        LOG.info().$("column version will not be deleted, detected table truncated [path=").$(path.trimTo(pathTableLen)).I$();
+                        return true;
+                    }
+
                     // Re-set up path to .d file
                     setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
                     TableUtils.dFile(path, task.getColumnName(), columnVersion);
@@ -290,6 +299,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
             }
         } finally {
             txnScoreboard.clear();
+            txReader.clear();
         }
 
         return allDone;

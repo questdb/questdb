@@ -39,6 +39,7 @@ public class ColumnVersionPurgeTask implements Mutable {
     private int partitionBy;
     private long updatedTxn;
     private int columnType;
+    private int truncateVersion;
 
     public void appendColumnVersion(long columnVersion, long partitionTimestamp, long partitionNameTxn) {
         updatedColumnVersions.add(columnVersion, partitionTimestamp, partitionNameTxn, 0L);
@@ -60,6 +61,7 @@ public class ColumnVersionPurgeTask implements Mutable {
         this.partitionBy = inTask.partitionBy;
         this.updatedTxn = inTask.updatedTxn;
         this.columnType = inTask.columnType;
+        this.truncateVersion = inTask.truncateVersion;
         this.updatedColumnVersions.clear();
         this.updatedColumnVersions.add(inTask.updatedColumnVersions);
     }
@@ -84,6 +86,10 @@ public class ColumnVersionPurgeTask implements Mutable {
         return tableName;
     }
 
+    public int getTruncateVersion() {
+        return truncateVersion;
+    }
+
     public LongList getUpdatedColumnVersions() {
         return updatedColumnVersions;
     }
@@ -92,18 +98,19 @@ public class ColumnVersionPurgeTask implements Mutable {
         return updatedTxn;
     }
 
-    public void of(String tableName, CharSequence columnName, int tableId, int columnType, int partitionBy, long lastTxn) {
+    public void of(String tableName, CharSequence columnName, int tableId, int truncateVersion, int columnType, int partitionBy, long lastTxn) {
         this.tableName = tableName;
         this.columnName = columnName;
         this.tableId = tableId;
         this.columnType = columnType;
         this.partitionBy = partitionBy;
         this.updatedTxn = lastTxn;
+        this.truncateVersion = truncateVersion;
         this.updatedColumnVersions.clear();
     }
 
-    public void of(String tableName, CharSequence columnName, int tableId, int columnType, int partitionBy, long lastTxn, LongList columnVersions) {
-        of(tableName, columnName, tableId, columnType, partitionBy, lastTxn);
+    public void of(String tableName, CharSequence columnName, int tableId, int truncateVersion, int columnType, int partitionBy, long lastTxn, LongList columnVersions) {
+        of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, lastTxn);
         this.updatedColumnVersions.add(columnVersions);
     }
 }

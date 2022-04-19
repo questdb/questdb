@@ -220,6 +220,7 @@ public class UpdateExecution implements Closeable {
             String tableName,
             CharSequence columnName,
             int tableId,
+            int tableTruncateVersion,
             int columnType,
             int partitionBy,
             long updatedTxn,
@@ -230,7 +231,7 @@ public class UpdateExecution implements Closeable {
             long cursor = pubSeq.next();
             if (cursor > -1L) {
                 ColumnVersionPurgeTask task = messageBus.getColumnVersionPurgeQueue().get(cursor);
-                task.of(tableName, columnName, tableId, columnType, partitionBy, updatedTxn, columnVersions);
+                task.of(tableName, columnName, tableId, tableTruncateVersion, columnType, partitionBy, updatedTxn, columnVersions);
                 pubSeq.done(cursor);
                 return;
             } else if (cursor == -1L) {
@@ -448,7 +449,9 @@ public class UpdateExecution implements Closeable {
                         tableWriter.getTableName(),
                         columnName,
                         writerMetadata.getId(),
-                        columnType, tableWriter.getPartitionBy(),
+                        (int) tableWriter.getTruncateVersion(),
+                        columnType,
+                        tableWriter.getPartitionBy(),
                         updatedTxn,
                         cleanupColumnVersionsAsync
                 );

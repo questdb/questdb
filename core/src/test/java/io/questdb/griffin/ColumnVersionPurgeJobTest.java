@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -67,22 +66,21 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
 
                 try (TableReader rdr1 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3_many")) {
-                    compiler.compile("insert into up_part_o3_many " +
+                    compile("insert into up_part_o3_many " +
                             " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                             " x," +
                             " rnd_str('a', 'b', 'c', 'd') str," +
                             " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                             " rnd_symbol('1', '2', '3', '4') sym2" +
-                            " from long_sequence(3)", sqlExecutionContext).execute(null).await();
+                            " from long_sequence(3)");
 
                     try (TableReader rdr2 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3_many")) {
-                        // TODO: updates symbol columns
-                        executeUpdate("UPDATE up_part_o3_many SET x = 100, str='u1' WHERE ts >= '1970-01-03'");
+                        executeUpdate("UPDATE up_part_o3_many SET x = 100, str='u1', sym2='EE' WHERE ts >= '1970-01-03'");
                         runPurgeJob(purgeJob);
 
                         currentMicros++;
                         try (TableReader rdr3 = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3_many")) {
-                            executeUpdate("UPDATE up_part_o3_many SET x = 200, str='u2' WHERE x = 100");
+                            executeUpdate("UPDATE up_part_o3_many SET x = 200, str='u2', sym2='EE' WHERE x = 100");
                             runPurgeJob(purgeJob);
                             rdr3.openPartition(0);
                         }
@@ -111,26 +109,33 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                                 "1970-01-01T02:00:00.000000Z\t1\ta\tC\t2\n" +
                                 "1970-01-02T01:00:00.000000Z\t1\ta\tA\t2\n" +
                                 "1970-01-02T02:00:00.000000Z\t2\td\tB\t4\n" +
-                                "1970-01-03T01:00:00.000000Z\t200\tu2\tC\t4\n" +
-                                "1970-01-03T02:00:00.000000Z\t200\tu2\tD\t3\n" +
-                                "1970-01-04T01:00:00.000000Z\t200\tu2\tA\t2\n" +
-                                "1970-01-04T02:00:00.000000Z\t200\tu2\tA\t1\n" +
-                                "1970-01-05T02:00:00.000000Z\t200\tu2\tD\t2\n"
+                                "1970-01-03T01:00:00.000000Z\t200\tu2\tC\tEE\n" +
+                                "1970-01-03T02:00:00.000000Z\t200\tu2\tD\tEE\n" +
+                                "1970-01-04T01:00:00.000000Z\t200\tu2\tA\tEE\n" +
+                                "1970-01-04T02:00:00.000000Z\t200\tu2\tA\tEE\n" +
+                                "1970-01-05T02:00:00.000000Z\t200\tu2\tD\tEE\n"
                 );
 
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part_o3_many\tx\t2\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part_o3_many\tx\t2\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part_o3_many\tx\t2\t6\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part_o3_many\tstr\t2\t11\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part_o3_many\tstr\t2\t11\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part_o3_many\tstr\t2\t11\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000061Z\tup_part_o3_many\tx\t2\t6\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000061Z\tup_part_o3_many\tx\t2\t6\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000061Z\tup_part_o3_many\tx\t2\t6\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000062Z\tup_part_o3_many\tstr\t2\t11\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000062Z\tup_part_o3_many\tstr\t2\t11\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000062Z\tup_part_o3_many\tstr\t2\t11\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n");
+                assertSql(purgeJob.getLogTableName(), "" +
+                        "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part_o3_many\tx\t2\t0\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part_o3_many\tx\t2\t0\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part_o3_many\tx\t2\t0\t6\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000061Z\tup_part_o3_many\tx\t2\t0\t6\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000061Z\tup_part_o3_many\tx\t2\t0\t6\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000061Z\tup_part_o3_many\tx\t2\t0\t6\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000062Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000062Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000062Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000063Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000063Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                        "1970-01-01T00:00:00.000063Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n");
             }
         });
     }
@@ -149,17 +154,16 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
 
-                compiler.compile("insert into up_part_o3 " +
+                compile("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
-                        " from long_sequence(3)", sqlExecutionContext).execute(null).await();
+                        " from long_sequence(3)");
 
                 try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3")) {
-                    // TODO: updates symbol columns
-                    executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd' WHERE ts >= '1970-01-03'");
+                    executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
@@ -169,7 +173,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
             currentMicros = Timestamps.DAY_MICROS * 32;
             try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
                 try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3")) {
-                    executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd' WHERE ts >= '1970-01-03'");
+                    executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
                 }
 
                 try (Path path = new Path()) {
@@ -189,26 +193,32 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                                 "1970-01-01T02:00:00.000000Z\t1\ta\tC\t2\n" +
                                 "1970-01-02T01:00:00.000000Z\t1\ta\tA\t2\n" +
                                 "1970-01-02T02:00:00.000000Z\t2\td\tB\t4\n" +
-                                "1970-01-03T01:00:00.000000Z\t100\tabcd\tC\t4\n" +
-                                "1970-01-03T02:00:00.000000Z\t100\tabcd\tD\t3\n" +
-                                "1970-01-04T01:00:00.000000Z\t100\tabcd\tA\t2\n" +
-                                "1970-01-04T02:00:00.000000Z\t100\tabcd\tA\t1\n" +
-                                "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\t2\n"
+                                "1970-01-03T01:00:00.000000Z\t100\tabcd\tC\tEE\n" +
+                                "1970-01-03T02:00:00.000000Z\t100\tabcd\tD\tEE\n" +
+                                "1970-01-04T01:00:00.000000Z\t100\tabcd\tA\tEE\n" +
+                                "1970-01-04T02:00:00.000000Z\t100\tabcd\tA\tEE\n" +
+                                "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n"
                 );
 
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-31T00:00:00.000010Z\tup_part_o3\tx\t2\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000030Z\n" +
-                        "1970-01-31T00:00:00.000010Z\tup_part_o3\tx\t2\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000030Z\n" +
-                        "1970-01-31T00:00:00.000010Z\tup_part_o3\tx\t2\t6\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000030Z\n" +
-                        "1970-01-31T00:00:00.000011Z\tup_part_o3\tstr\t2\t11\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000030Z\n" +
-                        "1970-01-31T00:00:00.000011Z\tup_part_o3\tstr\t2\t11\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000030Z\n" +
-                        "1970-01-31T00:00:00.000011Z\tup_part_o3\tstr\t2\t11\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000030Z\n" +
-                        "1970-02-02T00:00:00.000030Z\tup_part_o3\tx\t2\t6\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z\n" +
-                        "1970-02-02T00:00:00.000030Z\tup_part_o3\tx\t2\t6\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z\n" +
-                        "1970-02-02T00:00:00.000030Z\tup_part_o3\tx\t2\t6\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000070Z\n" +
-                        "1970-02-02T00:00:00.000031Z\tup_part_o3\tstr\t2\t11\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z\n" +
-                        "1970-02-02T00:00:00.000031Z\tup_part_o3\tstr\t2\t11\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z\n" +
-                        "1970-02-02T00:00:00.000031Z\tup_part_o3\tstr\t2\t11\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000070Z\n");
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                        "1970-01-31T00:00:00.000010Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000030Z\n" +
+                        "1970-01-31T00:00:00.000010Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000030Z\n" +
+                        "1970-01-31T00:00:00.000010Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000030Z\n" +
+                        "1970-01-31T00:00:00.000011Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000030Z\n" +
+                        "1970-01-31T00:00:00.000011Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000030Z\n" +
+                        "1970-01-31T00:00:00.000011Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000030Z\n" +
+                        "1970-01-31T00:00:00.000012Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000030Z\n" +
+                        "1970-01-31T00:00:00.000012Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000030Z\n" +
+                        "1970-01-31T00:00:00.000012Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000030Z\n" +
+                        "1970-02-02T00:00:00.000030Z\tup_part_o3\tx\t2\t0\t6\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z\n" +
+                        "1970-02-02T00:00:00.000030Z\tup_part_o3\tx\t2\t0\t6\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z\n" +
+                        "1970-02-02T00:00:00.000030Z\tup_part_o3\tx\t2\t0\t6\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000070Z\n" +
+                        "1970-02-02T00:00:00.000031Z\tup_part_o3\tstr\t2\t0\t11\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z\n" +
+                        "1970-02-02T00:00:00.000031Z\tup_part_o3\tstr\t2\t0\t11\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z\n" +
+                        "1970-02-02T00:00:00.000031Z\tup_part_o3\tstr\t2\t0\t11\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000070Z\n" +
+                        "1970-02-02T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z\n" +
+                        "1970-02-02T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z\n" +
+                        "1970-02-02T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000070Z\n");
             }
         });
     }
@@ -242,8 +252,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
 
                 try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part")) {
-                    // TODO: updates symbol columns
-                    executeUpdate("UPDATE up_part SET x = 100, str='abcd' WHERE ts >= '1970-01-02'");
+                    executeUpdate("UPDATE up_part SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
@@ -267,21 +276,25 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         "up_part",
                         "ts\tx\tstr\tsym1\tsym2\n" +
                                 "1970-01-01T00:00:00.000000Z\t1\ta\tC\t2\n" +
-                                "1970-01-02T00:00:00.000000Z\t100\tabcd\tB\t4\n" +
-                                "1970-01-03T00:00:00.000000Z\t100\tabcd\tD\t3\n" +
-                                "1970-01-04T00:00:00.000000Z\t100\tabcd\tA\t1\n" +
-                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\t2\n"
+                                "1970-01-02T00:00:00.000000Z\t100\tabcd\tB\tEE\n" +
+                                "1970-01-03T00:00:00.000000Z\t100\tabcd\tD\tEE\n" +
+                                "1970-01-04T00:00:00.000000Z\t100\tabcd\tA\tEE\n" +
+                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\tEE\n"
                 );
 
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t6\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t6\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t6\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t6\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t11\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000150Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t11\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000150Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t11\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000150Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t11\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000150Z\n");
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t0\t6\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t0\t6\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t0\t6\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t0\t6\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t0\t11\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000150Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t0\t11\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000150Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t0\t11\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000150Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t0\t11\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000150Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
             }
         });
     }
@@ -301,8 +314,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
 
                 try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part")) {
-                    // TODO: updates symbol columns
-                    executeUpdate("UPDATE up_part SET x = 100, str='abcd' WHERE ts >= '1970-01-02'");
+                    executeUpdate("UPDATE up_part SET x = 100, str='abcd',SYM2='EE' WHERE ts >= '1970-01-02'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
@@ -320,21 +332,25 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         "up_part",
                         "ts\tx\tstr\tsym1\tsym2\n" +
                                 "1970-01-01T00:00:00.000000Z\t1\ta\tC\t2\n" +
-                                "1970-01-02T00:00:00.000000Z\t100\tabcd\tB\t4\n" +
-                                "1970-01-03T00:00:00.000000Z\t100\tabcd\tD\t3\n" +
-                                "1970-01-04T00:00:00.000000Z\t100\tabcd\tA\t1\n" +
-                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\t2\n"
+                                "1970-01-02T00:00:00.000000Z\t100\tabcd\tB\tEE\n" +
+                                "1970-01-03T00:00:00.000000Z\t100\tabcd\tD\tEE\n" +
+                                "1970-01-04T00:00:00.000000Z\t100\tabcd\tA\tEE\n" +
+                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\tEE\n"
                 );
 
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t6\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t6\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t6\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t6\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t11\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t11\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t11\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t11\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t0\t6\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t0\t6\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t0\t6\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part\tx\t2\t0\t6\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t0\t11\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t0\t11\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t0\t11\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part\tstr\t2\t0\t11\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-02T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
             }
         });
     }
@@ -353,8 +369,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         " timestamp(ts)", sqlExecutionContext);
 
                 try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
-                    // TODO: updates symbol columns
-                    executeUpdate("UPDATE up SET x = 100, str='abcd'");
+                    executeUpdate("UPDATE up SET x = 100, str='abcd', sym2='EE'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
@@ -369,20 +384,17 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                 assertSql(
                         "up",
                         "ts\tx\tstr\tsym1\tsym2\n" +
-                                "1970-01-01T00:00:00.000000Z\t100\tabcd\tC\t2\n" +
-                                "1970-01-01T00:00:01.000000Z\t100\tabcd\tB\t4\n" +
-                                "1970-01-01T00:00:02.000000Z\t100\tabcd\tD\t3\n" +
-                                "1970-01-01T00:00:03.000000Z\t100\tabcd\tA\t1\n" +
-                                "1970-01-01T00:00:04.000000Z\t100\tabcd\tD\t2\n"
+                                "1970-01-01T00:00:00.000000Z\t100\tabcd\tC\tEE\n" +
+                                "1970-01-01T00:00:01.000000Z\t100\tabcd\tB\tEE\n" +
+                                "1970-01-01T00:00:02.000000Z\t100\tabcd\tD\tEE\n" +
+                                "1970-01-01T00:00:03.000000Z\t100\tabcd\tA\tEE\n" +
+                                "1970-01-01T00:00:04.000000Z\t100\tabcd\tD\tEE\n"
                 );
 
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000010Z\tup\tx\t2\t6\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup\tstr\t2\t11\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
-
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000010Z\tup\tx\t2\t6\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup\tstr\t2\t11\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                        "1970-01-01T00:00:00.000010Z\tup\tx\t2\t0\t6\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup\tstr\t2\t0\t11\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup\tsym2\t2\t0\t12\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
             }
         });
     }
@@ -494,17 +506,16 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
 
-                compiler.compile("insert into up_part_o3 " +
+                compile("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
-                        " from long_sequence(3)", sqlExecutionContext).execute(null).await();
+                        " from long_sequence(3)");
 
                 try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3")) {
-                    // TODO: updates symbol columns
-                    executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd' WHERE ts >= '1970-01-03'");
+                    executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
 
                     runPurgeJob(purgeJob);
                     rdr.openPartition(0);
@@ -529,20 +540,23 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                                 "1970-01-01T02:00:00.000000Z\t1\ta\tC\t2\n" +
                                 "1970-01-02T01:00:00.000000Z\t1\ta\tA\t2\n" +
                                 "1970-01-02T02:00:00.000000Z\t2\td\tB\t4\n" +
-                                "1970-01-03T01:00:00.000000Z\t100\tabcd\tC\t4\n" +
-                                "1970-01-03T02:00:00.000000Z\t100\tabcd\tD\t3\n" +
-                                "1970-01-04T01:00:00.000000Z\t100\tabcd\tA\t2\n" +
-                                "1970-01-04T02:00:00.000000Z\t100\tabcd\tA\t1\n" +
-                                "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\t2\n"
+                                "1970-01-03T01:00:00.000000Z\t100\tabcd\tC\tEE\n" +
+                                "1970-01-03T02:00:00.000000Z\t100\tabcd\tD\tEE\n" +
+                                "1970-01-04T01:00:00.000000Z\t100\tabcd\tA\tEE\n" +
+                                "1970-01-04T02:00:00.000000Z\t100\tabcd\tA\tEE\n" +
+                                "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n"
                 );
 
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part_o3\tx\t2\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part_o3\tx\t2\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part_o3\tx\t2\t6\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part_o3\tstr\t2\t11\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part_o3\tstr\t2\t11\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part_o3\tstr\t2\t11\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000010Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
             }
         });
     }
@@ -561,17 +575,16 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
 
-                compiler.compile("insert into up_part_o3 " +
+                compile("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
                         " rnd_symbol('A', 'B', 'C', 'D') sym1," +
                         " rnd_symbol('1', '2', '3', '4') sym2" +
-                        " from long_sequence(3)", sqlExecutionContext).execute(null).await();
+                        " from long_sequence(3)");
 
                 try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3")) {
-                    // TODO: updates symbol columns
-                    executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd' WHERE ts >= '1970-01-03'");
+                    executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2 = 'EE' WHERE ts >= '1970-01-03'");
 
                     currentMicros = 20;
                     runPurgeJob(purgeJob);
@@ -594,20 +607,23 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                                 "1970-01-01T02:00:00.000000Z\t1\ta\tC\t2\n" +
                                 "1970-01-02T01:00:00.000000Z\t1\ta\tA\t2\n" +
                                 "1970-01-02T02:00:00.000000Z\t2\td\tB\t4\n" +
-                                "1970-01-03T01:00:00.000000Z\t100\tabcd\tC\t4\n" +
-                                "1970-01-03T02:00:00.000000Z\t100\tabcd\tD\t3\n" +
-                                "1970-01-04T01:00:00.000000Z\t100\tabcd\tA\t2\n" +
-                                "1970-01-04T02:00:00.000000Z\t100\tabcd\tA\t1\n" +
-                                "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\t2\n"
+                                "1970-01-03T01:00:00.000000Z\t100\tabcd\tC\tEE\n" +
+                                "1970-01-03T02:00:00.000000Z\t100\tabcd\tD\tEE\n" +
+                                "1970-01-04T01:00:00.000000Z\t100\tabcd\tA\tEE\n" +
+                                "1970-01-04T02:00:00.000000Z\t100\tabcd\tA\tEE\n" +
+                                "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n"
                 );
 
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000030Z\tup_part_o3\tx\t2\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000030Z\tup_part_o3\tx\t2\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000030Z\tup_part_o3\tx\t2\t6\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000031Z\tup_part_o3\tstr\t2\t11\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000031Z\tup_part_o3\tstr\t2\t11\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000031Z\tup_part_o3\tstr\t2\t11\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z\n");
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                        "1970-01-01T00:00:00.000030Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
+                        "1970-01-01T00:00:00.000030Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
+                        "1970-01-01T00:00:00.000030Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z\n" +
+                        "1970-01-01T00:00:00.000031Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
+                        "1970-01-01T00:00:00.000031Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
+                        "1970-01-01T00:00:00.000031Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z\n" +
+                        "1970-01-01T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
+                        "1970-01-01T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
+                        "1970-01-01T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z\n");
             }
         });
     }
@@ -625,16 +641,16 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                 appendTaskToQueue(task2);
 
                 purgeJob.run(0);
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t\n" +
-                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t\n" +
-                        "1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t\n");
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t\n" +
+                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t\n" +
+                        "1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t\n");
 
                 runPurgeJob(purgeJob);
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000010Z\n" +
-                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t1970-01-01T00:00:00.000010Z\n" +
-                        "1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000010Z\n");
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000010Z\n" +
+                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t1970-01-01T00:00:00.000010Z\n" +
+                        "1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000010Z\n");
             }
         });
     }
@@ -668,6 +684,15 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
 
         path.of(configuration.getRoot()).concat(up_part).concat(partition).concat("str.i").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
+
+        path.of(configuration.getRoot()).concat(up_part).concat(partition).concat("sym2.d").put(colSuffix).$();
+        Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
+
+        path.of(configuration.getRoot()).concat(up_part).concat(partition).concat("sym2.k").put(colSuffix).$();
+        Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
+
+        path.of(configuration.getRoot()).concat(up_part).concat(partition).concat("sym2.v").put(colSuffix).$();
+        Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
     }
 
     private ColumnVersionPurgeJob createColumnVersionPurgeJob() throws SqlException {
@@ -690,7 +715,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
             long partitionNameTxn
     ) throws NumericException {
         ColumnVersionPurgeTask tsk = new ColumnVersionPurgeTask();
-        tsk.of(tblName, colName, tableId, columnType, PartitionBy.NONE, updateTxn, new LongList());
+        tsk.of(tblName, colName, tableId, 0, columnType, PartitionBy.NONE, updateTxn, new LongList());
         tsk.appendColumnVersion(columnVersion, IntervalUtils.parseFloorPartialDate(partitionTs), partitionNameTxn);
         return tsk;
     }
@@ -698,7 +723,9 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     private void executeUpdate(String query) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
-        cc.execute(null);
+        try (QueryFuture qf = cc.execute(null)) {
+            qf.await();
+        }
     }
 
     private void runPurgeJob(ColumnVersionPurgeJob purgeJob) {

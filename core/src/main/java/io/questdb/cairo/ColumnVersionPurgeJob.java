@@ -45,13 +45,14 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
     private static final Log LOG = LogFactory.getLog(ColumnVersionPurgeJob.class);
     private final String tableName;
     private static final int TABLE_ID_COLUMN = 3;
-    private static final int COLUMN_TYPE_COLUMN = 4;
-    private static final int PARTITION_BY_COLUMN = 5;
-    private static final int UPDATED_TXN_COLUMN = 6;
-    private static final int COLUMN_VERSION_COLUMN = 7;
-    private static final int PARTITION_TIMESTAMP_COLUMN = 8;
-    private static final int PARTITION_NAME_COLUMN = 9;
-    private static final int MAX_ERRORS = 10;
+    private static final int TABLE_TRUNCATE_VERSION = 4;
+    private static final int COLUMN_TYPE_COLUMN = 5;
+    private static final int PARTITION_BY_COLUMN = 6;
+    private static final int UPDATED_TXN_COLUMN = 7;
+    private static final int COLUMN_VERSION_COLUMN = 8;
+    private static final int PARTITION_TIMESTAMP_COLUMN = 9;
+    private static final int PARTITION_NAME_COLUMN = 10;
+    private static final int MAX_ERRORS = 11;
     private final int lookbackCleanupDays;
 
     private ColumnVersionPurgeExecution cleanupExecution;
@@ -92,13 +93,14 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
                         "table_name symbol, " + // 1
                         "column_name symbol, " + // 2
                         "table_id int, " + // 3
-                        "columnType int, " + // 4
-                        "table_partition_by int, " + // 5
-                        "updated_txn long, " + // 6
-                        "column_version long, " + // 7
-                        "partition_timestamp timestamp, " + // 8
-                        "partition_name_txn long," + // 9
-                        "completed timestamp" + // 10
+                        "truncate_version int, " + // 4
+                        "columnType int, " + // 5
+                        "table_partition_by int, " + // 6
+                        "updated_txn long, " + // 7
+                        "column_version long, " + // 8
+                        "partition_timestamp timestamp, " + // 9
+                        "partition_name_txn long," + // 10
+                        "completed timestamp" + // 11
                         ") timestamp(ts) partition by MONTH",
                 sqlExecutionContext);
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, getLogTableName(), "QuestDB system");
@@ -216,10 +218,11 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
                             String tableName = Chars.toString(rec.getSym(TABLE_NAME_COLUMN));
                             String columnName = Chars.toString(rec.getSym(COLUMN_NAME_COLUMN));
                             int tableId = rec.getInt(TABLE_ID_COLUMN);
+                            int truncateVersion = rec.getInt(TABLE_TRUNCATE_VERSION);
                             int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
                             int partitionBY = rec.getInt(PARTITION_BY_COLUMN);
                             long updatedTxn = rec.getLong(UPDATED_TXN_COLUMN);
-                            taskRun.of(tableName, columnName, tableId, columnType, partitionBY, updatedTxn, startWaitMicro, microTime);
+                            taskRun.of(tableName, columnName, tableId, truncateVersion, columnType, partitionBY, updatedTxn, startWaitMicro, microTime);
                         }
                         long columnVersion = rec.getLong(COLUMN_VERSION_COLUMN);
                         long partitionTs = rec.getLong(PARTITION_TIMESTAMP_COLUMN);
@@ -285,6 +288,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
                     row.putSym(TABLE_NAME_COLUMN, cleanTask.getTableName());
                     row.putSym(COLUMN_NAME_COLUMN, cleanTask.getColumnName());
                     row.putInt(TABLE_ID_COLUMN, cleanTask.getTableId());
+                    row.putInt(TABLE_TRUNCATE_VERSION, cleanTask.getTruncateVersion());
                     row.putInt(COLUMN_TYPE_COLUMN, cleanTask.getColumnType());
                     row.putInt(PARTITION_BY_COLUMN, cleanTask.getPartitionBy());
                     row.putLong(UPDATED_TXN_COLUMN, cleanTask.getUpdatedTxn());
@@ -316,8 +320,8 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
             super.copyFrom(inTask);
         }
 
-        public void of(String tableName, CharSequence columnName, int tableId, int columnType, int partitionBy, long lastTxn, long waitToRun, long microTime) {
-            super.of(tableName, columnName, tableId, columnType, partitionBy, lastTxn);
+        public void of(String tableName, CharSequence columnName, int tableId, int truncateVersion, int columnType, int partitionBy, long lastTxn, long waitToRun, long microTime) {
+            super.of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, lastTxn);
             this.waitToRun = waitToRun;
             nextRunTimestamp = microTime;
         }
