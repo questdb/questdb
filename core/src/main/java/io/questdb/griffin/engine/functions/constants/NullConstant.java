@@ -218,4 +218,9 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     public Record getRecord(Record rec) {
         return null;
     }
+
+    @Override
+    public boolean isNullConstant() {
+        return true;
+    }
 }
