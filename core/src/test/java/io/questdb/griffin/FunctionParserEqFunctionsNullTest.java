@@ -62,9 +62,6 @@ public class FunctionParserEqFunctionsNullTest extends BaseFunctionFactoryTest {
     // SqlCompiler.isAssignableFrom
     private static final int[] EQUIVALENT_NULL_TYPES = {
             ColumnType.NULL,
-            ColumnType.BOOLEAN,
-            ColumnType.BYTE,
-            ColumnType.SHORT,
             ColumnType.CHAR,
             ColumnType.INT,
             ColumnType.LONG,
@@ -75,6 +72,12 @@ public class FunctionParserEqFunctionsNullTest extends BaseFunctionFactoryTest {
             ColumnType.STRING,
             ColumnType.LONG256,
             ColumnType.BINARY
+    };
+
+    private static final int[] EQUIVALENT_NULL_TYPES_NON_NULLABLE = {
+        ColumnType.BOOLEAN,
+        ColumnType.BYTE,
+        ColumnType.SHORT
     };
 
     private static final Record ILLEGAL_ACCESS_RECORD = (Record) Proxy.newProxyInstance(
@@ -140,6 +143,50 @@ public class FunctionParserEqFunctionsNullTest extends BaseFunctionFactoryTest {
                 function = parseFunction("null = col1", metadata, functionParser);
                 Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
                 Assert.assertTrue(function.getBool(NULL_RECORD));
+            }
+        }
+    }
+
+    @Test
+    public void testEqFunctionResolutionNonNullArgsForNonNullableTypes() throws SqlException {
+        functions.addAll(Arrays.asList(EQ_FUNCS));
+        FunctionParser functionParser = createFunctionParser();
+        for (int col0Type : EQUIVALENT_NULL_TYPES_NON_NULLABLE) {
+            for (int col1Type : EQUIVALENT_NULL_TYPES_NON_NULLABLE) {
+
+                final GenericRecordMetadata metadata = new GenericRecordMetadata();
+                metadata.add(new TableColumnMetadata("col0", 1, col0Type));
+                metadata.add(new TableColumnMetadata("col1", 2, col1Type));
+
+                Collections.shuffle(functions);
+
+                Function function = parseFunction("null = null", metadata, functionParser);
+                Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+                Assert.assertTrue(function.getBool(ILLEGAL_ACCESS_RECORD));
+
+                function = parseFunction("null != null", metadata, functionParser);
+                Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+                Assert.assertFalse(function.getBool(ILLEGAL_ACCESS_RECORD));
+
+                function = parseFunction("col0 = null", metadata, functionParser);
+                Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+                Assert.assertFalse(function.getBool(NULL_RECORD));
+
+                function = parseFunction("col1 = null", metadata, functionParser);
+                Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+                Assert.assertFalse(function.getBool(NULL_RECORD));
+
+                function = parseFunction("col0 = col0", metadata, functionParser);
+                Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+                Assert.assertTrue(function.getBool(NULL_RECORD));
+
+                function = parseFunction("null = col0", metadata, functionParser);
+                Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+                Assert.assertFalse(function.getBool(NULL_RECORD));
+
+                function = parseFunction("null = col1", metadata, functionParser);
+                Assert.assertEquals(ColumnType.BOOLEAN, function.getType());
+                Assert.assertFalse(function.getBool(NULL_RECORD));
             }
         }
     }

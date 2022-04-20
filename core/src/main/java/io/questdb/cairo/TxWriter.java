@@ -80,6 +80,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         commit(CommitMode.NOSYNC, denseSymbolMapWriters);
     }
 
+    public void bumpTruncateVersion() {
+        truncateVersion++;
+    }
+
     public void cancelRow() {
         if (transientRowCount == 1 && txPartitionCount > 1) {
             // we have to undo creation of partition
@@ -312,7 +316,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
-    public void truncate() {
+    public void truncate(long columnVersion) {
         recordStructureVersion++;
         maxTimestamp = Long.MIN_VALUE;
         minTimestamp = Long.MAX_VALUE;
@@ -324,7 +328,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         writeAreaSize = calculateWriteSize();
         writeBaseOffset = calculateWriteOffset();
-        resetTxn(txMemBase, writeBaseOffset, getSymbolColumnCount(), ++txn, ++dataVersion, ++partitionTableVersion, structureVersion, columnVersion);
+        resetTxn(txMemBase, writeBaseOffset, getSymbolColumnCount(), ++txn, ++dataVersion, ++partitionTableVersion, structureVersion, columnVersion, ++truncateVersion);
         finishABHeader(writeBaseOffset, symbolColumnCount * 8, 0, CommitMode.NOSYNC);
     }
 
@@ -385,6 +389,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         putLong(TX_OFFSET_DATA_VERSION_64, dataVersion);
         putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
+        putLong(TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
 
         // store symbol counts
         storeSymbolCounts(symbolCountProviders);
