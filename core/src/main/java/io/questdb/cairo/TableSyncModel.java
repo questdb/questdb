@@ -45,7 +45,7 @@ public class TableSyncModel implements Mutable, Sinkable {
     };
     private static final int SLOTS_PER_PARTITION = 8;
     private static final int SLOTS_PER_COLUMN_META_INDEX = 2;
-    private static final int SLOTS_PER_COLUMN_TOP = 4;
+    private static final int SLOTS_PER_COLUMN_VERSION = 4;
     private static final int SLOTS_PER_VAR_COLUMN_SIZE = 4;
     // see toSink() method for example of how to unpack this structure
     private final LongList partitions = new LongList();
@@ -55,14 +55,14 @@ public class TableSyncModel implements Mutable, Sinkable {
     // this metadata is only for columns that need to added on slave
     private final ObjList<TableColumnMetadata> addedColumnMetadata = new ObjList<>();
 
-    // this encodes (long,long,long,long) per non-zero column top
-    // the idea here is to store tops densely to avoid issues sending a bunch of zeroes
+    // this encodes (long,long,long,long) per column version
+    // the idea here is to store versions densely to avoid issues sending a bunch of zeroes
     // across network. Structure is as follows:
     // long0 = partition timestamp
     // long1 = column index (this is really an int)
-    // long2 = column top value
-    // long3 = unused
-    private final LongList columnTops = new LongList();
+    // long2 = column file txn name
+    // long3 = column top
+    private final LongList columnVersions = new LongList();
 
     // This encodes (long,long,long,long) per non-zero variable length column
     // we are not encoding lengths of the fixed-width column because it is enough to send row count.
@@ -86,8 +86,8 @@ public class TableSyncModel implements Mutable, Sinkable {
         this.addedColumnMetadata.add(columnMetadata);
     }
 
-    public void addColumnTop(long timestamp, int columnIndex, long topValue) {
-        columnTops.add(timestamp, columnIndex, topValue, 0);
+    public void addColumnVersion(long timestamp, int columnIndex, long columnNameTxn, long topValue) {
+        columnVersions.add(timestamp, columnIndex, columnNameTxn, topValue);
     }
 
     public void addPartitionAction(
@@ -110,7 +110,7 @@ public class TableSyncModel implements Mutable, Sinkable {
         partitions.clear();
         columnMetaIndex.clear();
         tableAction = 0;
-        columnTops.clear();
+        columnVersions.clear();
         varColumnSizes.clear();
         addedColumnMetadata.clear();
     }
@@ -126,15 +126,15 @@ public class TableSyncModel implements Mutable, Sinkable {
 
         int n = Unsafe.getUnsafe().getInt(p);
         p += 4;
-        for (int i = 0; i < n; i += SLOTS_PER_COLUMN_TOP) {
-            columnTops.add(
+        for (int i = 0; i < n; i += SLOTS_PER_COLUMN_VERSION) {
+            columnVersions.add(
                     Unsafe.getUnsafe().getLong(p),
                     Unsafe.getUnsafe().getInt(p + 8),
                     Unsafe.getUnsafe().getLong(p + 12),
-                    0
+                    Unsafe.getUnsafe().getLong(p + 20)
             );
 
-            p += 20;
+            p += 28;
         }
 
         n = Unsafe.getUnsafe().getInt(p);
@@ -233,13 +233,14 @@ public class TableSyncModel implements Mutable, Sinkable {
         sink.putLong(dataVersion);
         sink.putLong(maxTimestamp);
 
-        int n = columnTops.size();
-        sink.putInt(n); // column top count
+        int n = columnVersions.size();
+        sink.putInt(n); // column version count
         if (n > 0) {
-            for (int i = 0; i < n; i += SLOTS_PER_COLUMN_TOP) {
-                sink.putLong(columnTops.getQuick(i)); // partition timestamp
-                sink.putInt((int) columnTops.getQuick(i + 1)); // column index
-                sink.putLong(columnTops.getQuick(i + 2)); // column top
+            for (int i = 0; i < n; i += SLOTS_PER_COLUMN_VERSION) {
+                sink.putLong(columnVersions.getQuick(i)); // partition timestamp
+                sink.putInt((int) columnVersions.getQuick(i + 1)); // column index
+                sink.putLong(columnVersions.getQuick(i + 2)); // column name txn
+                sink.putLong(columnVersions.getQuick(i + 3)); // column top
             }
         }
 
@@ -249,7 +250,7 @@ public class TableSyncModel implements Mutable, Sinkable {
             for (int i = 0; i < n; i += SLOTS_PER_VAR_COLUMN_SIZE) {
                 sink.putLong(varColumnSizes.getQuick(i)); // partition timestamp
                 sink.putInt((int) varColumnSizes.getQuick(i + 1)); // column index
-                sink.putLong(varColumnSizes.getQuick(i + 2)); // column top
+                sink.putLong(varColumnSizes.getQuick(i + 2)); // column size
             }
         }
 
@@ -313,21 +314,22 @@ public class TableSyncModel implements Mutable, Sinkable {
 
         sink.put('}');
 
-        int n = columnTops.size();
+        int n = columnVersions.size();
         if (n > 0) {
             sink.put(',');
 
-            sink.putQuoted("columnTops").put(':').put('[');
+            sink.putQuoted("columnVersions").put(':').put('[');
 
-            for (int i = 0; i < n; i += SLOTS_PER_COLUMN_TOP) {
+            for (int i = 0; i < n; i += SLOTS_PER_COLUMN_VERSION) {
                 if (i > 0) {
                     sink.put(',');
                 }
 
                 sink.put('{');
-                sink.putQuoted("ts").put(':').put('"').putISODate(columnTops.getQuick(i)).put('"').put(',');
-                sink.putQuoted("index").put(':').put(columnTops.getQuick(i + 1)).put(',');
-                sink.putQuoted("top").put(':').put(columnTops.getQuick(i + 2));
+                sink.putQuoted("ts").put(':').put('"').putISODate(columnVersions.getQuick(i)).put('"').put(',');
+                sink.putQuoted("index").put(':').put(columnVersions.getQuick(i + 1)).put(',');
+                sink.putQuoted("nameTxn").put(':').put(columnVersions.getQuick(i + 2)).put(',');
+                sink.putQuoted("top").put(':').put(columnVersions.getQuick(i + 3));
                 sink.put('}');
             }
 

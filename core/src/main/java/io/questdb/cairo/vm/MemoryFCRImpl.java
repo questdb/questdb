@@ -40,7 +40,7 @@ public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR {
 
     @Override
     public void extend(long size) {
-        throw new UnsupportedOperationException();
+//        throw new UnsupportedOperationException();
     }
 
     @Override

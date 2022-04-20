@@ -100,6 +100,10 @@ public abstract class AbstractMemoryCR implements MemoryCR {
     }
 
     public long addressOf(long offset) {
+        if (offset > size) {
+
+            assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        }
         assert offset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
         return pageAddress + offset;
     }

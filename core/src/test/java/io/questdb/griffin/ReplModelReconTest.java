@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableSyncModel;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
@@ -108,7 +111,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
@@ -176,7 +179,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
@@ -244,7 +247,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
@@ -421,7 +424,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
@@ -468,11 +471,11 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":292504}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":292504}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -487,11 +490,11 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T23:04:59.970000Z\"},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133802},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":424521},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":507396}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T23:04:59.970000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133802},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":424521},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":507396}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -528,7 +531,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T23:04:59.970000Z\"},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133802},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":424521},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":507396}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T23:04:59.970000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133802},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":424521},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":507396}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -568,7 +571,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T23:04:59.970000Z\"},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133802},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":424521},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":507396}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T23:04:59.970000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133802},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":424521},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":507396}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -609,7 +612,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
@@ -655,7 +658,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
@@ -708,11 +711,11 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":292504}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"o\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":16,\"toIndex\":16},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":292504}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"o\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":16,\"toIndex\":16},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -761,11 +764,11 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnTops\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"n\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":15,\"toIndex\":15},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"n\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":15,\"toIndex\":15},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -1195,7 +1198,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
@@ -1265,7 +1268,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
@@ -1312,7 +1315,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
             ) {
                 sink.clear();
-                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize()));
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
             }
 
             TestUtils.assertEquals(
@@ -1458,6 +1461,8 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                             slave.getRawTxnMemorySize(),
                             slave.getRawMetaMemory(),
                             slave.getRawMetaMemorySize(),
+                            slave.getRawColumnVersionsMemory(),
+                            slave.getRawColumnVersionsMemorySize(),
                             slaveIP,
                             sequence
                     );

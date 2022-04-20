@@ -76,15 +76,19 @@ public class TableWriterTask implements Closeable {
             long txMemSize,
             long metaMem,
             long metaMemSize,
+            long cvMem,
+            long cvMemSize,
             long slaveIP,
             long sequence
     ) {
         reset();
-        checkCapacity(txMemSize + metaMemSize + 2 * Long.BYTES);
+        checkCapacity(txMemSize + metaMemSize + cvMemSize + 3 * Long.BYTES);
         Unsafe.getUnsafe().putLong(data, txMemSize);
         Vect.memcpy(data + Long.BYTES, txMem, txMemSize);
         Unsafe.getUnsafe().putLong(data + txMemSize + Long.BYTES, metaMemSize);
         Vect.memcpy(data + txMemSize + 2 * Long.BYTES, metaMem, metaMemSize);
+        Unsafe.getUnsafe().putLong(data + txMemSize + metaMemSize + 2 * Long.BYTES, cvMemSize);
+        Vect.memcpy(data + txMemSize + metaMemSize + 2 * Long.BYTES + Long.BYTES, cvMem, cvMemSize);
         this.type = CMD_SLAVE_SYNC;
         this.tableId = tableId;
         this.tableName = tableName;

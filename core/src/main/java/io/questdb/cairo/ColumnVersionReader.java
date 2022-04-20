@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.MemoryW;
 import io.questdb.log.Log;
@@ -50,15 +50,17 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
     private final LongList cachedList = new LongList();
-    private MemoryCMR mem;
+    private MemoryMR mem;
     private boolean ownMem;
     private long version;
+    private long dataSize;
 
     @Override
     public void clear() {
         if (ownMem) {
             mem.close();
         }
+        dataSize = 0;
     }
 
     @Override
@@ -153,6 +155,10 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return this;
     }
 
+    public void initRO(MemoryMR mem) {
+        this.mem = mem;
+    }
+
     public void readSafe(MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
         final long tick = microsecondClock.getTicks();
         while (true) {
@@ -173,10 +179,10 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 offset = mem.getLong(OFFSET_OFFSET_B_64);
                 size = mem.getLong(OFFSET_SIZE_B_64);
             }
-
+            this.dataSize = offset + size + HEADER_SIZE;
             Unsafe.getUnsafe().loadFence();
             if (version == unsafeGetVersion()) {
-                mem.resize(offset + size);
+                mem.extend(offset + size);
                 readUnsafe(offset, size, cachedList, mem);
 
                 Unsafe.getUnsafe().loadFence();
@@ -216,7 +222,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         }
     }
 
-    void ofRO(MemoryCMR mem) {
+    void ofRO(MemoryMR mem) {
         if (this.mem != null && ownMem) {
             this.mem.close();
         }
@@ -231,7 +237,8 @@ public class ColumnVersionReader implements Closeable, Mutable {
         boolean areaA = (version & 1L) == 0L;
         long offset = areaA ? mem.getLong(OFFSET_OFFSET_A_64) : mem.getLong(OFFSET_OFFSET_B_64);
         long size = areaA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
-        mem.resize(offset + size);
+        mem.extend(offset + size);
+        this.dataSize = offset + size + HEADER_SIZE;
         readUnsafe(offset, size, cachedList, mem);
         return version;
     }
@@ -239,4 +246,16 @@ public class ColumnVersionReader implements Closeable, Mutable {
     private long unsafeGetVersion() {
         return mem.getLong(OFFSET_VERSION_64);
     }
+
+    protected long unsafeGetRawMemory() {
+        return mem.getPageAddress(0);
+    }
+
+    protected long unsafeGetRawMemorySize() {
+        if (mem.size() != dataSize) {
+            System.out.println("");
+        }
+        return dataSize; //mem.size();
+    }
+
 }
