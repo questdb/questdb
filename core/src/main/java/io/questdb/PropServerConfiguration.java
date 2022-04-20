@@ -382,6 +382,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String systemTableNamePrefix;
     private final int columnVersionCleanupLookbackDays;
     private final long columnVersionPurgeStartWaitTimeoutMicros;
+    private short floatDefaultColumnType;
+    private short integerDefaultColumnType;
 
     public PropServerConfiguration(
             String root,
@@ -886,6 +888,18 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.stringToCharCastAllowed = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED, false);
                 this.symbolAsFieldSupported = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_SYMBOL_AS_FIELD_SUPPORTED, false);
                 this.isStringAsTagSupported = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_AS_TAG_SUPPORTED, false);
+                String floatDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_FLOAT_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.DOUBLE));
+                this.floatDefaultColumnType = ColumnType.tagOf(floatDefaultColumnTypeName);
+                if (floatDefaultColumnType != ColumnType.DOUBLE && floatDefaultColumnType != ColumnType.FLOAT) {
+                    log.info().$("invalid default column type for float ").$(floatDefaultColumnTypeName).$("), will use DOUBLE").$();
+                    this.floatDefaultColumnType = ColumnType.DOUBLE;
+                }
+                String integerDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_INTEGER_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.LONG));
+                this.integerDefaultColumnType = ColumnType.tagOf(integerDefaultColumnTypeName);
+                if (integerDefaultColumnType != ColumnType.LONG && integerDefaultColumnType != ColumnType.INT && integerDefaultColumnType != ColumnType.SHORT && integerDefaultColumnType != ColumnType.BYTE) {
+                    log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$("), will use LONG").$();
+                    this.integerDefaultColumnType = ColumnType.LONG;
+                }
             }
 
             this.sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(1, cpuAvailable / 2 - 1 - cpuUsed));
@@ -2359,6 +2373,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         public int getDefaultPartitionBy() {
             return lineUdpDefaultPartitionBy;
         }
+
+        @Override
+        public short getDefaultColumnTypeForFloat() {
+            return floatDefaultColumnType;
+        }
+
+        @Override
+        public short getDefaultColumnTypeForInteger() {
+            return integerDefaultColumnType;
+        }
     }
 
     private class PropLineTcpReceiverIODispatcherConfiguration implements IODispatcherConfiguration {
@@ -2627,6 +2651,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isStringAsTagSupported() {
             return isStringAsTagSupported;
+        }
+
+        @Override
+        public short getDefaultColumnTypeForFloat() {
+            return floatDefaultColumnType;
+        }
+
+        @Override
+        public short getDefaultColumnTypeForInteger() {
+            return integerDefaultColumnType;
         }
     }
 
