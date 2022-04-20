@@ -54,7 +54,7 @@ public class AbstractCairoTest {
 
     protected static final StringSink sink = new StringSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
-    protected final static Log LOG = LogFactory.getLog(AbstractCairoTest.class);
+    protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     public static long writerAsyncCommandBusyWaitTimeout = -1;

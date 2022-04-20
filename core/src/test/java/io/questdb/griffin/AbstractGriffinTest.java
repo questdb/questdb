@@ -58,6 +58,33 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             RecordCursor cursor,
             RecordMetadata metadata
     ) {
+        return assertCursor(
+                expected,
+                supportsRandomAccess,
+                checkSameStr,
+                sizeExpected,
+                sizeCanBeVariable,
+                cursor,
+                metadata,
+                sink,
+                printer,
+                rows
+        );
+    }
+
+    // Thread-safe cursor assertion method.
+    public static boolean assertCursor(
+            CharSequence expected,
+            boolean supportsRandomAccess,
+            boolean checkSameStr,
+            boolean sizeExpected,
+            boolean sizeCanBeVariable,
+            RecordCursor cursor,
+            RecordMetadata metadata,
+            StringSink sink,
+            RecordCursorPrinter printer,
+            LongList rows
+    ) {
         if (expected == null) {
             Assert.assertFalse(cursor.hasNext());
             cursor.toTop();

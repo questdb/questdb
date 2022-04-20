@@ -27,12 +27,14 @@ package io.questdb.griffin;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.RecordCursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.LongList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -112,18 +114,18 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
             "4014104627539596639\n" +
             "4167328623064065836\n";
 
-    private static final String queryNegativeLimit = "x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
+    private static final String queryNegativeLimit = "x where v > 3326086085493629941L and v < 4326086085493629941L limit -10";
     private static final String expectedNegativeLimit = "v\n" +
-            "3614738589890112276\n" +
-            "3394168647660478011\n" +
-            "4086802474270249591\n" +
-            "3958193676455060057\n" +
-            "3619114107112892010\n" +
-            "3705833798044144433\n" +
-            "4238042693748641409\n" +
-            "3518554007419864093\n" +
-            "4014104627539596639\n" +
-            "4167328623064065836\n";
+            "3499854656700247548\n" +
+            "3433721896286859656\n" +
+            "4270881260749377500\n" +
+            "3564031921719748904\n" +
+            "3658246407068171204\n" +
+            "3387658305631292205\n" +
+            "3516348260509090745\n" +
+            "4031101756856736238\n" +
+            "3461453140026724919\n" +
+            "3860877990849202595\n";
 
     @BeforeClass
     public static void setUpStatic() {
@@ -231,10 +233,17 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     );
 
                     RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
+                    StringSink[] sinks = new StringSink[threadCount];
+                    RecordCursorPrinter[] printers = new RecordCursorPrinter[threadCount];
+                    LongList[] rows = new LongList[threadCount];
 
                     for (int i = 0; i < threadCount; i++) {
                         factories[i] = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
                         Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factories[i].usesCompiledFilter());
+
+                        sinks[i] = new StringSink();
+                        printers[i] = new RecordCursorPrinter();
+                        rows[i] = new LongList();
                     }
 
                     final AtomicInteger errors = new AtomicInteger();
@@ -243,19 +252,18 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
 
                     for (int i = 0; i < threadCount; i++) {
                         int th = i;
+                        int finalI = i;
                         new Thread(() -> {
                             TestUtils.await(barrier);
                             try {
                                 RecordCursorFactory factory = factories[th];
-                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                    TestUtils.assertCursor(
-                                            expected,
-                                            cursor,
-                                            factory.getMetadata(),
-                                            true,
-                                            new StringSink() // sink is transient and used internally by printer
-                                    );
-                                }
+                                assertQuery(
+                                        expected,
+                                        factory,
+                                        sinks[finalI],
+                                        printers[finalI],
+                                        rows[finalI]
+                                );
                             } catch (Throwable e) {
                                 e.printStackTrace();
                                 errors.incrementAndGet();
@@ -270,5 +278,62 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                 },
                 configuration
         );
+    }
+
+    private static void assertQuery(
+            CharSequence expected,
+            RecordCursorFactory factory,
+            StringSink sink,
+            RecordCursorPrinter printer,
+            LongList rows
+    ) throws Exception {
+        if (
+                assertCursor(
+                        expected,
+                        factory,
+                        sink,
+                        printer,
+                        rows
+                )
+        ) {
+            return;
+        }
+        // make sure we get the same outcome when we get factory to create new cursor
+        assertCursor(
+                expected,
+                factory,
+                sink,
+                printer,
+                rows
+        );
+    }
+
+    private static boolean assertCursor(
+            CharSequence expected,
+            RecordCursorFactory factory,
+            StringSink sink,
+            RecordCursorPrinter printer,
+            LongList rows
+    ) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue("supports random access", factory.recordCursorSupportsRandomAccess());
+            if (
+                    assertCursor(
+                            expected,
+                            true,
+                            true,
+                            false,
+                            true,
+                            cursor,
+                            factory.getMetadata(),
+                            sink,
+                            printer,
+                            rows
+                    )
+            ) {
+                return true;
+            }
+        }
+        return false;
     }
 }

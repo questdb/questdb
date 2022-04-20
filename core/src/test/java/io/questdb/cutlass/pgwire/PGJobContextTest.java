@@ -38,8 +38,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
-import io.questdb.mp.MPSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
@@ -3390,30 +3388,6 @@ nodejs code:
                 PreparedStatement sel = connection.prepareStatement("x");
                 ResultSet res = sel.executeQuery();
                 assertResultSet(expected, sink, res);
-            }
-        });
-    }
-
-    // TODO: this test needs updating
-    @Ignore
-    @Test
-    public void testUnexpectedAssertionErrorDisconnectsClient() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1);
-                 final Connection connection = getConnection(false, false)) {
-
-                connection.setAutoCommit(false);
-
-                Statement stmt = connection.createStatement();
-                stmt.execute("create table ltest as (select cast(x as timestamp) ts from long_sequence(10))");
-                connection.commit();
-
-                try (PreparedStatement pstmt = connection.prepareStatement("select ts from ltest limit -9223372036854775807L-1, -1");
-                     ResultSet ignore = pstmt.executeQuery()) {
-                    Assert.fail("exception should be thrown");
-                } catch (PSQLException e) {
-                    Assert.assertEquals("An I/O error occurred while sending to the backend.", e.getMessage());
-                }
             }
         });
     }

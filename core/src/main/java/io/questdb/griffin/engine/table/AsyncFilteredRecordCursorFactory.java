@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReducer;
@@ -47,7 +46,6 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
 
     private final RecordCursorFactory base;
-    private final RecordMetadata baseMetadata;
     private final AsyncFilteredRecordCursor cursor;
     private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
     private final Function filter;
@@ -68,15 +66,6 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     ) {
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
-        // TODO: revisit timestamp index returned for ORDER BY DESC queries with no filter; see OrderByDescRowSkippingTest
-        if (base.hasDescendingOrder()) {
-            // Copy metadata and erase timestamp index in case of ORDER BY DESC.
-            GenericRecordMetadata copy = GenericRecordMetadata.copyOf(base.getMetadata());
-            copy.setTimestampIndex(-1);
-            this.baseMetadata = copy;
-        } else {
-            this.baseMetadata = base.getMetadata();
-        }
         this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor();
         this.filter = filter;
@@ -136,7 +125,7 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordMetadata getMetadata() {
-        return baseMetadata;
+        return base.getMetadata();
     }
 
     @Override

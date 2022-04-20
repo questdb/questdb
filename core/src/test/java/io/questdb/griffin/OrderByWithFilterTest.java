@@ -261,7 +261,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "8\t2022-01-03T07:26:40.000000Z\t80\t800\n" +
                         "10\t2022-01-02T01:00:00.000000Z\tNaN\t\n",
                 "select l as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
-                null, null, true, false, true);
+                null, "ts###DESC", true, false, true);
 
         assertQuery("l\tts\tcol1\tcol2\n" +
                         "1010\t2022-01-03T13:00:00.000000Z\t100\t1000\n" +
@@ -325,7 +325,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByTimestampWithJITFilter() throws Exception {
+    public void testOrderByTimestampWithJitFilterAndLimitDesc() throws Exception {
 
         runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
                 "insert into trips " +
@@ -341,7 +341,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "1\t2022-01-03T00:00:00.000000Z\n",
                 "select l, ts from trips where l <=5 order by ts desc limit 5",
                 null,
-                null,
+                "ts###DESC",
                 true,
                 false,
                 true
@@ -349,7 +349,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByTimestampWithJitFilterAsc() throws Exception {
+    public void testOrderByTimestampWithJitFilterAndLimitAsc() throws Exception {
 
         runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
                 "insert into trips " +
@@ -384,21 +384,21 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "2\t2022-01-04T03:46:40.000000Z\n" +
                         "1\t2022-01-03T00:00:00.000000Z\n",
                 "select l, ts from trips where l <=5 order by ts desc limit 5",
-                null, null, true, false, true);
+                null, "ts###DESC", true, false, true);
     }
 
     @Test
-    public void testOrderByDescWithJitFilterDoesNotExposeTimestamp() throws Exception {
-        testOrderByDescDoesNotExposeTimestamp();
+    public void testOrderByTimestampWithJitFilterDesc() throws Exception {
+        testOrderByTimestampWithFilterDesc();
     }
 
     @Test
-    public void testOrderByDescWithNonJitFilterDoesNotExposeTimestamp() throws Exception {
+    public void testOrderByTimestampWithNonJitFilterDesc() throws Exception {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        testOrderByDescDoesNotExposeTimestamp();
+        testOrderByTimestampWithFilterDesc();
     }
 
-    private void testOrderByDescDoesNotExposeTimestamp() throws Exception {
+    private void testOrderByTimestampWithFilterDesc() throws Exception {
         runQueries("CREATE TABLE trips(l long, ts TIMESTAMP) timestamp(ts) partition by year;",
                 "insert into trips " +
                         "  select x," +
@@ -412,7 +412,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "2\t2022-01-04T03:46:40.000000Z\n" +
                         "1\t2022-01-03T00:00:00.000000Z\n",
                 "select l, ts from trips where l <= 5 order by ts desc",
-                null, null, true, false, false);
+                null, "ts###DESC", true, false, false);
     }
 
     private void runQueries(String... queries) throws Exception {

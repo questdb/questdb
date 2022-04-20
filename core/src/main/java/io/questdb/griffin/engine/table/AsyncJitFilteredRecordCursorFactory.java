@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReducer;
@@ -54,7 +53,6 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
 
     private final RecordCursorFactory base;
-    private final RecordMetadata baseMetadata;
     private final Function filter;
     private final CompiledFilter compiledFilter;
     private final AsyncFilteredRecordCursor cursor;
@@ -81,14 +79,6 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
         assert !(base instanceof FilteredRecordCursorFactory);
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;
-        if (base.hasDescendingOrder()) {
-            // Copy metadata and erase timestamp index in case of ORDER BY DESC.
-            GenericRecordMetadata copy = GenericRecordMetadata.copyOf(base.getMetadata());
-            copy.setTimestampIndex(-1);
-            this.baseMetadata = copy;
-        } else {
-            this.baseMetadata = base.getMetadata();
-        }
         this.filter = filter;
         this.compiledFilter = compiledFilter;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
@@ -154,7 +144,7 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
 
     @Override
     public RecordMetadata getMetadata() {
-        return baseMetadata;
+        return base.getMetadata();
     }
 
     @Override
