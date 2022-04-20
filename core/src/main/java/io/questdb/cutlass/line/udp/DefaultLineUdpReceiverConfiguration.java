@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -114,5 +115,15 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     @Override
     public int getCommitMode() {
         return CommitMode.NOSYNC;
+    }
+
+    @Override
+    public short getDefaultColumnTypeForFloat() {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
+    public short getDefaultColumnTypeForInteger() {
+        return ColumnType.LONG;
     }
 }
