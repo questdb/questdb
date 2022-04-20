@@ -305,7 +305,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getColumnVersionPurgeQueueCapacity());
-        Assert.assertEquals(7, configuration.getCairoConfiguration().getColumnVersionCleanupLookbackDays());
+        Assert.assertEquals(7, configuration.getCairoConfiguration().getColumnVersionCleanupLookBackDays());
         Assert.assertEquals(10.0, configuration.getCairoConfiguration().getColumnVersionPurgeWaitExponent(), 0.00001);
         Assert.assertEquals(60000000, configuration.getCairoConfiguration().getColumnVersionPurgeMaxTimeoutMicros());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getColumnVersionPurgeStartWaitTimeoutMicros());
@@ -744,7 +744,7 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
 
             Assert.assertEquals(512, configuration.getCairoConfiguration().getColumnVersionPurgeQueueCapacity());
-            Assert.assertEquals(14, configuration.getCairoConfiguration().getColumnVersionCleanupLookbackDays());
+            Assert.assertEquals(14, configuration.getCairoConfiguration().getColumnVersionCleanupLookBackDays());
             Assert.assertEquals(5.0, configuration.getCairoConfiguration().getColumnVersionPurgeWaitExponent(), 0.00001);
             Assert.assertEquals(30000000, configuration.getCairoConfiguration().getColumnVersionPurgeMaxTimeoutMicros());
             Assert.assertEquals(30000, configuration.getCairoConfiguration().getColumnVersionPurgeStartWaitTimeoutMicros());

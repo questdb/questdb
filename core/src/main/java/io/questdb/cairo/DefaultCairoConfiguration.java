@@ -127,7 +127,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getColumnVersionCleanupLookbackDays() {
+    public int getColumnVersionCleanupLookBackDays() {
         return 7;
     }
 

@@ -61,8 +61,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
-    private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
+    private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
     private final StaticContentProcessorConfiguration staticContentProcessorConfiguration = new PropStaticContentProcessorConfiguration();
@@ -240,6 +240,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int o3PartitionPurgeListCapacity;
     private final long writerFileOpenOpts;
+    private final int queryCacheEventQueueCapacity;
+    private final int columnVersionPurgeQueueCapacity;
+    private final long columnVersionPurgeMaxTimeoutMicros;
+    private final double columnVersionPurgeWaitExponent;
+    private final String systemTableNamePrefix;
+    private final int columnVersionCleanupLookBackDays;
+    private final long columnVersionPurgeStartWaitTimeoutMicros;
     private int lineUdpDefaultPartitionBy;
     private int httpMinNetConnectionLimit;
     private boolean httpMinNetConnectionHint;
@@ -285,7 +292,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetBindPort;
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
-    private int queryCacheEventQueueCapacity;
     private int jsonQueryFloatScale;
     private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
@@ -376,12 +382,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private boolean isStringAsTagSupported;
-    private final int columnVersionPurgeQueueCapacity;
-    private final long columnVersionPurgeMaxTimeoutMicros;
-    private final double columnVersionPurgeWaitExponent;
-    private final String systemTableNamePrefix;
-    private final int columnVersionCleanupLookbackDays;
-    private final long columnVersionPurgeStartWaitTimeoutMicros;
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
 
@@ -698,7 +698,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnVersionPurgeMaxTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_TIMEOUT, 60_000_000L);
             this.columnVersionPurgeStartWaitTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_START_TIMEOUT, 10_000);
             this.columnVersionPurgeWaitExponent = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_TIMEOUT_EXPONENT, 10.0);
-            this.columnVersionCleanupLookbackDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_LOOK_BACK_DAYS, 7);
+            this.columnVersionCleanupLookBackDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_LOOK_BACK_DAYS, 7);
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024));
@@ -1200,6 +1200,25 @@ public class PropServerConfiguration implements ServerConfiguration {
         parser.onReady(ipv4, port);
     }
 
+    private void validateProperties(Properties properties) throws ServerConfigurationException {
+        Set<String> propertyNames = properties.stringPropertyNames();
+        Set<String> incorrectNames = new HashSet<>();
+        boolean prop;
+
+        for (String keys : propertyNames) {
+            prop = PropertyKey.getByString(keys).isPresent();
+            if (!prop) {
+                incorrectNames.add(keys);
+            }
+        }
+        if (!incorrectNames.isEmpty()) {
+            if (incorrectNames.size() == 1) {
+                throw new ServerConfigurationException(incorrectNames.toString());
+            }
+            throw new ServerConfigurationException("The following keys are incorrect: " + incorrectNames);
+        }
+    }
+
     @FunctionalInterface
     protected interface BindToParser {
         void onReady(int address, int port);
@@ -1699,8 +1718,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getColumnVersionCleanupLookbackDays() {
-            return columnVersionCleanupLookbackDays;
+        public int getColumnVersionCleanupLookBackDays() {
+            return columnVersionCleanupLookBackDays;
         }
 
         @Override
@@ -3104,24 +3123,5 @@ public class PropServerConfiguration implements ServerConfiguration {
         WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
         WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
         WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
-    }
-
-    private void validateProperties(Properties properties) throws ServerConfigurationException{
-        Set<String> propertyNames = properties.stringPropertyNames();
-        Set<String> incorrectNames = new HashSet<>();
-        boolean prop;
-
-        for (String keys : propertyNames) {
-            prop = PropertyKey.getByString(keys).isPresent();
-            if (!prop) {
-                incorrectNames.add(keys);
-            }
-        }
-        if (!incorrectNames.isEmpty()){
-            if(incorrectNames.size() == 1){
-                throw new ServerConfigurationException(incorrectNames.toString());
-            }
-            throw new ServerConfigurationException("The following keys are incorrect: " + incorrectNames);
-        }
     }
 }
