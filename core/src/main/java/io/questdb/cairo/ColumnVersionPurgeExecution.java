@@ -253,7 +253,6 @@ public class ColumnVersionPurgeExecution implements Closeable {
                     tableInitied = true;
                 }
 
-
                 if (columnVersion < minUnlockedTxnRangeStarts) {
                     if (checkScoreboardHasReadersBeforeUpdate(columnVersion, task)) {
                         // Reader lock still exists

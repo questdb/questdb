@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.*;
@@ -37,12 +38,15 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.ColumnVersionPurgeTask;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.PriorityQueue;
 
 public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(ColumnVersionPurgeJob.class);
+    private static final int TABLE_NAME_COLUMN = 1;
+    private static final int COLUMN_NAME_COLUMN = 2;
     private static final int TABLE_ID_COLUMN = 3;
     private static final int TABLE_TRUNCATE_VERSION = 4;
     private static final int COLUMN_TYPE_COLUMN = 5;
@@ -52,8 +56,6 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
     private static final int PARTITION_TIMESTAMP_COLUMN = 9;
     private static final int PARTITION_NAME_COLUMN = 10;
     private static final int MAX_ERRORS = 11;
-    private static final int TABLE_NAME_COLUMN = 1;
-    private static final int COLUMN_NAME_COLUMN = 2;
     private final String tableName;
     private final int lookbackCleanupDays;
     private final RingQueue<ColumnVersionPurgeTask> inQueue;
@@ -68,7 +70,6 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
     private SqlExecutionContextImpl sqlExecutionContext;
     private TableWriter writer;
     private SqlCompiler sqlCompiler;
-    private boolean initialised;
     private int inErrorCount;
 
     public ColumnVersionPurgeJob(CairoEngine engine, @Nullable FunctionFactoryCache functionFactoryCache) throws SqlException {
@@ -103,8 +104,9 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
                         ") timestamp(ts) partition by MONTH",
                 sqlExecutionContext
         );
-        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, getLogTableName(), "QuestDB system");
+        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "QuestDB system");
         this.cleanupExecution = new ColumnVersionPurgeExecution(configuration, this.writer, "completed");
+        putTasksFromTableToQueue();
     }
 
     @Override
@@ -115,6 +117,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
         this.cleanupExecution = Misc.free(cleanupExecution);
     }
 
+    @TestOnly
     public String getLogTableName() {
         return tableName;
     }
@@ -151,18 +154,21 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
 
     private void commit() {
         try {
-            writer.commit();
+            if (writer != null) {
+                writer.commit();
+            }
         } catch (Throwable th) {
-            LOG.error().$("error saving to column version house keeping log, cannot commit [table=").$(tableName).$(", error=").$(th).I$();
-            writer.rollback();
+            LOG.error().$("error saving to column version house keeping log, cannot commit")
+                    .$(", releasing writer and stop updating log [table=").$(tableName)
+                    .$(", error=").$(th)
+                    .I$();
             writer = Misc.free(writer);
-            throw th;
         }
     }
 
     // Process incoming queue and put it on priority queue with next timestamp to rerun
     private boolean processInQueue() {
-        boolean any = false;
+        boolean useful = false;
         long microTime = clock.getTicks();
         while (true) {
             long cursor = inSubSequence.next();
@@ -170,13 +176,9 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
             if (cursor < -1) {
                 continue;
             }
-
-            // -1 = queue is empty. All done.
+            // -1 = queue is empty, all done
             if (cursor < 0) {
-                if (any) {
-                    commit();
-                }
-                return any;
+                break;
             }
 
             ColumnVersionPurgeTask queueTask = inQueue.get(cursor);
@@ -188,22 +190,24 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
             saveToStorage(purgeTaskRun);
 
             houseKeepingRunQueue.add(purgeTaskRun);
-            any = true;
+            useful = true;
         }
+        commit();
+        return useful;
     }
 
     private void putTasksFromTableToQueue() {
         try {
-            CompiledQuery reloadQuery = this.sqlCompiler.compile(
+            CompiledQuery reloadQuery = sqlCompiler.compile(
                     "SELECT * FROM \"" + tableName + "\" WHERE ts > dateadd('d', -" + lookbackCleanupDays + ", now()) and completed = null",
                     sqlExecutionContext
             );
 
             long microTime = clock.getTicks();
-            try (RecordCursorFactory recordFactor = reloadQuery.getRecordCursorFactory()) {
-                assert recordFactor.supportsUpdateRowId(tableName);
-                try (RecordCursor records = recordFactor.getCursor(sqlExecutionContext)) {
-                    io.questdb.cairo.sql.Record rec = records.getRecord();
+            try (RecordCursorFactory recordCursorFactory = reloadQuery.getRecordCursorFactory()) {
+                assert recordCursorFactory.supportsUpdateRowId(tableName);
+                try (RecordCursor records = recordCursorFactory.getCursor(sqlExecutionContext)) {
+                    Record rec = records.getRecord();
                     long lastTs = 0;
                     ColumnVersionPurgeTaskRun taskRun = null;
 
@@ -244,7 +248,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
                     }
                 }
             }
-            if (houseKeepingRunQueue.size() == 0) {
+            if (houseKeepingRunQueue.size() == 0 && writer != null) {
                 // No tasks to do. Cleanup the log table
                 writer.truncate();
             }
@@ -257,11 +261,6 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
     protected boolean runSerially() {
         if (inErrorCount >= MAX_ERRORS) {
             return false;
-        }
-
-        if (!initialised) {
-            putTasksFromTableToQueue();
-            initialised = true;
         }
 
         try {
@@ -312,9 +311,11 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
                     updatedColumnVersions.setQuick(i + 3, Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1));
                 }
             } catch (Throwable th) {
-                LOG.error().$("error saving to column version house keeping log, cannot append [table=").$(tableName).$(", error=").$(th).I$();
-                writer.rollback();
-                throw th;
+                LOG.error().$("error saving to column version house keeping log, unable to insert")
+                        .$(", releasing writer and stop updating log [table=").$(tableName)
+                        .$(", error=").$(th)
+                        .I$();
+                writer = Misc.free(writer);
             }
         }
     }

@@ -32,6 +32,7 @@ import io.questdb.mp.FanOut;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TableWriterTask;
@@ -238,7 +239,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     writer.tick(true);
 
                     try {
-                        queryFuture.await(1_000_000);
+                        queryFuture.await(Timestamps.SECOND_MICROS);
                         Assert.fail();
                     } catch (SqlException exception) {
                         Assert.assertNotNull(exception);

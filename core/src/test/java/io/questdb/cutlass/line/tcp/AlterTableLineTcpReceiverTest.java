@@ -486,7 +486,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 try {
                     startBarrier.await();
                     LOG.info().$("Busy waiting for writer ASYNC event ").$(alterCommandQueryFuture).$();
-                    alterCommandQueryFuture.await(10_000_000);
+                    alterCommandQueryFuture.await(10 * Timestamps.SECOND_MICROS);
                 } catch (SqlException exception) {
                     sqlException = exception;
                 } catch (Throwable e) {

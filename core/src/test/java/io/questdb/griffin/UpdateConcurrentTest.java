@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -152,7 +153,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                         barrier.await();
                         for (int i = 0; i < numOfUpdates; i++) {
                             QueryFuture queryFuture = executeUpdate("UPDATE up SET x = " + i, updateCompiler, sqlExecutionContext);
-                            queryFuture.await(10000000);
+                            queryFuture.await(10 * Timestamps.SECOND_MICROS);
                             current.incrementAndGet();
                         }
                         updateCompiler.close();

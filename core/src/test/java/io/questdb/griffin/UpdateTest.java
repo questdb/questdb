@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -177,7 +178,7 @@ public class UpdateTest extends AbstractGriffinTest {
                 Assert.assertEquals(QueryFuture.QUERY_NO_RESPONSE, queryFuture.getStatus());
                 Assert.assertEquals(0, queryFuture.getAffectedRowsCount());
                 barrier.await(); // update is on writer async cmd queue
-                queryFuture.await(10000000); // 10 seconds timeout
+                queryFuture.await(10 * Timestamps.SECOND_MICROS); // 10 seconds timeout
                 Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
                 Assert.assertEquals(2, queryFuture.getAffectedRowsCount());
             }

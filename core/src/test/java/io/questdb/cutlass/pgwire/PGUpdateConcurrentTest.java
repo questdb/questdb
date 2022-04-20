@@ -134,7 +134,6 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                         tableWriter.tick();
                     } catch (EntryUnavailableException e) {
                         // ignore and re-try
-                        LOG.error().$("HOPPA").$();
                     }
                     Os.sleep(100);
                 }

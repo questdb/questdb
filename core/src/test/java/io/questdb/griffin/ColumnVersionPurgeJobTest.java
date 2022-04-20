@@ -300,6 +300,64 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPurgeCannotAllocateFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = 0;
+            ff = new FilesFacadeImpl() {
+                private int counter = 0;
+
+                @Override
+                public boolean allocate(long fd, long size) {
+                    if (counter < 96) {
+                        counter++;
+                        return super.allocate(fd, size);
+                    } else {
+                        throw new RuntimeException("TEST ERROR");
+                    }
+                }
+            };
+
+            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+                compiler.compile("create table up_part as" +
+                        " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                        " x," +
+                        " rnd_str('a', 'b', 'c', 'd') str," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                        " rnd_symbol('1', '2', '3', '4') sym2" +
+                        " from long_sequence(5)), index(sym2)" +
+                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+
+                try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part")) {
+                    executeUpdate("UPDATE up_part SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
+                    // cannot purge column versions because of active reader
+                    runPurgeJob(purgeJob);
+                }
+
+                try (Path path = new Path()) {
+                    String[] partitions = new String[]{"1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
+                    assertFilesExist(partitions, path, "up_part", "", true);
+
+                    // reader has been closed, now it can purge but FilesFacade will throw error and purge log table will not be populated
+                    runPurgeJob(purgeJob);
+                    assertFilesExist(partitions, path, "up_part", "", false);
+                }
+
+                assertSql(
+                        "up_part",
+                        "ts\tx\tstr\tsym1\tsym2\n" +
+                                "1970-01-01T00:00:00.000000Z\t1\ta\tC\t2\n" +
+                                "1970-01-02T00:00:00.000000Z\t100\tabcd\tB\tEE\n" +
+                                "1970-01-03T00:00:00.000000Z\t100\tabcd\tD\tEE\n" +
+                                "1970-01-04T00:00:00.000000Z\t100\tabcd\tA\tEE\n" +
+                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\tEE\n"
+                );
+
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+            }
+        });
+    }
+
+    @Test
     public void testPurgeRespectsOpenReaderDailyPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = 0;
@@ -565,7 +623,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     public void testPurge() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = 0;
-            try (ColumnVersionPurgeJob purgeJob = createColumnVersionPurgeJob()) {
+            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
                 ColumnVersionPurgeTask task = createTask("tbl_name", "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
                 task.appendColumnVersion(-1, IntervalUtils.parseFloorPartialDate("2022-04-05"), 2);
                 appendTaskToQueue(task);
@@ -659,7 +717,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     public void testSavesDataToPurgeLogTable() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = 0;
-            try (ColumnVersionPurgeJob purgeJob = createColumnVersionPurgeJob()) {
+            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
                 ColumnVersionPurgeTask task = createTask("tbl_name", "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
                 task.appendColumnVersion(-1, IntervalUtils.parseFloorPartialDate("2022-04-05"), 2);
                 appendTaskToQueue(task);
@@ -720,10 +778,6 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
 
         path.of(configuration.getRoot()).concat(up_part).concat(partition).concat("sym2.v").put(colSuffix).$();
         Assert.assertEquals(Chars.toString(path), exist, FilesFacadeImpl.INSTANCE.exists(path));
-    }
-
-    private ColumnVersionPurgeJob createColumnVersionPurgeJob() throws SqlException {
-        return new ColumnVersionPurgeJob(engine, null);
     }
 
     @NotNull
