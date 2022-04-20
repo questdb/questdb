@@ -468,7 +468,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 // deprecated
                 this.httpMinNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_RCV_BUF_SIZE, 1024);
                 this.httpMinNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF, this.httpMinNetConnectionRcvBuf);
-                this.httpMinNetConnectionHint = getBoolean(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF, false);
+                this.httpMinNetConnectionHint = getBoolean(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_HINT, false);
             }
 
             this.httpServerEnabled = getBoolean(properties, env, PropertyKey.HTTP_ENABLED, true);
