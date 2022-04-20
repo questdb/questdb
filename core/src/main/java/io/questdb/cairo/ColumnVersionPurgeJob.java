@@ -43,7 +43,6 @@ import java.util.PriorityQueue;
 
 public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(ColumnVersionPurgeJob.class);
-    private final String tableName;
     private static final int TABLE_ID_COLUMN = 3;
     private static final int TABLE_TRUNCATE_VERSION = 4;
     private static final int COLUMN_TYPE_COLUMN = 5;
@@ -53,9 +52,10 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
     private static final int PARTITION_TIMESTAMP_COLUMN = 9;
     private static final int PARTITION_NAME_COLUMN = 10;
     private static final int MAX_ERRORS = 11;
+    private static final int TABLE_NAME_COLUMN = 1;
+    private static final int COLUMN_NAME_COLUMN = 2;
+    private final String tableName;
     private final int lookbackCleanupDays;
-
-    private ColumnVersionPurgeExecution cleanupExecution;
     private final RingQueue<ColumnVersionPurgeTask> inQueue;
     private final Sequence inSubSequence;
     private final MicrosecondClock clock;
@@ -64,11 +64,10 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
     private final long maxWaitCapMicro;
     private final long startWaitMicro;
     private final double exponentialWaitMultiplier;
+    private ColumnVersionPurgeExecution cleanupExecution;
     private SqlExecutionContextImpl sqlExecutionContext;
     private TableWriter writer;
     private SqlCompiler sqlCompiler;
-    private static final int TABLE_NAME_COLUMN = 1;
-    private static final int COLUMN_NAME_COLUMN = 2;
     private boolean initialised;
     private int inErrorCount;
 
@@ -102,24 +101,10 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
                         "partition_name_txn long," + // 10
                         "completed timestamp" + // 11
                         ") timestamp(ts) partition by MONTH",
-                sqlExecutionContext);
+                sqlExecutionContext
+        );
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, getLogTableName(), "QuestDB system");
         this.cleanupExecution = new ColumnVersionPurgeExecution(configuration, this.writer, "completed");
-    }
-
-    public String getLogTableName() {
-        return tableName;
-    }
-
-    private void commit() {
-        try {
-            writer.commit();
-        } catch (Throwable th) {
-            LOG.error().$("error saving to column version house keeping log, cannot commit [table=").$(tableName).$(", error=").$(th).I$();
-            writer.rollback();
-            writer = Misc.free(writer);
-            throw th;
-        }
     }
 
     @Override
@@ -128,6 +113,10 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
         this.sqlCompiler = Misc.free(sqlCompiler);
         this.sqlExecutionContext = Misc.free(sqlExecutionContext);
         this.cleanupExecution = Misc.free(cleanupExecution);
+    }
+
+    public String getLogTableName() {
+        return tableName;
     }
 
     private static int compareHouseKeepingTasks(ColumnVersionPurgeTaskRun task1, ColumnVersionPurgeTaskRun task2) {
@@ -158,6 +147,17 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
             }
         }
         return useful;
+    }
+
+    private void commit() {
+        try {
+            writer.commit();
+        } catch (Throwable th) {
+            LOG.error().$("error saving to column version house keeping log, cannot commit [table=").$(tableName).$(", error=").$(th).I$();
+            writer.rollback();
+            writer = Misc.free(writer);
+            throw th;
+        }
     }
 
     // Process incoming queue and put it on priority queue with next timestamp to rerun
@@ -222,7 +222,17 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
                             int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
                             int partitionBY = rec.getInt(PARTITION_BY_COLUMN);
                             long updatedTxn = rec.getLong(UPDATED_TXN_COLUMN);
-                            taskRun.of(tableName, columnName, tableId, truncateVersion, columnType, partitionBY, updatedTxn, startWaitMicro, microTime);
+                            taskRun.of(
+                                    tableName,
+                                    columnName,
+                                    tableId,
+                                    truncateVersion,
+                                    columnType,
+                                    partitionBY,
+                                    updatedTxn,
+                                    startWaitMicro,
+                                    microTime
+                            );
                         }
                         long columnVersion = rec.getLong(COLUMN_VERSION_COLUMN);
                         long partitionTs = rec.getLong(PARTITION_TIMESTAMP_COLUMN);
@@ -320,7 +330,17 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
             super.copyFrom(inTask);
         }
 
-        public void of(String tableName, CharSequence columnName, int tableId, int truncateVersion, int columnType, int partitionBy, long lastTxn, long waitToRun, long microTime) {
+        public void of(
+                String tableName,
+                CharSequence columnName,
+                int tableId,
+                int truncateVersion,
+                int columnType,
+                int partitionBy,
+                long lastTxn,
+                long waitToRun,
+                long microTime
+        ) {
             super.of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, lastTxn);
             this.waitToRun = waitToRun;
             nextRunTimestamp = microTime;
