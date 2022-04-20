@@ -56,6 +56,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.util.*;
+import java.util.function.BiConsumer;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
@@ -442,7 +443,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.httpMinWorkerYieldThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_YIELD_THRESHOLD, 10);
                 this.httpMinWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_SLEEP_THRESHOLD, 10000);
 
-                // obsolete
+                // deprecated
                 String httpMinBindTo = getString(properties, env, PropertyKey.HTTP_MIN_BIND_TO, "0.0.0.0:9003");
 
                 parseBindTo(properties, env, PropertyKey.HTTP_MIN_NET_BIND_TO, httpMinBindTo, (a, p) -> {
@@ -452,22 +453,22 @@ public class PropServerConfiguration implements ServerConfiguration {
 
                 this.httpMinNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_LIMIT, 4);
 
-                // obsolete
+                // deprecated
                 this.httpMinNetConnectionTimeout = getLong(properties, env, PropertyKey.HTTP_MIN_NET_IDLE_CONNECTION_TIMEOUT, 5 * 60 * 1000L);
                 this.httpMinNetConnectionTimeout = getLong(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_TIMEOUT, this.httpMinNetConnectionTimeout);
 
-                // obsolete
+                // deprecated
                 this.httpMinNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.HTTP_MIN_NET_QUEUED_CONNECTION_TIMEOUT, 5 * 1000L);
                 this.httpMinNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_QUEUE_TIMEOUT, this.httpMinNetConnectionQueueTimeout);
 
-                // obsolete
+                // deprecated
                 this.httpMinNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_MIN_NET_SND_BUF_SIZE, 1024);
                 this.httpMinNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_SNDBUF, this.httpMinNetConnectionSndBuf);
 
-                // obsolete
+                // deprecated
                 this.httpMinNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_RCV_BUF_SIZE, 1024);
                 this.httpMinNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF, this.httpMinNetConnectionRcvBuf);
-                this.httpMinNetConnectionHint = getBoolean(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_HINT, false);
+                this.httpMinNetConnectionHint = getBoolean(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF, false);
             }
 
             this.httpServerEnabled = getBoolean(properties, env, PropertyKey.HTTP_ENABLED, true);
@@ -513,23 +514,23 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.publicDirectory = new File(root, publicDirectory).getAbsolutePath();
                 }
 
-                // maintain obsolete property name for the time being
+                // maintain deprecated property name for the time being
                 this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT, 256);
                 this.httpNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_NET_CONNECTION_LIMIT, this.httpNetConnectionLimit);
                 this.httpNetConnectionHint = getBoolean(properties, env, PropertyKey.HTTP_NET_CONNECTION_HINT, false);
-                // obsolete
+                // deprecated
                 this.httpNetConnectionTimeout = getLong(properties, env, PropertyKey.HTTP_NET_IDLE_CONNECTION_TIMEOUT, 5 * 60 * 1000L);
                 this.httpNetConnectionTimeout = getLong(properties, env, PropertyKey.HTTP_NET_CONNECTION_TIMEOUT, this.httpNetConnectionTimeout);
 
-                // obsolete
+                // deprecated
                 this.httpNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.HTTP_NET_QUEUED_CONNECTION_TIMEOUT, 5 * 1000L);
                 this.httpNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT, this.httpNetConnectionQueueTimeout);
 
-                // obsolete
+                // deprecated
                 this.httpNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_SND_BUF_SIZE, 2 * 1024 * 1024);
                 this.httpNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_SNDBUF, this.httpNetConnectionSndBuf);
 
-                // obsolete
+                // deprecated
                 this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_RCV_BUF_SIZE, 2 * 1024 * 1024);
                 this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_RCVBUF, this.httpNetConnectionRcvBuf);
 
@@ -576,7 +577,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.pgEnabled = getBoolean(properties, env, PropertyKey.PG_ENABLED, true);
             if (pgEnabled) {
-                // obsolete
+                // deprecated
                 pgNetConnectionLimit = getInt(properties, env, PropertyKey.PG_NET_ACTIVE_CONNECTION_LIMIT, 10);
                 pgNetConnectionLimit = getInt(properties, env, PropertyKey.PG_NET_CONNECTION_LIMIT, pgNetConnectionLimit);
                 pgNetConnectionHint = getBoolean(properties, env, PropertyKey.PG_NET_CONNECTION_HINT, false);
@@ -585,16 +586,16 @@ public class PropServerConfiguration implements ServerConfiguration {
                     pgNetBindPort = p;
                 });
 
-                // obsolete
+                // deprecated
                 this.pgNetIdleConnectionTimeout = getLong(properties, env, PropertyKey.PG_NET_IDLE_TIMEOUT, 300_000);
                 this.pgNetIdleConnectionTimeout = getLong(properties, env, PropertyKey.PG_NET_CONNECTION_TIMEOUT, this.pgNetIdleConnectionTimeout);
                 this.pgNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.PG_NET_CONNECTION_QUEUE_TIMEOUT, 5_000);
 
-                // obsolete
+                // deprecated
                 this.pgNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.PG_NET_RECV_BUF_SIZE, -1);
                 this.pgNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.PG_NET_CONNECTION_RCVBUF, this.pgNetConnectionRcvBuf);
 
-                // obsolete
+                // deprecated
                 this.pgNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.PG_NET_SEND_BUF_SIZE, -1);
                 this.pgNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.PG_NET_CONNECTION_SNDBUF, this.pgNetConnectionSndBuf);
 
@@ -806,15 +807,15 @@ public class PropServerConfiguration implements ServerConfiguration {
                     lineTcpNetBindPort = p;
                 });
 
-                // obsolete
+                // deprecated
                 this.lineTcpNetConnectionTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT, 0);
                 this.lineTcpNetConnectionTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_TIMEOUT, this.lineTcpNetConnectionTimeout);
 
-                // obsolete
+                // deprecated
                 this.lineTcpNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_QUEUED_TIMEOUT, 5_000);
                 this.lineTcpNetConnectionQueueTimeout = getLong(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT, this.lineTcpNetConnectionQueueTimeout);
 
-                // obsolete
+                // deprecated
                 this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE, -1);
                 this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF, this.lineTcpNetConnectionRcvBuf);
 
@@ -857,7 +858,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.lineTcpCommitIntervalDefault = COMMIT_INTERVAL_DEFAULT;
                 }
                 this.lineTcpAuthDbPath = getString(properties, env, PropertyKey.LINE_TCP_AUTH_DB_PATH, null);
-                // obsolete
+                // deprecated
                 String defaultTcpPartitionByProperty = getString(properties, env, PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY, "DAY");
                 defaultTcpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, defaultTcpPartitionByProperty);
                 this.lineTcpDefaultPartitionBy = PartitionBy.fromString(defaultTcpPartitionByProperty);
@@ -3045,9 +3046,69 @@ public class PropServerConfiguration implements ServerConfiguration {
         WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
         WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
 
-        // OBSOLETE_SETTINGS;
-        // DEPRECATED_SETTINGS;
+        OBSOLETE_SETTINGS.put(
+            "line.tcp.commit.timeout",
+            "Replaced by `line.tcp.commit.interval.default` and `line.tcp.commit.interval.fraction`.");
 
+        BiConsumer<PropertyKey, PropertyKey> registerDeprecated =
+            (PropertyKey oldSetting, PropertyKey newSetting) -> {
+                DEPRECATED_SETTINGS.put(
+                    oldSetting,
+                    "Replaced by `" + newSetting.getPropertyPath() +"`.");
+            };
+
+        registerDeprecated.accept(
+            PropertyKey.HTTP_MIN_BIND_TO,
+            PropertyKey.HTTP_MIN_NET_BIND_TO);
+        registerDeprecated.accept(
+            PropertyKey.HTTP_MIN_NET_IDLE_CONNECTION_TIMEOUT,
+            PropertyKey.HTTP_MIN_NET_CONNECTION_TIMEOUT);
+        registerDeprecated.accept(
+            PropertyKey.HTTP_MIN_NET_QUEUED_CONNECTION_TIMEOUT,
+            PropertyKey.HTTP_MIN_NET_CONNECTION_QUEUE_TIMEOUT);
+        registerDeprecated.accept(
+            PropertyKey.HTTP_MIN_NET_SND_BUF_SIZE,
+            PropertyKey.HTTP_MIN_NET_CONNECTION_SNDBUF);
+        DEPRECATED_SETTINGS.put(
+            PropertyKey.HTTP_NET_RCV_BUF_SIZE,
+            "Replaced by `" + PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF.getPropertyPath() +
+            "` and `" + PropertyKey.HTTP_NET_CONNECTION_RCVBUF.getPropertyPath() + "`.");
+        registerDeprecated.accept(
+            PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT,
+            PropertyKey.HTTP_NET_CONNECTION_LIMIT);
+        registerDeprecated.accept(
+            PropertyKey.HTTP_NET_IDLE_CONNECTION_TIMEOUT,
+            PropertyKey.HTTP_NET_CONNECTION_TIMEOUT);
+        registerDeprecated.accept(
+            PropertyKey.HTTP_NET_QUEUED_CONNECTION_TIMEOUT,
+            PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT);
+        registerDeprecated.accept(
+            PropertyKey.HTTP_NET_SND_BUF_SIZE,
+            PropertyKey.HTTP_NET_CONNECTION_SNDBUF);
+        registerDeprecated.accept(
+            PropertyKey.PG_NET_ACTIVE_CONNECTION_LIMIT,
+            PropertyKey.PG_NET_CONNECTION_LIMIT);
+        registerDeprecated.accept(
+            PropertyKey.PG_NET_IDLE_TIMEOUT,
+            PropertyKey.PG_NET_CONNECTION_TIMEOUT);
+        registerDeprecated.accept(
+            PropertyKey.PG_NET_RECV_BUF_SIZE,
+            PropertyKey.PG_NET_CONNECTION_RCVBUF);
+        registerDeprecated.accept(
+            PropertyKey.LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT,
+            PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT);
+        registerDeprecated.accept(
+            PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT,
+            PropertyKey.LINE_TCP_NET_CONNECTION_TIMEOUT);
+        registerDeprecated.accept(
+            PropertyKey.LINE_TCP_NET_QUEUED_TIMEOUT,
+            PropertyKey.LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT);
+        registerDeprecated.accept(
+            PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE,
+            PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF);
+        registerDeprecated.accept(
+            PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY,
+            PropertyKey.LINE_DEFAULT_PARTITION_BY);
     }
 
     private static class ValidationResult {
@@ -3070,7 +3131,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         // Settings that are still valid but are now superseded by newer ones.
         Map<String, String> deprecated = new HashMap<>();
 
-        // Settings that are not valid. Either typos, or valid in future versions (in case of rollback).
+        // Settings that are not recognized.
         Set<String> incorrect = new HashSet<>();
 
         for (String propName : propertyNames) {
@@ -3097,12 +3158,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         boolean isError = false;
 
-        StringBuilder sb = new StringBuilder("Configuration errors:\n");
+        StringBuilder sb = new StringBuilder("Configuration issues:\n");
 
         if (!incorrect.isEmpty())
         {
             isError = true;
-            sb.append("    Incorrect settings (not recognised, probable typos):\n");
+            sb.append("    Incorrect settings (not recognized, probable typos):\n");
             for (String key : incorrect)
             {
                 sb.append("        * ");
@@ -3126,7 +3187,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         if (!deprecated.isEmpty())
         {
-            sb.append("    Deprecated settings (will be removed in future versions):\n");
+            sb.append("    Deprecated settings (superseded by newer settings):\n");
             for (Map.Entry<String, String> entry : deprecated.entrySet()) {
                 sb.append("        * ");
                 sb.append(entry.getKey());
