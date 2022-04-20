@@ -39,6 +39,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -50,10 +51,11 @@ import java.util.Hashtable;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTest {
+import static io.questdb.griffin.QueryFuture.QUERY_COMPLETE;
 
+public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverUpdateFuzzTest.class);
-    private final ConcurrentLinkedQueue<String> updatesSql = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<TableSql> updatesSql = new ConcurrentLinkedQueue<>();
     private int numOfUpdates;
     private SOCountDownLatch updatesDone;
     private int numOfUpdateThreads;
@@ -82,7 +84,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     }
 
     @Test
-    public void testInsertUpdateSequencial() throws Exception {
+    public void testInsertUpdateSequential() throws Exception {
         initLoadParameters(50, 2, 2, 5, 75);
         initUpdateParameters(10, 1);
         initFuzzParameters(-1, -1, -1, -1, -1, false, false, false, false);
@@ -100,10 +102,13 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     private void executeUpdate(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String sql, SCSequence waitSequence) throws SqlException {
         while (true) {
             try {
-                CompiledQuery cc;
-                cc = compiler.compile(sql, sqlExecutionContext);
+                CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
+
+                LOG.info().$(sql).$();
                 try (QueryFuture qf = cc.execute(waitSequence)) {
-                    qf.await(10 * Timestamps.SECOND_MICROS);
+                    if (qf.await(10 * Timestamps.SECOND_MICROS) != QUERY_COMPLETE) {
+                        throw SqlException.$(0, "update query timeout");
+                    }
                 }
                 return;
             } catch (ReaderOutOfDateException ex) {
@@ -176,7 +181,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     }
 
     private void startUpdateThread(final int threadId, SOCountDownLatch updatesDone) {
-        Rnd rnd = new Rnd(7268482583166L, 1650364149333L);
+        Rnd rnd = TestUtils.generateRandom();
         new Thread(() -> {
             String sql = "";
             try {
@@ -199,7 +204,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
 
                     sql = line.generateRandomUpdate(tableName, metadata, rnd);
                     executeUpdate(compiler, executionContext, sql, waitSequence);
-                    this.updatesSql.add(sql);
+                    this.updatesSql.add(new TableSql(tableName, sql));
                 }
             } catch (Exception e) {
                 Assert.fail("Data sending failed [e=" + e + ", sql=" + sql + "]");
@@ -213,20 +218,33 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     @Override
     protected void waitDone() {
         updatesDone.await();
+        long timeoutMicros = 180_000_000;
 
         SCSequence waitSequence = new SCSequence();
         SqlCompiler compiler = compilers[0];
         SqlExecutionContext executionContext = executionContexts[0];
-        for (String sql : updatesSql) {
+        for (TableSql tableSql : updatesSql) {
             try {
-                executeUpdate(compiler, executionContext, sql, waitSequence);
+                final TableData table = tables.get(tableSql.tableName);
+                if (!table.await(timeoutMicros)) {
+                    Assert.fail("Timed out on waiting for the data to be ingested");
+                    break;
+                }
+
+                executeUpdate(compiler, executionContext, tableSql.sql, waitSequence);
             } catch (SqlException e) {
                 LOG.error().$("update failed").$((Throwable) e).$();
             }
         }
+    }
 
-        for (String sql : updatesSql) {
-            LOG.info().$(sql).$();
+    private static class TableSql {
+        CharSequence tableName;
+        String sql;
+
+        TableSql(CharSequence tableName, String sql) {
+            this.tableName = tableName;
+            this.sql = sql;
         }
     }
 }

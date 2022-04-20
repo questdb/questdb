@@ -125,7 +125,7 @@ public class UpdateExecution implements Closeable {
 
             long startPartitionRowId = 0;
             long firstUpdatedPartitionRowId = -1L;
-            long lastRowId = -1;
+            long lastRowId = Long.MAX_VALUE;
             while (recordCursor.hasNext()) {
                 long rowId = masterRecord.getUpdateRowId();
 
@@ -197,8 +197,13 @@ public class UpdateExecution implements Closeable {
             tableWriter.commit();
             tableWriter.openLastPartition();
             purgeOldColumnVersions(tableWriter, updateColumnIndexes, ff);
+        } else {
+            // Suspicious, no rows updated, log it as info
+            LOG.info().$("update finished [table=").$(tableName)
+                    .$(", updated=").$(rowsUpdated)
+                    .$(", txn=").$(tableWriter.getTxn())
+                    .I$();
         }
-
         return rowsUpdated;
     }
 
@@ -461,7 +466,7 @@ public class UpdateExecution implements Closeable {
             } else {
                 LOG.info().$("updated column version cleaned [table=").$(tableWriter.getTableName())
                         .$(", column=").$(columnName)
-                        .$(", updateTxn=").$(updatedTxn).I$();
+                        .$(", newColumnVersion=").$(updatedTxn - 1).I$();
             }
         }
 

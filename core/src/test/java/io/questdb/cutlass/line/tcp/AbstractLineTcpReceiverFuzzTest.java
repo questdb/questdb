@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableReaderRecordCursor;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.tcp.load.LineData;
@@ -185,7 +186,18 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 final TableReaderMetadata metadata = reader.getMetadata();
                 final CharSequence expected = table.generateRows(metadata);
                 getLog().info().$(table.getName()).$(" expected:\n").utf8(expected).$();
-                assertCursorTwoPass(expected, reader.getCursor(), metadata);
+
+                TableReaderRecordCursor cursor = reader.getCursor();
+                // Assert reader min timestamp
+                long txnMinTs = reader.getMinTimestamp();
+                int timestampIndex = reader.getMetadata().getTimestampIndex();
+                if (cursor.hasNext()) {
+                    long dataMinTs = cursor.getRecord().getLong(timestampIndex);
+                    Assert.assertEquals(dataMinTs, txnMinTs);
+                    cursor.toTop();
+                }
+
+                assertCursorTwoPass(expected, cursor, metadata);
                 return true;
             } else {
                 table.notReady();

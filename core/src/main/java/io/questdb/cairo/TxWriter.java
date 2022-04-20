@@ -179,6 +179,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             this.readBaseOffset = writeBaseOffset;
 
             prevTransientRowCount = transientRowCount;
+            prevMinTimestamp = minTimestamp;
+            prevMaxTimestamp = maxTimestamp;
+
             prevRecordBaseOffset = lastRecordBaseOffset;
             lastRecordBaseOffset = writeBaseOffset;
         } else {
@@ -400,6 +403,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         finishABHeader(writeBaseOffset, symbolColumnCount * 8, attachedPartitions.size() * 8, commitMode);
 
         prevTransientRowCount = transientRowCount;
+        prevMinTimestamp = minTimestamp;
+        prevMaxTimestamp = maxTimestamp;
+
         prevRecordStructureVersion = lastRecordStructureVersion;
         lastRecordStructureVersion = recordStructureVersion;
         prevRecordBaseOffset = lastRecordBaseOffset;

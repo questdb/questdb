@@ -39,6 +39,7 @@ public class LineData {
     // column/tag name can be different to real name (dupes, uppercase...)
     private final ObjList<CharSequence> names = new ObjList<>();
     private final ObjList<CharSequence> values = new ObjList<>();
+    private final BoolList updated = new BoolList();
     private final BoolList tagFlags = new BoolList();
 
     private final LowerCaseCharSequenceIntHashMap nameToIndex = new LowerCaseCharSequenceIntHashMap();
@@ -66,24 +67,27 @@ public class LineData {
         add(tagName, tagValue, true);
     }
 
-    public String generateRandomUpdate(CharSequence tableName, List<ColumnNameType> metadata, Rnd rnd) {
-        int columnType;
+    public synchronized String generateRandomUpdate(CharSequence tableName, List<ColumnNameType> metadata, Rnd rnd) {
+        int columnType = -1;
         CharSequence name;
-        int fieldIndex;
+        int fieldIndex = -1;
 
         OUT:
-        while (true) {
-            for (int i = 0; i < metadata.size(); i++) {
-                name = metadata.get(i).columnName;
-                columnType = metadata.get(i).columnType;
+        for (int i = 0; i < metadata.size(); i++) {
+            name = metadata.get(i).columnName;
+            columnType = metadata.get(i).columnType;
 
-                for (int j = 0; j < names.size(); j++) {
-                    fieldIndex = j;
-                    if (Chars.equals(name, names.getQuick(j))) {
-                        break OUT;
-                    }
+            for (int j = 0; j < names.size(); j++) {
+                fieldIndex = j;
+                if (Chars.equals(name, names.getQuick(j)) && !updated.get(j)) {
+                    updated.set(j, true);
+                    break OUT;
                 }
             }
+        }
+        if (fieldIndex == -1) {
+            // Nothing to update anymore on this like. Update field to the value of the self.
+            return String.format("update \"%s\" set %s=%s where timestamp='%s'", tableName, metadata.get(0), metadata.get(0), TimestampsToString(timestampNanos / 1000));
         }
 
         double value = 500.0 + rnd.nextInt(1000);
@@ -108,6 +112,7 @@ public class LineData {
         names.add(name);
         values.add(value);
         tagFlags.add(isTag);
+        updated.add(false);
         nameToIndex.putIfAbsent(name, names.size() - 1);
     }
 
