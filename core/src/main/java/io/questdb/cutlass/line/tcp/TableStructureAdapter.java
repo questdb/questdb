@@ -40,12 +40,14 @@ class TableStructureAdapter implements TableStructure {
     private final LowerCaseCharSequenceHashSet entityNamesUtf16 = new LowerCaseCharSequenceHashSet();
     private final ObjList<LineTcpParser.ProtoEntity> entities = new ObjList<>();
     private final CairoConfiguration cairoConfiguration;
+    private final DefaultColumnTypes defaultColumnTypes;
     private final int defaultPartitionBy;
     private CharSequence tableName;
     private int timestampIndex = -1;
 
-    public TableStructureAdapter(CairoConfiguration configuration, int defaultPartitionBy) {
+    public TableStructureAdapter(CairoConfiguration configuration, DefaultColumnTypes defaultColumnTypes, int defaultPartitionBy) {
         this.cairoConfiguration = configuration;
+        this.defaultColumnTypes = defaultColumnTypes;
         this.defaultPartitionBy = defaultPartitionBy;
     }
 
@@ -73,7 +75,7 @@ class TableStructureAdapter implements TableStructure {
         if (columnIndex == getTimestampIndex()) {
             return ColumnType.TIMESTAMP;
         }
-        return DefaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
+        return defaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
     }
 
     @Override
