@@ -279,6 +279,8 @@ public enum PropertyKey {
     LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED("line.tcp.undocumented.string.to.char.cast.allowed"),
     LINE_TCP_UNDOCUMENTED_SYMBOL_AS_FIELD_SUPPORTED("line.tcp.undocumented.symbol.as.field.supported"),
     LINE_TCP_UNDOCUMENTED_STRING_AS_TAG_SUPPORTED("line.tcp.undocumented.string.as.tag.supported"),
+    LINE_FLOAT_DEFAULT_COLUMN_TYPE("line.float.default.column.type"),
+    LINE_INTEGER_DEFAULT_COLUMN_TYPE("line.integer.default.column.type"),
     LINE_TCP_NET_IO_QUEUE_CAPACITY("line.tcp.net.io.queue.capacity"),
     LINE_TCP_IO_AGGRESIVE_RECV("line.tcp.io.aggressive.recv"),
     METRICS_ENABLED("metrics.enabled"),
