@@ -74,7 +74,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final LineUdpReceiverConfiguration lineUdpReceiverConfiguration = new PropLineUdpReceiverConfiguration();
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new PropJsonQueryProcessorConfiguration();
     private final TelemetryConfiguration telemetryConfiguration = new PropTelemetryConfiguration();
-    private final boolean configValidationEnabled;
     private final int commitMode;
     private final boolean httpServerEnabled;
     private final int createAsSelectRetryCount;
@@ -386,10 +385,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             final BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
 
-        this.configValidationEnabled = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_ENABLED, false);
         this.log = log;
 
-        validateProperties(properties);
+        boolean configValidationEnabled = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_ENABLED, false);
+        if (configValidationEnabled) {
+            validateProperties(properties);
+        }
 
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
 
@@ -3137,20 +3138,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             PropertyKey.LINE_DEFAULT_PARTITION_BY);
     }
 
-    public static class ValidationResult {
-        public final boolean isError;
-        public final String message;
+    static class ValidationResult {
+        final boolean isError;
+        final String message;
 
-        public ValidationResult(boolean isError, String message)
-        {
+        private ValidationResult(boolean isError, String message) {
             this.isError = isError;
             this.message = message;
         }
     }
 
     public static ValidationResult validate(Properties properties) {
-        Set<String> propertyNames = properties.stringPropertyNames();
-
         // Settings that used to be valid but no longer are.
         Map<String, String> obsolete = new HashMap<>();
 
@@ -3160,27 +3158,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         // Settings that are not recognized.
         Set<String> incorrect = new HashSet<>();
 
-        for (String propName : propertyNames) {
+        for (String propName : properties.stringPropertyNames()) {
             Optional<PropertyKey> prop = PropertyKey.getByString(propName);
             if (prop.isPresent()) {
                 String deprecationMsg = DEPRECATED_SETTINGS.get(prop.get());
                 if (deprecationMsg != null) {
                     deprecated.put(propName, deprecationMsg);
                 }
-            }
-            else {
+            } else {
                 String obsoleteMsg = OBSOLETE_SETTINGS.get(propName);
                 if (obsoleteMsg != null) {
                     obsolete.put(propName, obsoleteMsg);
-                }
-                else {
+                } else {
                     incorrect.add(propName);
                 }
             }
         }
 
-        if (obsolete.isEmpty() && deprecated.isEmpty() && incorrect.isEmpty())
+        if (obsolete.isEmpty() && deprecated.isEmpty() && incorrect.isEmpty()) {
             return null;
+        }
 
         boolean isError = false;
 
@@ -3225,12 +3222,10 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private void validateProperties(Properties properties) throws ServerConfigurationException {
         ValidationResult validation = validate(properties);
-        if (validation != null)
-        {
-            if (configValidationEnabled && validation.isError) {   
+        if (validation != null) {
+            if (validation.isError) {
                 throw new ServerConfigurationException(validation.message);
-            }
-            else {
+            } else {
                 log.advisory().$(validation.message).$();
             }
         }
