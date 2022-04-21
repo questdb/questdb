@@ -3186,8 +3186,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         StringBuilder sb = new StringBuilder("Configuration issues:\n");
 
-        if (!incorrect.isEmpty())
-        {
+        if (!incorrect.isEmpty()) {
             isError = true;
             sb.append("    Invalid settings (not recognized, probable typos):\n");
             for (String key : incorrect)
@@ -3198,8 +3197,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
 
-        if (!obsolete.isEmpty())
-        {
+        if (!obsolete.isEmpty()) {
             isError = true;
             sb.append("    Obsolete settings (no longer recognized):\n");
             for (Map.Entry<String, String> entry : obsolete.entrySet()) {
@@ -3211,8 +3209,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
         }
 
-        if (!deprecated.isEmpty())
-        {
+        if (!deprecated.isEmpty()) {
             sb.append("    Deprecated settings (recognized but superseded by newer settings):\n");
             for (Map.Entry<String, String> entry : deprecated.entrySet()) {
                 sb.append("        * ");
