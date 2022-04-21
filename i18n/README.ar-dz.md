@@ -81,7 +81,7 @@ brew services start questdb
 
 يمكنك التفاعل مع QuestDB باستخدام الواجهات التالية:
 
-- <a href="https://questdb.io/docs/reference/web-console/">وحدة تحكم الويب</a>
+- <a href="https://questdb.io/docs/develop/web-console/">وحدة تحكم الويب</a>
   الاستماع على المنفذ `9000`
 - <a href="https://questdb.io/docs/reference/api/rest/">REST API</a> في المنفذ
   `9000`

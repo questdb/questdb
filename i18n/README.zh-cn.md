@@ -76,7 +76,7 @@ brew services start questdb
 
 你可以使用以下接口与 QuestDB 进行交互。
 
-- [web 控制台](https://questdb.io/docs/reference/web-console/) 监听在端口 `9000`
+- [web 控制台](https://questdb.io/docs/develop/web-console/) 监听在端口 `9000`
 - [REST API](https://questdb.io/docs/reference/api/rest/) 监听在端口 `9000`
 - [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) 监听在端口
   `8812`， 支持 wire 协议，
