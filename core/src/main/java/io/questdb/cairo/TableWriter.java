@@ -5094,10 +5094,6 @@ public class TableWriter implements Closeable {
         return columnVersionWriter;
     }
 
-    public void upsertColumnVersion(long partitionTimestamp, int columnIndex) {
-        upsertColumnVersion(partitionTimestamp, columnIndex, getColumnTop(columnIndex));
-    }
-
     public void upsertColumnVersion(long partitionTimestamp, int columnIndex, long columnTop) {
         columnVersionWriter.upsert(partitionTimestamp, columnIndex, txWriter.txn, columnTop);
         txWriter.updatePartitionColumnVersion(partitionTimestamp);

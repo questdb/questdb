@@ -472,8 +472,13 @@ public class WriterPool extends AbstractPool {
                     addCommandToWriterQueue(e, asyncWriterCommand);
                     return null;
                 }
-                LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(", thread=").$(thread).I$();
-                throw EntryUnavailableException.instance(reinterpretOwnershipReason(e.ownershipReason));
+                CharSequence reason = reinterpretOwnershipReason(e.ownershipReason);
+                LOG.info().$("busy [table=`").utf8(tableName)
+                        .$("`, owner=").$(owner)
+                        .$(", thread=").$(thread)
+                        .$(", reason=").$(reason)
+                        .I$();
+                throw EntryUnavailableException.instance(reason);
             }
         }
     }

@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.ColumnVersionPurgeJob;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.pool.PoolListener;
@@ -189,19 +190,22 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
                 O3Utils.setupWorkerPool(sharedWorkerPool, engine.getMessageBus());
-                    if (needMaintenanceJob) {
-                        sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
-                    }
-                    sharedWorkerPool.start(LOG);
-                    try {
-                        r.run(receiver);
-                    } catch (Throwable err) {
-                        LOG.error().$("Stopping ILP worker pool because of an error").$(err).$();
-                        throw err;
-                    } finally {
-                        sharedWorkerPool.halt();
-                        Path.clearThreadLocals();
-                    }
+                if (needMaintenanceJob) {
+                    sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
+                }
+                final ColumnVersionPurgeJob columnVersionPurgeJob = new ColumnVersionPurgeJob(engine, null);
+                sharedWorkerPool.assign(columnVersionPurgeJob);
+                sharedWorkerPool.freeOnHalt(columnVersionPurgeJob);
+                sharedWorkerPool.start(LOG);
+                try {
+                    r.run(receiver);
+                } catch (Throwable err) {
+                    LOG.error().$("Stopping ILP worker pool because of an error").$(err).$();
+                    throw err;
+                } finally {
+                    sharedWorkerPool.halt();
+                    Path.clearThreadLocals();
+                }
             } catch (Throwable err) {
                 LOG.error().$("Stopping ILP receiver because of an error").$(err).$();
                 throw err;

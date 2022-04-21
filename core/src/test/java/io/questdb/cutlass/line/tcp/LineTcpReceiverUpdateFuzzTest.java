@@ -45,10 +45,7 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Hashtable;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 import static io.questdb.griffin.QueryFuture.QUERY_COMPLETE;
@@ -99,6 +96,15 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         runTest();
     }
 
+    private boolean checkTableAllRowsReceived(TableData table) {
+        CharSequence tableName = table.getName();
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName).$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
+            return table.size() == reader.size();
+
+        }
+    }
+
     private void executeUpdate(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String sql, SCSequence waitSequence) throws SqlException {
         while (true) {
             try {
@@ -137,6 +143,43 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         super.startThread(threadId, threadPushFinished);
         while (this.numOfUpdateThreads-- > 0) {
             startUpdateThread(this.numOfUpdateThreads, updatesDone);
+        }
+    }
+
+    @Override
+    protected void waitDone() {
+        updatesDone.await();
+
+        SqlCompiler compiler = compilers[0];
+        SqlExecutionContext executionContext = executionContexts[0];
+        HashSet<CharSequence> doneTables = new HashSet<>();
+
+        // Repeat all updates when all lines are guaranteed to be landed in the tables
+        for (TableSql tableSql : updatesSql) {
+            try {
+                if (!doneTables.contains(tableSql.tableName)) {
+                    long timeoutMicros = 180_000_000;
+                    long prev = testMicrosClock.getTicks();
+                    final TableData table = tables.get(tableSql.tableName);
+                    while (true) {
+                        if (!table.await(timeoutMicros)) {
+                            Assert.fail("Timed out on waiting for the data to be ingested");
+                            break;
+                        }
+                        if (checkTableAllRowsReceived(table)) {
+                            break;
+                        }
+                        long current = testMicrosClock.getTicks();
+                        timeoutMicros -= current - prev;
+                        prev = current;
+                    }
+                    doneTables.add(tableSql.tableName);
+                }
+
+                executeUpdate(compiler, executionContext, tableSql.sql, null);
+            } catch (SqlException e) {
+                LOG.error().$("update failed").$((Throwable) e).$();
+            }
         }
     }
 
@@ -213,29 +256,6 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 updatesDone.countDown();
             }
         }).start();
-    }
-
-    @Override
-    protected void waitDone() {
-        updatesDone.await();
-        long timeoutMicros = 180_000_000;
-
-        SCSequence waitSequence = new SCSequence();
-        SqlCompiler compiler = compilers[0];
-        SqlExecutionContext executionContext = executionContexts[0];
-        for (TableSql tableSql : updatesSql) {
-            try {
-                final TableData table = tables.get(tableSql.tableName);
-                if (!table.await(timeoutMicros)) {
-                    Assert.fail("Timed out on waiting for the data to be ingested");
-                    break;
-                }
-
-                executeUpdate(compiler, executionContext, tableSql.sql, waitSequence);
-            } catch (SqlException e) {
-                LOG.error().$("update failed").$((Throwable) e).$();
-            }
-        }
     }
 
     private static class TableSql {
