@@ -3039,7 +3039,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private static void registerDeprecated(PropertyKey old, PropertyKey... replacements) {
+    private static <KeyT> void registerReplacements(
+            Map<KeyT, String> map,
+            KeyT old,
+            PropertyKey... replacements) {
         StringBuilder sb = new StringBuilder("Replaced by ");
         for (int index = 0; index < replacements.length; ++index) {
             if (index > 0) {
@@ -3052,8 +3055,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             sb.append(replacement);
             sb.append('`');
         }
-        sb.append('.');
-        DEPRECATED_SETTINGS.put(old, sb.toString());
+        map.put(old, sb.toString());
+    }
+
+    private static void registerObsolete(String old, PropertyKey... replacements) {
+        registerReplacements(OBSOLETE_SETTINGS, old, replacements);
+    }
+
+    private static void registerDeprecated(PropertyKey old, PropertyKey... replacements) {
+        registerReplacements(DEPRECATED_SETTINGS, old, replacements);
     }
 
     static {
@@ -3062,9 +3072,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
         WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
 
-        OBSOLETE_SETTINGS.put(
+        registerObsolete(
             "line.tcp.commit.timeout",
-            "Replaced by `line.tcp.commit.interval.default` and `line.tcp.commit.interval.fraction`.");
+            PropertyKey.LINE_TCP_COMMIT_INTERVAL_DEFAULT,
+            PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION);
+        registerObsolete(
+            "cairo.timestamp.locale",
+            PropertyKey.CAIRO_DATE_LOCALE);
+        registerObsolete(
+            "pg.timestamp.locale",
+            PropertyKey.PG_DATE_LOCALE);
 
         registerDeprecated(
             PropertyKey.HTTP_MIN_BIND_TO,

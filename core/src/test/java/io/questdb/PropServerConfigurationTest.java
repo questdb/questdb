@@ -557,7 +557,7 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(result.isError);
         Assert.assertNotEquals(-1, result.message.indexOf("Obsolete settings"));
         Assert.assertNotEquals(-1, result.message.indexOf(
-            "Replaced by `line.tcp.commit.interval.default` and `line.tcp.commit.interval.fraction`."));
+            "Replaced by `line.tcp.commit.interval.default` and `line.tcp.commit.interval.fraction`"));
     }
 
     @Test
@@ -568,7 +568,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(result.isError);
         Assert.assertNotEquals(-1, result.message.indexOf("Deprecated settings"));
         Assert.assertNotEquals(-1, result.message.indexOf(
-            "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`."));
+            "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`"));
     }
 
     @Test
