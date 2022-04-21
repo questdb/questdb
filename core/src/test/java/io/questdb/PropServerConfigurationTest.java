@@ -534,7 +534,7 @@ public class PropServerConfigurationTest {
     @Test
     public void testDeprecatedConfigKeys() throws JsonException, ServerConfigurationException {
         Properties properties = new Properties();
-        properties.setProperty("config.validation.enabled", "true");
+        properties.setProperty("config.validation.strict", "true");
         properties.setProperty("http.min.bind.to", "0.0.0.0:0");
 
         // Using deprecated settings will not throw an exception, despite validation enabled.
