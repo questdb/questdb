@@ -38,18 +38,18 @@ import org.junit.*;
 import java.util.concurrent.CyclicBarrier;
 
 public class UpdateTest extends AbstractGriffinTest {
-    private static UpdateExecution updateExecution;
+    private static UpdateOperator updateOperator;
     private final SCSequence eventSubSequence = new SCSequence();
 
     @BeforeClass
     public static void setUpUpdates() {
-        // Make updateExecution static to test re-usabbility of the object
-        updateExecution = new UpdateExecution(configuration, engine.getMessageBus());
+        // Make updateOperator static to test re-usability of the object
+        updateOperator = new UpdateOperator(configuration, engine.getMessageBus());
     }
 
     @AfterClass
     public static void tearDownUpdate() {
-        updateExecution = Misc.free(updateExecution);
+        updateOperator = Misc.free(updateOperator);
     }
 
     @Test

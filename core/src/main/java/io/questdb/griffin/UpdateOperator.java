@@ -46,8 +46,8 @@ import static io.questdb.cairo.ColumnType.isVariableLength;
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 
-public class UpdateExecution implements Closeable {
-    private static final Log LOG = LogFactory.getLog(UpdateExecution.class);
+public class UpdateOperator implements Closeable {
+    private static final Log LOG = LogFactory.getLog(UpdateOperator.class);
     private final FilesFacade ff;
     private final int rootLen;
     private final IntList updateColumnIndexes = new IntList();
@@ -60,13 +60,13 @@ public class UpdateExecution implements Closeable {
     private final LongList cleanupColumnVersionsAsync = new LongList();
     private final MessageBus messageBus;
     private final CairoConfiguration configuration;
-    private RebuildIndex rebuildIndex;
+    private IndexBuilder indexBuilder;
     private Path path;
 
-    public UpdateExecution(CairoConfiguration configuration, MessageBus messageBus) {
+    public UpdateOperator(CairoConfiguration configuration, MessageBus messageBus) {
         this.messageBus = messageBus;
         this.configuration = configuration;
-        rebuildIndex = new RebuildIndex();
+        indexBuilder = new IndexBuilder();
         ff = configuration.getFilesFacade();
         path = new Path().of(configuration.getRoot());
         rootLen = path.length();
@@ -77,10 +77,18 @@ public class UpdateExecution implements Closeable {
     @Override
     public void close() {
         path = Misc.free(path);
-        rebuildIndex = Misc.free(rebuildIndex);
+        indexBuilder = Misc.free(indexBuilder);
     }
 
-    public long executeUpdate(TableWriter tableWriter, UpdateStatement updateStatement, SqlExecutionContext executionContext) throws SqlException {
+    public long executeUpdate(
+            TableWriter tableWriter,
+            UpdateStatement updateStatement,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+
+        System.out.println("running");
+        LOG.debug().$("executing UPDATE [table=").$(tableWriter.getTableName()).I$();
+
         cleanupColumnVersions.clear();
 
         final String tableName = tableWriter.getTableName();
@@ -93,6 +101,7 @@ public class UpdateExecution implements Closeable {
 
         // Check that table structure hasn't changed between planning and executing the UPDATE
         if (writerMetadata.getId() != updateStatement.getTableId() || tableWriter.getStructureVersion() != updateStatement.getTableVersion()) {
+            System.out.println("reader fooked");
             throw ReaderOutOfDateException.of(tableName);
         }
 
@@ -148,7 +157,14 @@ public class UpdateExecution implements Closeable {
                                 updateMemory,
                                 startPartitionRowId,
                                 firstUpdatedPartitionRowId);
-                        updateEffectiveColumnTops(tableWriter, currentPartitionIndex, updateColumnIndexes, updateColumnCount, firstUpdatedPartitionRowId);
+
+                        updateEffectiveColumnTops(
+                                tableWriter,
+                                currentPartitionIndex,
+                                updateColumnIndexes,
+                                updateColumnCount,
+                                firstUpdatedPartitionRowId
+                        );
                     }
 
                     openPartitionColumnsForRead(tableWriter, baseMemory, partitionIndex, updateColumnIndexes);
@@ -184,7 +200,14 @@ public class UpdateExecution implements Closeable {
                         updateMemory,
                         startPartitionRowId,
                         firstUpdatedPartitionRowId);
-                updateEffectiveColumnTops(tableWriter, currentPartitionIndex, updateColumnIndexes, updateColumnCount, firstUpdatedPartitionRowId);
+
+                updateEffectiveColumnTops(
+                        tableWriter,
+                        currentPartitionIndex,
+                        updateColumnIndexes,
+                        updateColumnCount,
+                        firstUpdatedPartitionRowId
+                );
             }
         } finally {
             Misc.freeObjList(baseMemory);
@@ -197,27 +220,27 @@ public class UpdateExecution implements Closeable {
             tableWriter.commit();
             tableWriter.openLastPartition();
             purgeOldColumnVersions(tableWriter, updateColumnIndexes, ff);
-        } else {
-            // Suspicious, no rows updated, log it as info
-            LOG.info().$("update finished [table=").$(tableName)
-                    .$(", updated=").$(rowsUpdated)
-                    .$(", txn=").$(tableWriter.getTxn())
-                    .I$();
         }
+
+        LOG.info().$("update finished [table=").$(tableName)
+                .$(", updated=").$(rowsUpdated)
+                .$(", txn=").$(tableWriter.getTxn())
+                .I$();
+
         return rowsUpdated;
     }
 
     private void rebuildIndexes(String tableName, TableWriterMetadata writerMetadata, TableWriter tableWriter) {
         int pathTrimToLen = path.length();
-        rebuildIndex.of(path.concat(tableName), configuration);
+        indexBuilder.of(path.concat(tableName), configuration);
         for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
             int columnIndex = updateColumnIndexes.get(i);
             if (writerMetadata.isColumnIndexed(columnIndex)) {
                 CharSequence colName = writerMetadata.getColumnName(columnIndex);
-                rebuildIndex.rebuildColumn(colName, tableWriter);
+                indexBuilder.rebuildColumn(colName, tableWriter);
             }
         }
-        rebuildIndex.clear();
+        indexBuilder.clear();
         path.trimTo(pathTrimToLen);
     }
 

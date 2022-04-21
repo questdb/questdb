@@ -24,7 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.tasks.TableWriterTask;
@@ -33,24 +33,31 @@ import java.io.Closeable;
 
 public class UpdateStatement extends AsyncWriterCommandBase implements Closeable {
     private RecordCursorFactory updateToDataCursorFactory;
-    private final SqlExecutionContext executionContext;
+    private SqlExecutionContext sqlExecutionContext;
 
     public UpdateStatement(
             String tableName,
             int tableId,
             long tableVersion,
             int tableNamePosition,
-            SqlExecutionContext executionContext,
             RecordCursorFactory updateToDataCursorFactory
     ) {
         init(TableWriterTask.CMD_UPDATE_TABLE, "UPDATE", tableName, tableId, tableVersion, tableNamePosition);
-        this.executionContext = executionContext;
         this.updateToDataCursorFactory = updateToDataCursorFactory;
     }
 
     @Override
-    public void close() {
-        updateToDataCursorFactory = Misc.free(updateToDataCursorFactory);
+    public long apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException {
+        if (updateToDataCursorFactory != null) {
+            return tableWriter.getUpdateOperator().executeUpdate(
+                    tableWriter,
+                    this,
+                    sqlExecutionContext
+            );
+        } else {
+            System.out.println("updating: "+this);
+        }
+        return 0L;
     }
 
     @Override
@@ -59,11 +66,9 @@ public class UpdateStatement extends AsyncWriterCommandBase implements Closeable
     }
 
     @Override
-    public long apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException {
-        if (updateToDataCursorFactory != null) {
-            return tableWriter.getUpdateExecution().executeUpdate(tableWriter, this, executionContext);
-        }
-        return 0L;
+    public void close() {
+        System.out.println("closed: "+this);
+        updateToDataCursorFactory = Misc.free(updateToDataCursorFactory);
     }
 
     public RecordCursorFactory getUpdateToDataCursorFactory() {
@@ -74,5 +79,9 @@ public class UpdateStatement extends AsyncWriterCommandBase implements Closeable
     public void serialize(TableWriterTask task) {
         super.serialize(task);
         task.setAsyncWriterCommand(this);
+    }
+
+    public void withContext(SqlExecutionContext sqlExecutionContext) {
+        this.sqlExecutionContext = sqlExecutionContext;
     }
 }

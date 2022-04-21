@@ -29,19 +29,25 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.tasks.TableWriterTask;
 
 public interface AsyncWriterCommand {
-    int getTableNamePosition();
-    int getTableId();
-    long getTableVersion();
-    String getTableName();
-    String getCommandName();
-    void setCommandCorrelationId(long correlationId);
-
-    void serialize(TableWriterTask task);
-    AsyncWriterCommand deserialize(TableWriterTask task);
-
     long apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException;
 
     default long apply(TableWriter tableWriter) throws SqlException, TableStructureChangesException {
         return apply(tableWriter, false);
     }
+
+    AsyncWriterCommand deserialize(TableWriterTask task);
+
+    String getCommandName();
+
+    int getTableId();
+
+    String getTableName();
+
+    int getTableNamePosition();
+
+    long getTableVersion();
+
+    void serialize(TableWriterTask task);
+
+    void setCommandCorrelationId(long correlationId);
 }

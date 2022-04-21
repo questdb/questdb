@@ -28,13 +28,12 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.griffin.UpdateStatement;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -56,8 +55,6 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT
  */
 public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
-    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
-
     public static final String TAG_SET = "SET";
     public static final String TAG_BEGIN = "BEGIN";
     public static final String TAG_COMMIT = "COMMIT";
@@ -67,11 +64,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
     public static final String TAG_UPDATE = "UPDATE";
-
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
-
+    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
 
@@ -133,13 +129,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
     private final WeakObjectPool<Portal> namedPortalPool;
     private final WeakAutoClosableObjectPool<TypesAndInsert> typesAndInsertPool;
-    private final WeakAutoClosableObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private final DateLocale locale;
     private final CharSequenceObjHashMap<TableWriter> pendingWriters;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
     private final AssociativeCache<TypesAndInsert> typesAndInsertCache;
-    private final AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap;
     private final CharSequenceObjHashMap<Portal> namedPortalMap;
     private final IntList syncActions = new IntList(4);
@@ -147,11 +141,13 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final SCSequence tempSequence = new SCSequence();
-    //stores result format codes (0=Text,1=Binary) from latest bind message
+    //stores result format codes (0=Text,1=Binary) from the latest bind message
     //we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
     //pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message
     private final IntList bindSelectColumnFormats;
     private final BatchCallback batchCallback;
+    private WeakAutoClosableObjectPool<TypesAndUpdate> typesAndUpdatePool;
+    private AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     //list of pair: column types (with format flag stored in first bit) AND additional type flag
     private IntList activeSelectColumnTypes;
     private int parsePhaseBindVariableCount;
@@ -172,6 +168,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private TypesAndSelect typesAndSelect = null;
     private TypesAndInsert typesAndInsert = null;
     private TypesAndUpdate typesAndUpdate = null;
+    private boolean typesAndUpdateIsCached = false;
     private long fd;
     private CharSequence queryText;
     //command tag used when returning row count to client,
@@ -233,11 +230,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
         final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1; // 8
         this.typesAndInsertCache = new AssociativeCache<>(insertBlockCount, insertRowCount);
-        this.typesAndUpdatePool = new WeakAutoClosableObjectPool<>(parent -> new TypesAndUpdate(parent, engine), configuration.getUpdatePoolCapacity()); // 64
-        final boolean enableUpdateCache = configuration.isUpdateCacheEnabled();
-        final int updateBlockCount = enableUpdateCache ? configuration.getUpdateCacheBlockCount() : 1; // 8
-        final int updateRowCount = enableUpdateCache ? configuration.getUpdateCacheRowCount() : 1; // 8
-        this.typesAndUpdateCache = new AssociativeCache<>(updateBlockCount, updateRowCount);
         this.batchCallback = new PGConnectionBatchCallback();
         this.bindSelectColumnFormats = new IntList();
     }
@@ -312,7 +304,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         clearWriters();
         clearRecvBuffer();
         typesAndInsertCache.clear();
-        typesAndUpdateCache.clear();
         namedStatementMap.clear();
         namedPortalMap.clear();
         bindVariableService.clear();
@@ -322,6 +313,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         completed = true;
         clearCursorAndFactory();
         totalReceived = 0;
+        typesAndUpdateIsCached = false;
     }
 
     public void clearWriters() {
@@ -341,7 +333,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
             Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
             Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            Misc.free(typesAndSelectCache);
             Misc.free(path);
             Misc.free(utf8Sink);
             Misc.free(circuitBreaker);
@@ -376,11 +367,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             @Transient SqlCompiler compiler,
             @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
             @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool,
+            @Transient AssociativeCache<TypesAndUpdate> typesAndUpdateCache,
+            @Transient WeakAutoClosableObjectPool<TypesAndUpdate> typesAndUpdatePool,
             int operation
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException, BadProtocolException {
 
         this.typesAndSelectCache = selectAndTypesCache;
         this.typesAndSelectPool = selectAndTypesPool;
+        this.typesAndUpdateCache = typesAndUpdateCache;
+        this.typesAndUpdatePool = typesAndUpdatePool;
 
         try {
             if (bufferRemainingSize > 0) {
@@ -1056,6 +1051,16 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             // free the factory when context finishes abnormally
             this.typesAndSelect = null;
         }
+
+        if (typesAndUpdate != null) {
+            if (typesAndUpdateIsCached) {
+                assert queryText != null;
+                typesAndUpdateCache.put(queryText, typesAndUpdate);
+                this.typesAndUpdate = null;
+            } else {
+                typesAndUpdate = Misc.free(typesAndUpdate);
+            }
+        }
     }
 
     void clearRecvBuffer() {
@@ -1080,11 +1085,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 return false;
             }
 
-            typesAndUpdate = typesAndUpdateCache.peek(queryText);
+            typesAndUpdate = typesAndUpdateCache.poll(queryText);
 
             if (typesAndUpdate != null) {
                 typesAndUpdate.defineBindVariables(bindVariableService);
                 queryTag = TAG_UPDATE;
+                typesAndUpdateIsCached = true;
                 return false;
             }
 
@@ -1275,64 +1281,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void executeUpdate() throws SqlException {
-        final TableWriter writer;
-        try {
-            switch (transactionState) {
-                case IN_TRANSACTION:
-                    // update contains implicit commits which breaks the idea of transactions
-                    if ((writer = executeUpdate0()) != null) {
-                        pendingWriters.put(writer.getTableName(), writer);
-                    }
-                    break;
-                case ERROR_TRANSACTION:
-                    // when transaction is in error state, skip execution
-                    break;
-                default:
-                    // in any other case we will commit
-                    if ((writer = executeUpdate0()) != null) {
-                        writer.commit();
-                        Misc.free(writer);
-                    }
-                    break;
-            }
-            prepareCommandComplete(true);
-        } catch (Throwable e) {
-            if (transactionState == IN_TRANSACTION) {
-                transactionState = ERROR_TRANSACTION;
-            }
-            throw e;
-        }
-    }
-
-    private TableWriter executeUpdate0() throws SqlException {
-        CompiledQuery cqUpdate = typesAndUpdate.getCompiledQuery();
-        UpdateStatement updateStatement = cqUpdate.getUpdateStatement();
-
-        TableWriter writer = null;
-        try {
-            try {
-                writer = getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        updateStatement.getTableName(),
-                        "Update table execute"
-                );
-                rowCount = updateStatement.apply(writer);
-            } catch (EntryUnavailableException busyException) {
-                try (QueryFuture queryFuture = cqUpdate.executeAsync(updateStatement, tempSequence, false)) {
-                    queryFuture.await();
-                    rowCount = queryFuture.getAffectedRowsCount();
-                }
-            } catch (TableStructureChangesException e) {
-                assert false : "This must never happen for UPDATE, tableName=" + updateStatement.getTableName();
-            }
-        } catch (Throwable th) {
-            updateStatement.close();
-            throw th;
-        }
-        return writer;
-    }
-
     private void executeTag() {
         LOG.debug().$("executing [tag=").$(queryTag).$(']').$();
         if (queryTag != null && TAG_OK != queryTag) {  //do not run this for OK tag (i.e.: create table)
@@ -1369,6 +1317,68 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             default:
                 break;
         }
+    }
+
+    private void executeUpdate() throws SqlException {
+        final TableWriter writer;
+        try {
+            switch (transactionState) {
+                case IN_TRANSACTION:
+                    // update contains implicit commits which breaks the idea of transactions
+                    if ((writer = executeUpdate0()) != null) {
+                        pendingWriters.put(writer.getTableName(), writer);
+                    }
+                    break;
+                case ERROR_TRANSACTION:
+                    // when transaction is in error state, skip execution
+                    break;
+                default:
+                    // in any other case we will commit
+                    if ((writer = executeUpdate0()) != null) {
+                        writer.commit();
+                        Misc.free(writer);
+                    }
+                    break;
+            }
+            prepareCommandComplete(true);
+        } catch (Throwable e) {
+            if (transactionState == IN_TRANSACTION) {
+                transactionState = ERROR_TRANSACTION;
+            }
+            throw e;
+        }
+    }
+
+    private TableWriter executeUpdate0() throws SqlException {
+        CompiledQuery cqUpdate = typesAndUpdate.getCompiledQuery().withContext(sqlExecutionContext);
+        UpdateStatement updateStatement = cqUpdate.getUpdateStatement();
+
+        TableWriter writer = null;
+        try {
+            try {
+                writer = getWriter(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        updateStatement.getTableName(),
+                        "Update table execute"
+                );
+                rowCount = updateStatement.apply(writer);
+                System.out.println("rows SYNC: "+rowCount);
+            } catch (EntryUnavailableException busyException) {
+                LOG.debug().$("executing UPDATE async [table=").$(updateStatement.getTableName()).I$();
+
+                try (QueryFuture queryFuture = cqUpdate.executeAsync(updateStatement, tempSequence, false)) {
+                    queryFuture.await();
+                    rowCount = queryFuture.getAffectedRowsCount();
+                    System.out.println("rows async: "+rowCount);
+                }
+            } catch (TableStructureChangesException e) {
+                assert false : "This must never happen for UPDATE, tableName=" + updateStatement.getTableName();
+            }
+        } catch (Throwable th) {
+            updateStatement.close();
+            throw th;
+        }
+        return writer;
     }
 
     @Nullable
@@ -1501,8 +1511,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 processQuery(msgLo, msgLimit, compiler);
                 break;
             case 'd':
-                System.out.println("data " + msgLen);
-                // msgLen includes 4 bytes of self
                 break;
             default:
                 LOG.error().$("unknown message [type=").$(type).$(']').$();
@@ -1609,7 +1617,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             bindVariableService.clear();
             currentCursor = Misc.free(currentCursor);
             typesAndInsert = null;
-            typesAndUpdate = null;
             clearCursorAndFactory();
             rowCount = 0;
             queryTag = TAG_OK;
@@ -1779,10 +1786,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 }
             }
         } catch (SqlException e) {
-            if (typesAndSelect != null) {
-                Misc.free(typesAndSelect);
-                typesAndSelect = null;
-            }
+            typesAndSelect = Misc.free(typesAndSelect);
+            typesAndUpdate = Misc.free(typesAndUpdate);
             throw e;
         }
 
@@ -1918,11 +1923,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 queryTag = TAG_UPDATE;
                 typesAndUpdate = typesAndUpdatePool.pop();
                 typesAndUpdate.of(cq.getUpdateStatement(), bindVariableService);
-                if (bindVariableService.getIndexedVariableCount() > 0) {
-                    LOG.debug().$("cache update [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
-                    // we can add update to cache right away because it is local to the connection
-                    typesAndUpdateCache.put(queryText, typesAndUpdate);
-                }
+                typesAndUpdateIsCached = bindVariableService.getIndexedVariableCount() > 0;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
                 queryTag = TAG_INSERT;

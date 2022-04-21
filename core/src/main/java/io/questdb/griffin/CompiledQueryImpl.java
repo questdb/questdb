@@ -122,8 +122,11 @@ public class CompiledQueryImpl implements CompiledQuery {
         return this;
     }
 
-    public CompiledQueryImpl withContext(SqlExecutionContext executionContext) {
-        sqlExecutionContext = executionContext;
+    public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
+        this.sqlExecutionContext = sqlExecutionContext;
+        if (updateStatement != null) {
+            updateStatement.withContext(sqlExecutionContext);
+        }
         return this;
     }
 
@@ -183,7 +186,11 @@ public class CompiledQueryImpl implements CompiledQuery {
         }
     }
 
-    public QueryFuture executeAsync(AsyncWriterCommand asyncWriterCommand, SCSequence eventSubSeq, boolean acceptStructureChange) throws SqlException {
+    public QueryFuture executeAsync(
+            AsyncWriterCommand asyncWriterCommand,
+            SCSequence eventSubSeq,
+            boolean acceptStructureChange
+    ) throws SqlException {
         try {
             queryFuture.of(asyncWriterCommand, sqlExecutionContext, eventSubSeq, acceptStructureChange);
             return queryFuture;

@@ -133,16 +133,6 @@ public class AlterStatement extends AsyncWriterCommandBase implements Mutable {
     }
 
     @Override
-    public void clear() {
-        command = DO_NOTHING;
-        objCharList.clear();
-        directCharList.clear();
-        charSequenceList = objCharList;
-        setCommandCorrelationId(-1);
-        longList.clear();
-    }
-
-    @Override
     public AlterStatement deserialize(TableWriterTask event) {
         clear();
 
@@ -170,6 +160,16 @@ public class AlterStatement extends AsyncWriterCommandBase implements Mutable {
         directCharList.of(readPtr, hi);
         charSequenceList = directCharList;
         return this;
+    }
+
+    @Override
+    public void clear() {
+        command = DO_NOTHING;
+        objCharList.clear();
+        directCharList.clear();
+        charSequenceList = objCharList;
+        setCommandCorrelationId(-1);
+        longList.clear();
     }
 
     public AlterStatement of(

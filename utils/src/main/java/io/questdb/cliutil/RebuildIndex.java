@@ -28,6 +28,7 @@ package io.questdb.cliutil;
 import io.questdb.BuildInformation;
 import io.questdb.PropServerConfiguration;
 import io.questdb.ServerConfigurationException;
+import io.questdb.cairo.IndexBuilder;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -46,7 +47,7 @@ public class RebuildIndex {
             // Invalid params, usage already printed
             return;
         }
-        runColumnRebuild(params, new io.questdb.cairo.RebuildIndex());
+        runColumnRebuild(params, new IndexBuilder());
     }
 
     private static PropServerConfiguration readServerConfiguration(

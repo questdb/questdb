@@ -105,15 +105,15 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 10000000;
-        writerAsyncCommandMaxTimeout = 10000000;
+        writerAsyncCommandBusyWaitTimeout = 10000000000L;
+        writerAsyncCommandMaxTimeout = 1000000000;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
             AtomicInteger current = new AtomicInteger();
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
-            final PGWireServer pgServer = createPGServer(1);
+            final PGWireServer pgServer = createPGServer(4);
             try (final Connection connection = getConnection(false, true)) {
                 PreparedStatement create = connection.prepareStatement("create table up as" +
                         " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +
@@ -132,8 +132,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                             "up",
                             "test")) {
                         tableWriter.tick();
-                    } catch (EntryUnavailableException e) {
-                        // ignore and re-try
+                    } catch (EntryUnavailableException ignored) {
                     }
                     Os.sleep(100);
                 }

@@ -40,13 +40,13 @@ io.questdb.cliutil.RebuildIndex <table_path> [-p <partition_name>] [-c <column_n
 #### Examples
 
 ```bash
-java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE
+java -cp utils.jar io.questdb.cliutil.IndexBuilder /questdb-root/db/trades-COINBASE
 
-java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -c symbol
+java -cp utils.jar io.questdb.cliutil.IndexBuilder /questdb-root/db/trades-COINBASE -c symbol
 
-java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -p 2022-03-21
+java -cp utils.jar io.questdb.cliutil.IndexBuilder /questdb-root/db/trades-COINBASE -p 2022-03-21
 
-java -cp utils.jar io.questdb.cliutil.RebuildIndex /questdb-root/db/trades-COINBASE -p 2022-03-21 -c symbol
+java -cp utils.jar io.questdb.cliutil.IndexBuilder /questdb-root/db/trades-COINBASE -p 2022-03-21 -c symbol
 ```
 
 ### Rebuild String column index `.i` file

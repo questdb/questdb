@@ -82,7 +82,7 @@ public class SqlCompiler implements Closeable {
     private final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
     private final CompiledQueryImpl compiledQuery;
     private final AlterStatementBuilder alterQueryBuilder = new AlterStatementBuilder();
-    private final UpdateExecution updateExecution;
+    private final UpdateOperator updateOperator;
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -222,7 +222,7 @@ public class SqlCompiler implements Closeable {
                 postOrderTreeTraversalAlgo
         );
         textLoader = new TextLoader(engine);
-        updateExecution = new UpdateExecution(engine.getConfiguration(), engine.getMessageBus());
+        updateOperator = new UpdateOperator(engine.getConfiguration(), engine.getMessageBus());
     }
 
     // Creates data type converter.
@@ -904,7 +904,7 @@ public class SqlCompiler implements Closeable {
     public void close() {
         backupAgent.close();
         codeGenerator.close();
-        updateExecution.close();
+        updateOperator.close();
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
@@ -1726,7 +1726,7 @@ public class SqlCompiler implements Closeable {
         ExecutionModel executionModel = compileExecutionModel(executionContext);
         switch (executionModel.getModelType()) {
             case ExecutionModel.QUERY:
-                LOG.info().$("plan [q=`").$((QueryModel) executionModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
+//                LOG.info().$("plan [q=`").$((QueryModel) executionModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
                 return compiledQuery.of(generate((QueryModel) executionModel, executionContext));
             case ExecutionModel.CREATE_TABLE:
                 return createTableWithRetries(executionModel, executionContext);
@@ -2154,7 +2154,6 @@ public class SqlCompiler implements Closeable {
                 selectQueryModel.getTableId(),
                 selectQueryModel.getTableVersion(),
                 lexer.getPosition(),
-                executionContext,
                 recordCursorFactory
         );
     }

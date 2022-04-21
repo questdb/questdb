@@ -40,8 +40,10 @@ import java.io.Closeable;
 public class PGJobContext implements Closeable {
 
     private final SqlCompiler compiler;
-    private final AssociativeCache<TypesAndSelect> selectAndTypesCache;
-    private final WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool;
+    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
+    private final WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool;
+    private final AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
+    private final WeakAutoClosableObjectPool<TypesAndUpdate> typesAndUpdatePool;
 
     public PGJobContext(
             PGWireConfiguration configuration,
@@ -53,14 +55,21 @@ public class PGJobContext implements Closeable {
         final boolean enableSelectCache = configuration.isSelectCacheEnabled();
         final int blockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
         final int rowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;
-        this.selectAndTypesCache = new AssociativeCache<>(blockCount, rowCount);
-        this.selectAndTypesPool = new WeakAutoClosableObjectPool<>(TypesAndSelect::new, blockCount * rowCount);
+        this.typesAndSelectCache = new AssociativeCache<>(blockCount, rowCount);
+        this.typesAndSelectPool = new WeakAutoClosableObjectPool<>(TypesAndSelect::new, blockCount * rowCount);
+
+        final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
+        final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1; // 8
+        final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1; // 8
+        this.typesAndUpdateCache = new AssociativeCache<>(updateBlockCount, updateRowCount);
+        this.typesAndUpdatePool = new WeakAutoClosableObjectPool<TypesAndUpdate>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
     }
 
     @Override
     public void close() {
         Misc.free(compiler);
-        Misc.free(selectAndTypesCache);
+        Misc.free(typesAndSelectCache);
+        Misc.free(typesAndUpdateCache);
     }
 
     public void handleClientOperation(PGConnectionContext context, int operation)
@@ -68,10 +77,17 @@ public class PGJobContext implements Closeable {
             PeerIsSlowToReadException,
             PeerDisconnectedException,
             BadProtocolException {
-        context.handleClientOperation(compiler, selectAndTypesCache, selectAndTypesPool, operation);
+        context.handleClientOperation(
+                compiler,
+                typesAndSelectCache,
+                typesAndSelectPool,
+                typesAndUpdateCache,
+                typesAndUpdatePool,
+                operation
+        );
     }
 
     public void flushQueryCache() {
-        selectAndTypesCache.clear();
+        typesAndSelectCache.clear();
     }
 }

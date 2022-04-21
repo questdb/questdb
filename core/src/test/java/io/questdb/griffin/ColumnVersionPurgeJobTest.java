@@ -36,20 +36,13 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 
 public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
-    private UpdateExecution updateExecution;
     private int iteration = 1;
 
     @Before
     public void setUpUpdates() {
-        updateExecution = new UpdateExecution(configuration, engine.getMessageBus());
         iteration = 1;
         currentMicros = 0;
         columnVersionPurgeStartWaitTimeoutMicros = 1;
-    }
-
-    @After
-    public void tearDownUpdate() {
-        updateExecution = Misc.free(updateExecution);
     }
 
     @Test
@@ -327,7 +320,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
 
-                try (TableReader r = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part")) {
+                try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part")) {
                     executeUpdate("UPDATE up_part SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
                     // cannot purge column versions because of active reader
                     runPurgeJob(purgeJob);

@@ -38,8 +38,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
-import io.questdb.mp.MPSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
@@ -2814,7 +2812,7 @@ nodejs code:
     public void testUpdateBatch() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer ignored = createPGServer(1);
+                    final PGWireServer ignored = createPGServer(2);
                     final Connection connection = getConnection(true, false)
             ) {
                 final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
@@ -5688,7 +5686,6 @@ create table tab as (
     @Test
     public void testSlowClient() throws Exception {
         assertMemoryLeak(() -> {
-            final int delayedAttempts = 1000;
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
             PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
                 @Override

@@ -38,8 +38,8 @@ public class ColumnVersionPurgeExecution implements Closeable {
     private static final Log LOG = LogFactory.getLog(ColumnVersionPurgeExecution.class);
     private final Path path = new Path();
     private final int pathRootLen;
-    private final FilesFacade filesFacade;
-    private final TableWriter cleanUpLogWriter;
+    private final FilesFacade ff;
+    private final TableWriter purgeLogWriter;
     private final String updateCompleteColumnName;
     private final TxnScoreboard txnScoreboard;
     private final TxReader txReader;
@@ -48,18 +48,18 @@ public class ColumnVersionPurgeExecution implements Closeable {
     private final int updateCompleteColumnWriterIndex;
     private long longBytes;
     private int pathTableLen;
-    private long cleanupLogOpenPartitionTimestamp = Long.MAX_VALUE;
-    private long cleanupLogOpenPartitionFd = -1L;
+    private long purgeLogPartitionTimestamp = Long.MAX_VALUE;
+    private long purgeLogPartitionFd = -1L;
 
-    public ColumnVersionPurgeExecution(CairoConfiguration configuration, TableWriter cleanUpLogWriter, String updateCompleteColumnName) {
-        this.filesFacade = configuration.getFilesFacade();
-        this.cleanUpLogWriter = cleanUpLogWriter;
+    public ColumnVersionPurgeExecution(CairoConfiguration configuration, TableWriter purgeLogWriter, String updateCompleteColumnName) {
+        this.ff = configuration.getFilesFacade();
+        this.purgeLogWriter = purgeLogWriter;
         this.updateCompleteColumnName = updateCompleteColumnName;
-        this.updateCompleteColumnWriterIndex = cleanUpLogWriter.getMetadata().getColumnIndex(updateCompleteColumnName);
+        this.updateCompleteColumnWriterIndex = purgeLogWriter.getMetadata().getColumnIndex(updateCompleteColumnName);
         path.of(configuration.getRoot());
         pathRootLen = path.length();
-        txnScoreboard = new TxnScoreboard(filesFacade, configuration.getTxnScoreboardEntryCount());
-        txReader = new TxReader(filesFacade);
+        txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
+        txReader = new TxReader(ff);
         microClock = configuration.getMicrosecondClock();
         longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
     }
@@ -78,9 +78,9 @@ public class ColumnVersionPurgeExecution implements Closeable {
             boolean done = tryCleanup0(task);
             setCompleteTimestamp(completedRecordIds, microClock.getTicks());
             return done;
-        } catch (CairoException ex) {
+        } catch (Throwable ex) {
             // Can be some IO exception
-            LOG.error().$("failed to clean column versions. ").$((Throwable) ex).$();
+            LOG.error().$("failed to clean column versions. ").$(ex).$();
             return false;
         }
     }
@@ -102,50 +102,31 @@ public class ColumnVersionPurgeExecution implements Closeable {
     }
 
     private void closeCleanupLogCompleteFile() {
-        if (cleanupLogOpenPartitionFd != -1L) {
-            filesFacade.close(cleanupLogOpenPartitionFd);
-            cleanupLogOpenPartitionFd = -1L;
+        if (purgeLogPartitionFd != -1L) {
+            ff.close(purgeLogPartitionFd);
+            purgeLogPartitionFd = -1L;
         }
-    }
-
-    private long openCompleteColumToWrite(int partitionIndex) {
-        long partitionTimestamp = cleanUpLogWriter.getPartitionTimestamp(partitionIndex);
-        if (cleanupLogOpenPartitionTimestamp != partitionTimestamp) {
-            path.trimTo(pathRootLen);
-            path.concat(cleanUpLogWriter.getTableName());
-            long partitionNameTxn = cleanUpLogWriter.getPartitionNameTxn(partitionIndex);
-            int partitionBy = cleanUpLogWriter.getPartitionBy();
-            TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
-            TableUtils.txnPartitionConditionally(path, partitionNameTxn);
-            long completeColumnNameTxn = cleanUpLogWriter.getColumnNameTxn(partitionTimestamp, updateCompleteColumnWriterIndex);
-            TableUtils.dFile(path, updateCompleteColumnName, completeColumnNameTxn);
-            closeCleanupLogCompleteFile();
-            cleanupLogOpenPartitionFd = TableUtils.openRW(filesFacade, path, LOG, cleanUpLogWriter.getConfiguration().getWriterFileOpenOpts());
-            cleanupLogOpenPartitionTimestamp = partitionTimestamp;
-        }
-        return cleanupLogOpenPartitionFd;
     }
 
     private int readTableId(Path path) {
         final int INVALID_TABLE_ID = Integer.MIN_VALUE;
-        long fd = filesFacade.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
+        long fd = ff.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
         if (fd < 0) {
             return INVALID_TABLE_ID;
         }
         try {
-            if (filesFacade.read(fd, longBytes, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) != Integer.BYTES) {
+            if (ff.read(fd, longBytes, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) != Integer.BYTES) {
                 return INVALID_TABLE_ID;
             }
             return Unsafe.getUnsafe().getInt(longBytes);
         } finally {
-            filesFacade.close(fd);
+            ff.close(fd);
         }
     }
 
     private void setCompleteTimestamp(LongList completedRecordIds, long timeMicro) {
         // This is in-place update for known record ids of completed column in column version cleanup log table
         try {
-            long fd = -1;
             long fileSize = -1;
             Unsafe.getUnsafe().putLong(longBytes, timeMicro);
             for (int rec = 0, n = completedRecordIds.size(); rec < n; rec++) {
@@ -155,8 +136,11 @@ public class ColumnVersionPurgeExecution implements Closeable {
                     // Assumption is that all records belong to same partition
                     // this is how the records are added to the table in ColumnVersionPurgeJob
                     // e.g. all records about the same column updated have identical timestamp
-                    fd = openCompleteColumToWrite(partitionIndex);
-                    fileSize = filesFacade.length(fd);
+                    final long partitionTimestamp = purgeLogWriter.getPartitionTimestamp(partitionIndex);
+                    if (purgeLogPartitionTimestamp != partitionTimestamp) {
+                        reopenPurgeLogPartition(partitionIndex, partitionTimestamp);
+                    }
+                    fileSize = ff.length(purgeLogPartitionFd);
                 }
                 long rowId = Rows.toLocalRowID(recordId);
                 long offset = rowId * Long.BYTES;
@@ -166,8 +150,8 @@ public class ColumnVersionPurgeExecution implements Closeable {
                             .$(", path=").$(path).I$();
                     return;
                 }
-                if (filesFacade.write(fd, longBytes, Long.BYTES, rowId * Long.BYTES) != Long.BYTES) {
-                    LOG.error().$("update column version cleanup failed [errno=").$(filesFacade.errno())
+                if (ff.write(purgeLogPartitionFd, longBytes, Long.BYTES, rowId * Long.BYTES) != Long.BYTES) {
+                    LOG.error().$("update column version cleanup failed [errno=").$(ff.errno())
                             .$(", writeOffset=").$(offset)
                             .$(", fileSize=").$(fileSize)
                             .$(", path=").$(path).I$();
@@ -177,6 +161,27 @@ public class ColumnVersionPurgeExecution implements Closeable {
         } catch (CairoException ex) {
             LOG.error().$("failed to update column_versions_purge_log table with complete time. ").$((Throwable) ex).$();
         }
+    }
+
+    private void reopenPurgeLogPartition(int partitionIndex, long partitionTimestamp) {
+        path.trimTo(pathRootLen);
+        path.concat(purgeLogWriter.getTableName());
+        long partitionNameTxn = purgeLogWriter.getPartitionNameTxn(partitionIndex);
+        TableUtils.setPathForPartition(
+                path,
+                purgeLogWriter.getPartitionBy(),
+                partitionTimestamp,
+                false
+        );
+        TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+        TableUtils.dFile(
+                path,
+                updateCompleteColumnName,
+                purgeLogWriter.getColumnNameTxn(partitionTimestamp, updateCompleteColumnWriterIndex)
+        );
+        closeCleanupLogCompleteFile();
+        purgeLogPartitionFd = TableUtils.openRW(ff, path.$(), LOG, purgeLogWriter.getConfiguration().getWriterFileOpenOpts());
+        purgeLogPartitionTimestamp = partitionTimestamp;
     }
 
     private void setTablePath(String tableName) {
@@ -198,27 +203,28 @@ public class ColumnVersionPurgeExecution implements Closeable {
 
         setTablePath(task.getTableName());
 
-        LongList updatedColumnInfo = task.getUpdatedColumnInfo();
+        final LongList updatedColumnInfo = task.getUpdatedColumnInfo();
         boolean tableInitied = false;
         long minUnlockedTxnRangeStarts = Long.MAX_VALUE;
         boolean allDone = true;
         try {
             completedRecordIds.clear();
             for (int i = 0, n = updatedColumnInfo.size(); i < n; i += ColumnVersionPurgeTask.BLOCK_SIZE) {
-                long columnVersion = updatedColumnInfo.getQuick(i);
-                long partitionTimestamp = updatedColumnInfo.getQuick(i + 1);
-                long partitionTxnName = updatedColumnInfo.getQuick(i + 2);
+                final long columnVersion = updatedColumnInfo.getQuick(i);
+                final long partitionTimestamp = updatedColumnInfo.getQuick(i + 1);
+                final long partitionTxnName = updatedColumnInfo.getQuick(i + 2);
+                final long updateRecordId = updatedColumnInfo.getQuick(i + 3);
 
                 setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
-                int pathTripToPartition = path.length();
-                TableUtils.dFile(path, task.getColumnName(), columnVersion);
-                long updateRecordId = updatedColumnInfo.getQuick(i + 3);
+                int pathTrimToPartition = path.length();
 
-                if (!filesFacade.exists(path.$())) {
+                TableUtils.dFile(path, task.getColumnName(), columnVersion);
+
+                if (!ff.exists(path)) {
                     if (ColumnType.isVariableLength(task.getColumnType())) {
-                        path.trimTo(pathTripToPartition);
+                        path.trimTo(pathTrimToPartition);
                         TableUtils.iFile(path, task.getColumnName(), columnVersion);
-                        if (!filesFacade.exists(path.$())) {
+                        if (!ff.exists(path)) {
                             completedRecordIds.add(updateRecordId);
                             continue;
                         }
@@ -267,18 +273,16 @@ public class ColumnVersionPurgeExecution implements Closeable {
                 LOG.info().$("column version to be deleted [path=").$(path).I$();
 
                 // No readers looking at the column version, files can be deleted
-                if (!filesFacade.remove(path.$()) && filesFacade.exists(path.$())) {
-                    LOG.info().$("cannot delete file, will retry [path=").$(path).$(", errno=").$(filesFacade.errno()).$();
+                if (couldNotRemove(ff, path)) {
                     allDone = false;
                     continue;
                 }
 
                 if (ColumnType.isVariableLength(task.getColumnType())) {
-                    path.trimTo(pathTripToPartition);
+                    path.trimTo(pathTrimToPartition);
                     TableUtils.iFile(path, task.getColumnName(), columnVersion);
 
-                    if (!filesFacade.remove(path.$()) && filesFacade.exists(path.$())) {
-                        LOG.info().$("cannot delete file, will retry [path=").$(path).$(", errno=").$(filesFacade.errno()).$();
+                    if (couldNotRemove(ff, path)) {
                         allDone = false;
                         continue;
                     }
@@ -286,13 +290,19 @@ public class ColumnVersionPurgeExecution implements Closeable {
 
                 // Check if it's symbol, try remove .k and .v files in the partition
                 if (ColumnType.isSymbol(task.getColumnType())) {
-                    path.trimTo(pathTripToPartition);
+                    path.trimTo(pathTrimToPartition);
                     BitmapIndexUtils.keyFileName(path, task.getColumnName(), columnVersion);
-                    filesFacade.remove(path.$());
+                    if (couldNotRemove(ff, path)) {
+                        allDone = false;
+                        continue;
+                    }
 
-                    path.trimTo(pathTripToPartition);
+                    path.trimTo(pathTrimToPartition);
                     BitmapIndexUtils.valueFileName(path, task.getColumnName(), columnVersion);
-                    filesFacade.remove(path.$());
+                    if (couldNotRemove(ff, path)) {
+                        allDone = false;
+                        continue;
+                    }
                 }
                 completedRecordIds.add(updateRecordId);
             }
@@ -302,5 +312,22 @@ public class ColumnVersionPurgeExecution implements Closeable {
         }
 
         return allDone;
+    }
+
+    private static boolean couldNotRemove(FilesFacade ff, Path path) {
+        if (ff.remove(path)) {
+            return false;
+        }
+
+        final int errno = ff.errno();
+
+        if (ff.exists(path)) {
+            LOG.info().$("cannot delete file, will retry [path=").$(path).$(", errno=").$(errno).I$();
+            return true;
+        }
+
+        // file did not exist, we don't care of the error
+
+        return false;
     }
 }

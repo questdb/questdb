@@ -78,10 +78,16 @@ public interface CompiledQuery {
      */
     QueryFuture execute(SCSequence eventSubSeq) throws SqlException;
 
-    QueryFuture executeAsync(AsyncWriterCommand asyncWriterCommand, SCSequence eventSubSeq, boolean acceptStructureChange) throws SqlException;
+    QueryFuture executeAsync(
+            AsyncWriterCommand asyncWriterCommand,
+            SCSequence eventSubSeq,
+            boolean acceptStructureChange
+    ) throws SqlException;
 
     /**
      * Returns number of rows changed by this command. Used e.g. in pg wire protocol.
      */
     long getAffectedRowsCount();
+
+    CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 }

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.CompiledQueryImpl;
 import io.questdb.griffin.UpdateStatement;
+import io.questdb.std.Misc;
 import io.questdb.std.WeakAutoClosableObjectPool;
 
 public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
@@ -48,5 +49,11 @@ public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
         // to store compiled statements because the instance re-used for every new compilation
         this.compiledQuery.ofUpdate(updateStatement);
         copyTypesFrom(bindVariableService);
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        Misc.free(compiledQuery.getUpdateStatement());
     }
 }

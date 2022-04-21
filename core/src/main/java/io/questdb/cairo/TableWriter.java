@@ -188,7 +188,7 @@ public class TableWriter implements Closeable {
     private double commitIntervalFraction;
     private long commitIntervalDefault;
     private long commitInterval;
-    private UpdateExecution updateExecution;
+    private UpdateOperator updateOperator;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
@@ -837,11 +837,11 @@ public class TableWriter implements Closeable {
         return (masterRef - committedMasterRef) >> 1;
     }
 
-    public UpdateExecution getUpdateExecution() {
-        if (updateExecution == null) {
-            updateExecution = new UpdateExecution(configuration, messageBus);
+    public UpdateOperator getUpdateOperator() {
+        if (updateOperator == null) {
+            updateOperator = new UpdateOperator(configuration, messageBus);
         }
-        return updateExecution;
+        return updateOperator;
     }
 
     public boolean inTransaction() {
@@ -2252,7 +2252,7 @@ public class TableWriter implements Closeable {
         Misc.free(columnVersionWriter);
         Misc.free(o3ColumnTopSink);
         Misc.free(commandQueue);
-        updateExecution = Misc.free(updateExecution);
+        updateOperator = Misc.free(updateOperator);
         freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
@@ -3974,7 +3974,13 @@ public class TableWriter implements Closeable {
         indexCount = denseIndexers.size();
     }
 
-    private void processAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand, TableWriterTask cmd, long cursor, Sequence sequence, boolean acceptStructureChange) {
+    private void processAsyncWriterCommand(
+            AsyncWriterCommand asyncWriterCommand,
+            TableWriterTask cmd,
+            long cursor,
+            Sequence sequence,
+            boolean acceptStructureChange
+    ) {
         final int cmdType = cmd.getType();
         final long correlationId = cmd.getInstance();
         final long tableId = cmd.getTableId();

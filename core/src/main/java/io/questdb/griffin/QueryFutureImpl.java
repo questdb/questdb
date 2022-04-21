@@ -99,9 +99,13 @@ class QueryFutureImpl implements QueryFuture {
      * Initializes instance of QueryFuture with the parameters to wait for the new command
      * @param eventSubSeq - event sequence used to wait for the command execution to be signaled as complete
      */
-    public void of(AsyncWriterCommand asyncWriterCommand, SqlExecutionContext executionContext, SCSequence eventSubSeq, boolean acceptStructureChange) throws SqlException, TableStructureChangesException {
+    public void of(
+            AsyncWriterCommand asyncWriterCommand,
+            SqlExecutionContext executionContext,
+            SCSequence eventSubSeq,
+            boolean acceptStructureChange
+    ) throws SqlException, TableStructureChangesException {
         assert eventSubSeq != null : "event subscriber sequence must be provided";
-
         this.asyncWriterCommand = asyncWriterCommand;
         this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();
         // Set up execution wait sequence to listen to async writer events
@@ -120,12 +124,23 @@ class QueryFutureImpl implements QueryFuture {
         }
     }
 
-    private long publishTableWriterCommand(AsyncWriterCommand asyncWriterCommand, SqlExecutionContext executionContext, boolean acceptStructureChange) throws TableStructureChangesException, SqlException {
+    private long publishTableWriterCommand(
+            AsyncWriterCommand asyncWriterCommand,
+            SqlExecutionContext executionContext,
+            boolean acceptStructureChange
+    ) throws TableStructureChangesException, SqlException {
         CharSequence cmdName = asyncWriterCommand.getCommandName();
         CharSequence tableName = asyncWriterCommand.getTableName();
         final long correlationId = engine.getCommandCorrelationId();
         asyncWriterCommand.setCommandCorrelationId(correlationId);
-        try (TableWriter writer = engine.getWriterOrPublishCommand(executionContext.getCairoSecurityContext(), tableName, asyncWriterCommand)) {
+
+        // todo: deep copy execution context
+
+        try (TableWriter writer = engine.getWriterOrPublishCommand(
+                executionContext.getCairoSecurityContext(),
+                tableName,
+                asyncWriterCommand
+        )) {
             if (writer != null) {
                 asyncWriterCommand.apply(writer, acceptStructureChange);
             }
