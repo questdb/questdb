@@ -32,7 +32,7 @@ public class ColumnVersionPurgeTask implements Mutable {
     public static final int OFFSET_COLUMN_VERSION = 0;
     public static final int OFFSET_PARTITION_TIMESTAMP = 1;
     public static final int OFFSET_PARTITION_NAME_TXN = 2;
-    private final LongList updatedColumnVersions = new LongList();
+    private final LongList updatedColumnInfo = new LongList();
     private CharSequence columnName;
     private String tableName;
     private int tableId;
@@ -41,17 +41,17 @@ public class ColumnVersionPurgeTask implements Mutable {
     private int columnType;
     private int truncateVersion;
 
-    public void appendColumnVersion(long columnVersion, long partitionTimestamp, long partitionNameTxn) {
-        updatedColumnVersions.add(columnVersion, partitionTimestamp, partitionNameTxn, 0L);
+    public void appendColumnInfo(long columnVersion, long partitionTimestamp, long partitionNameTxn) {
+        updatedColumnInfo.add(columnVersion, partitionTimestamp, partitionNameTxn, 0L);
     }
 
-    public void appendColumnVersion(long columnVersion, long partitionTimestamp, long partitionNameTxn, long updateRowId) {
-        updatedColumnVersions.add(columnVersion, partitionTimestamp, partitionNameTxn, updateRowId);
+    public void appendColumnInfo(long columnVersion, long partitionTimestamp, long partitionNameTxn, long updateRowId) {
+        updatedColumnInfo.add(columnVersion, partitionTimestamp, partitionNameTxn, updateRowId);
     }
 
     @Override
     public void clear() {
-        updatedColumnVersions.clear();
+        updatedColumnInfo.clear();
     }
 
     public void copyFrom(ColumnVersionPurgeTask inTask) {
@@ -62,8 +62,8 @@ public class ColumnVersionPurgeTask implements Mutable {
         this.updatedTxn = inTask.updatedTxn;
         this.columnType = inTask.columnType;
         this.truncateVersion = inTask.truncateVersion;
-        this.updatedColumnVersions.clear();
-        this.updatedColumnVersions.add(inTask.updatedColumnVersions);
+        this.updatedColumnInfo.clear();
+        this.updatedColumnInfo.add(inTask.updatedColumnInfo);
     }
 
     public CharSequence getColumnName() {
@@ -90,8 +90,8 @@ public class ColumnVersionPurgeTask implements Mutable {
         return truncateVersion;
     }
 
-    public LongList getUpdatedColumnVersions() {
-        return updatedColumnVersions;
+    public LongList getUpdatedColumnInfo() {
+        return updatedColumnInfo;
     }
 
     public long getUpdatedTxn() {
@@ -114,7 +114,7 @@ public class ColumnVersionPurgeTask implements Mutable {
         this.partitionBy = partitionBy;
         this.updatedTxn = lastTxn;
         this.truncateVersion = truncateVersion;
-        this.updatedColumnVersions.clear();
+        this.updatedColumnInfo.clear();
     }
 
     public void of(
@@ -128,6 +128,6 @@ public class ColumnVersionPurgeTask implements Mutable {
             LongList columnVersions
     ) {
         of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, lastTxn);
-        this.updatedColumnVersions.add(columnVersions);
+        this.updatedColumnInfo.add(columnVersions);
     }
 }

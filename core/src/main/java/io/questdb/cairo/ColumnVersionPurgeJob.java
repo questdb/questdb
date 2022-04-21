@@ -241,7 +241,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
                         long columnVersion = rec.getLong(COLUMN_VERSION_COLUMN);
                         long partitionTs = rec.getLong(PARTITION_TIMESTAMP_COLUMN);
                         long partitionNameTxn = rec.getLong(PARTITION_NAME_COLUMN);
-                        taskRun.appendColumnVersion(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());
+                        taskRun.appendColumnInfo(columnVersion, partitionTs, partitionNameTxn, rec.getUpdateRowId());
                     }
                     if (taskRun != null) {
                         houseKeepingRunQueue.add(taskRun);
@@ -250,7 +250,11 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
             }
             if (houseKeepingRunQueue.size() == 0 && writer != null) {
                 // No tasks to do. Cleanup the log table
-                writer.truncate();
+                try {
+                    writer.truncate();
+                } catch (Throwable th) {
+                    LOG.error().$("failed to truncate column version purge log table").$(th).$();
+                }
             }
         } catch (SqlException e) {
             LOG.error().$("failed to reload column version purge tasks").$((Throwable) e).$();
@@ -291,8 +295,8 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
     private void saveToStorage(ColumnVersionPurgeTaskRun cleanTask) {
         if (writer != null) {
             try {
-                LongList updatedColumnVersions = cleanTask.getUpdatedColumnVersions();
-                for (int i = 0, n = updatedColumnVersions.size(); i < n; i += ColumnVersionPurgeTask.BLOCK_SIZE) {
+                LongList updatedColumnInfo = cleanTask.getUpdatedColumnInfo();
+                for (int i = 0, n = updatedColumnInfo.size(); i < n; i += ColumnVersionPurgeTask.BLOCK_SIZE) {
                     TableWriter.Row row = writer.newRow(cleanTask.timestamp);
                     row.putSym(TABLE_NAME_COLUMN, cleanTask.getTableName());
                     row.putSym(COLUMN_NAME_COLUMN, cleanTask.getColumnName());
@@ -301,14 +305,11 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
                     row.putInt(COLUMN_TYPE_COLUMN, cleanTask.getColumnType());
                     row.putInt(PARTITION_BY_COLUMN, cleanTask.getPartitionBy());
                     row.putLong(UPDATED_TXN_COLUMN, cleanTask.getUpdatedTxn());
-                    row.putLong(COLUMN_VERSION_COLUMN,
-                            updatedColumnVersions.getQuick(i + ColumnVersionPurgeTask.OFFSET_COLUMN_VERSION));
-                    row.putTimestamp(PARTITION_TIMESTAMP_COLUMN,
-                            updatedColumnVersions.getQuick(i + ColumnVersionPurgeTask.OFFSET_PARTITION_TIMESTAMP));
-                    row.putLong(PARTITION_NAME_COLUMN,
-                            updatedColumnVersions.getQuick(i + ColumnVersionPurgeTask.OFFSET_PARTITION_NAME_TXN));
+                    row.putLong(COLUMN_VERSION_COLUMN, updatedColumnInfo.getQuick(i + ColumnVersionPurgeTask.OFFSET_COLUMN_VERSION));
+                    row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, updatedColumnInfo.getQuick(i + ColumnVersionPurgeTask.OFFSET_PARTITION_TIMESTAMP));
+                    row.putLong(PARTITION_NAME_COLUMN, updatedColumnInfo.getQuick(i + ColumnVersionPurgeTask.OFFSET_PARTITION_NAME_TXN));
                     row.append();
-                    updatedColumnVersions.setQuick(i + 3, Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1));
+                    updatedColumnInfo.setQuick(i + 3, Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1));
                 }
             } catch (Throwable th) {
                 LOG.error().$("error saving to column version house keeping log, unable to insert")

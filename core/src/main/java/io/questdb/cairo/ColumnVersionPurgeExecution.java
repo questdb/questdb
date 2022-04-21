@@ -120,7 +120,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
             long completeColumnNameTxn = cleanUpLogWriter.getColumnNameTxn(partitionTimestamp, updateCompleteColumnWriterIndex);
             TableUtils.dFile(path, updateCompleteColumnName, completeColumnNameTxn);
             closeCleanupLogCompleteFile();
-            cleanupLogOpenPartitionFd = TableUtils.openRW(filesFacade, path.$(), LOG, cleanUpLogWriter.getConfiguration().getWriterFileOpenOpts());
+            cleanupLogOpenPartitionFd = TableUtils.openRW(filesFacade, path, LOG, cleanUpLogWriter.getConfiguration().getWriterFileOpenOpts());
             cleanupLogOpenPartitionTimestamp = partitionTimestamp;
         }
         return cleanupLogOpenPartitionFd;
@@ -198,21 +198,21 @@ public class ColumnVersionPurgeExecution implements Closeable {
 
         setTablePath(task.getTableName());
 
-        LongList columnVersionList = task.getUpdatedColumnVersions();
+        LongList updatedColumnInfo = task.getUpdatedColumnInfo();
         boolean tableInitied = false;
         long minUnlockedTxnRangeStarts = Long.MAX_VALUE;
         boolean allDone = true;
         try {
             completedRecordIds.clear();
-            for (int i = 0, n = columnVersionList.size(); i < n; i += ColumnVersionPurgeTask.BLOCK_SIZE) {
-                long columnVersion = columnVersionList.getQuick(i);
-                long partitionTimestamp = columnVersionList.getQuick(i + 1);
-                long partitionTxnName = columnVersionList.getQuick(i + 2);
+            for (int i = 0, n = updatedColumnInfo.size(); i < n; i += ColumnVersionPurgeTask.BLOCK_SIZE) {
+                long columnVersion = updatedColumnInfo.getQuick(i);
+                long partitionTimestamp = updatedColumnInfo.getQuick(i + 1);
+                long partitionTxnName = updatedColumnInfo.getQuick(i + 2);
 
                 setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
                 int pathTripToPartition = path.length();
                 TableUtils.dFile(path, task.getColumnName(), columnVersion);
-                long updateRecordId = columnVersionList.getQuick(i + 3);
+                long updateRecordId = updatedColumnInfo.getQuick(i + 3);
 
                 if (!filesFacade.exists(path.$())) {
                     if (ColumnType.isVariableLength(task.getColumnType())) {
