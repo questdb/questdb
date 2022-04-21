@@ -1323,33 +1323,17 @@ public class TableWriter implements Closeable {
 
                     // assuming master/slave metadata column order is the same
                     for (int j = 0; j < columnCount; j++) {
-                        long myTop = columnVersionWriter.getColumnTop(ts, j);
-                        long myNameTxn = columnVersionWriter.getColumnNameTxn(ts, j);
-
                         final CharSequence columnName = metadata.getColumnName(j);
-                        //final int slaveColumnIndex = replSlaveColumnIndex.get(columnName);
-                        boolean updateColumnVersion;
-                        if (j < slaveColumnCount) {
-                            long theirNameTxn = slaveCvReader.getColumnNameTxn(ts, j);
-                            long theirTop = slaveCvReader.getColumnTop(ts, j);
-                            updateColumnVersion = myTop != theirTop || myNameTxn > theirNameTxn;
-                        } else {
-                            updateColumnVersion = true; // new column;
-                        }
-
-                        if (updateColumnVersion) {
-                            model.addColumnVersion(ts, j, myNameTxn, myTop);
-                            if (ColumnType.isVariableLength(metadata.getColumnType(j))) {
-                                long columnNameTxn = columnVersionWriter.getColumnNameTxn(ts, j);
-                                iFile(path.trimTo(plen), columnName, columnNameTxn);
-                                long sz = TableUtils.readLongAtOffset(
-                                        ff,
-                                        path,
-                                        tempMem16b,
-                                        ourSize * 8L
-                                );
-                                model.addVarColumnSize(ts, j, sz);
-                            }
+                        if (ColumnType.isVariableLength(metadata.getColumnType(j))) {
+                            long columnNameTxn = columnVersionWriter.getColumnNameTxn(ts, j);
+                            iFile(path.trimTo(plen), columnName, columnNameTxn);
+                            long sz = TableUtils.readLongAtOffset(
+                                    ff,
+                                    path,
+                                    tempMem16b,
+                                    ourSize * 8L
+                            );
+                            model.addVarColumnSize(ts, j, sz);
                         }
                     }
                 }
