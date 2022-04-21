@@ -56,7 +56,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.util.*;
-import java.util.function.BiConsumer;
 
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
@@ -3040,6 +3039,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    private static void registerDeprecated(PropertyKey old, PropertyKey... replacements) {
+        StringBuilder sb = new StringBuilder("Replaced by ");
+        for (int index = 0; index < replacements.length; ++index) {
+            if (index > 0) {
+                sb.append(index < (replacements.length - 1)
+                    ? ", "
+                    : " and ");
+            }
+            String replacement = replacements[index].getPropertyPath();
+            sb.append('`');
+            sb.append(replacement);
+            sb.append('`');
+        }
+        sb.append('.');
+        DEPRECATED_SETTINGS.put(old, sb.toString());
+    }
+
     static {
         WRITE_FO_OPTS.put("o_direct", (int) CairoConfiguration.O_DIRECT);
         WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
@@ -3050,63 +3066,56 @@ public class PropServerConfiguration implements ServerConfiguration {
             "line.tcp.commit.timeout",
             "Replaced by `line.tcp.commit.interval.default` and `line.tcp.commit.interval.fraction`.");
 
-        BiConsumer<PropertyKey, PropertyKey> registerDeprecated =
-            (PropertyKey oldSetting, PropertyKey newSetting) -> {
-                DEPRECATED_SETTINGS.put(
-                    oldSetting,
-                    "Replaced by `" + newSetting.getPropertyPath() +"`.");
-            };
-
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.HTTP_MIN_BIND_TO,
             PropertyKey.HTTP_MIN_NET_BIND_TO);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.HTTP_MIN_NET_IDLE_CONNECTION_TIMEOUT,
             PropertyKey.HTTP_MIN_NET_CONNECTION_TIMEOUT);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.HTTP_MIN_NET_QUEUED_CONNECTION_TIMEOUT,
             PropertyKey.HTTP_MIN_NET_CONNECTION_QUEUE_TIMEOUT);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.HTTP_MIN_NET_SND_BUF_SIZE,
             PropertyKey.HTTP_MIN_NET_CONNECTION_SNDBUF);
-        DEPRECATED_SETTINGS.put(
+        registerDeprecated(
             PropertyKey.HTTP_NET_RCV_BUF_SIZE,
-            "Replaced by `" + PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF.getPropertyPath() +
-            "` and `" + PropertyKey.HTTP_NET_CONNECTION_RCVBUF.getPropertyPath() + "`.");
-        registerDeprecated.accept(
+            PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF,
+            PropertyKey.HTTP_NET_CONNECTION_RCVBUF);
+        registerDeprecated(
             PropertyKey.HTTP_NET_ACTIVE_CONNECTION_LIMIT,
             PropertyKey.HTTP_NET_CONNECTION_LIMIT);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.HTTP_NET_IDLE_CONNECTION_TIMEOUT,
             PropertyKey.HTTP_NET_CONNECTION_TIMEOUT);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.HTTP_NET_QUEUED_CONNECTION_TIMEOUT,
             PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.HTTP_NET_SND_BUF_SIZE,
             PropertyKey.HTTP_NET_CONNECTION_SNDBUF);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.PG_NET_ACTIVE_CONNECTION_LIMIT,
             PropertyKey.PG_NET_CONNECTION_LIMIT);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.PG_NET_IDLE_TIMEOUT,
             PropertyKey.PG_NET_CONNECTION_TIMEOUT);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.PG_NET_RECV_BUF_SIZE,
             PropertyKey.PG_NET_CONNECTION_RCVBUF);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT,
             PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT,
             PropertyKey.LINE_TCP_NET_CONNECTION_TIMEOUT);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.LINE_TCP_NET_QUEUED_TIMEOUT,
             PropertyKey.LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE,
             PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF);
-        registerDeprecated.accept(
+        registerDeprecated(
             PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY,
             PropertyKey.LINE_DEFAULT_PARTITION_BY);
     }
