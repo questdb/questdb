@@ -3120,7 +3120,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             PropertyKey.LINE_DEFAULT_PARTITION_BY);
     }
 
-    private static class ValidationResult {
+    public static class ValidationResult {
         public final boolean isError;
         public final String message;
 
@@ -3131,7 +3131,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private static ValidationResult validate(Properties properties) {
+    public static ValidationResult validate(Properties properties) {
         Set<String> propertyNames = properties.stringPropertyNames();
 
         // Settings that used to be valid but no longer are.
@@ -3172,7 +3172,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         if (!incorrect.isEmpty())
         {
             isError = true;
-            sb.append("    Incorrect settings (not recognized, probable typos):\n");
+            sb.append("    Invalid settings (not recognized, probable typos):\n");
             for (String key : incorrect)
             {
                 sb.append("        * ");
@@ -3196,7 +3196,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         if (!deprecated.isEmpty())
         {
-            sb.append("    Deprecated settings (superseded by newer settings):\n");
+            sb.append("    Deprecated settings (recognized but superseded by newer settings):\n");
             for (Map.Entry<String, String> entry : deprecated.entrySet()) {
                 sb.append("        * ");
                 sb.append(entry.getKey());

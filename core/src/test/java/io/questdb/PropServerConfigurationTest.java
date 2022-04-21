@@ -518,7 +518,7 @@ public class PropServerConfigurationTest {
     }
 
     @Test(expected = ServerConfigurationException.class)
-    public void testValidation() throws IOException, JsonException, ServerConfigurationException {
+    public void testInvalidConfigKeys() throws IOException, JsonException, ServerConfigurationException {
         try (InputStream inputStream = PropServerConfigurationTest.class.getResourceAsStream("/server.conf")) {
             Properties properties = new Properties();
             properties.load(inputStream);
@@ -527,6 +527,48 @@ public class PropServerConfigurationTest {
 
             new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         }
+    }
+
+    @Test
+    public void testDeprecatedConfigKeys() throws JsonException, ServerConfigurationException {
+        Properties properties = new Properties();
+        properties.setProperty("config.validation.enabled", "true");
+        properties.setProperty("http.min.bind.to", "0.0.0.0:0");
+
+        // Using deprecated settings will not throw an exception, despite validation enabled.
+        new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+    }
+
+    @Test
+    public void testInvalidValidationResult() {
+        Properties properties = new Properties();
+        properties.setProperty("invalid.key", "value");
+        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        Assert.assertTrue(result.isError);
+        Assert.assertNotEquals(-1, result.message.indexOf("Invalid settings"));
+        Assert.assertNotEquals(-1, result.message.indexOf("* invalid.key"));
+    }
+
+    @Test
+    public void testObsoleteValidationResult() {
+        Properties properties = new Properties();
+        properties.setProperty("line.tcp.commit.timeout", "10000");
+        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        Assert.assertTrue(result.isError);
+        Assert.assertNotEquals(-1, result.message.indexOf("Obsolete settings"));
+        Assert.assertNotEquals(-1, result.message.indexOf(
+            "Replaced by `line.tcp.commit.interval.default` and `line.tcp.commit.interval.fraction`."));
+    }
+
+    @Test
+    public void testDeprecatedValidationResult() {
+        Properties properties = new Properties();
+        properties.setProperty("http.net.rcv.buf.size", "10000");
+        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        Assert.assertFalse(result.isError);
+        Assert.assertNotEquals(-1, result.message.indexOf("Deprecated settings"));
+        Assert.assertNotEquals(-1, result.message.indexOf(
+            "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`."));
     }
 
     @Test
