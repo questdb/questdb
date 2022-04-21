@@ -228,7 +228,7 @@ export class Client {
       }
     }
 
-    if (response.ok) {
+    if (response.ok || response.status == 400) {
       const fetchTime = (new Date().getTime() - start.getTime()) * 1e6
       const data = (await response.json()) as RawResult
 
