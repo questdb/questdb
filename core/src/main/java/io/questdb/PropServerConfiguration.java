@@ -388,9 +388,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.log = log;
 
         boolean configValidationEnabled = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_ENABLED, false);
-        if (configValidationEnabled) {
-            validateProperties(properties);
-        }
+        validateProperties(properties, configValidationEnabled);
 
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
 
@@ -3220,10 +3218,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         return new ValidationResult(isError, sb.toString());
     }
 
-    private void validateProperties(Properties properties) throws ServerConfigurationException {
+    private void validateProperties(Properties properties, boolean configValidationEnabled) throws ServerConfigurationException {
         ValidationResult validation = validate(properties);
         if (validation != null) {
-            if (validation.isError) {
+            if (validation.isError && configValidationEnabled) {
                 throw new ServerConfigurationException(validation.message);
             } else {
                 log.advisory().$(validation.message).$();
