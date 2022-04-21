@@ -3047,7 +3047,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         for (int index = 0; index < replacements.length; ++index) {
             if (index > 0) {
                 sb.append(index < (replacements.length - 1)
-                    ? ", "
+                    ?  ", "
                     : " and ");
             }
             String replacement = replacements[index].getPropertyPath();
