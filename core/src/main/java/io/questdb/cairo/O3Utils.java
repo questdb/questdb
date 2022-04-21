@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cairo.sql.async.PageFrameDispatchJob;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -47,20 +46,13 @@ public class O3Utils {
     ) {
         final int workerCount = workerPool.getWorkerCount();
         final O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount());
-        final PageFrameDispatchJob pageFrameDispatchJob = new PageFrameDispatchJob(
-                messageBus,
-                workerCount,
-                sqlExecutionCircuitBreakerConfiguration
-        );
 
         workerPool.assign(purgeDiscoveryJob);
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
-        workerPool.assign(pageFrameDispatchJob);
         workerPool.freeOnHalt(purgeDiscoveryJob);
-        workerPool.freeOnHalt(pageFrameDispatchJob);
 
         final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
         final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();

@@ -133,8 +133,6 @@ public interface CairoConfiguration {
 
     FilesFacade getFilesFacade();
 
-    int getPageFrameDispatchQueueCapacity();
-
     int getFloatToStrCastScale();
 
     int getGroupByMapCapacity();

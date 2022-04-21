@@ -203,7 +203,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                     collectSubSeq.done(cursor);
                 }
             } else {
-                frameSequence.stealDispatchWork();
+                frameSequence.tryDispatch();
             }
         } while (this.frameIndex < frameLimit);
     }

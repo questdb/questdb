@@ -44,9 +44,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
-    private static final int OWNER_NONE = 0;
-    private static final int OWNER_WORK_STEALING = 1;
-    private static final int OWNER_ASYNC = 2;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private static final AtomicLong ID_SEQ = new AtomicLong();
     public final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
@@ -56,19 +53,15 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final PageFrameReducer reducer;
     private final PageAddressCache pageAddressCache;
     private final MessageBus messageBus;
-    private final AtomicInteger owner = new AtomicInteger(OWNER_NONE);
     private final MicrosecondClock microsecondClock;
-    private final AtomicInteger dispatchStartIndex = new AtomicInteger();
     private long id;
     private int shard;
+    private int dispatchStartIndex;
     private int frameCount;
     private Sequence collectSubSeq;
     private SymbolTableSource symbolTableSource;
     private T atom;
     private PageAddressCacheRecord[] records;
-    // we need this to restart execution for `toTop`
-    private MPSequence dispatchPubSeq;
-    private RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue;
     private SqlExecutionCircuitBreaker[] circuitBreakers;
     private long startTimeUs;
     private long circuitBreakerFd;
@@ -96,23 +89,13 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 .$(", frameCount=").$(frameCount)
                 .I$();
 
-        // Collect only dispatched frames. To do that we need to stall any further dispatch.
-        while (true) {
-            final int dispatched = dispatchStartIndex.get();
-            if (dispatchStartIndex.compareAndSet(dispatched, frameCount)) {
-                frameCount = dispatched;
-                break;
-            }
-        }
-
         final RingQueue<PageFrameReduceTask> queue = getPageFrameReduceQueue();
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         while (doneLatch.getCount() == 0) {
             final int workerId = getWorkerId();
             final PageAddressCacheRecord rec = records[workerId];
             final SqlExecutionCircuitBreaker circuitBreaker = circuitBreakers[workerId];
-            boolean allFramesReduced = reduceCounter.get() == frameCount;
-            // we were asked to steal work from dispatch0 queue and beyond, as much as we can
+            // we were asked to steal work from the reduce queue and beyond, as much as we can
             if (PageFrameReduceJob.consumeQueue(queue, pageFrameReduceSubSeq, rec, circuitBreaker)) {
                 long cursor = collectSubSeq.next();
                 if (cursor > -1) {
@@ -122,7 +105,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                         tsk.collected(true);
                     }
                     collectSubSeq.done(cursor);
-                } else if (cursor == -1 && allFramesReduced) {
+                } else if (cursor == -1 && reduceCounter.get() == dispatchStartIndex) {
                     // The collect queue is empty while we know that all frames were reduced. We're almost done.
                     if (doneLatch.getCount() == 0) {
                         // Looks like not all the frames were dispatched, so no one reached the very last frame and
@@ -149,7 +132,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             LOG.debug().$("removed [seq=").$(collectSubSeq).I$();
             collectSubSeq.clear();
         }
-        this.dispatchStartIndex.set(0);
+        this.dispatchStartIndex = 0;
     }
 
     @Override
@@ -183,11 +166,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // this method sets a lot of state of the page sequence
             prepareForDispatch(rnd, frameCount, pageFrameCursor, atom, collectSubSeq);
 
-            // It is essential to init the atom after we prepared sequence for dispatch0.
+            // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
             atom.init(pageFrameCursor, executionContext);
 
-            // dispatch0 message only if there is anything to dispatch0
+            // dispatch tasks only if there is anything to dispatch
             if (frameCount > 0) {
                 dispatch0();
             }
@@ -204,14 +187,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public long getCircuitBreakerFd() {
         return circuitBreakerFd;
-    }
-
-    public int getDispatchStartIndex() {
-        return dispatchStartIndex.get();
-    }
-
-    public void setDispatchStartIndex(int i) {
-        this.dispatchStartIndex.set(i);
     }
 
     public int getFrameCount() {
@@ -258,16 +233,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return symbolTableSource;
     }
 
-    /**
-     * Async owner is allowed to enter only once. The expectation is that all frames will be dispatched
-     * in the first attempt.
-     *
-     * @return true if this sequence dispatch0 belongs to async owner, work stealing must not touch this.
-     */
-    public boolean isAsyncOwner() {
-        return owner.compareAndSet(OWNER_NONE, OWNER_ASYNC);
-    }
-
     public boolean isValid() {
         return valid.get();
     }
@@ -276,59 +241,99 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         this.valid.compareAndSet(true, valid);
     }
 
-    /**
-     * Work stealing is re-enterable, hence subsequence invocations can yield true.
-     *
-     * @return true is this sequence dispatch0 is owned by work stealing algo.
-     */
-    public boolean isWorkStealingOwner() {
-        return owner.get() == OWNER_WORK_STEALING || owner.compareAndSet(OWNER_NONE, OWNER_WORK_STEALING);
-    }
-
     public void reset() {
-        // prepare to resent the same sequence
-        // as it might be required by toTop()
+        // prepare to resend the same sequence as it might be required by toTop()
         frameRowCounts.clear();
         assert doneLatch.getCount() == 0;
         doneLatch.countDown();
-        this.owner.set(OWNER_NONE);
     }
 
-    public void stealDispatchWork() {
+    /**
+     * This method is not thread safe. It's always invoked on a single "query owner" thread.
+     *
+     * This method is re enterable. It has to be in case queue capacity is smaller than number of frames to
+     * be dispatched. When it is the case, frame count published so far is stored in the `frameSequence`.     *
+     * This method has no responsibility to deal with "collect" stage hence it deals with everything to
+     * unblock the collect stage.
+     */
+    public void tryDispatch() {
         final int workerId = getWorkerId();
-        final PageAddressCacheRecord rec = records[workerId];
+        final PageAddressCacheRecord record = records[workerId];
         final SqlExecutionCircuitBreaker circuitBreaker = circuitBreakers[workerId];
-        // we were asked to steal work from dispatch0 queue and beyond, as much as we can
-        PageFrameDispatchJob.handleTask(this, rec, messageBus, true, circuitBreaker);
 
-        // now we need to steal all dispatch0 work from the queue until we reach either:
-        // - end of the queue
-        // - find out publisher id
-        final MCSequence dispatchSubSeq = messageBus.getPageFrameDispatchSubSeq();
-        while (true) {
-            final long cursor = dispatchSubSeq.next();
-            if (cursor > -1) {
-                PageFrameSequence<?> pageFrameSequence = pageFrameDispatchQueue.get(cursor).getFrameSequence();
+        boolean idle = true;
+        final RingQueue<PageFrameReduceTask> queue = messageBus.getPageFrameReduceQueue(shard);
 
-                if (pageFrameSequence == this) {
-                    pageFrameDispatchQueue.get(cursor).of(null);
-                    dispatchSubSeq.done(cursor);
+        // the sequence used to steal worker jobs
+        final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
+        final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
+
+        long cursor;
+        int i = dispatchStartIndex;
+        dispatchStartIndex = frameCount;
+        OUT:
+        for (; i < frameCount; i++) {
+            // We cannot process work on this thread. If we do the consumer will
+            // never get the executions results. Consumer only picks ready to go
+            // tasks from the queue.
+
+            while (true) {
+                cursor = reducePubSeq.next();
+                if (cursor > -1) {
+                    queue.get(cursor).of(this, i);
+                    LOG.debug()
+                            .$("dispatched [shard=").$(shard)
+                            .$(", id=").$(getId())
+                            .$(", frameIndex=").$(i)
+                            .$(", frameCount=").$(frameCount)
+                            .$(", cursor=").$(cursor)
+                            .I$();
+                    reducePubSeq.done(cursor);
                     break;
+                } else {
+                    idle = false;
+                    // start stealing work to unload the queue
+                    if (stealWork(queue, reduceSubSeq, record, circuitBreaker)) {
+                        continue;
+                    }
+                    dispatchStartIndex = i;
+                    break OUT;
                 }
-
-                // We are entering all frame sequences in work stealing mode, which means
-                // they can end up being partially dispatched. This is done because we
-                // cannot afford to enter infinite loop here
-                PageFrameDispatchJob.handleTask(pageFrameSequence, rec, messageBus, true, circuitBreaker);
-                pageFrameDispatchQueue.get(cursor).of(null);
-                dispatchSubSeq.done(cursor);
-            } else {
-                if (dispatchStartIndex.get() < frameCount) {
-                    PageFrameDispatchJob.handleTask(this, rec, messageBus, true, circuitBreaker);
-                }
-                break;
             }
         }
+
+        // Reduce counter is here to provide safe backoff point
+        // for job stealing code. It is needed because queue is shared
+        // and there is possibility of never ending stealing if we don't
+        // specifically count only our items
+
+        // join the gang to consume published tasks
+        while (reduceCounter.get() < frameCount) {
+            idle = false;
+            if (stealWork(queue, reduceSubSeq, record, circuitBreaker)) {
+                if (isValid()) {
+                    continue;
+                }
+            }
+            break;
+        }
+
+        if (idle) {
+            stealWork(queue, reduceSubSeq, record, circuitBreaker);
+        }
+    }
+
+    public boolean stealWork(
+            RingQueue<PageFrameReduceTask> queue,
+            MCSequence reduceSubSeq,
+            PageAddressCacheRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker)) {
+            Os.pause();
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -345,21 +350,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
             // done latch is reset by method call above
             doneLatch.reset();
-            dispatchStartIndex.set(0);
+            dispatchStartIndex = 0;
             reduceCounter.set(0);
             valid.set(true);
-            long dispatchCursor;
-            do {
-                dispatchCursor = dispatchPubSeq.next();
-                if (dispatchCursor < 0) {
-                    stealDispatchWork();
-                } else {
-                    break;
-                }
-            } while (true);
-            final PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
-            dispatchTask.of(this);
-            dispatchPubSeq.done(dispatchCursor);
+
+            tryDispatch();
         }
     }
 
@@ -386,21 +381,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 .$(", seq=").$(collectSubSeq)
                 .I$();
 
-        long dispatchCursor;
-        do {
-            dispatchCursor = dispatchPubSeq.next();
-
-            if (dispatchCursor < 0) {
-                stealDispatchWork();
-                Os.pause();
-            } else {
-                break;
-            }
-        } while (true);
-
-        PageFrameDispatchTask dispatchTask = pageFrameDispatchQueue.get(dispatchCursor);
-        dispatchTask.of(this);
-        dispatchPubSeq.done(dispatchCursor);
+        tryDispatch();
     }
 
     private void initWorkerRecords(
@@ -443,8 +424,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         this.symbolTableSource = symbolTableSource;
         this.atom = atom;
         this.collectSubSeq = collectSubSeq;
-        this.dispatchPubSeq = messageBus.getPageFrameDispatchPubSeq();
-        this.pageFrameDispatchQueue = messageBus.getPageFrameDispatchQueue();
     }
 
     private int setupAddressCache(RecordCursorFactory base, PageFrameCursor pageFrameCursor) {

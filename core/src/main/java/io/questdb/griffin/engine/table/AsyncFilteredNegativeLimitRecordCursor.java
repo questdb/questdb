@@ -24,8 +24,10 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.sql.PageAddressCacheRecord;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
@@ -168,7 +170,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                     collectSubSeq.done(cursor);
                 }
             } else {
-                frameSequence.stealDispatchWork();
+                frameSequence.tryDispatch();
             }
         } while (frameIndex < frameLimit);
     }

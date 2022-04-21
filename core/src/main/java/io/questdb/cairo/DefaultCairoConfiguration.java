@@ -234,11 +234,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getPageFrameDispatchQueueCapacity() {
-        return 32;
-    }
-
-    @Override
     public int getFloatToStrCastScale() {
         return 4;
     }

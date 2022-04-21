@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.async.PageFrameDispatchTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.mp.*;
 import io.questdb.std.Misc;
@@ -88,12 +87,6 @@ public interface MessageBus extends Closeable {
     MCSequence getO3PurgeDiscoverySubSeq();
 
     FanOut getPageFrameCollectFanOut(int shard);
-
-    MPSequence getPageFrameDispatchPubSeq();
-
-    RingQueue<PageFrameDispatchTask> getPageFrameDispatchQueue();
-
-    MCSequence getPageFrameDispatchSubSeq();
 
     MPSequence getPageFrameReducePubSeq(int shard);
 

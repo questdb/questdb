@@ -261,7 +261,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 int frameCount = 0;
 
                 while (true) {
-                    long cursor = subSeq.nextBully();
+                    long cursor = subSeq.next();
+                    if (cursor < 0) {
+                        frameSequence.tryDispatch();
+                        continue;
+                    }
                     PageFrameReduceTask task = queue.get(cursor);
                     PageFrameSequence<?> taskSequence = task.getFrameSequence();
                     if (taskSequence == frameSequence) {

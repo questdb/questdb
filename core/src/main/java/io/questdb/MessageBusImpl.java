@@ -25,7 +25,6 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.async.PageFrameDispatchTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.mp.*;
 import io.questdb.std.MemoryTag;
@@ -79,9 +78,6 @@ public class MessageBusImpl implements MessageBus {
     private final MCSequence[] pageFrameReduceSubSeq;
     private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
     private final FanOut[] pageFrameCollectFanOut;
-    private final MPSequence pageFrameDispatchPubSeq;
-    private final MCSequence pageFrameDispatchSubSeq;
-    private final RingQueue<PageFrameDispatchTask> pageFrameDispatchQueue;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -164,13 +160,6 @@ public class MessageBusImpl implements MessageBus {
             pageFrameReduceSubSeq[i] = reduceSubSeq;
             pageFrameCollectFanOut[i] = collectFanOut;
         }
-        pageFrameDispatchQueue = new RingQueue<PageFrameDispatchTask>(
-                PageFrameDispatchTask::new,
-                configuration.getPageFrameDispatchQueueCapacity()
-        );
-        pageFrameDispatchPubSeq = new MPSequence(pageFrameDispatchQueue.getCycle());
-        pageFrameDispatchSubSeq = new MCSequence(pageFrameDispatchQueue.getCycle());
-        pageFrameDispatchPubSeq.then(pageFrameDispatchSubSeq).then(pageFrameDispatchPubSeq);
     }
 
     @Override
@@ -286,21 +275,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public FanOut getPageFrameCollectFanOut(int shard) {
         return pageFrameCollectFanOut[shard];
-    }
-
-    @Override
-    public MPSequence getPageFrameDispatchPubSeq() {
-        return pageFrameDispatchPubSeq;
-    }
-
-    @Override
-    public RingQueue<PageFrameDispatchTask> getPageFrameDispatchQueue() {
-        return pageFrameDispatchQueue;
-    }
-
-    @Override
-    public MCSequence getPageFrameDispatchSubSeq() {
-        return pageFrameDispatchSubSeq;
     }
 
     @Override
