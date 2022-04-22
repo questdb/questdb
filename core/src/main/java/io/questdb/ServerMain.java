@@ -87,6 +87,7 @@ public class ServerMain {
 
         LogFactory.configureFromSystemProperties(LogFactory.INSTANCE, null, rootDirectory);
         final Log log = LogFactory.getLog("server-main");
+        // TODO [adam]: log.advisoryW().$("Log path: ").$(log.).$(); -- log config path.
 
         extractSite(buildInformation, rootDirectory, log);
         final Properties properties = new Properties();
@@ -97,7 +98,15 @@ public class ServerMain {
             properties.load(is);
         }
 
-        readServerConfiguration(rootDirectory, properties, log, buildInformation);
+        log.advisoryW().$("Server config: ").$(configurationFile.getAbsoluteFile()).$();
+
+        try {
+            readServerConfiguration(rootDirectory, properties, log, buildInformation);
+        } catch (ServerConfigurationException sce) {
+            log.errorW().$(sce.getMessage()).$();
+            throw sce;
+        }
+
         final CairoConfiguration cairoConfiguration = configuration.getCairoConfiguration();
 
         final boolean httpEnabled = configuration.getHttpServerConfiguration().isEnabled();
@@ -107,40 +116,39 @@ public class ServerMain {
         final boolean pgReadOnly = configuration.getPGWireConfiguration().readOnlySecurityContext();
         final String pgReadOnlyHint = pgEnabled && pgReadOnly ? " [read-only]" : "";
 
-        log.advisory().$("Server config : ").$(configurationFile.getAbsoluteFile()).$();
-        log.advisory().$("Config changes applied:").$();
-        log.advisory().$("  http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
-        log.advisory().$("  tcp.enabled  : ").$(configuration.getLineTcpReceiverConfiguration().isEnabled()).$();
-        log.advisory().$("  pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
+        log.advisoryW().$("Config changes applied:").$();
+        log.advisoryW().$("  http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
+        log.advisoryW().$("  tcp.enabled  : ").$(configuration.getLineTcpReceiverConfiguration().isEnabled()).$();
+        log.advisoryW().$("  pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
 
-        log.advisory().$("open database [id=").$(cairoConfiguration.getDatabaseIdLo()).$('.').$(cairoConfiguration.getDatabaseIdHi()).$(']').$();
-        log.advisory().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
+        log.advisoryW().$("open database [id=").$(cairoConfiguration.getDatabaseIdLo()).$('.').$(cairoConfiguration.getDatabaseIdHi()).$(']').$();
+        log.advisoryW().$("platform [bit=").$(System.getProperty("sun.arch.data.model")).$(']').$();
         switch (Os.type) {
             case Os.WINDOWS:
-                log.advisory().$("OS/Arch: windows/amd64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisoryW().$("OS/Arch: windows/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.LINUX_AMD64:
-                log.advisory().$("OS/Arch: linux/amd64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisoryW().$("OS/Arch: linux/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.OSX_AMD64:
-                log.advisory().$("OS/Arch: apple/amd64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisoryW().$("OS/Arch: apple/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.OSX_ARM64:
-                log.advisory().$("OS/Arch: apple/apple-silicon").$();
+                log.advisoryW().$("OS/Arch: apple/apple-silicon").$();
                 break;
             case Os.LINUX_ARM64:
-                log.advisory().$("OS/Arch: linux/arm64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisoryW().$("OS/Arch: linux/arm64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             case Os.FREEBSD:
-                log.advisory().$("OS: freebsd/amd64").$(Vect.getSupportedInstructionSetName()).$();
+                log.advisoryW().$("OS: freebsd/amd64").$(Vect.getSupportedInstructionSetName()).$();
                 break;
             default:
-                log.critical().$("Unsupported OS").$(Vect.getSupportedInstructionSetName()).$();
+                log.criticalW().$("Unsupported OS").$(Vect.getSupportedInstructionSetName()).$();
                 break;
         }
-        log.advisory().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
-        log.advisory().$("db root: ").$(cairoConfiguration.getRoot()).$();
-        log.advisory().$("backup root: ").$(cairoConfiguration.getBackupRoot()).$();
+        log.advisoryW().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
+        log.advisoryW().$("db root: ").$(cairoConfiguration.getRoot()).$();
+        log.advisoryW().$("backup root: ").$(cairoConfiguration.getBackupRoot()).$();
         try (Path path = new Path()) {
             verifyFileSystem("db", cairoConfiguration.getRoot(), path, log);
             verifyFileSystem("backup", cairoConfiguration.getBackupRoot(), path, log);
@@ -151,18 +159,18 @@ public class ServerMain {
             final int jitMode = configuration.getCairoConfiguration().getSqlJitMode();
             switch (jitMode) {
                 case SqlJitMode.JIT_MODE_ENABLED:
-                    log.advisory().$("SQL JIT compiler mode: on").$();
-                    log.advisory().$("Note: JIT compiler mode is a beta feature.").$();
+                    log.advisoryW().$("SQL JIT compiler mode: on").$();
+                    log.advisoryW().$("Note: JIT compiler mode is a beta feature.").$();
                     break;
                 case SqlJitMode.JIT_MODE_FORCE_SCALAR:
-                    log.advisory().$("SQL JIT compiler mode: scalar").$();
-                    log.advisory().$("Note: JIT compiler mode is a beta feature.").$();
+                    log.advisoryW().$("SQL JIT compiler mode: scalar").$();
+                    log.advisoryW().$("Note: JIT compiler mode is a beta feature.").$();
                     break;
                 case SqlJitMode.JIT_MODE_DISABLED:
-                    log.advisory().$("SQL JIT compiler mode: off").$();
+                    log.advisoryW().$("SQL JIT compiler mode: off").$();
                     break;
                 default:
-                    log.error().$("Unknown SQL JIT compiler mode: ").$(jitMode).$();
+                    log.errorW().$("Unknown SQL JIT compiler mode: ").$(jitMode).$();
                     break;
             }
         }
@@ -254,7 +262,7 @@ public class ServerMain {
 
             System.gc();
 
-            log.advisory().$("enjoy").$();
+            log.advisoryW().$("enjoy").$();
 
             if (Os.type != Os.WINDOWS && optHash.get("-n") == null) {
                 // suppress HUP signal
@@ -268,7 +276,7 @@ public class ServerMain {
                 System.err.println(new Date() + " QuestDB is down");
             }));
         } catch (NetworkError e) {
-            log.error().$((Sinkable) e).$();
+            log.errorW().$((Sinkable) e).$();
             LockSupport.parkNanos(10000000L);
             System.exit(55);
         }
@@ -293,7 +301,12 @@ public class ServerMain {
     }
 
     public static void main(String[] args) throws Exception {
-        new ServerMain(args);
+        try {
+            new ServerMain(args);
+        } catch (ServerConfigurationException sce) {
+            System.err.println(sce.getMessage());
+            System.exit(1);
+        }
     }
 
     static void verifyFileOpts(CairoConfiguration cairoConfiguration, Path path) {
@@ -325,7 +338,7 @@ public class ServerMain {
     }
 
     private static void logWebConsoleUrls(Log log, PropServerConfiguration configuration) throws SocketException {
-        final LogRecord record = log.info().$("web console URL(s):").$('\n').$('\n');
+        final LogRecord record = log.infoW().$("web console URL(s):").$('\n').$('\n');
         final int httpBindIP = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindIPv4Address();
         final int httpBindPort = configuration.getHttpServerConfiguration().getDispatcherConfiguration().getBindPort();
         if (httpBindIP == 0) {
@@ -399,7 +412,7 @@ public class ServerMain {
         URL resource = ServerMain.class.getResource(publicZip);
         long thisVersion = Long.MIN_VALUE;
         if (resource == null) {
-            log.error().$("did not find Web Console build at '").$(publicZip).$("'. Proceeding without Web Console checks").$();
+            log.errorW().$("did not find Web Console build at '").$(publicZip).$("'. Proceeding without Web Console checks").$();
         } else {
             thisVersion = resource.openConnection().getLastModified();
         }
@@ -441,7 +454,7 @@ public class ServerMain {
         }
 
         if (!extracted) {
-            log.info().$("web console is up to date").$();
+            log.infoW().$("web console is up to date").$();
         }
     }
 
@@ -459,7 +472,7 @@ public class ServerMain {
                     }
                 }
             } else {
-                log.error().$("could not find site [resource=").$(PUBLIC_ZIP).$(']').$();
+                log.errorW().$("could not find site [resource=").$(PUBLIC_ZIP).$(']').$();
             }
         }
         setPublicVersion(publicDir, thisVersion);
@@ -483,7 +496,7 @@ public class ServerMain {
         if (force || !exists) {
             File dir = out.getParentFile();
             if (!dir.exists() && !dir.mkdirs()) {
-                log.error().$("could not create directory [path=").$(dir).$(']').$();
+                log.errorW().$("could not create directory [path=").$(dir).$(']').$();
                 return;
             }
             try (FileOutputStream fos = new FileOutputStream(out)) {
@@ -492,10 +505,10 @@ public class ServerMain {
                     fos.write(buffer, 0, n);
                 }
             }
-            log.info().$("extracted [path=").$(out).$(']').$();
+            log.infoW().$("extracted [path=").$(out).$(']').$();
             return;
         }
-        log.debug().$("skipped [path=").$(out).$(']').$();
+        log.debugW().$("skipped [path=").$(out).$(']').$();
     }
 
     private static void deleteDirContentsOrException(File file) {
@@ -540,6 +553,22 @@ public class ServerMain {
         Misc.freeObjList(instancesToClean);
     }
 
+    private static void verifyFileSystem(String kind, CharSequence dir, Path path, Log log) {
+        if (dir != null) {
+            path.of(dir).$();
+            // path will contain file system name
+            long fsStatus = Files.getFileSystemStatus(path);
+            path.seekZ();
+            LogRecord rec = log.advisoryW().$(kind).$(" file system magic: 0x");
+            if (fsStatus < 0) {
+                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
+            } else {
+                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
+                log.advisoryW().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
+            }
+        }
+    }
+
     protected HttpServer createHttpServer(
             final WorkerPool workerPool,
             final Log log,
@@ -566,7 +595,7 @@ public class ServerMain {
             DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics) {
         if (!metrics.isEnabled()) {
-            log.advisory().$("Min health server is starting. Health check endpoint will not consider unhandled errors when metrics are disabled.").$();
+            log.advisoryW().$("Min health server is starting. Health check endpoint will not consider unhandled errors when metrics are disabled.").$();
         }
         return HttpServer.createMin(
                 configuration.getHttpMinServerConfiguration(),
@@ -603,21 +632,5 @@ public class ServerMain {
             final Log log
     ) {
         workerPool.start(log);
-    }
-
-    private void verifyFileSystem(String kind, CharSequence dir, Path path, Log log) {
-        if (dir != null) {
-            path.of(dir).$();
-            // path will contain file system name
-            long fsStatus = Files.getFileSystemStatus(path);
-            path.seekZ();
-            LogRecord rec = log.advisory().$(kind).$(" file system magic: 0x");
-            if (fsStatus < 0) {
-                rec.$hex(-fsStatus).$(" [").$(path).$("] SUPPORTED").$();
-            } else {
-                rec.$hex(fsStatus).$(" [").$(path).$("] EXPERIMENTAL").$();
-                log.advisory().$("\n\n\n\t\t\t*** SYSTEM IS USING UNSUPPORTED FILE SYSTEM AND COULD BE UNSTABLE ***\n\n").$();
-            }
-        }
     }
 }

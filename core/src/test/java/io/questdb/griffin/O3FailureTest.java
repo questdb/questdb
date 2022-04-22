@@ -994,6 +994,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testTwoRowsConsistency0);
     }
 
+    // TODO this test is super sloooooow
     @Test
     public void testVarColumnStress() throws Exception {
         dataAppendPageSize = 1024 * 1024;

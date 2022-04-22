@@ -24,12 +24,12 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 
 /**
  * String bind variable function wrapper used in SQL JIT. Also used to handle deferred
@@ -42,7 +42,7 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     private StaticSymbolTable symbolTable;
 
     public CompiledFilterSymbolBindVariable(Function symbolFunction, int columnIndex) {
-        assert symbolFunction instanceof StrBindVariable || symbolFunction instanceof SymbolConstant;
+        assert symbolFunction.getType() == ColumnType.STRING || symbolFunction.getType() == ColumnType.SYMBOL;
         this.symbolFunction = symbolFunction;
         this.columnIndex = columnIndex;
     }
@@ -50,6 +50,7 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         this.symbolTable = (StaticSymbolTable) symbolTableSource.getSymbolTable(columnIndex);
+        this.symbolFunction.init(symbolTableSource, executionContext);
     }
 
     @Override

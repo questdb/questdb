@@ -620,7 +620,7 @@ public class IODispatcherTest {
                         ",2200\r\n" +
                         ",11\r\n" +
                         ",2200\r\n" +
-                        "\r\n"+
+                        "\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -2345,7 +2345,7 @@ public class IODispatcherTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
+                "HTTP/1.1 400 Bad request\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -2966,7 +2966,7 @@ public class IODispatcherTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
+                "HTTP/1.1 400 Bad request\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -2992,7 +2992,7 @@ public class IODispatcherTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
+                "HTTP/1.1 400 Bad request\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -3146,7 +3146,7 @@ public class IODispatcherTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
+                "HTTP/1.1 400 Bad request\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -3170,7 +3170,7 @@ public class IODispatcherTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
+                "HTTP/1.1 400 Bad request\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -3237,7 +3237,7 @@ public class IODispatcherTest {
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
                         "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
+                "HTTP/1.1 400 Bad request\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -4100,7 +4100,7 @@ public class IODispatcherTest {
                             "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                             "\r\n";
 
-                    String expectedResponse = "HTTP/1.1 200 OK\r\n" +
+                    String expectedResponse = "HTTP/1.1 400 Bad request\r\n" +
                             "Server: questDB/1.0\r\n" +
                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                             "Transfer-Encoding: chunked\r\n" +
@@ -6246,6 +6246,87 @@ public class IODispatcherTest {
                 1
         );
     }
+
+    @Test
+    public void testTextQueryInsertViaWrongEndpoint() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine) -> {
+                            SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
+                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "GET /exec?query=create%20table%20tab%20(x%20int) HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "Connection: keep-alive\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "X-Requested-With: XMLHttpRequest\r\n" +
+                                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                                "Sec-Fetch-Site: same-origin\r\n" +
+                                                "Sec-Fetch-Mode: cors\r\n" +
+                                                "Referer: http://localhost:9000/index.html\r\n" +
+                                                "Accept-Encoding: gzip, deflate, br\r\n" +
+                                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                                "\r\n",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                                "Keep-Alive: timeout=5, max=10000\r\n" +
+                                                "\r\n" +
+                                                JSON_DDL_RESPONSE,
+                                        1,
+                                        0,
+                                        false,
+                                        true
+                                );
+
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "GET /exp?query=insert%20into%20tab%20value%20(1) HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "Connection: keep-alive\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "X-Requested-With: XMLHttpRequest\r\n" +
+                                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                                "Sec-Fetch-Site: same-origin\r\n" +
+                                                "Sec-Fetch-Mode: cors\r\n" +
+                                                "Referer: http://localhost:9000/index.html\r\n" +
+                                                "Accept-Encoding: gzip, deflate, br\r\n" +
+                                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                                "\r\n",
+                                        "HTTP/1.1 400 Bad request\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/csv; charset=utf-8\r\n" +
+                                                "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                                "Keep-Alive: timeout=5, max=10000\r\n" +
+                                                "\r\n" +
+                                                "5b\r\n" +
+                                                "{\"query\":\"insert into tab value (1)\",\"error\":\"'select' or 'values' expected\",\"position\":16}\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false,
+                                        true
+                                );
+                            }
+                        }
+                );
+    }
+
 
     @Test
     public void testTextQueryPseudoRandomStability() throws Exception {

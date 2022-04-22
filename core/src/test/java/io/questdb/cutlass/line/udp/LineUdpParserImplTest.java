@@ -25,8 +25,6 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -40,20 +38,83 @@ import org.junit.Test;
 public class LineUdpParserImplTest extends AbstractCairoTest {
 
     @Test
-    public void testAddColumn() throws Exception {
+    public void testAddColumnDefaultLong() throws Exception {
+        testAddColumnInteger(ColumnType.LONG, "NaN");
+    }
+
+    @Test
+    public void testAddColumnDefaultInteger() throws Exception {
+        testAddColumnInteger(ColumnType.INT, "NaN");
+    }
+
+    @Test
+    public void testAddColumnDefaultShort() throws Exception {
+        testAddColumnInteger(ColumnType.SHORT, "0");
+    }
+
+    @Test
+    public void testAddColumnDefaultByte() throws Exception {
+        testAddColumnInteger(ColumnType.BYTE, "0");
+    }
+
+    private void testAddColumnInteger(short colType, String nullValue) throws Exception {
         final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
-                "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
-                "woopsie\tdaisy\t2000\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
-                "444\td555\t510\t1.4000000000000001\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
-                "666\t777\t410\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tNaN\n";
+                "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
+                "woopsie\tdaisy\t127\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
+                "444\td555\t110\t1.4000000000000001\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
+                "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n";
 
-        final String lines = "tab,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
-                "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=444,tag2=d555 field=510i,f4=1.4,f5=55i,field2=\"comment\",fx=true 100000000000\n" +
-                "tab,tag=666,tag2=777 field=410i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
+        final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
+                "tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
+                "tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55i,field2=\"comment\",fx=true 100000000000\n" +
+                "tab,tag=666,tag2=777 field=40i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
 
+        assertThat(expected, lines, "tab", configuration, new DefaultLineUdpReceiverConfiguration() {
+            @Override
+            public short getDefaultColumnTypeForInteger() {
+                return colType;
+            }
+        });
 
-        assertThat(expected, lines, "tab");
+        try (TableReader reader = new TableReader(configuration, "tab")) {
+            Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
+        }
+    }
+
+    @Test
+    public void testAddColumnDefaultFloat() throws Exception {
+        testAddColumnFloat(ColumnType.FLOAT, "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
+                "abc\txyz\t100\t9.0340\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
+                "woopsie\tdaisy\t127\t3.0889\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
+                "444\td555\t110\t1.4000\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55.0000\n" +
+                "666\t777\t40\t1.1000\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tNaN\n");
+    }
+
+    @Test
+    public void testAddColumnDefaultDouble() throws Exception {
+        testAddColumnFloat(ColumnType.DOUBLE, "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
+                "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
+                "woopsie\tdaisy\t127\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
+                "444\td555\t110\t1.4000000000000001\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55.0\n" +
+                "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tNaN\n");
+    }
+
+    private void testAddColumnFloat(short colType, String expected) throws Exception {
+        final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
+                "tab,tag=woopsie,tag2=daisy field=127i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n" +
+                "tab,tag=444,tag2=d555 field=110i,f4=1.4,f5=55,field2=\"comment\",fx=true 100000000000\n" +
+                "tab,tag=666,tag2=777 field=40i,f4=1.1,field2=\"comment\\ X\",fx=false 100000000000\n";
+
+        assertThat(expected, lines, "tab", configuration, new DefaultLineUdpReceiverConfiguration() {
+            @Override
+            public short getDefaultColumnTypeForFloat() {
+                return colType;
+            }
+        });
+
+        try (TableReader reader = new TableReader(configuration, "tab")) {
+            Assert.assertEquals(colType, reader.getMetadata().getColumnType("f5"));
+        }
     }
 
     @Test
@@ -716,10 +777,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         }
     }
 
-    private void assertThat(String expected, String lines, CharSequence tableName, CairoConfiguration configuration) throws Exception {
+    private void assertThat(String expected, String lines, CharSequence tableName, CairoConfiguration configuration, LineUdpReceiverConfiguration udpConfiguration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration())) {
+                try (LineUdpParserImpl parser = new LineUdpParserImpl(engine, udpConfiguration)) {
                     byte[] bytes = lines.getBytes(Files.UTF_8);
                     int len = bytes.length;
                     long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
@@ -740,6 +801,10 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
             }
             assertTable(expected, tableName);
         });
+    }
+
+    private void assertThat(String expected, String lines, CharSequence tableName, CairoConfiguration configuration) throws Exception {
+        assertThat(expected, lines, tableName, configuration, new DefaultLineUdpReceiverConfiguration());
     }
 
     private void assertThat(String expected, String lines, CharSequence tableName) throws Exception {

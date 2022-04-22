@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
+import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
@@ -386,7 +388,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         if (token.charAt(0) == ':') {
             // name bind variable case
-            varFunction = getBindVariableService().getFunction(token);
+            Function bindFunction = getBindVariableService().getFunction(token);
+            if (bindFunction == null) {
+                throw SqlException.position(position).put("failed to find function for bind variable: ").put(token);
+            }
+            varFunction = new NamedParameterLinkFunction(Chars.toString(token), bindFunction.getType());
         } else {
             // indexed bind variable case
             try {
@@ -394,14 +400,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 if (variableIndex < 1) {
                     throw SqlException.$(position, "invalid bind variable index [value=").put(variableIndex).put(']');
                 }
-                varFunction = getBindVariableService().getFunction(variableIndex - 1);
+                Function bindFunction = getBindVariableService().getFunction(variableIndex - 1);
+                if (bindFunction == null) {
+                    throw SqlException.position(position).put("failed to find function for bind variable: ").put(token);
+                }
+                varFunction = new IndexedParameterLinkFunction(
+                        variableIndex - 1,
+                        bindFunction.getType(),
+                        position);
+
             } catch (NumericException e) {
                 throw SqlException.$(position, "invalid bind variable index [value=").put(token).put(']');
             }
-        }
-
-        if (varFunction == null) {
-            throw SqlException.position(position).put("failed to find function for bind variable: ").put(token);
         }
 
         return varFunction;
