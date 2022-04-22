@@ -44,7 +44,7 @@ is 100% free from garbage collection.
 We provide a [live demo](https://demo.questdb.io/) provisioned with the latest
 QuestDB release and sample datasets:
 
-- 10 years of NYC taxi trips in 1.6 billion rows
+- 10 years of NYC taxi trips with 1.6 billion rows
 - live trading data from a cryptocurrency exchange
 - geolocations of 250k unique ships over time
 
