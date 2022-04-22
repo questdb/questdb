@@ -42,8 +42,13 @@ is 100% free from garbage collection.
 ## Try QuestDB
 
 We provide a [live demo](https://demo.questdb.io/) provisioned with the latest
-QuestDB release and a 1.6 billion row dataset with 10 years of NYC taxi trips to
-query.
+QuestDB release and sample datasets:
+
+- 10 years of NYC taxi trips with 1.6 billion rows
+- live trading data from a cryptocurrency exchange
+- geolocations of 250k unique ships over time
+
+## Install QuestDB
 
 To run QuestDB, Docker can be used to get started quickly:
 
