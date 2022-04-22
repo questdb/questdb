@@ -1081,6 +1081,64 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testAddIntegerColumnAsByte() throws Exception {
+        integerDefaultColumnType = ColumnType.BYTE;
+        testDefaultColumnType(ColumnType.BYTE, "21i", "21", "0");
+    }
+
+    @Test
+    public void testAddIntegerColumnAsShort() throws Exception {
+        integerDefaultColumnType = ColumnType.SHORT;
+        testDefaultColumnType(ColumnType.SHORT, "21i", "21", "0");
+    }
+
+    @Test
+    public void testAddIntegerColumnAsInt() throws Exception {
+        integerDefaultColumnType = ColumnType.INT;
+        testDefaultColumnType(ColumnType.INT, "21i", "21", "NaN");
+    }
+
+    @Test
+    public void testAddIntegerColumnAsLong() throws Exception {
+        integerDefaultColumnType = ColumnType.LONG;
+        testDefaultColumnType(ColumnType.LONG, "21i", "21", "NaN");
+    }
+
+    @Test
+    public void testAddFloatColumnAsDouble() throws Exception {
+        floatDefaultColumnType = ColumnType.DOUBLE;
+        testDefaultColumnType(ColumnType.DOUBLE, "24.3", "24.3", "NaN");
+    }
+
+    @Test
+    public void testAddFloatColumnAsFloat() throws Exception {
+        floatDefaultColumnType = ColumnType.FLOAT;
+        testDefaultColumnType(ColumnType.FLOAT, "24.3", "24.3000", "NaN");
+    }
+
+    private void testDefaultColumnType(short expectedType, String ilpValue, String tableValue, String emptyValue) throws Exception {
+        String table = "addDefColType";
+        addTable(table);
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82 1465839830100400200\n" +
+                            table + ",location=us-eastcoast temperature=81,newcol=" + ilpValue + " 1465839830101400200\n";
+            do {
+                handleContextIO();
+                Assert.assertFalse(disconnected);
+            } while (recvBuffer.length() > 0);
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\tnewcol\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t" + emptyValue + "\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t" + tableValue + "\n";
+            try (TableReader reader = new TableReader(configuration, table)) {
+                assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+                Assert.assertEquals(expectedType, ColumnType.tagOf(reader.getMetadata().getColumnType("newcol")));
+            }
+        });
+    }
+
+    @Test
     public void testDuplicateNewFieldAlternating() throws Exception {
         String table = "dupField";
         runInContext(() -> {

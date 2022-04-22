@@ -154,6 +154,30 @@ public class TxSerializerTest {
         testRoundTxnSerialization(createTableSql, false);
     }
 
+    @Test
+    public void testPartitionedDailyWithTruncate() throws SqlException {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 1000000000000) ts " +
+                "from long_sequence(10)" +
+                ") timestamp(ts) PARTITION BY DAY";
+
+        compiler.compile(createTableSql, sqlExecutionContext);
+
+        TxSerializer serializer = new TxSerializer();
+        String txPath = root + "/" + "xxx/_txn";
+        String json = serializer.toJson(txPath);
+        Assert.assertTrue(json.contains("\"TX_OFFSET_TRUNCATE_VERSION\": 0"));
+
+        compiler.compile("truncate table xxx", sqlExecutionContext);
+        json = serializer.toJson(txPath);
+        Assert.assertTrue(json.contains("\"TX_OFFSET_TRUNCATE_VERSION\": 1"));
+
+    }
+
     private void assertFirstColumnValueLong(String sql, long expected) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

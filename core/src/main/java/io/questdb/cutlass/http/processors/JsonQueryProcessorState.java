@@ -381,7 +381,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (start == hi) {
             info().$("empty column in list '").$(columnNames).$('\'').$();
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-            JsonQueryProcessor.header(socket, "");
+            JsonQueryProcessor.header(socket, "", 400);
             socket.put('{').
                     putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',').
                     putQuoted("error").put(':').putQuoted("empty column in list");
@@ -394,7 +394,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (columnIndex == RecordMetadata.COLUMN_NOT_FOUND) {
             info().$("invalid column in list: '").$(columnNames, start, hi).$('\'').$();
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-            JsonQueryProcessor.header(socket, "");
+            JsonQueryProcessor.header(socket, "", 400);
             socket.put('{').
                     putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',').
                     putQuoted("error").put(':').put('\'').put("invalid column in list: ").put(columnNames, start, hi).put('\'');
@@ -637,7 +637,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             } catch (Utf8Exception e) {
                 info().$("utf8 error when decoding column list '").$(columnNames).$('\'').$();
                 HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-                JsonQueryProcessor.header(socket, "");
+                JsonQueryProcessor.header(socket, "", 400);
                 socket.put('{').
                         putQuoted("error").put(':').putQuoted("utf8 error in column list");
                 socket.put('}');

@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
@@ -160,5 +161,15 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     @Override
     public boolean isStringAsTagSupported() {
         return false;
+    }
+
+    @Override
+    public short getDefaultColumnTypeForFloat() {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
+    public short getDefaultColumnTypeForInteger() {
+        return ColumnType.LONG;
     }
 }
