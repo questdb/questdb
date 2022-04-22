@@ -323,7 +323,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         }
     }
 
-    public boolean stealWork(
+    private boolean stealWork(
             RingQueue<PageFrameReduceTask> queue,
             MCSequence reduceSubSeq,
             PageAddressCacheRecord record,
