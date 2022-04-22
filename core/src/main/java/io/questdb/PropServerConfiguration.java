@@ -294,7 +294,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetBindPort;
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
-    private final int queryCacheEventQueueCapacity;
     private int jsonQueryFloatScale;
     private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
@@ -953,7 +952,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         return null;
     }
 
-    public static ValidationResult validate(Properties properties) {
+    static ValidationResult validate(Properties properties) {
         // Settings that used to be valid but no longer are.
         Map<String, String> obsolete = new HashMap<>();
 
