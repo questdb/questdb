@@ -610,7 +610,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 final String dateLocale = getString(properties, env, PropertyKey.PG_DATE_LOCALE, "en");
                 this.pgDefaultLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
                 if (this.pgDefaultLocale == null) {
-                    throw new ServerConfigurationException(PropertyKey.PG_DATE_LOCALE.getPropertyPath(), dateLocale);
+                    throw ServerConfigurationException.forInvalidKey(PropertyKey.PG_DATE_LOCALE.getPropertyPath(), dateLocale);
                 }
                 this.pgWorkerCount = getInt(properties, env, PropertyKey.PG_WORKER_COUNT, 0);
                 cpuUsed += this.pgWorkerCount;
@@ -701,7 +701,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             final String dateLocale = getString(properties, env, PropertyKey.CAIRO_DATE_LOCALE, "en");
             this.locale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
             if (this.locale == null) {
-                throw new ServerConfigurationException(PropertyKey.CAIRO_DATE_LOCALE.getPropertyPath(), dateLocale);
+                throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_DATE_LOCALE.getPropertyPath(), dateLocale);
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY, 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR, 0.5);
@@ -980,13 +980,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else {
             String[] affinity = value.split(",");
             if (affinity.length != httpWorkerCount) {
-                throw new ServerConfigurationException(key.getPropertyPath(), "wrong number of affinity values");
+                throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "wrong number of affinity values");
             }
             for (int i = 0; i < httpWorkerCount; i++) {
                 try {
                     result[i] = Numbers.parseInt(affinity[i]);
                 } catch (NumericException e) {
-                    throw new ServerConfigurationException(key.getPropertyPath(), "Invalid affinity value: " + affinity[i]);
+                    throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Invalid affinity value: " + affinity[i]);
                 }
             }
         }
@@ -1025,7 +1025,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         try {
             return value != null ? Numbers.parseDouble(value) : defaultValue;
         } catch (NumericException e) {
-            throw new ServerConfigurationException(key.getPropertyPath(), value);
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
     }
 
@@ -1035,7 +1035,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         try {
             return Net.parseIPv4(value);
         } catch (NetworkError e) {
-            throw new ServerConfigurationException(key.getPropertyPath(), value);
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
     }
 
@@ -1044,7 +1044,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         try {
             return value != null ? Numbers.parseInt(value) : defaultValue;
         } catch (NumericException e) {
-            throw new ServerConfigurationException(key.getPropertyPath(), value);
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
     }
 
@@ -1053,7 +1053,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         try {
             return value != null ? Numbers.parseIntSize(value) : defaultValue;
         } catch (NumericException e) {
-            throw new ServerConfigurationException(key.getPropertyPath(), value);
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
     }
 
@@ -1080,7 +1080,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         try {
             return value != null ? Numbers.parseLong(value) : defaultValue;
         } catch (NumericException e) {
-            throw new ServerConfigurationException(key.getPropertyPath(), value);
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
     }
 
@@ -1089,14 +1089,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         try {
             return value != null ? Numbers.parseLongSize(value) : defaultValue;
         } catch (NumericException e) {
-            throw new ServerConfigurationException(key.getPropertyPath(), value);
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
     }
 
     private int getQueueCapacity(Properties properties, @Nullable Map<String, String> env, PropertyKey key, int defaultValue) throws ServerConfigurationException {
         final int value = getInt(properties, env, key, defaultValue);
         if (!Numbers.isPow2(value)) {
-            throw new ServerConfigurationException(key.getPropertyPath(), "Value must be power of 2, e.g. 1,2,4,8,16,32,64...");
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), "Value must be power of 2, e.g. 1,2,4,8,16,32,64...");
         }
         return value;
     }
@@ -1162,7 +1162,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         final String bindTo = getString(properties, env, key, defaultValue);
         final int colonIndex = bindTo.indexOf(':');
         if (colonIndex == -1) {
-            throw new ServerConfigurationException(key.getPropertyPath(), bindTo);
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), bindTo);
         }
 
         final String ipv4Str = bindTo.substring(0, colonIndex);
@@ -1170,7 +1170,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         try {
             ipv4 = Net.parseIPv4(ipv4Str);
         } catch (NetworkError e) {
-            throw new ServerConfigurationException(key.getPropertyPath(), ipv4Str);
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), ipv4Str);
         }
 
         final String portStr = bindTo.substring(colonIndex + 1);
@@ -1178,7 +1178,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         try {
             port = Numbers.parseInt(portStr);
         } catch (NumericException e) {
-            throw new ServerConfigurationException(key.getPropertyPath(), portStr);
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), portStr);
         }
 
         parser.onReady(ipv4, port);
