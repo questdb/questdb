@@ -35,6 +35,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -48,7 +49,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AsyncOffloadTest extends AbstractGriffinTest {
 
     private static final int PAGE_FRAME_MAX_ROWS = 100;
-    private static final int PAGE_FRAME_COUNT = 4;
+    private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int ROW_COUNT = PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
 
     private static final String queryNoLimit = "x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
@@ -238,9 +239,7 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     }
 
                     haltLatch.await();
-                    for (int i = 0; i < threadCount; i++) {
-                        factories[i].close();
-                    }
+                    Misc.free(factories);
 
                     Assert.assertEquals(0, errors.get());
                 },
