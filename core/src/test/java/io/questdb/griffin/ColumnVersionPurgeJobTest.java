@@ -294,6 +294,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
 
     @Test
     public void testPurgeCannotAllocateFailure() throws Exception {
+        int deadline = Os.type == Os.WINDOWS ? 144 : 105;
         assertMemoryLeak(() -> {
             currentMicros = 0;
             ff = new FilesFacadeImpl() {
@@ -301,7 +302,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
 
                 @Override
                 public boolean allocate(long fd, long size) {
-                    if (counter < 105) {
+                    if (counter < deadline) {
                         counter++;
                         return super.allocate(fd, size);
                     } else {
