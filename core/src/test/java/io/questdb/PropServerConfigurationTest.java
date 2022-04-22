@@ -519,16 +519,79 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineTcpReceiverConfiguration().getDefaultPartitionBy());
         Assert.assertEquals(PartitionBy.YEAR, configuration.getLineUdpReceiverConfiguration().getDefaultPartitionBy());
     }
-    @Test(expected = ServerConfigurationException.class)
-    public void testsIncorrectPropertyKeyError() throws IOException, JsonException, ServerConfigurationException {
 
-        InputStream inputStream = PropServerConfigurationTest.class.getResourceAsStream("/server.conf");
+    @Test
+    public void testValidationIsOffByDefault() throws JsonException, ServerConfigurationException {
         Properties properties = new Properties();
-        properties.load(inputStream);
-        properties.setProperty("this.will.throw", "Test");
-        properties.setProperty("this.will.also", "throw");
+        properties.setProperty("this.will.not.throw", "Test");
+        properties.setProperty("this.will.also.not", "throw");
 
         new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidConfigKeys() throws IOException, JsonException, ServerConfigurationException {
+        try (InputStream inputStream = PropServerConfigurationTest.class.getResourceAsStream("/server.conf")) {
+            Properties properties = new Properties();
+            properties.load(inputStream);
+            properties.setProperty("this.will.throw", "Test");
+            properties.setProperty("this.will.also", "throw");
+
+            new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        }
+    }
+
+    @Test
+    public void testDeprecatedConfigKeys() throws JsonException, ServerConfigurationException {
+        Properties properties = new Properties();
+        properties.setProperty("config.validation.strict", "true");
+        properties.setProperty("http.min.bind.to", "0.0.0.0:0");
+
+        // Using deprecated settings will not throw an exception, despite validation enabled.
+        new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+    }
+
+    @Test
+    public void testInvalidValidationResult() {
+        Properties properties = new Properties();
+        properties.setProperty("invalid.key", "value");
+        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.isError);
+        Assert.assertNotEquals(-1, result.message.indexOf("Invalid settings"));
+        Assert.assertNotEquals(-1, result.message.indexOf("* invalid.key"));
+    }
+
+    @Test
+    public void testObsoleteValidationResult() {
+        Properties properties = new Properties();
+        properties.setProperty("line.tcp.commit.timeout", "10000");
+        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        Assert.assertNotNull(result);
+        Assert.assertTrue(result.isError);
+        Assert.assertNotEquals(-1, result.message.indexOf("Obsolete settings"));
+        Assert.assertNotEquals(-1, result.message.indexOf(
+            "Replaced by `line.tcp.commit.interval.default` and `line.tcp.commit.interval.fraction`"));
+    }
+
+    @Test
+    public void testDeprecatedValidationResult() {
+        Properties properties = new Properties();
+        properties.setProperty("http.net.rcv.buf.size", "10000");
+        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        Assert.assertNotNull(result);
+        Assert.assertFalse(result.isError);
+        Assert.assertNotEquals(-1, result.message.indexOf("Deprecated settings"));
+        Assert.assertNotEquals(-1, result.message.indexOf(
+            "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`"));
+    }
+
+    @Test
+    public void testValidConfiguration() {
+        Properties properties = new Properties();
+        properties.setProperty("http.net.connection.rcvbuf", "10000");
+        PropServerConfiguration.ValidationResult result = PropServerConfiguration.validate(properties);
+        Assert.assertNull(result);
     }
 
     @Test
