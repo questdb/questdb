@@ -30,27 +30,15 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 
 public class UpdateTest extends AbstractGriffinTest {
-    private static UpdateOperator updateOperator;
     private final SCSequence eventSubSequence = new SCSequence();
-
-    @BeforeClass
-    public static void setUpUpdates() {
-        // Make updateOperator static to test re-usability of the object
-        updateOperator = new UpdateOperator(configuration, engine.getMessageBus());
-    }
-
-    @AfterClass
-    public static void tearDownUpdate() {
-        updateOperator = Misc.free(updateOperator);
-    }
 
     @Test
     public void testInsertAfterUpdate() throws Exception {
@@ -174,13 +162,17 @@ public class UpdateTest extends AbstractGriffinTest {
             th.start();
 
             barrier.await(); // table is locked
-            try (QueryFuture queryFuture = executeUpdateGetFuture("UPDATE up SET x = 123 WHERE x > 1 and x < 4")) {
-                Assert.assertEquals(QueryFuture.QUERY_NO_RESPONSE, queryFuture.getStatus());
-                Assert.assertEquals(0, queryFuture.getAffectedRowsCount());
+            try (
+                    UpdateOperation op = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 4", sqlExecutionContext).getUpdateOperation();
+                    QueryFuture fut = op.execute(sqlExecutionContext, eventSubSequence)
+            ) {
+                Assert.assertEquals(QueryFuture.QUERY_NO_RESPONSE, fut.getStatus());
+                Assert.assertEquals(0, fut.getAffectedRowsCount());
                 barrier.await(); // update is on writer async cmd queue
-                queryFuture.await(10 * Timestamps.SECOND_MICROS); // 10 seconds timeout
-                Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
-                Assert.assertEquals(2, queryFuture.getAffectedRowsCount());
+                fut.await(10 * Timestamps.SECOND_MICROS); // 10 seconds timeout
+                Assert.assertEquals(QueryFuture.QUERY_COMPLETE, fut.getStatus());
+                Assert.assertEquals(2, fut.getAffectedRowsCount());
+
             }
             th.join();
 
@@ -213,7 +205,7 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateColumNameCaseInsensitive() throws Exception {
+    public void testUpdateColumnNameCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" + " (select timestamp_sequence(0, 1000000) ts," + " cast(x as int) x" + " from long_sequence(5))" + " timestamp(ts) partition by DAY", sqlExecutionContext);
 
@@ -456,12 +448,12 @@ public class UpdateTest extends AbstractGriffinTest {
             CompiledQuery cc = compiler.compile("UPDATE up SET x = 1", sqlExecutionContext);
             Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
 
-            try (UpdateStatement updateStatement = cc.getUpdateStatement()) {
+            try (UpdateOperation updateOperation = cc.getUpdateOperation()) {
                 // Bump table version
                 compile("alter table up add column y long", sqlExecutionContext);
                 compile("alter table up drop column y", sqlExecutionContext);
 
-                applyUpdate(updateStatement);
+                applyUpdate(updateOperation);
                 Assert.fail();
             } catch (ReaderOutOfDateException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "table='up'");
@@ -474,9 +466,12 @@ public class UpdateTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" + " (select timestamp_sequence(0, 1000000) ts," + " x" + " from long_sequence(5))" + " timestamp(ts)", sqlExecutionContext);
 
-            try (QueryFuture queryFuture = executeUpdateGetFuture("UPDATE up SET x = 123 WHERE x > 1 and x < 5")) {
-                Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
-                Assert.assertEquals(3, queryFuture.getAffectedRowsCount());
+            try (
+                    UpdateOperation op = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 5", sqlExecutionContext).getUpdateOperation();
+                    QueryFuture fut = op.execute(sqlExecutionContext, eventSubSequence)
+            ) {
+                Assert.assertEquals(QueryFuture.QUERY_COMPLETE, fut.getStatus());
+                Assert.assertEquals(3, fut.getAffectedRowsCount());
             }
 
             assertSql("up", "ts\tx\n" + "1970-01-01T00:00:00.000000Z\t1\n" + "1970-01-01T00:00:01.000000Z\t123\n" + "1970-01-01T00:00:02.000000Z\t123\n" + "1970-01-01T00:00:03.000000Z\t123\n" + "1970-01-01T00:00:04.000000Z\t5\n");
@@ -506,8 +501,14 @@ public class UpdateTest extends AbstractGriffinTest {
             SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
 
             try {
-                compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
-                Assert.fail();
+                CompiledQuery cc = compiler.compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
+                try (
+                        UpdateOperation op = cc.getUpdateOperation();
+                        QueryFuture fut = op.execute(roExecutionContext, null)
+                ) {
+                    fut.await();
+                    Assert.fail();
+                }
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
             }
@@ -638,11 +639,13 @@ public class UpdateTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" + " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," + " x" + " from long_sequence(5)), index(symCol)" + " timestamp(ts)", sqlExecutionContext);
 
-            try (QueryFuture queryFuture = executeUpdateGetFuture("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'")) {
-                Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
-                Assert.assertEquals(2, queryFuture.getAffectedRowsCount());
+            try (
+                    UpdateOperation op = compiler.compile("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'", sqlExecutionContext).getUpdateOperation();
+                    QueryFuture fut = op.execute(sqlExecutionContext, eventSubSequence)
+            ) {
+                Assert.assertEquals(QueryFuture.QUERY_COMPLETE, fut.getStatus());
+                Assert.assertEquals(2, fut.getAffectedRowsCount());
             }
-
             assertSql("up", "symCol\tts\tx\n" + "WCP\t1970-01-01T00:00:00.000000Z\t1\n" + "WCP\t1970-01-01T00:00:01.000000Z\t2\n" + "WCP\t1970-01-01T00:00:02.000000Z\t3\n" + "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" + "VTJ\t1970-01-01T00:00:04.000000Z\t5\n");
         });
     }
@@ -901,18 +904,20 @@ public class UpdateTest extends AbstractGriffinTest {
 
             assertSql("t2", "symCol2\tts\tx\n" + "XUX\t1970-01-01T00:00:00.000000Z\t1\n" + "IBB\t1970-01-01T00:00:01.000000Z\t2\n" + "IBB\t1970-01-01T00:00:02.000000Z\t3\n" + "GZS\t1970-01-01T00:00:03.000000Z\t4\n" + "\t1970-01-01T00:00:04.000000Z\t5\n");
 
-            try (QueryFuture queryFuture = executeUpdateGetFuture("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2")) {
-                Assert.assertEquals(QueryFuture.QUERY_COMPLETE, queryFuture.getStatus());
-                Assert.assertEquals(1, queryFuture.getAffectedRowsCount());
+            try (
+                    UpdateOperation op = compiler.compile("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2", sqlExecutionContext).getUpdateOperation();
+                    QueryFuture fut = op.execute(sqlExecutionContext, eventSubSequence)
+            ) {
+                Assert.assertEquals(QueryFuture.QUERY_COMPLETE, fut.getStatus());
+                Assert.assertEquals(1, fut.getAffectedRowsCount());
             }
-
             assertSql("up", "symCol\tts\tx\n" + "WCP\t1970-01-01T00:00:00.000000Z\t1\n" + "WCP\t1970-01-01T00:00:01.000000Z\t2\n" + "WCP\t1970-01-01T00:00:02.000000Z\t3\n" + "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" + "VTJ\t1970-01-01T00:00:04.000000Z\t5\n");
         });
     }
 
-    private void applyUpdate(UpdateStatement updateStatement) throws SqlException, TableStructureChangesException {
-        try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), updateStatement.getTableName(), "UPDATE")) {
-            updateStatement.apply(tableWriter);
+    private void applyUpdate(UpdateOperation updateOperation) throws SqlException, TableStructureChangesException {
+        try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), updateOperation.getTableName(), "UPDATE")) {
+            updateOperation.apply(tableWriter);
         }
     }
 
@@ -939,7 +944,10 @@ public class UpdateTest extends AbstractGriffinTest {
     private void executeUpdate(String query) throws SqlException {
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
-        try (QueryFuture qf = cc.execute(eventSubSequence)) {
+        try (
+                UpdateOperation op = cc.getUpdateOperation();
+                QueryFuture qf = op.execute(sqlExecutionContext, eventSubSequence)
+        ) {
             qf.await();
         }
     }
@@ -952,12 +960,6 @@ public class UpdateTest extends AbstractGriffinTest {
             TestUtils.assertContains(exception.getFlyweightMessage(), reason);
             Assert.assertEquals(position, exception.getPosition());
         }
-    }
-
-    private QueryFuture executeUpdateGetFuture(String query) throws SqlException {
-        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
-        return cc.execute(eventSubSequence);
     }
 
     private void testSymbol_UpdateWithExistingValue(boolean indexed) throws Exception {

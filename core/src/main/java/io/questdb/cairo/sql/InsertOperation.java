@@ -22,25 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.InsertOperation;
-import io.questdb.std.WeakAutoClosableObjectPool;
+import io.questdb.cairo.pool.WriterSource;
+import io.questdb.griffin.InsertRowImpl;
+import io.questdb.griffin.QueryFuture;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 
-public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
-    private InsertOperation insert;
+import java.io.Closeable;
 
-    public TypesAndInsert(WeakAutoClosableObjectPool<TypesAndInsert> parentPool) {
-        super(parentPool);
-    }
+public interface InsertOperation extends Closeable {
+    InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException;
 
-    public InsertOperation getInsert() {
-        return insert;
-    }
+    InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException;
 
-    public void of(InsertOperation insert, BindVariableService bindVariableService) {
-        this.insert = insert;
-        copyTypesFrom(bindVariableService);
+    CharSequence getTableName();
+
+    void addInsertRow(InsertRowImpl row);
+
+    QueryFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException;
+
+    default void close() {
     }
 }

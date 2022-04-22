@@ -32,7 +32,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -41,17 +40,17 @@ import io.questdb.tasks.TableWriterTask;
 import static io.questdb.tasks.TableWriterTask.TSK_BEGIN;
 import static io.questdb.tasks.TableWriterTask.TSK_COMPLETE;
 
-class QueryFutureImpl implements QueryFuture {
-    private static final Log LOG = LogFactory.getLog(QueryFutureImpl.class);
+class UpdateFutureImpl implements QueryFuture {
+    private static final Log LOG = LogFactory.getLog(UpdateFutureImpl.class);
     private final CairoEngine engine;
-    private AsyncWriterCommand asyncWriterCommand;
     private SCSequence eventSubSeq;
     private int status;
     private long affectedRowsCount;
     private long cmdCorrelationId;
     private QueryFutureUpdateListener queryFutureUpdateListener;
+    private int tableNamePositionInSql;
 
-    QueryFutureImpl(CairoEngine engine) {
+    UpdateFutureImpl(CairoEngine engine) {
         this.engine = engine;
     }
 
@@ -62,7 +61,7 @@ class QueryFutureImpl implements QueryFuture {
             await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
         }
         if (status != QUERY_COMPLETE) {
-            throw SqlException.$(asyncWriterCommand.getTableNamePosition(), "Timeout expired on waiting for the async command execution result");
+            throw SqlException.$(tableNamePositionInSql, "Timeout expired on waiting for the async command execution result");
         }
     }
 
@@ -71,7 +70,7 @@ class QueryFutureImpl implements QueryFuture {
         if (status == QUERY_COMPLETE) {
             return status;
         }
-        status = Math.max(status, awaitWriterEvent(timeout, asyncWriterCommand.getTableNamePosition()));
+        status = Math.max(status, awaitWriterEvent(timeout));
         return status;
     }
 
@@ -87,7 +86,6 @@ class QueryFutureImpl implements QueryFuture {
 
     @Override
     public void close() {
-        asyncWriterCommand = Misc.free(asyncWriterCommand);
         if (eventSubSeq != null) {
             engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
             eventSubSeq.clear();
@@ -104,11 +102,12 @@ class QueryFutureImpl implements QueryFuture {
             AsyncWriterCommand asyncWriterCommand,
             SqlExecutionContext executionContext,
             SCSequence eventSubSeq,
-            boolean acceptStructureChange
+            boolean acceptStructureChange,
+            int tableNamePositionInSql
     ) throws SqlException, TableStructureChangesException {
         assert eventSubSeq != null : "event subscriber sequence must be provided";
-        this.asyncWriterCommand = asyncWriterCommand;
         this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();
+        this.tableNamePositionInSql = tableNamePositionInSql;
         // Set up execution wait sequence to listen to async writer events
         final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
         writerEventFanOut.and(eventSubSeq);
@@ -125,7 +124,7 @@ class QueryFutureImpl implements QueryFuture {
         }
     }
 
-    private int awaitWriterEvent(long writerAsyncCommandBusyWaitTimeout, int queryTableNamePosition) throws SqlException {
+    private int awaitWriterEvent(long writerAsyncCommandBusyWaitTimeout) throws SqlException {
         assert eventSubSeq != null : "No sequence to wait on";
         assert cmdCorrelationId > -1 : "No command id to wait for";
 
@@ -160,7 +159,7 @@ class QueryFutureImpl implements QueryFuture {
                     LOG.info().$("writer command response received [instance=").$(cmdCorrelationId).I$();
                     int strLen = Unsafe.getUnsafe().getInt(event.getData());
                     if (strLen > -1) {
-                        throw SqlException.$(queryTableNamePosition, event.getData() + Integer.BYTES, event.getData() + Integer.BYTES + 2L * strLen);
+                        throw SqlException.$(tableNamePositionInSql, event.getData() + Integer.BYTES, event.getData() + Integer.BYTES + 2L * strLen);
                     }
                     affectedRowsCount = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);
                     queryFutureUpdateListener.reportProgress(cmdCorrelationId, QUERY_COMPLETE);

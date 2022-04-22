@@ -1007,14 +1007,6 @@ public final class TableUtils {
         }
     }
 
-    static boolean isEntryToBeProcessed(long address, int index) {
-        if (Unsafe.getUnsafe().getByte(address + index) == -1) {
-            return false;
-        }
-        Unsafe.getUnsafe().putByte(address + index, (byte) -1);
-        return true;
-    }
-
     public interface FailureCloseable {
         void close(long prevSize);
     }

@@ -144,7 +144,7 @@ public class TableWriter implements Closeable {
     // Latest command sequence per command source.
     // Publisher source is identified by a long value
     private final LongLongHashMap cmdSequences = new LongLongHashMap();
-    private final AlterStatement alterTableStatement = new AlterStatement();
+    private final AlterOperation alterTableStatement = new AlterOperation();
     private final ColumnVersionWriter columnVersionWriter;
     private final Metrics metrics;
     private final RingQueue<TableWriterTask> commandQueue;
@@ -839,7 +839,7 @@ public class TableWriter implements Closeable {
 
     public UpdateOperator getUpdateOperator() {
         if (updateOperator == null) {
-            updateOperator = new UpdateOperator(configuration, messageBus);
+            updateOperator = new UpdateOperator(configuration, messageBus, this);
         }
         return updateOperator;
     }

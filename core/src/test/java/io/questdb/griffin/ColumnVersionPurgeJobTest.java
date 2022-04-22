@@ -795,10 +795,12 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     }
 
     private void executeUpdate(String query) throws SqlException {
-        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
-        try (QueryFuture qf = cc.execute(null)) {
-            qf.await();
+        try (UpdateOperation op = cc.getUpdateOperation()) {
+            try (QueryFuture qf = op.execute(sqlExecutionContext, null)) {
+                qf.await();
+            }
         }
     }
 

@@ -688,9 +688,9 @@ public final class TestUtils {
 
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
         CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
-        Assert.assertNotNull(compiledQuery.getInsertStatement());
-        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
-        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
+        Assert.assertNotNull(compiledQuery.getInsertOperation());
+        final InsertOperation insertOperation = compiledQuery.getInsertOperation();
+        try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
             insertMethod.execute();
             insertMethod.commit();
         }

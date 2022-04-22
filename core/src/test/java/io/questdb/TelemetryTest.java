@@ -26,7 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -129,9 +129,9 @@ public class TelemetryTest extends AbstractCairoTest {
                compiler.compile(
                        "CREATE TABLE " + TelemetryJob.configTableName + " (id long256, enabled boolean)",
                        sqlExecutionContext);
-               InsertStatement ist = compiler.compile(
+               InsertOperation ist = compiler.compile(
                        "INSERT INTO " + TelemetryJob.configTableName + " values(CAST('0x01' AS LONG256), true)",
-                       sqlExecutionContext).getInsertStatement();
+                       sqlExecutionContext).getInsertOperation();
                InsertMethod im = ist.createMethod(sqlExecutionContext);
                im.execute();
                im.commit();

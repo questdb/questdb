@@ -81,8 +81,7 @@ public class SqlCompiler implements Closeable {
     private final Path path = new Path();
     private final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
     private final CompiledQueryImpl compiledQuery;
-    private final AlterStatementBuilder alterQueryBuilder = new AlterStatementBuilder();
-    private final UpdateOperator updateOperator;
+    private final AlterOperationBuilder alterQueryBuilder = new AlterOperationBuilder();
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -222,7 +221,6 @@ public class SqlCompiler implements Closeable {
                 postOrderTreeTraversalAlgo
         );
         textLoader = new TextLoader(engine);
-        updateOperator = new UpdateOperator(engine.getConfiguration(), engine.getMessageBus());
     }
 
     // Creates data type converter.
@@ -904,7 +902,6 @@ public class SqlCompiler implements Closeable {
     public void close() {
         backupAgent.close();
         codeGenerator.close();
-        updateOperator.close();
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
@@ -917,7 +914,9 @@ public class SqlCompiler implements Closeable {
         lexer.of(query);
         isSingleQueryMode = true;
 
-        return compileInner(executionContext);
+        compileInner(executionContext);
+        compiledQuery.withContext(executionContext);
+        return compiledQuery;
     }
 
     /*
@@ -956,18 +955,18 @@ public class SqlCompiler implements Closeable {
 
             batchCallback.preCompile(this);
             clear();//we don't use normal compile here because we can't reset existing lexer
-            CompiledQuery current = compileInner(executionContext);
+            compileInner(executionContext);
             //We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
             //some code in postCompile might need full text of current query
             CharSequence currentQuery = query.subSequence(position, goToQueryEnd());
-            batchCallback.postCompile(this, current, currentQuery);
+            batchCallback.postCompile(this, compiledQuery, currentQuery);
         }
     }
 
     public void filterPartitions(
             Function function,
             TableReader reader,
-            AlterStatementBuilder changePartitionStatement
+            AlterOperationBuilder changePartitionStatement
     ) {
         // Iterate partitions in descending order so if folders are missing on disk
         // removePartition does not fail to determine next minTimestamp
@@ -1232,7 +1231,7 @@ public class SqlCompiler implements Closeable {
             lexer.unparse();
         }
 
-        AlterStatementBuilder addColumn = alterQueryBuilder.ofAddColumn(
+        AlterOperationBuilder addColumn = alterQueryBuilder.ofAddColumn(
                 tableNamePosition,
                 tableName,
                 tableMetadata.getId());
@@ -1447,7 +1446,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterTableDropColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
-        AlterStatementBuilder dropColumnStatement = alterQueryBuilder.ofDropColumn(tableNamePosition, tableName, metadata.getId());
+        AlterOperationBuilder dropColumnStatement = alterQueryBuilder.ofDropColumn(tableNamePosition, tableName, metadata.getId());
         int semicolonPos = -1;
         do {
             CharSequence tok = GenericLexer.unquote(maybeExpectToken(lexer, "column name", semicolonPos < 0));
@@ -1495,7 +1494,7 @@ public class SqlCompiler implements Closeable {
             if (action != PartitionAction.DROP) {
                 throw SqlException.$(pos, "WHERE clause can only be used with DROP PARTITION command");
             }
-            AlterStatementBuilder alterPartitionStatement = alterQueryBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
+            AlterOperationBuilder alterPartitionStatement = alterQueryBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
             String designatedTimestampColumnName = null;
             int tsIndex = readerMetadata.getTimestampIndex();
@@ -1523,7 +1522,7 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery alterTableDropOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
         String tableName = reader.getTableName();
-        AlterStatementBuilder partitions;
+        AlterOperationBuilder partitions;
         if (action == PartitionAction.DROP) {
             partitions = alterQueryBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
         } else {
@@ -1569,7 +1568,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
-        AlterStatementBuilder renameColumnStatement = alterQueryBuilder.ofRenameColumn(tableNamePosition, tableName, metadata.getId());
+        AlterOperationBuilder renameColumnStatement = alterQueryBuilder.ofRenameColumn(tableNamePosition, tableName, metadata.getId());
         int hadSemicolonPos = -1;
 
         do {
@@ -1685,7 +1684,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private CompiledQuery compileInner(@NotNull SqlExecutionContext executionContext) throws SqlException {
+    private void compileInner(@NotNull SqlExecutionContext executionContext) throws SqlException {
         final CharSequence tok = SqlUtil.fetchNext(lexer);
 
         if (tok == null) {
@@ -1697,9 +1696,10 @@ public class SqlCompiler implements Closeable {
         compiledQuery.withContext(executionContext);
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
         if (executor == null) {
-            return compileUsingModel(executionContext);
+            compileUsingModel(executionContext);
+        } else {
+            executor.execute(executionContext);
         }
-        return executor.execute(executionContext);
     }
 
     private CompiledQuery compileRollback(SqlExecutionContext executionContext) {
@@ -1710,8 +1710,7 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofSet();
     }
 
-    @NotNull
-    private CompiledQuery compileUsingModel(SqlExecutionContext executionContext) throws SqlException {
+    private void compileUsingModel(SqlExecutionContext executionContext) throws SqlException {
         // This method will not populate sql cache directly;
         // factories are assumed to be non-reentrant and once
         // factory is out of this method the caller assumes
@@ -1726,32 +1725,37 @@ public class SqlCompiler implements Closeable {
         ExecutionModel executionModel = compileExecutionModel(executionContext);
         switch (executionModel.getModelType()) {
             case ExecutionModel.QUERY:
-//                LOG.info().$("plan [q=`").$((QueryModel) executionModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
-                return compiledQuery.of(generate((QueryModel) executionModel, executionContext));
+                LOG.info().$("plan [q=`").$((QueryModel) executionModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
+                compiledQuery.of(generate((QueryModel) executionModel, executionContext));
+                break;
             case ExecutionModel.CREATE_TABLE:
-                return createTableWithRetries(executionModel, executionContext);
+                createTableWithRetries(executionModel, executionContext);
+                break;
             case ExecutionModel.COPY:
-                return executeCopy(executionContext, (CopyModel) executionModel);
+                executeCopy(executionContext, (CopyModel) executionModel);
+                break;
             case ExecutionModel.RENAME_TABLE:
                 final RenameTableModel rtm = (RenameTableModel) executionModel;
                 engine.rename(executionContext.getCairoSecurityContext(), path, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
-                return compiledQuery.ofRenameTable();
+                compiledQuery.ofRenameTable();
+                break;
             case ExecutionModel.UPDATE:
                 final QueryModel updateQueryModel = (QueryModel) executionModel;
-                UpdateStatement updateStatement = generateUpdate(updateQueryModel, executionContext);
-                return compiledQuery.ofUpdate(updateStatement);
+                compiledQuery.ofUpdate(generateUpdate(updateQueryModel, executionContext));
+                break;
             default:
                 InsertModel insertModel = (InsertModel) executionModel;
                 if (insertModel.getQueryModel() != null) {
-                    return executeWithRetries(
+                    executeWithRetries(
                             insertAsSelectMethod,
                             executionModel,
                             configuration.getCreateAsSelectRetryCount(),
                             executionContext
                     );
                 } else {
-                    return insert(executionModel, executionContext);
+                    insert(executionModel, executionContext);
                 }
+                break;
         }
     }
 
@@ -2059,11 +2063,8 @@ public class SqlCompiler implements Closeable {
      * @param executionContext provides access to bind variables and authorization module
      * @throws SqlException contains text of error and error position in SQL text.
      */
-    private CompiledQuery createTableWithRetries(
-            ExecutionModel executionModel,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        return executeWithRetries(createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
+    private void createTableWithRetries(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        executeWithRetries(createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
     }
 
     private CompiledQuery dropTable(SqlExecutionContext executionContext) throws SqlException {
@@ -2102,17 +2103,17 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofDrop();
     }
 
-    @NotNull
-    private CompiledQuery executeCopy(SqlExecutionContext executionContext, CopyModel executionModel) throws SqlException {
+    private void executeCopy(SqlExecutionContext executionContext, CopyModel executionModel) throws SqlException {
         setupTextLoaderFromModel(executionModel);
         if (Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
-            return compiledQuery.ofCopyRemote(textLoader);
+            compiledQuery.ofCopyRemote(textLoader);
+        } else {
+            copyTable(executionContext, executionModel);
+            compiledQuery.ofCopyLocal();
         }
-        copyTable(executionContext, executionModel);
-        return compiledQuery.ofCopyLocal();
     }
 
-    private CompiledQuery executeWithRetries(
+    private void executeWithRetries(
             ExecutableMethod method,
             ExecutionModel executionModel,
             int retries,
@@ -2121,7 +2122,8 @@ public class SqlCompiler implements Closeable {
         int attemptsLeft = retries;
         do {
             try {
-                return method.execute(executionModel, executionContext);
+                method.execute(executionModel, executionContext);
+                return;
             } catch (ReaderOutOfDateException e) {
                 attemptsLeft--;
                 clear();
@@ -2137,7 +2139,7 @@ public class SqlCompiler implements Closeable {
         return codeGenerator.generate(queryModel, executionContext);
     }
 
-    UpdateStatement generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext) throws SqlException {
+    UpdateOperation generateUpdate(QueryModel updateQueryModel, SqlExecutionContext executionContext) throws SqlException {
         // Update QueryModel structure is
         // QueryModel with SET column expressions
         // |-- QueryModel of select-virtual or select-choose of data selected for update
@@ -2149,7 +2151,10 @@ public class SqlCompiler implements Closeable {
                 executionContext
         );
 
-        return new UpdateStatement(
+        // todo: perhaps reuse instance ?
+
+        return new UpdateOperation(
+                engine,
                 updateQueryModel.getUpdateTableName(),
                 selectQueryModel.getTableId(),
                 selectQueryModel.getTableVersion(),
@@ -2185,7 +2190,7 @@ public class SqlCompiler implements Closeable {
         return lexer.getPosition();
     }
 
-    private CompiledQuery insert(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+    private void insert(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
         final InsertModel model = (InsertModel) executionModel;
         final ExpressionNode name = model.getTableName();
         tableExistsOrFail(name.position, name.token, executionContext);
@@ -2199,7 +2204,7 @@ public class SqlCompiler implements Closeable {
         )) {
             final long structureVersion = reader.getVersion();
             final RecordMetadata metadata = reader.getMetadata();
-            final InsertStatementImpl insertStatement = new InsertStatementImpl(engine, reader.getTableName(), structureVersion);
+            final InsertOperationImpl insertStatement = new InsertOperationImpl(engine, reader.getTableName(), structureVersion);
             final int writerTimestampIndex = metadata.getTimestampIndex();
             final CharSequenceHashSet columnSet = model.getColumnSet();
             final int columnSetSize = columnSet.size();
@@ -2284,7 +2289,7 @@ public class SqlCompiler implements Closeable {
                 RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, listColumnFilter);
                 insertStatement.addInsertRow(new InsertRowImpl(record, copier, timestampFunction));
             }
-            return compiledQuery.ofInsert(insertStatement);
+            compiledQuery.ofInsert(insertStatement);
         } catch (SqlException e) {
             Misc.freeObjList(valueFunctions);
             throw e;

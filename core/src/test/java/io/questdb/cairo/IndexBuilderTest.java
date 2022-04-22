@@ -75,6 +75,41 @@ public class IndexBuilderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotRemoveOldFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            String createTableSql = "create table xxx as (" +
+                    "select " +
+                    "rnd_symbol('A', 'B', 'C') as sym1," +
+                    "rnd_symbol(4,4,4,2) as sym2," +
+                    "rnd_symbol(4,4,4,2) as sym3," +
+                    "x," +
+                    "timestamp_sequence(0, 100000000) ts " +
+                    "from long_sequence(10000)" +
+                    "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
+
+            ff = new FilesFacadeImpl() {
+                @Override
+                public boolean remove(LPSZ path) {
+                    if (Chars.endsWith(path, ".v") || Chars.endsWith(path, ".k")) {
+                        return false;
+                    }
+                    return Files.remove(path);
+                }
+            };
+
+            try {
+                checkRebuildIndexes(createTableSql,
+                        tablePath -> {
+                        },
+                        indexBuilder -> indexBuilder.rebuildColumn("sym2"));
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot remove index file");
+            }
+        });
+    }
+
+    @Test
     public void testEmptyTable() throws Exception {
         String createTableSql = "create table xxx as (" +
                 "select " +
@@ -135,7 +170,11 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 IndexBuilder::rebuildAll);
 
         engine.releaseAllWriters();
-        compiler.compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext).execute(null).await();
+        compiler
+                .compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext)
+                .getInsertOperation()
+                .execute(sqlExecutionContext)
+                .await();
         int sym1D = countByFullScan("select * from xxx where sym1 = 'D'");
         Assert.assertEquals(1, sym1D);
         int sym2I2 = countByFullScan("select * from xxx where sym2 = 'I2'");
@@ -393,41 +432,6 @@ public class IndexBuilderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCannotRemoveOldFiles() throws Exception {
-        assertMemoryLeak(() -> {
-            String createTableSql = "create table xxx as (" +
-                    "select " +
-                    "rnd_symbol('A', 'B', 'C') as sym1," +
-                    "rnd_symbol(4,4,4,2) as sym2," +
-                    "rnd_symbol(4,4,4,2) as sym3," +
-                    "x," +
-                    "timestamp_sequence(0, 100000000) ts " +
-                    "from long_sequence(10000)" +
-                    "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
-
-            ff = new FilesFacadeImpl() {
-                @Override
-                public boolean remove(LPSZ path) {
-                    if (Chars.endsWith(path, ".v") || Chars.endsWith(path, ".k")) {
-                        return false;
-                    }
-                    return Files.remove(path);
-                }
-            };
-
-            try {
-                checkRebuildIndexes(createTableSql,
-                        tablePath -> {
-                        },
-                        indexBuilder -> indexBuilder.rebuildColumn("sym2"));
-                Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot remove index file");
-            }
-        });
-    }
-
-    @Test
     public void testRebuildIndexCustomBlockSize() throws Exception {
         String createTableSql = "create table xxx as (" +
                 "select " +
@@ -515,7 +519,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             int sym1A = countByFullScan("select * from xxx where sym1 = 'A'");
             int sym1B = countByFullScan("select * from xxx where sym1 = 'B'");
             int sym1C = countByFullScan("select * from xxx where sym1 = 'C'");
-            compiler.compile("create table copy as (select * from xxx)", sqlExecutionContext).execute(null).await();
+            compiler.compile("create table copy as (select * from xxx)", sqlExecutionContext);
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
@@ -535,7 +539,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             Assert.assertEquals(sym1B, sym1B2);
             Assert.assertEquals(sym1C, sym1C2);
 
-            compiler.compile("insert into xxx select * from copy", sqlExecutionContext).execute(null).await();
+            compiler.compile("insert into xxx select * from copy", sqlExecutionContext);
 
             int sym1A3 = countByFullScan("select * from xxx where sym1 = 'A'");
             int sym1B3 = countByFullScan("select * from xxx where sym1 = 'B'");

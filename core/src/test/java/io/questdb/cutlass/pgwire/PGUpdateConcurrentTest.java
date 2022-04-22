@@ -113,7 +113,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
             AtomicInteger current = new AtomicInteger();
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
-            final PGWireServer pgServer = createPGServer(4);
+            final PGWireServer pgServer = createPGServer(2);
             try (final Connection connection = getConnection(false, true)) {
                 PreparedStatement create = connection.prepareStatement("create table up as" +
                         " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +

@@ -95,7 +95,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.compiler = sqlCompiler;
         final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
-        this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsertOrUpdate);
+        this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
         this.queryExecutors.extendAndSet(CompiledQuery.UPDATE, this::executeInsertOrUpdate);
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
@@ -420,9 +420,22 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        try (QueryFuture execution = cc.execute(state.getEventSubSequence())) {
-            execution.await();
+        try (
+                UpdateOperation op = cc.getUpdateOperation();
+                QueryFuture fut = op.execute(sqlExecutionContext, state.getEventSubSequence())
+        ) {
+            fut.await();
         }
+        metrics.jsonQuery().markComplete();
+        sendConfirmation(state, cc, keepAliveHeader);
+    }
+
+    private void executeInsert(
+            JsonQueryProcessorState state,
+            CompiledQuery cc,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        cc.getInsertOperation().execute(sqlExecutionContext).await();
         metrics.jsonQuery().markComplete();
         sendConfirmation(state, cc, keepAliveHeader);
     }

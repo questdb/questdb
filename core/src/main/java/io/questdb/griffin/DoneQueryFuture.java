@@ -22,19 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin;
 
-import io.questdb.cairo.pool.WriterSource;
-import io.questdb.griffin.InsertRowImpl;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+class DoneQueryFuture implements QueryFuture {
+    private long affectedRowsCount;
 
-public interface InsertStatement {
-    InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException;
+    @Override
+    public void await() {
+    }
 
-    InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException;
+    @Override
+    public int await(long timeout) {
+        return QUERY_COMPLETE;
+    }
 
-    CharSequence getTableName();
+    @Override
+    public int getStatus() {
+        return QUERY_COMPLETE;
+    }
 
-    void addInsertRow(InsertRowImpl row);
+    @Override
+    public long getAffectedRowsCount() {
+        return affectedRowsCount;
+    }
+
+    @Override
+    public void close() {
+    }
+
+    public QueryFuture of(long affectedRowsCount) {
+        this.affectedRowsCount = affectedRowsCount;
+        return this;
+    }
 }

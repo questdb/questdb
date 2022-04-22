@@ -1320,25 +1320,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void executeUpdate() throws SqlException {
-        final TableWriter writer;
         try {
-            switch (transactionState) {
-                case IN_TRANSACTION:
-                    // update contains implicit commits which breaks the idea of transactions
-                    if ((writer = executeUpdate0()) != null) {
-                        pendingWriters.put(writer.getTableName(), writer);
-                    }
-                    break;
-                case ERROR_TRANSACTION:
-                    // when transaction is in error state, skip execution
-                    break;
-                default:
-                    // in any other case we will commit
-                    if ((writer = executeUpdate0()) != null) {
-                        writer.commit();
-                        Misc.free(writer);
-                    }
-                    break;
+            if (transactionState != ERROR_TRANSACTION) {
+                // when transaction is in error state, skip execution
+                executeUpdate0();
             }
             prepareCommandComplete(true);
         } catch (Throwable e) {
@@ -1349,36 +1334,25 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private TableWriter executeUpdate0() throws SqlException {
-        CompiledQuery cqUpdate = typesAndUpdate.getCompiledQuery().withContext(sqlExecutionContext);
-        UpdateStatement updateStatement = cqUpdate.getUpdateStatement();
-
-        TableWriter writer = null;
-        try {
+    private void executeUpdate0() throws SqlException {
+        final UpdateOperation op = typesAndUpdate.getCompiledQuery().getUpdateOperation();
+        // check if there is pending writer, which would be pending if there is active transaction
+        // when we have writer, execution is synchronous
+        final int index = pendingWriters.keyIndex(op.getTableName());
+        if (index < 0) {
             try {
-                writer = getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        updateStatement.getTableName(),
-                        "Update table execute"
-                );
-                rowCount = updateStatement.apply(writer);
-                System.out.println("rows SYNC: "+rowCount);
-            } catch (EntryUnavailableException busyException) {
-                LOG.debug().$("executing UPDATE async [table=").$(updateStatement.getTableName()).I$();
-
-                try (QueryFuture queryFuture = cqUpdate.executeAsync(updateStatement, tempSequence, false)) {
-                    queryFuture.await();
-                    rowCount = queryFuture.getAffectedRowsCount();
-                    System.out.println("rows async: "+rowCount);
-                }
-            } catch (TableStructureChangesException e) {
-                assert false : "This must never happen for UPDATE, tableName=" + updateStatement.getTableName();
+                pendingWriters.valueAt(index).getUpdateOperator().executeUpdate(sqlExecutionContext, op);
+            } catch (ReaderOutOfDateException e) {
+                // todo: investigate and handle
+                e.printStackTrace();
             }
-        } catch (Throwable th) {
-            updateStatement.close();
-            throw th;
+        } else {
+            // execute against writer from the engine, or async
+            try (QueryFuture fut = op.execute(sqlExecutionContext, tempSequence)) {
+                fut.await();
+                rowCount = fut.getAffectedRowsCount();
+            }
         }
-        return writer;
     }
 
     @Nullable
@@ -1912,7 +1886,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case CompiledQuery.INSERT:
                 queryTag = TAG_INSERT;
                 typesAndInsert = typesAndInsertPool.pop();
-                typesAndInsert.of(cq.getInsertStatement(), bindVariableService);
+                typesAndInsert.of(cq.getInsertOperation(), bindVariableService);
                 if (bindVariableService.getIndexedVariableCount() > 0) {
                     LOG.debug().$("cache insert [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).$(']').$();
                     // we can add insert to cache right away because it is local to the connection
@@ -1922,7 +1896,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case CompiledQuery.UPDATE:
                 queryTag = TAG_UPDATE;
                 typesAndUpdate = typesAndUpdatePool.pop();
-                typesAndUpdate.of(cq.getUpdateStatement(), bindVariableService);
+                typesAndUpdate.of(cq.getUpdateOperation(), bindVariableService);
                 typesAndUpdateIsCached = bindVariableService.getIndexedVariableCount() > 0;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:

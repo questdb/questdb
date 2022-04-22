@@ -457,8 +457,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                      )
         ) {
             CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
-            AlterStatement alterStatement = cc.getAlterStatement();
-            assert alterStatement != null;
+            AlterOperation alterOperation = cc.getAlterStatement();
+            assert alterOperation != null;
 
             return cc.execute(scSequence);
         }

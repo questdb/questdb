@@ -24,7 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.mp.SCSequence;
@@ -59,11 +59,11 @@ public interface CompiledQuery {
 
     TextLoader getTextLoader();
 
-    InsertStatement getInsertStatement();
+    InsertOperation getInsertOperation();
 
-    UpdateStatement getUpdateStatement();
+    UpdateOperation getUpdateOperation();
 
-    AlterStatement getAlterStatement();
+    AlterOperation getAlterStatement();
 
     short getType();
 
@@ -77,12 +77,6 @@ public interface CompiledQuery {
      * @throws SqlException - throws exception if command execution fails
      */
     QueryFuture execute(SCSequence eventSubSeq) throws SqlException;
-
-    QueryFuture executeAsync(
-            AsyncWriterCommand asyncWriterCommand,
-            SCSequence eventSubSeq,
-            boolean acceptStructureChange
-    ) throws SqlException;
 
     /**
      * Returns number of rows changed by this command. Used e.g. in pg wire protocol.

@@ -27,12 +27,12 @@ package io.questdb.griffin;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.AlterStatement.*;
+import static io.questdb.griffin.AlterOperation.*;
 
-public class AlterStatementBuilder {
+public class AlterOperationBuilder {
     private final ObjList<CharSequence> objCharList = new ObjList<>();
     private final LongList longList = new LongList();
-    private final AlterStatement resultInstance;
+    private final AlterOperation resultInstance;
     // This is only used to serialize Partition name in form 2020-02-12 or 2020-02 or 2020
     // to exception message using TableUtils.setSinkForPartition
     private short command;
@@ -40,8 +40,8 @@ public class AlterStatementBuilder {
     private int tableId;
     private int tableNamePosition;
 
-    public AlterStatementBuilder() {
-        this.resultInstance = new AlterStatement(longList, objCharList);
+    public AlterOperationBuilder() {
+        this.resultInstance = new AlterOperation(longList, objCharList);
     }
 
     public void clear() {
@@ -50,11 +50,11 @@ public class AlterStatementBuilder {
         longList.clear();
     }
 
-    public AlterStatement build() {
+    public AlterOperation build() {
         return resultInstance.of(command, tableName, tableId, tableNamePosition);
     }
 
-    public AlterStatementBuilder ofAddColumn(int tableNamePosition, String tableName, int tableId) {
+    public AlterOperationBuilder ofAddColumn(int tableNamePosition, String tableName, int tableId) {
         this.command = ADD_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
@@ -62,7 +62,7 @@ public class AlterStatementBuilder {
         return this;
     }
 
-    public AlterStatementBuilder ofAddIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName, int indexValueBlockSize) {
+    public AlterOperationBuilder ofAddIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName, int indexValueBlockSize) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
@@ -72,7 +72,7 @@ public class AlterStatementBuilder {
         return this;
     }
 
-    public AlterStatementBuilder ofAttachPartition(int tableNamePosition, String tableName, int tableId) {
+    public AlterOperationBuilder ofAttachPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = ATTACH_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
@@ -80,7 +80,7 @@ public class AlterStatementBuilder {
         return this;
     }
 
-    public AlterStatementBuilder ofCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
+    public AlterOperationBuilder ofCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
         this.command = ADD_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
@@ -89,7 +89,7 @@ public class AlterStatementBuilder {
         return this;
     }
 
-    public AlterStatementBuilder ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
+    public AlterOperationBuilder ofRemoveCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
         assert columnName != null && columnName.length() > 0;
         this.command = REMOVE_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
@@ -99,13 +99,13 @@ public class AlterStatementBuilder {
         return this;
     }
 
-    public AlterStatementBuilder ofDropColumn(CharSequence columnName) {
+    public AlterOperationBuilder ofDropColumn(CharSequence columnName) {
         assert columnName != null && columnName.length() > 0;
         this.objCharList.add(columnName);
         return this;
     }
 
-    public AlterStatementBuilder ofDropColumn(int tableNamePosition, String tableName, int tableId) {
+    public AlterOperationBuilder ofDropColumn(int tableNamePosition, String tableName, int tableId) {
         this.command = DROP_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
@@ -113,7 +113,7 @@ public class AlterStatementBuilder {
         return this;
     }
 
-    public AlterStatementBuilder ofDropPartition(int tableNamePosition, String tableName, int tableId) {
+    public AlterOperationBuilder ofDropPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = DROP_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
@@ -121,7 +121,7 @@ public class AlterStatementBuilder {
         return this;
     }
 
-    public AlterStatementBuilder ofRenameColumn(int tableNamePosition, String tableName, int tableId) {
+    public AlterOperationBuilder ofRenameColumn(int tableNamePosition, String tableName, int tableId) {
         this.command = RENAME_COLUMN;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
@@ -129,7 +129,7 @@ public class AlterStatementBuilder {
         return this;
     }
 
-    public AlterStatementBuilder ofSetParamCommitLag(String tableName, int tableId, long commitLag) {
+    public AlterOperationBuilder ofSetParamCommitLag(String tableName, int tableId, long commitLag) {
         this.command = SET_PARAM_COMMIT_LAG;
         this.tableName = tableName;
         this.longList.add(commitLag);
@@ -137,7 +137,7 @@ public class AlterStatementBuilder {
         return this;
     }
 
-    public AlterStatementBuilder ofSetParamUncommittedRows(String tableName, int tableId, int maxUncommittedRows) {
+    public AlterOperationBuilder ofSetParamUncommittedRows(String tableName, int tableId, int maxUncommittedRows) {
         this.command = SET_PARAM_MAX_UNCOMMITTED_ROWS;
         this.tableName = tableName;
         this.longList.add(maxUncommittedRows);

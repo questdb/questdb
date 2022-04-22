@@ -27,18 +27,21 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.WriterSource;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public class InsertStatementImpl implements InsertStatement {
+public class InsertOperationImpl implements InsertOperation {
     private final long structureVersion;
     private final String tableName;
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
     private final CairoEngine engine;
+    private final InsertQueryFuture doneFuture = new InsertQueryFuture();
 
-    public InsertStatementImpl(
+    public InsertOperationImpl(
             CairoEngine engine,
             String tableName,
             long structureVersion
@@ -77,6 +80,15 @@ public class InsertStatementImpl implements InsertStatement {
         insertRows.add(row);
     }
 
+    @Override
+    public QueryFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException {
+        try (InsertMethod insertMethod = createMethod(sqlExecutionContext)) {
+            insertMethod.execute();
+            insertMethod.commit();
+            return doneFuture;
+        }
+    }
+
     private void initContext(SqlExecutionContext executionContext) throws SqlException {
         for (int i = 0, n = insertRows.size(); i < n; i++) {
             InsertRowImpl row = insertRows.get(i);
@@ -111,6 +123,34 @@ public class InsertStatementImpl implements InsertStatement {
         @Override
         public void close() {
             writer = Misc.free(writer);
+        }
+    }
+
+    private class InsertQueryFuture implements QueryFuture {
+
+        @Override
+        public void await() throws SqlException {
+
+        }
+
+        @Override
+        public int await(long timeout) throws SqlException {
+            return 0;
+        }
+
+        @Override
+        public int getStatus() {
+            return 0;
+        }
+
+        @Override
+        public long getAffectedRowsCount() {
+            return insertRows.size();
+        }
+
+        @Override
+        public void close() {
+
         }
     }
 }

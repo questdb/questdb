@@ -33,7 +33,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterStatement extends AsyncWriterCommandBase implements Mutable {
+public class AlterOperation extends AsyncWriterCommandBase implements Mutable {
 
     public final static short DO_NOTHING = 1;
     public final static short ADD_COLUMN = 3;
@@ -47,7 +47,7 @@ public class AlterStatement extends AsyncWriterCommandBase implements Mutable {
     public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 11;
     public final static short SET_PARAM_COMMIT_LAG = 12;
 
-    private final static Log LOG = LogFactory.getLog(AlterStatement.class);
+    private final static Log LOG = LogFactory.getLog(AlterOperation.class);
 
     private final ObjCharSequenceList objCharList;
     private final DirectCharSequenceList directCharList = new DirectCharSequenceList();
@@ -58,11 +58,11 @@ public class AlterStatement extends AsyncWriterCommandBase implements Mutable {
     private short command;
     private CharSequenceList charSequenceList;
 
-    public AlterStatement() {
+    public AlterOperation() {
         this(new LongList(), new ObjList<>());
     }
 
-    public AlterStatement(LongList longList, ObjList<CharSequence> charSequenceObjList) {
+    public AlterOperation(LongList longList, ObjList<CharSequence> charSequenceObjList) {
         this.longList = longList;
         this.objCharList = new ObjCharSequenceList(charSequenceObjList);
     }
@@ -133,7 +133,7 @@ public class AlterStatement extends AsyncWriterCommandBase implements Mutable {
     }
 
     @Override
-    public AlterStatement deserialize(TableWriterTask event) {
+    public AlterOperation deserialize(TableWriterTask event) {
         clear();
 
         tableName = event.getTableName();
@@ -172,7 +172,7 @@ public class AlterStatement extends AsyncWriterCommandBase implements Mutable {
         longList.clear();
     }
 
-    public AlterStatement of(
+    public AlterOperation of(
             short command,
             String tableName,
             int tableId,
