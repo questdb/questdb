@@ -107,9 +107,34 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
+    public void testMillis() throws NumericException, SqlException {
+        StringSink sink = new StringSink();
+        for (int k = 0; k < 1001; k++) {
+            sink.clear();
+            if (k > 0) {
+                sink.put(k).put('T');
+            } else {
+                sink.put('T');
+            }
+            TimestampSampler sampler = TimestampSamplerFactory.getInstance(sink, 120);
+            Assert.assertNotNull(sampler);
+
+            final long n = Timestamps.MILLI_MICROS * (k == 0 ? 1 : k);
+            long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-04-15T10:23:00.000000Z");
+            timestamp = timestamp - timestamp % n;
+            for (int i = 0; i < n; i += 4) {
+                long actual = sampler.round(timestamp + i);
+                if (timestamp != actual) {
+                    Assert.fail("Failed at: " + sink + ". Expected: " + Timestamps.toString(timestamp) + ", actual: " + Timestamps.toString(actual));
+                }
+            }
+        }
+    }
+
+    @Test
     public void testMicros() throws NumericException, SqlException {
         StringSink sink = new StringSink();
-        for (int k = 0; k < 61; k++) {
+        for (int k = 0; k < 1001; k++) {
             sink.clear();
             if (k > 0) {
                 sink.put(k).put('U');
@@ -122,7 +147,7 @@ public class TimestampSamplerFactoryTest {
             final long n = (k == 0 ? 1 : k);
             long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-04-15T10:23:00.000000Z");
             timestamp = timestamp - timestamp % n;
-            for (int i = 0; i < n; i += 1) {
+            for (int i = 0; i < n; i += 4) {
                 long actual = sampler.round(timestamp + i);
                 if (timestamp != actual) {
                     Assert.fail("Failed at: " + sink + ". Expected: " + Timestamps.toString(timestamp) + ", actual: " + Timestamps.toString(actual));
