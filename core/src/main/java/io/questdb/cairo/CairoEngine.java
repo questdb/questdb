@@ -130,6 +130,15 @@ public class CairoEngine implements Closeable, WriterSource {
             CairoSecurityContext securityContext,
             MemoryMARW mem,
             Path path,
+            TableSyncModel model
+    ) {
+        createTable(securityContext, mem, path, new TableSyncModelAdapter(model));
+    }
+
+    public void createTable(
+            CairoSecurityContext securityContext,
+            MemoryMARW mem,
+            Path path,
             TableStructure struct
     ) {
         CharSequence lockedReason = lock(securityContext, struct.getTableName(), "createTable");
@@ -298,6 +307,19 @@ public class CairoEngine implements Closeable, WriterSource {
         return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName, lo, hi);
     }
 
+    /**
+     * Returns status of a table.
+     * It can be used to check existence of a table.
+     *
+     * @see TableUtils#TABLE_EXISTS
+     * @see TableUtils#TABLE_DOES_NOT_EXIST
+     * @see TableUtils#TABLE_RESERVED
+     *
+     * @param securityContext security context
+     * @param path path to storage
+     * @param tableName name of the table
+     * @return code indicating the state of the table
+     */
     public int getStatus(
             CairoSecurityContext securityContext,
             Path path,

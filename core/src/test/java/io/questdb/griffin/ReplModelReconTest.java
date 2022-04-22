@@ -27,8 +27,11 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableSyncModel;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
@@ -36,6 +39,7 @@ import io.questdb.mp.Sequence;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -43,12 +47,74 @@ import org.junit.Test;
 
 import java.io.Closeable;
 
+import static org.junit.Assert.assertEquals;
+
 public class ReplModelReconTest extends AbstractGriffinTest {
 
     @Override
     public void setUp() {
         super.setUp();
         CairoConfiguration.RANDOM.set(new Rnd());
+    }
+
+    @Test
+    public void testInitialModelToTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compile(
+                    "create table x as  " +
+                            "(select" +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+            try (
+
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    MemoryMARW mem = Vm.getMARWInstance();
+                    Path path = new Path();
+            ) {
+                TableSyncModel model = w1.createInitialSyncModel();
+
+                //rename the table to avoid conflict
+                model.setTableName("y");
+
+                engine.createTable(sqlExecutionContext.getCairoSecurityContext(), mem, path, model);
+                int status = engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, model.getTableName());
+                assertEquals(TableUtils.TABLE_EXISTS, status);
+            }
+        });
+    }
+
+    @Test
+    public void testInitialModelContainsTableNameAndColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            compile(
+                    "create table x as  " +
+                            "(select" +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+            ) {
+                TableSyncModel model = w1.createInitialSyncModel();
+                assertEquals("x", model.getTableName());
+                sink.clear();
+                sink.put(model);
+                TestUtils.assertEquals(
+                        "{\"table\":" +
+                                "{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"1970-01-01T00:00:00.000000Z\"}," +
+                                "\"columnMetaData\":[{\"name\":\"k\",\"type\":\"TIMESTAMP\",\"hash\":4729996258992366,\"index\":false,\"indexCapacity\":0}]," +
+                                "\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":0}]}",
+                        sink
+                );
+
+            }
+        });
     }
 
     @Test

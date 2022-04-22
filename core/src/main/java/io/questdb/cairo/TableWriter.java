@@ -1183,6 +1183,18 @@ public class TableWriter implements Closeable {
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$(path).$();
     }
 
+    public TableSyncModel createInitialSyncModel() {
+        TableSyncModel model = new TableSyncModel();
+        model.setPartitionBy(partitionBy);
+        model.setTableName(tableName);
+        for (int masterIndex = 0; masterIndex < columnCount; masterIndex++) {
+            model.addColumnMetadata(metadata.getColumnQuick(masterIndex));
+            model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, masterIndex, masterIndex);
+        }
+        return model;
+    }
+
+
     public TableSyncModel replCreateTableSyncModel(
             long slaveTxAddress,
             long slaveTxDataSize,
@@ -1195,6 +1207,8 @@ public class TableWriter implements Closeable {
         replSlaveColumnIndex.clear();
 
         final TableSyncModel model = new TableSyncModel();
+        model.setPartitionBy(partitionBy);
+        model.setTableName(tableName);
 
         model.setMaxTimestamp(getMaxTimestamp());
 

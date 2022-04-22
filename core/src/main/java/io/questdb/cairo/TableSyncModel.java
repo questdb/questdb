@@ -76,6 +76,8 @@ public class TableSyncModel implements Mutable, Sinkable {
     private int tableAction = 0;
     private long dataVersion;
     private long maxTimestamp;
+    private String tableName;
+    private int partitionBy;
 
     public void addColumnMetaAction(int action, int from, int to) {
         columnMetaIndex.add((long) action, Numbers.encodeLowHighInts(from, to));
@@ -208,12 +210,32 @@ public class TableSyncModel implements Mutable, Sinkable {
         }
     }
 
+    public int getPartitionBy() {
+        return partitionBy;
+    }
+
+    public void setPartitionBy(int partitionBy) {
+        this.partitionBy = partitionBy;
+    }
+
     public int getPartitionCount() {
         return partitions.size() / SLOTS_PER_PARTITION;
     }
 
     public int getTableAction() {
         return tableAction;
+    }
+
+    public String getTableName() {
+        return tableName;
+    }
+
+    public int getAddedColumnSize() {
+        return addedColumnMetadata.size();
+    }
+
+    public TableColumnMetadata getAddedColumnMetadata(int columnIndex) {
+        return addedColumnMetadata.get(columnIndex);
     }
 
     public void setTableAction(int tableAction) {
@@ -226,6 +248,10 @@ public class TableSyncModel implements Mutable, Sinkable {
 
     public void setMaxTimestamp(long maxTimestamp) {
         this.maxTimestamp = maxTimestamp;
+    }
+
+    public void setTableName(String tableName) {
+        this.tableName = tableName;
     }
 
     public void toBinary(TableWriterTask sink) {
