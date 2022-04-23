@@ -332,6 +332,9 @@ public class AbstractCairoTest {
         snapshotRecoveryEnabled = null;
         hideTelemetryTable = false;
         writerCommandQueueCapacity = 4;
+        queryCacheEventQueueCapacity = -1;
+        pageFrameReduceShardCount = -1;
+        pageFrameReduceQueueCapacity = -1;
     }
 
     protected static void configureForBackups() throws IOException {
