@@ -630,6 +630,84 @@ public final class SqlParser {
         }
     }
 
+    private CharSequence parseCreateSymbolColumnParams(GenericLexer lexer, CreateTableModel model) throws SqlException {
+        CharSequence tok;
+        int symbolCapacity;
+        tok = tok(lexer, "')', 'int: symbol capacity'");
+        boolean markParamSkipped = false;
+        if(Chars.equals(tok, ')')) {
+            symbolCapacity = -1;
+            markParamSkipped = true;
+        }
+        else {
+            lexer.unparse();
+            model.symbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
+            tok = tok(lexer, "',' , ')'");
+            if(Chars.equals(tok, ',')) tok = tok(lexer, "true or false");
+            else if(!isFieldTerm(tok)) {
+                throw SqlException.position(lexer.lastTokenPosition()).put('\'').put("',' or ')'").put("' expected");
+            }
+            else markParamSkipped = true;
+        }
+        final boolean cached;
+        if (isTrueKeyword(tok)) {
+            cached = true;
+        } else if (isFalseKeyword(tok)) {
+            cached = false;
+        } else {
+            if(!markParamSkipped) {
+                throw SqlException.position(lexer.lastTokenPosition()).put('\'').put("'true' or 'false'").put("' expected");
+            }
+            cached = configuration.getDefaultSymbolCacheFlag();
+            lexer.unparse();
+        }
+        model.cached(cached);
+        if (cached && symbolCapacity != -1) {
+            TableUtils.validateSymbolCapacityCached(true, symbolCapacity, lexer.lastTokenPosition());
+        }
+        tok = parseCreateSymbolColumnParamsIndexDef(lexer, model);
+        return tok;
+    }
+
+    private CharSequence parseCreateSymbolColumnParamsIndexDef(GenericLexer lexer, CreateTableModel model) throws SqlException {
+        CharSequence tok = tok(lexer, "',' or )");
+
+        if (!isFieldTerm(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put("',' or ')'").put("' expected");
+        }
+
+        if(Chars.equals(tok, ')')) {
+            model.setIndexFlags(false, configuration.getIndexValueBlockSize());
+            tok = tok(lexer, ", | )");
+            return tok;
+        }
+        tok = tok(lexer, "true or false");
+
+        if (isFalseKeyword(tok)) {
+            model.setIndexFlags(false, configuration.getIndexValueBlockSize());
+            return null;
+        }
+
+        if (!isTrueKeyword(tok)) {
+            throw SqlException.position(lexer.lastTokenPosition()).put('\'').put("'true', or 'false'").put("' expected");
+        }
+
+        if (isFieldTerm(tok = tok(lexer, ") | , expected"))) {
+            if(Chars.equals(tok, ')')) {
+                model.setIndexFlags(true, configuration.getIndexValueBlockSize());
+                tok = tok(lexer, ", | )");
+                return tok;
+            }
+        }
+        int errorPosition = lexer.getPosition();
+        int indexValueBlockSize = expectInt(lexer);
+        TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
+        model.setIndexFlags(true, Numbers.ceilPow2(indexValueBlockSize));
+        expectTok(lexer, tok = tok(lexer, "')'"), ")");
+        tok= tok(lexer, ", | )");
+        return tok;
+    }
+
     private void parseCreateTableColumns(GenericLexer lexer, CreateTableModel model) throws SqlException {
         expectTok(lexer, '(');
 
@@ -648,31 +726,36 @@ public final class SqlParser {
 
             CharSequence tok;
             if (ColumnType.isSymbol(type)) {
-                tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
+                tok = tok(lexer, "'(', capacity', 'nocache', 'cache', 'index' or ')'");
 
-                int symbolCapacity;
-                if (isCapacityKeyword(tok)) {
-                    // when capacity is not set explicitly it will default via configuration
-                    model.symbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
-                    tok = tok(lexer, "'nocache', 'cache', 'index' or ')'");
-                } else {
-                    symbolCapacity = -1;
+                if (Chars.equals(tok, '(')) {
+                    tok = parseCreateSymbolColumnParams(lexer, model);
                 }
+                else {
+                    int symbolCapacity;
+                    if (isCapacityKeyword(tok)) {
+                        // when capacity is not set explicitly it will default via configuration
+                        model.symbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
+                        tok = tok(lexer, "'nocache', 'cache', 'index' or ')'");
+                    } else {
+                        symbolCapacity = -1;
+                    }
 
-                final boolean cached;
-                if (isNoCacheKeyword(tok)) {
-                    cached = false;
-                } else if (isCacheKeyword(tok)) {
-                    cached = true;
-                } else {
-                    cached = configuration.getDefaultSymbolCacheFlag();
-                    lexer.unparse();
+                    final boolean cached;
+                    if (isNoCacheKeyword(tok)) {
+                        cached = false;
+                    } else if (isCacheKeyword(tok)) {
+                        cached = true;
+                    } else {
+                        cached = configuration.getDefaultSymbolCacheFlag();
+                        lexer.unparse();
+                    }
+                    model.cached(cached);
+                    if (cached && symbolCapacity != -1) {
+                        TableUtils.validateSymbolCapacityCached(true, symbolCapacity, lexer.lastTokenPosition());
+                    }
+                    tok = parseCreateTableInlineIndexDef(lexer, model);
                 }
-                model.cached(cached);
-                if (cached && symbolCapacity != -1) {
-                    TableUtils.validateSymbolCapacityCached(true, symbolCapacity, lexer.lastTokenPosition());
-                }
-                tok = parseCreateTableInlineIndexDef(lexer, model);
             } else {
                 tok = null;
             }

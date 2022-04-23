@@ -1449,6 +1449,52 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableSymbolParenthesesParams() throws SqlException {
+        assertCreateTable("create table x (" +
+                        "x SYMBOL capacity 128 nocache index capacity 256)",
+                "create table x (" +
+                        "x SYMBOL (128, false, true, 256))");
+    }
+
+    @Test
+    public void testCreateTableSymbolParenthesesParamsIgnoreIndexCapacity() throws SqlException {
+        assertCreateTable("create table x (" +
+                        "t TIMESTAMP," +
+                        " x SYMBOL capacity 128 nocache index capacity 256)" +
+                        " timestamp(t)" +
+                        " partition by YEAR",
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "x SYMBOL (128, false, true)) " +
+                        "timestamp(t) " +
+                        "partition by YEAR");
+    }
+
+    @Test
+    public void testCreateTableSymbolParenthesesParamsIgnoreIndexAndIndexCapacity() throws SqlException {
+        assertCreateTable("create table x (" +
+                        "x SYMBOL capacity 128 nocache)",
+                "create table x (" +
+                        "x SYMBOL (128, false))");
+    }
+
+    @Test
+    public void testCreateTableSymbolParenthesesParamsSymbolCapacity() throws SqlException {
+        assertCreateTable("create table x (" +
+                        "x SYMBOL capacity 256 cache)",
+                "create table x (" +
+                        "x SYMBOL(158))");
+    }
+
+    @Test
+    public void testCreateTableSymbolParenthesesParamsDefault() throws SqlException {
+        assertCreateTable("create table x (" +
+                        "x SYMBOL capacity 128 cache)",
+                "create table x (" +
+                        "x SYMBOL())");
+    }
+
+    @Test
     public void testCreateTableNoCache() throws SqlException {
         assertCreateTable("create table x (" +
                         "a INT," +
