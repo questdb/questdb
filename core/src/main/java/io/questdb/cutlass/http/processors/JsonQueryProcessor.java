@@ -284,9 +284,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     protected static void header(
             HttpChunkedResponseSocket socket,
-            CharSequence keepAliveHeader
+            CharSequence keepAliveHeader,
+            int status_code
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(200, "application/json; charset=utf-8");
+        socket.status(status_code, "application/json; charset=utf-8");
         socket.headers().setKeepAlive(keepAliveHeader);
         socket.sendHeader();
     }
@@ -316,7 +317,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static void sendConfirmation(JsonQueryProcessorState state, CharSequence keepAliveHeader) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
-        header(socket, keepAliveHeader);
+        header(socket, keepAliveHeader, 200);
         socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}').put('\n');
         socket.sendChunk(true);
         readyForNextRequest(context);
@@ -329,7 +330,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CharSequence query,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(socket, keepAliveHeader);
+        header(socket, keepAliveHeader, 400);
         JsonQueryProcessorState.prepareExceptionJson(socket, position, message, query);
     }
 
@@ -446,7 +447,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
             if (state.of(factory, sqlExecutionContext)) {
-                header(context.getChunkedResponseSocket(), keepAliveHeader);
+                header(context.getChunkedResponseSocket(), keepAliveHeader, 200);
                 doResumeSend(state, context);
                 metrics.jsonQuery().markComplete();
             } else {
