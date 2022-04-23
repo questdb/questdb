@@ -327,6 +327,9 @@ public class AbstractCairoTest {
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
         pageFrameMaxRows = -1;
+        jitMode = SqlJitMode.JIT_MODE_ENABLED;
+        rndFunctionMemoryPageSize = -1;
+        rndFunctionMemoryMaxPages = -1;
         spinLockTimeoutUs = -1;
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
