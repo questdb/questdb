@@ -36,7 +36,7 @@ public class PowerTest extends AbstractGriffinTest {
                 "select power(10.2, 3)",
                 sink,
                 "power\n" +
-                        "1061.2080000000003\n"
+                        "1061.2079999999999\n"
         ));
     }
 

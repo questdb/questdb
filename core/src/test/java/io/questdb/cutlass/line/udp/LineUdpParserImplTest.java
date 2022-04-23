@@ -60,8 +60,8 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     private void testAddColumnInteger(short colType, String nullValue) throws Exception {
         final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
                 "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
-                "woopsie\tdaisy\t127\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
-                "444\td555\t110\t1.4000000000000001\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
+                "woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n" +
+                "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55\n" +
                 "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\t" + nullValue + "\n";
 
         final String lines = "tab,tag=abc,tag2=xyz field=100i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
@@ -94,8 +94,8 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     public void testAddColumnDefaultDouble() throws Exception {
         testAddColumnFloat(ColumnType.DOUBLE, "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\tf5\n" +
                 "abc\txyz\t100\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
-                "woopsie\tdaisy\t127\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
-                "444\td555\t110\t1.4000000000000001\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55.0\n" +
+                "woopsie\tdaisy\t127\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tNaN\n" +
+                "444\td555\t110\t1.4\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\t55.0\n" +
                 "666\t777\t40\t1.1\tcomment\\ X\tfalse\t1970-01-01T00:01:40.000000Z\tNaN\n");
     }
 
@@ -287,7 +287,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\tNaN\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -309,7 +309,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -353,7 +353,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\t1.3\tNaN\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -375,7 +375,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\tNaN\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -397,7 +397,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\tNaN\ttrue\tstring1\t1970-01-01T00:25:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -418,7 +418,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
                 "\t9.4\t6\tfalse\tstring3\t1970-01-01T00:25:00.000000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -439,7 +439,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "xyz\t1.6\t15\ttrue\tstring1\t1970-01-01T00:00:01.234000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t1970-01-01T00:25:00.000000Z\tabc\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t1970-01-01T00:25:00.000000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t1970-01-01T00:28:20.000000Z\n" +
@@ -547,7 +547,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     public void testCreateAndAppend() throws Exception {
         final String expected = "tag\ttag2\tfield\tf4\tfield2\tfx\ttimestamp\n" +
                 "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\n" +
-                "woopsie\tdaisy\t2000\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\n";
+                "woopsie\tdaisy\t2000\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\n";
 
         final String lines = "tab,tag=abc,tag2=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
                 "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n";
@@ -562,7 +562,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
                 "\t0.9\t6\tfalse\tstring3\t2017-10-03T10:00:00.030000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
@@ -620,7 +620,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
                 "\tNaN\t6\tfalse\tstring3\t2017-10-03T10:00:00.030000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.050000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
@@ -641,7 +641,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
@@ -662,7 +662,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
                 "\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.010000Z\tabc\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.020000Z\n" +
@@ -683,7 +683,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         final String expected1 = "sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1\n" +
                 "xyz\t1.6\t15\ttrue\tstring1\t2017-10-03T10:00:00.000000Z\t\n" +
                 "\t9.4\t6\tfalse\tstring3\t2017-10-03T10:00:00.020000Z\trow3\n" +
-                "\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
+                "\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\trow4\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.010000Z\n" +
@@ -704,7 +704,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         final String expected1 = "sym1\tdouble\tint\tbool\tstr\ttimestamp\n" +
                 "abc\t1.3\t11\tfalse\tstring2\t2017-10-03T10:00:00.000000Z\n" +
                 "row3\t9.4\t6\tfalse\tstring3\t2017-10-03T10:00:00.020000Z\n" +
-                "row4\t0.30000000000000004\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\n";
+                "row4\t0.3\t91\ttrue\tstring4\t2017-10-03T10:00:00.040000Z\n";
 
         final String expected2 = "asym1\tasym2\tadouble\ttimestamp\n" +
                 "55\tbox\t5.9\t2017-10-03T10:00:00.010000Z\n" +
@@ -724,7 +724,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     public void testAddTag() throws Exception {
         final String expected = "tag\ttag3\tfield\tf4\tfield2\tfx\ttimestamp\ttag2\n" +
                 "abc\txyz\t10000\t9.034\tstr\ttrue\t1970-01-01T00:01:40.000000Z\t\n" +
-                "woopsie\t\t2000\t3.0889100000000003\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tdaisy\n";
+                "woopsie\t\t2000\t3.08891\tcomment\ttrue\t1970-01-01T00:01:40.000000Z\tdaisy\n";
         final String lines = "tab,tag=abc,tag3=xyz field=10000i,f4=9.034,field2=\"str\",fx=true 100000000000\n" +
                 "tab,tag=woopsie,tag2=daisy field=2000i,f4=3.08891,field2=\"comment\",fx=true 100000000000\n";
         assertThat(expected, lines, "tab");
