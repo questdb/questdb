@@ -25,17 +25,14 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableStructureChangesException;
-import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.engine.ops.*;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.QuietClosable;
 
 public class CompiledQueryImpl implements CompiledQuery {
-    private final CairoEngine engine;
-    private final QueryFutureImpl queryFuture;
     private RecordCursorFactory recordCursorFactory;
     private InsertOperation insertOperation;
     private UpdateOperation updateOperation;
@@ -44,13 +41,15 @@ public class CompiledQueryImpl implements CompiledQuery {
     private short type;
     private SqlExecutionContext sqlExecutionContext;
     private final DoneQueryFuture doneFuture = new DoneQueryFuture();
+    private final OperationSender<UpdateOperation> updateOperationSender;
+    private final OperationSender<AlterOperation> alterOperationSender;
 
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        this.engine = engine;
-        queryFuture = new QueryFutureImpl(engine);
+        updateOperationSender = new UpdateOperationSender(engine);
+        alterOperationSender = new AlterOperationSender(engine);
     }
 
     @Override
@@ -95,11 +94,39 @@ public class CompiledQueryImpl implements CompiledQuery {
             case INSERT:
                 return insertOperation.execute(sqlExecutionContext);
             case UPDATE:
-                return updateOperation.execute(sqlExecutionContext, eventSubSeq);
+                throw SqlException.$(0, "UPDATE execution is not supported via careless invocation. UpdateOperation is allocating.");
             case ALTER:
-                return executeAlter(eventSubSeq);
+                return alterOperationSender.execute(alterOperation, sqlExecutionContext, eventSubSeq);
             default:
                 return doneFuture.of(0);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public <T extends QuietClosable> OperationSender<T> getSender() {
+        switch (type) {
+            case ALTER:
+                return (OperationSender<T>) alterOperationSender;
+            case UPDATE:
+                return (OperationSender<T>) updateOperationSender;
+            default:
+                return null;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public <T extends QuietClosable> T getOperation() {
+        switch (type) {
+            case INSERT:
+                return (T) insertOperation;
+            case UPDATE:
+                return (T) updateOperation;
+            case ALTER:
+                return (T) alterOperation;
+            default:
+                return null;
         }
     }
 
@@ -125,41 +152,6 @@ public class CompiledQueryImpl implements CompiledQuery {
     public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
         return this;
-    }
-
-    private QueryFuture executeAlter(SCSequence eventSubSeq) throws SqlException {
-        try (
-                TableWriter writer = engine.getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        alterOperation.getTableName(),
-                        "Alter table execute"
-                )
-        ) {
-            affectedRowsCount = alterOperation.apply(writer, true);
-            return doneFuture.of(affectedRowsCount);
-        } catch (EntryUnavailableException busyException) {
-            if (eventSubSeq == null) {
-                throw busyException;
-            }
-            return executeAsync(alterOperation, eventSubSeq, true);
-        } catch (TableStructureChangesException e) {
-            assert false : "This must never happen when parameter acceptStructureChange=true, tableName=" + alterOperation.getTableName();
-            return doneFuture.of(0);
-        }
-    }
-
-    public QueryFuture executeAsync(
-            AsyncWriterCommand asyncWriterCommand,
-            SCSequence eventSubSeq,
-            boolean acceptStructureChange
-    ) throws SqlException {
-        try {
-            queryFuture.of(asyncWriterCommand, sqlExecutionContext, eventSubSeq, acceptStructureChange);
-            return queryFuture;
-        } catch (TableStructureChangesException e) {
-            assert false : "This must never happen, command is either UPDATE or parameter acceptStructureChange=true";
-            return doneFuture.of(0);
-        }
     }
 
     CompiledQuery of(RecordCursorFactory recordCursorFactory) {

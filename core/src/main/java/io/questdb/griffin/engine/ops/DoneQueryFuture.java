@@ -22,32 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.TableStructureChangesException;
-import io.questdb.cairo.TableWriter;
-import io.questdb.tasks.TableWriterTask;
+import io.questdb.griffin.QueryFuture;
 
-public interface AsyncWriterCommand {
-    long apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException;
+public class DoneQueryFuture implements QueryFuture {
+    private long affectedRowsCount;
 
-    default long apply(TableWriter tableWriter) throws SqlException, TableStructureChangesException {
-        return apply(tableWriter, false);
+    @Override
+    public void await() {
     }
 
-    AsyncWriterCommand deserialize(TableWriterTask task);
+    @Override
+    public int await(long timeout) {
+        return QUERY_COMPLETE;
+    }
 
-    String getCommandName();
+    @Override
+    public int getStatus() {
+        return QUERY_COMPLETE;
+    }
 
-    int getTableId();
+    @Override
+    public long getAffectedRowsCount() {
+        return affectedRowsCount;
+    }
 
-    String getTableName();
+    @Override
+    public void close() {
+    }
 
-    int getTableNamePosition();
-
-    long getTableVersion();
-
-    void serialize(TableWriterTask task);
-
-    void setCommandCorrelationId(long correlationId);
+    public QueryFuture of(long affectedRowsCount) {
+        this.affectedRowsCount = affectedRowsCount;
+        return this;
+    }
 }

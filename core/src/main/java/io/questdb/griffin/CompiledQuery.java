@@ -27,7 +27,13 @@ package io.questdb.griffin;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.OperationSender;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.QuietClosable;
+
+import java.io.Closeable;
 
 public interface CompiledQuery {
     //these values should be covered in both JsonQueryProcessor and PGConnectionContext
@@ -77,6 +83,10 @@ public interface CompiledQuery {
      * @throws SqlException - throws exception if command execution fails
      */
     QueryFuture execute(SCSequence eventSubSeq) throws SqlException;
+
+    <T extends QuietClosable> OperationSender<T> getSender();
+
+    <T extends QuietClosable> T getOperation();
 
     /**
      * Returns number of rows changed by this command. Used e.g. in pg wire protocol.

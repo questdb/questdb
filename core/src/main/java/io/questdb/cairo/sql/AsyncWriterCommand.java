@@ -22,36 +22,29 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo.sql;
 
-class DoneQueryFuture implements QueryFuture {
-    private long affectedRowsCount;
+import io.questdb.cairo.AlterTableContextException;
+import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlException;
+import io.questdb.tasks.TableWriterTask;
 
-    @Override
-    public void await() {
-    }
+public interface AsyncWriterCommand {
+    long apply(TableWriter tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException;
 
-    @Override
-    public int await(long timeout) {
-        return QUERY_COMPLETE;
-    }
+    AsyncWriterCommand deserialize(TableWriterTask task);
 
-    @Override
-    public int getStatus() {
-        return QUERY_COMPLETE;
-    }
+    String getCommandName();
 
-    @Override
-    public long getAffectedRowsCount() {
-        return affectedRowsCount;
-    }
+    int getTableId();
 
-    @Override
-    public void close() {
-    }
+    String getTableName();
 
-    public QueryFuture of(long affectedRowsCount) {
-        this.affectedRowsCount = affectedRowsCount;
-        return this;
-    }
+    int getTableNamePosition();
+
+    long getTableVersion();
+
+    void serialize(TableWriterTask task);
+
+    void setCommandCorrelationId(long correlationId);
 }

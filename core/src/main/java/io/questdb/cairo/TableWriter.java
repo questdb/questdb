@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
@@ -35,6 +36,7 @@ import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.*;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -929,14 +931,14 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean acceptStructureChange) {
+    public void processCommandQueue(TableWriterTask cmd, Sequence commandSubSeq, long cursor, boolean contextAllowsAnyStructureChanges) {
         if (cmd.getTableId() == getMetadata().getId()) {
             switch (cmd.getType()) {
                 case CMD_SLAVE_SYNC:
                     processReplSyncCommand(cmd, cursor, commandSubSeq);
                     break;
                 case CMD_ALTER_TABLE:
-                    processAsyncWriterCommand(alterTableStatement, cmd, cursor, commandSubSeq, acceptStructureChange);
+                    processAsyncWriterCommand(alterTableStatement, cmd, cursor, commandSubSeq, contextAllowsAnyStructureChanges);
                     break;
                 case CMD_UPDATE_TABLE:
                     processAsyncWriterCommand(cmd.getAsyncWriterCommand(), cmd, cursor, commandSubSeq, false);
@@ -1367,13 +1369,13 @@ public class TableWriter implements Closeable {
     /***
      * Processes writer command queue to execute writer async commands such as replication and table alters.
      * Some tick calls can result into transaction commit.
-     * @param acceptStructureChange If true accepts any Alter table command, if false does not accept significant table
+     * @param contextAllowsAnyStructureChanges If true accepts any Alter table command, if false does not accept significant table
      *                             structure changes like column drop, rename
      */
-    public void tick(boolean acceptStructureChange) {
+    public void tick(boolean contextAllowsAnyStructureChanges) {
         // Some alter table trigger commit() which trigger tick()
         // If already inside the tick(), do not re-enter it.
-        processCommandQueue(acceptStructureChange);
+        processCommandQueue(contextAllowsAnyStructureChanges);
     }
 
     @Override
@@ -3979,7 +3981,7 @@ public class TableWriter implements Closeable {
             TableWriterTask cmd,
             long cursor,
             Sequence sequence,
-            boolean acceptStructureChange
+            boolean contextAllowsAnyStructureChanges
     ) {
         final int cmdType = cmd.getType();
         final long correlationId = cmd.getInstance();
@@ -3996,8 +3998,8 @@ public class TableWriter implements Closeable {
                     .$(", correlationId=").$(correlationId)
                     .I$();
             asyncWriterCommand = asyncWriterCommand.deserialize(cmd);
-            affectedRowsCount = asyncWriterCommand.apply(this, acceptStructureChange);
-        } catch (TableStructureChangesException ex) {
+            affectedRowsCount = asyncWriterCommand.apply(this, contextAllowsAnyStructureChanges);
+        } catch (AlterTableContextException ex) {
             LOG.info()
                     .$("cannot complete async cmd, table structure change is not allowed [type=").$(cmdType)
                     .$(", tableName=").$(tableName)
@@ -4019,11 +4021,11 @@ public class TableWriter implements Closeable {
         publishTableWriterEvent(cmdType, tableId, correlationId, error, affectedRowsCount, TSK_COMPLETE);
     }
 
-    private void processCommandQueue(boolean acceptStructureChange) {
+    private void processCommandQueue(boolean contextAllowsAnyStructureChanges) {
         long cursor;
         while ((cursor = commandSubSeq.next()) > -1) {
             TableWriterTask cmd = commandQueue.get(cursor);
-            processCommandQueue(cmd, commandSubSeq, cursor, acceptStructureChange);
+            processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
         }
     }
 

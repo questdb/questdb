@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.CompiledQueryImpl;
-import io.questdb.griffin.UpdateOperation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Misc;
 import io.questdb.std.WeakAutoClosableObjectPool;
 

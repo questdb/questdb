@@ -25,7 +25,7 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.griffin.AsyncWriterCommand;
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.std.Chars;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;

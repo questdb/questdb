@@ -22,10 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -33,7 +34,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterOperation extends AsyncWriterCommandBase implements Mutable {
+public class AlterOperation extends AbstractOperation implements Mutable, QuietClosable {
 
     public final static short DO_NOTHING = 1;
     public final static short ADD_COLUMN = 3;
@@ -68,7 +69,7 @@ public class AlterOperation extends AsyncWriterCommandBase implements Mutable {
     }
 
     @Override
-    public long apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException, TableStructureChangesException {
+    public long apply(TableWriter tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException {
         try {
             switch (command) {
                 case ADD_COLUMN:
@@ -90,14 +91,14 @@ public class AlterOperation extends AsyncWriterCommandBase implements Mutable {
                     applySetSymbolCache(tableWriter, false);
                     break;
                 case DROP_COLUMN:
-                    if (!acceptStructureChange) {
-                        throw TableStructureChangesException.INSTANCE;
+                    if (!contextAllowsAnyStructureChanges) {
+                        throw AlterTableContextException.INSTANCE;
                     }
                     applyDropColumn(tableWriter);
                     break;
                 case RENAME_COLUMN:
-                    if (!acceptStructureChange) {
-                        throw TableStructureChangesException.INSTANCE;
+                    if (!contextAllowsAnyStructureChanges) {
+                        throw AlterTableContextException.INSTANCE;
                     }
                     applyRenameColumn(tableWriter);
                     break;
@@ -500,5 +501,9 @@ public class AlterOperation extends AsyncWriterCommandBase implements Mutable {
             }
             return lo - initialAddress;
         }
+    }
+
+    @Override
+    public void close() {
     }
 }

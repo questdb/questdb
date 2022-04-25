@@ -36,6 +36,7 @@ import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.*;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;

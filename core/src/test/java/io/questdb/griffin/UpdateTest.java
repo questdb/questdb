@@ -29,6 +29,7 @@ import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
@@ -915,9 +916,9 @@ public class UpdateTest extends AbstractGriffinTest {
         });
     }
 
-    private void applyUpdate(UpdateOperation updateOperation) throws SqlException, TableStructureChangesException {
+    private void applyUpdate(UpdateOperation updateOperation) throws SqlException {
         try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), updateOperation.getTableName(), "UPDATE")) {
-            updateOperation.apply(tableWriter);
+            updateOperation.apply(tableWriter, false);
         }
     }
 

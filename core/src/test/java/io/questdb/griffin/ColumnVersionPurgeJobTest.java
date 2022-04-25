@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;

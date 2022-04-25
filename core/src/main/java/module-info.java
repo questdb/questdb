@@ -90,6 +90,7 @@ open module io.questdb {
     exports io.questdb.cairo.vm.api;
     exports io.questdb.cairo.mig;
     exports io.questdb.griffin.engine.join;
+    exports io.questdb.griffin.engine.ops;
 
     provides FunctionFactory with
             // test functions

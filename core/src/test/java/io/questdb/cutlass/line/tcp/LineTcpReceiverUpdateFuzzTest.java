@@ -37,6 +37,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
+import io.questdb.std.QuietClosable;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
@@ -111,8 +112,11 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
 
                 LOG.info().$(sql).$();
-                try (QueryFuture qf = cc.execute(waitSequence)) {
-                    if (qf.await(10 * Timestamps.SECOND_MICROS) != QUERY_COMPLETE) {
+                try (
+                        QuietClosable op = cc.getOperation();
+                        QueryFuture fut = cc.getSender().execute(op, sqlExecutionContext, waitSequence)
+                ) {
+                    if (fut.await(10 * Timestamps.SECOND_MICROS) != QUERY_COMPLETE) {
                         throw SqlException.$(0, "update query timeout");
                     }
                 }
@@ -167,7 +171,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                             break;
                         }
                         if (checkTableAllRowsReceived(table)) {
-                            break;
+                             break;
                         }
                         long current = testMicrosClock.getTicks();
                         timeoutMicros -= current - prev;

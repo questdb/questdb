@@ -22,11 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.tasks.TableWriterTask;
 
-abstract class AsyncWriterCommandBase implements AsyncWriterCommand {
+public abstract class AbstractOperation implements AsyncWriterCommand {
     private int cmdType;
     private String cmdName;
     private int tableId;

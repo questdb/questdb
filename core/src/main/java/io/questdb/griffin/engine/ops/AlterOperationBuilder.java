@@ -22,12 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.AlterOperation.*;
+import static io.questdb.griffin.engine.ops.AlterOperation.*;
 
 public class AlterOperationBuilder {
     private final ObjList<CharSequence> objCharList = new ObjList<>();

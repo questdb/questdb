@@ -34,7 +34,7 @@ import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.griffin.AsyncWriterCommand;
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -44,6 +44,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -370,7 +371,11 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public TableWriter getWriterOrPublishCommand(CairoSecurityContext securityContext, CharSequence tableName, AsyncWriterCommand asyncWriterCommand) {
+    public TableWriter getWriterOrPublishCommand(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            @NotNull AsyncWriterCommand asyncWriterCommand
+    ) {
         securityContext.checkWritePermission();
         return writerPool.getWriterOrPublishCommand(tableName, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }

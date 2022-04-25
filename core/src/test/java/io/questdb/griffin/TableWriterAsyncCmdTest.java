@@ -28,10 +28,14 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.OperationSender;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -40,7 +44,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.griffin.AlterOperation.ADD_COLUMN;
+import java.io.Closeable;
+
+import static io.questdb.griffin.engine.ops.AlterOperation.ADD_COLUMN;
 import static io.questdb.griffin.QueryFuture.QUERY_COMPLETE;
 import static io.questdb.griffin.QueryFuture.QUERY_NO_RESPONSE;
 
@@ -54,23 +60,24 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
     public void testAsyncAlterCommandInvalidSerialisation() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table product (timestamp timestamp, name symbol nocache)", sqlExecutionContext);
-            QueryFuture cf = null;
+            QueryFuture fut = null;
+            AlterOperation operation = null;
             try {
                 try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "product", "test lock")) {
                     CompiledQueryImpl cc = new CompiledQueryImpl(engine).withContext(sqlExecutionContext);
                     AlterOperation creepyAlterOperation = new AlterOperation();
                     creepyAlterOperation.of((short) 1000, "product", writer.getMetadata().getId(), 1000);
                     cc.ofAlter(creepyAlterOperation);
-                    cf = cc.execute(commandReplySequence);
+                    operation = cc.getOperation();
+                    fut = cc.getSender().execute(operation, sqlExecutionContext, commandReplySequence);
                 }
-                cf.await();
+                fut.await();
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertEquals("Invalid alter table command [code=1000]", ex.getFlyweightMessage());
             } finally {
-                if (cf != null) {
-                    cf.close();
-                }
+                Misc.free(fut);
+                Misc.free(operation);
             }
         });
     }

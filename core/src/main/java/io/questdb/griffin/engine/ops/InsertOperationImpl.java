@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
@@ -30,6 +30,10 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.WriterOutOfDateException;
+import io.questdb.griffin.InsertRowImpl;
+import io.questdb.griffin.QueryFuture;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 

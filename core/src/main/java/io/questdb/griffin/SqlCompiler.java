@@ -41,6 +41,9 @@ import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory
 import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.InsertOperationImpl;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
@@ -81,7 +84,7 @@ public class SqlCompiler implements Closeable {
     private final Path path = new Path();
     private final CharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new CharSequenceObjHashMap<>();
     private final CompiledQueryImpl compiledQuery;
-    private final AlterOperationBuilder alterQueryBuilder = new AlterOperationBuilder();
+    private final AlterOperationBuilder alterOperationBuilder;
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -221,6 +224,7 @@ public class SqlCompiler implements Closeable {
                 postOrderTreeTraversalAlgo
         );
         textLoader = new TextLoader(engine);
+        alterOperationBuilder = new AlterOperationBuilder();
     }
 
     // Creates data type converter.
@@ -1231,7 +1235,7 @@ public class SqlCompiler implements Closeable {
             lexer.unparse();
         }
 
-        AlterOperationBuilder addColumn = alterQueryBuilder.ofAddColumn(
+        AlterOperationBuilder addColumn = alterOperationBuilder.ofAddColumn(
                 tableNamePosition,
                 tableName,
                 tableMetadata.getId());
@@ -1394,7 +1398,7 @@ public class SqlCompiler implements Closeable {
             }
 
         } while (true);
-        return compiledQuery.ofAlter(alterQueryBuilder.build());
+        return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private CompiledQuery alterTableColumnAddIndex(
@@ -1414,7 +1418,7 @@ public class SqlCompiler implements Closeable {
             indexValueBlockSize = configuration.getIndexValueBlockSize();
         }
         return compiledQuery.ofAlter(
-                alterQueryBuilder
+                alterOperationBuilder
                         .ofAddIndex(tableNamePosition, tableName, metadata.getId(), columnName, Numbers.ceilPow2(indexValueBlockSize))
                         .build()
         );
@@ -1438,15 +1442,15 @@ public class SqlCompiler implements Closeable {
         }
 
         return cache ? compiledQuery.ofAlter(
-                alterQueryBuilder.ofCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
+                alterOperationBuilder.ofCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
         )
                 : compiledQuery.ofAlter(
-                alterQueryBuilder.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
+                alterOperationBuilder.ofRemoveCacheSymbol(tableNamePosition, tableName, metadata.getId(), columnName).build()
         );
     }
 
     private CompiledQuery alterTableDropColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
-        AlterOperationBuilder dropColumnStatement = alterQueryBuilder.ofDropColumn(tableNamePosition, tableName, metadata.getId());
+        AlterOperationBuilder dropColumnStatement = alterOperationBuilder.ofDropColumn(tableNamePosition, tableName, metadata.getId());
         int semicolonPos = -1;
         do {
             CharSequence tok = GenericLexer.unquote(maybeExpectToken(lexer, "column name", semicolonPos < 0));
@@ -1475,7 +1479,7 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
 
-        return compiledQuery.ofAlter(alterQueryBuilder.build());
+        return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private CompiledQuery alterTableDropOrAttachPartition(TableReader reader, int action, SqlExecutionContext executionContext)
@@ -1494,7 +1498,7 @@ public class SqlCompiler implements Closeable {
             if (action != PartitionAction.DROP) {
                 throw SqlException.$(pos, "WHERE clause can only be used with DROP PARTITION command");
             }
-            AlterOperationBuilder alterPartitionStatement = alterQueryBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
+            AlterOperationBuilder alterPartitionStatement = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
             String designatedTimestampColumnName = null;
             int tsIndex = readerMetadata.getTimestampIndex();
@@ -1508,7 +1512,7 @@ public class SqlCompiler implements Closeable {
                 if (function != null && ColumnType.isBoolean(function.getType())) {
                     function.init(null, executionContext);
                     filterPartitions(function, reader, alterPartitionStatement);
-                    return compiledQuery.ofAlter(alterQueryBuilder.build());
+                    return compiledQuery.ofAlter(alterOperationBuilder.build());
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "boolean expression expected");
                 }
@@ -1524,9 +1528,9 @@ public class SqlCompiler implements Closeable {
         String tableName = reader.getTableName();
         AlterOperationBuilder partitions;
         if (action == PartitionAction.DROP) {
-            partitions = alterQueryBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
+            partitions = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
         } else {
-            partitions = alterQueryBuilder.ofAttachPartition(pos, tableName, reader.getMetadata().getId());
+            partitions = alterOperationBuilder.ofAttachPartition(pos, tableName, reader.getMetadata().getId());
         }
         assert action == PartitionAction.DROP || action == PartitionAction.ATTACH;
         int semicolonPos = -1;
@@ -1564,11 +1568,11 @@ public class SqlCompiler implements Closeable {
             }
         } while (true);
 
-        return compiledQuery.ofAlter(alterQueryBuilder.build());
+        return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private CompiledQuery alterTableRenameColumn(int tableNamePosition, String tableName, TableReaderMetadata metadata) throws SqlException {
-        AlterOperationBuilder renameColumnStatement = alterQueryBuilder.ofRenameColumn(tableNamePosition, tableName, metadata.getId());
+        AlterOperationBuilder renameColumnStatement = alterOperationBuilder.ofRenameColumn(tableNamePosition, tableName, metadata.getId());
         int hadSemicolonPos = -1;
 
         do {
@@ -1617,7 +1621,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), "',' expected");
             }
         } while (true);
-        return compiledQuery.ofAlter(alterQueryBuilder.build());
+        return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
     private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, String tableName, int tableId) throws SqlException {
@@ -1631,13 +1635,13 @@ public class SqlCompiler implements Closeable {
             if (maxUncommittedRows < 0) {
                 throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
             }
-            return compiledQuery.ofAlter(alterQueryBuilder.ofSetParamUncommittedRows(tableName, tableId, maxUncommittedRows).build());
+            return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamUncommittedRows(tableName, tableId, maxUncommittedRows).build());
         } else if (isCommitLag(paramName)) {
             long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
             if (commitLag < 0) {
                 throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
             }
-            return compiledQuery.ofAlter(alterQueryBuilder.ofSetParamCommitLag(tableName, tableId, commitLag).build());
+            return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamCommitLag(tableName, tableId, commitLag).build());
         } else {
             throw SqlException.$(paramNameNamePosition, "unknown parameter '").put(paramName).put('\'');
         }
@@ -1651,7 +1655,7 @@ public class SqlCompiler implements Closeable {
         optimiser.clear();
         parser.clear();
         backupAgent.clear();
-        alterQueryBuilder.clear();
+        alterOperationBuilder.clear();
         backupAgent.clear();
         functionParser.clear();
     }
@@ -2204,7 +2208,7 @@ public class SqlCompiler implements Closeable {
         )) {
             final long structureVersion = reader.getVersion();
             final RecordMetadata metadata = reader.getMetadata();
-            final InsertOperationImpl insertStatement = new InsertOperationImpl(engine, reader.getTableName(), structureVersion);
+            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, reader.getTableName(), structureVersion);
             final int writerTimestampIndex = metadata.getTimestampIndex();
             final CharSequenceHashSet columnSet = model.getColumnSet();
             final int columnSetSize = columnSet.size();
@@ -2287,9 +2291,9 @@ public class SqlCompiler implements Closeable {
 
                 VirtualRecord record = new VirtualRecord(valueFunctions);
                 RecordToRowCopier copier = assembleRecordToRowCopier(asm, record, metadata, listColumnFilter);
-                insertStatement.addInsertRow(new InsertRowImpl(record, copier, timestampFunction));
+                insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction));
             }
-            compiledQuery.ofInsert(insertStatement);
+            compiledQuery.ofInsert(insertOperation);
         } catch (SqlException e) {
             Misc.freeObjList(valueFunctions);
             throw e;

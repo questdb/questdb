@@ -22,22 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.TableStructureChangesException;
+import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.QueryFuture;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
+import io.questdb.std.QuietClosable;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-
-public class UpdateOperation extends AsyncWriterCommandBase implements Closeable {
+public class UpdateOperation extends AbstractOperation implements QuietClosable {
     private final DoneQueryFuture doneFuture = new DoneQueryFuture();
     private final CairoEngine engine;
     private final UpdateFutureImpl updateFuture;
@@ -59,7 +62,7 @@ public class UpdateOperation extends AsyncWriterCommandBase implements Closeable
     }
 
     @Override
-    public long apply(TableWriter tableWriter, boolean acceptStructureChange) throws SqlException {
+    public long apply(TableWriter tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException {
         return tableWriter.getUpdateOperator().executeUpdate(sqlExecutionContext, this);
     }
 
@@ -85,9 +88,9 @@ public class UpdateOperation extends AsyncWriterCommandBase implements Closeable
                 // writer thread will call `apply()` when thread is ready to do so
                 // `apply()` will use context stored in the operation
                 withContext(sqlExecutionContext);
-                updateFuture.of(this, sqlExecutionContext, eventSubSeq, false, this.tableNamePosition);
+                updateFuture.of(this, sqlExecutionContext, eventSubSeq, this.tableNamePosition);
                 return updateFuture;
-            } catch (TableStructureChangesException e) {
+            } catch (AlterTableContextException e) {
                 assert false : "This must never happen, command is either UPDATE or parameter acceptStructureChange=true";
                 return doneFuture;
             }

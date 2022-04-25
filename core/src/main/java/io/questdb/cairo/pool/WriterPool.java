@@ -29,7 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
-import io.questdb.griffin.AsyncWriterCommand;
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
@@ -38,7 +38,6 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -141,12 +140,16 @@ public class WriterPool extends AbstractPool {
     /**
      * Returns writer from the pool or sends writer command
      *
-     * @param tableName   name of the table
-     * @param lockReason  reason for the action
+     * @param tableName          name of the table
+     * @param lockReason         reason for the action
      * @param asyncWriterCommand command to write to TableWriterTask
      * @return null if command is published or TableWriter instance if writer is available
      */
-    public TableWriter getWriterOrPublishCommand(CharSequence tableName, String lockReason, AsyncWriterCommand asyncWriterCommand) {
+    public TableWriter getWriterOrPublishCommand(
+            CharSequence tableName,
+            String lockReason,
+            @NotNull AsyncWriterCommand asyncWriterCommand
+    ) {
         while (true) {
             try {
                 return getWriterEntry(tableName, lockReason, asyncWriterCommand);
@@ -419,7 +422,11 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private TableWriter getWriterEntry(CharSequence tableName, CharSequence lockReason, AsyncWriterCommand asyncWriterCommand) {
+    private TableWriter getWriterEntry(
+            CharSequence tableName,
+            CharSequence lockReason,
+            @Nullable AsyncWriterCommand asyncWriterCommand
+    ) {
         assert null != lockReason;
         checkClosed();
 
@@ -472,6 +479,7 @@ public class WriterPool extends AbstractPool {
                     addCommandToWriterQueue(e, asyncWriterCommand);
                     return null;
                 }
+
                 CharSequence reason = reinterpretOwnershipReason(e.ownershipReason);
                 LOG.info().$("busy [table=`").utf8(tableName)
                         .$("`, owner=").$(owner)

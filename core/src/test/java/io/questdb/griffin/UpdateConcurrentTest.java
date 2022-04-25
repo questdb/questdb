@@ -152,8 +152,14 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
 
                         barrier.await();
                         for (int i = 0; i < numOfUpdates; i++) {
-                            QueryFuture queryFuture = executeUpdate("UPDATE up SET x = " + i, updateCompiler, sqlExecutionContext);
-                            queryFuture.await(10 * Timestamps.SECOND_MICROS);
+                            CompiledQuery cc = updateCompiler.compile("UPDATE up SET x = " + i, sqlExecutionContext);
+                            Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
+
+                            try (
+                                    QuietClosable op = cc.getOperation();
+                                    QueryFuture fut = cc.getSender().execute(op, sqlExecutionContext, eventSubSequence.get())) {
+                                fut.await(10 * Timestamps.SECOND_MICROS);
+                            }
                             current.incrementAndGet();
                         }
                         updateCompiler.close();
@@ -249,12 +255,6 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                 }
             }
         }
-    }
-
-    private QueryFuture executeUpdate(String query, SqlCompiler updateCompiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CompiledQuery cc = updateCompiler.compile(query, sqlExecutionContext);
-        Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
-        return cc.execute(eventSubSequence.get());
     }
 
     private enum PartitionMode {

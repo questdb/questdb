@@ -22,11 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableStructureChangesException;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.griffin.QueryFuture;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
@@ -40,17 +45,17 @@ import io.questdb.tasks.TableWriterTask;
 import static io.questdb.tasks.TableWriterTask.TSK_BEGIN;
 import static io.questdb.tasks.TableWriterTask.TSK_COMPLETE;
 
-class UpdateFutureImpl implements QueryFuture {
-    private static final Log LOG = LogFactory.getLog(UpdateFutureImpl.class);
+public class QueryFutureImpl implements QueryFuture {
+    private static final Log LOG = LogFactory.getLog(QueryFutureImpl.class);
     private final CairoEngine engine;
+    private AsyncWriterCommand asyncWriterCommand;
     private SCSequence eventSubSeq;
     private int status;
     private long affectedRowsCount;
     private long cmdCorrelationId;
     private QueryFutureUpdateListener queryFutureUpdateListener;
-    private int tableNamePositionInSql;
 
-    UpdateFutureImpl(CairoEngine engine) {
+    public QueryFutureImpl(CairoEngine engine) {
         this.engine = engine;
     }
 
@@ -61,7 +66,7 @@ class UpdateFutureImpl implements QueryFuture {
             await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
         }
         if (status != QUERY_COMPLETE) {
-            throw SqlException.$(tableNamePositionInSql, "Timeout expired on waiting for the async command execution result");
+            throw SqlException.$(asyncWriterCommand.getTableNamePosition(), "Timeout expired on waiting for the async command execution result");
         }
     }
 
@@ -70,7 +75,7 @@ class UpdateFutureImpl implements QueryFuture {
         if (status == QUERY_COMPLETE) {
             return status;
         }
-        status = Math.max(status, awaitWriterEvent(timeout));
+        status = Math.max(status, awaitWriterEvent(timeout, asyncWriterCommand.getTableNamePosition()));
         return status;
     }
 
@@ -101,13 +106,11 @@ class UpdateFutureImpl implements QueryFuture {
     public void of(
             AsyncWriterCommand asyncWriterCommand,
             SqlExecutionContext executionContext,
-            SCSequence eventSubSeq,
-            boolean acceptStructureChange,
-            int tableNamePositionInSql
-    ) throws SqlException, TableStructureChangesException {
+            SCSequence eventSubSeq
+    ) throws SqlException, AlterTableContextException {
         assert eventSubSeq != null : "event subscriber sequence must be provided";
+        this.asyncWriterCommand = asyncWriterCommand;
         this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();
-        this.tableNamePositionInSql = tableNamePositionInSql;
         // Set up execution wait sequence to listen to async writer events
         final FanOut writerEventFanOut = engine.getMessageBus().getTableWriterEventFanOut();
         writerEventFanOut.and(eventSubSeq);
@@ -115,7 +118,7 @@ class UpdateFutureImpl implements QueryFuture {
 
         try {
             // Publish new command and get published command correlation id
-            cmdCorrelationId = publishTableWriterCommand(asyncWriterCommand, executionContext, acceptStructureChange);
+            cmdCorrelationId = publishTableWriterCommand(asyncWriterCommand, executionContext);
             queryFutureUpdateListener.reportStart(asyncWriterCommand.getTableName(), cmdCorrelationId);
             status = QUERY_NO_RESPONSE;
         } catch (Throwable ex) {
@@ -124,7 +127,7 @@ class UpdateFutureImpl implements QueryFuture {
         }
     }
 
-    private int awaitWriterEvent(long writerAsyncCommandBusyWaitTimeout) throws SqlException {
+    private int awaitWriterEvent(long writerAsyncCommandBusyWaitTimeout, int queryTableNamePosition) throws SqlException {
         assert eventSubSeq != null : "No sequence to wait on";
         assert cmdCorrelationId > -1 : "No command id to wait for";
 
@@ -159,7 +162,7 @@ class UpdateFutureImpl implements QueryFuture {
                     LOG.info().$("writer command response received [instance=").$(cmdCorrelationId).I$();
                     int strLen = Unsafe.getUnsafe().getInt(event.getData());
                     if (strLen > -1) {
-                        throw SqlException.$(tableNamePositionInSql, event.getData() + Integer.BYTES, event.getData() + Integer.BYTES + 2L * strLen);
+                        throw SqlException.$(queryTableNamePosition, event.getData() + Integer.BYTES, event.getData() + Integer.BYTES + 2L * strLen);
                     }
                     affectedRowsCount = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);
                     queryFutureUpdateListener.reportProgress(cmdCorrelationId, QUERY_COMPLETE);
@@ -175,11 +178,7 @@ class UpdateFutureImpl implements QueryFuture {
         }
     }
 
-    private long publishTableWriterCommand(
-            AsyncWriterCommand asyncWriterCommand,
-            SqlExecutionContext executionContext,
-            boolean acceptStructureChange
-    ) throws TableStructureChangesException, SqlException {
+    private long publishTableWriterCommand(AsyncWriterCommand asyncWriterCommand, SqlExecutionContext executionContext) throws SqlException {
         CharSequence cmdName = asyncWriterCommand.getCommandName();
         CharSequence tableName = asyncWriterCommand.getTableName();
         final long correlationId = engine.getCommandCorrelationId();
@@ -193,7 +192,7 @@ class UpdateFutureImpl implements QueryFuture {
                 asyncWriterCommand
         )) {
             if (writer != null) {
-                asyncWriterCommand.apply(writer, acceptStructureChange);
+                asyncWriterCommand.apply(writer, true);
             }
         }
 

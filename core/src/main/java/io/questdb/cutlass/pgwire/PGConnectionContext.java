@@ -34,6 +34,7 @@ import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -1926,11 +1927,15 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 transactionState = ROLLING_BACK_TRANSACTION;
                 break;
             case CompiledQuery.ALTER:
-                try (QueryFuture cf = cq.execute(tempSequence)) {
-                    cf.await();
+                // future-proofing ALTER execution
+                try (QuietClosable op = cq.getOperation()) {
+                    try (QueryFuture fut = cq.getSender().execute(op, sqlExecutionContext, tempSequence)) {
+                        fut.await();
+                    }
                 }
+                // fall thru
             default:
-                // DDL SQL
+                // DDL
                 queryTag = TAG_OK;
                 break;
         }
