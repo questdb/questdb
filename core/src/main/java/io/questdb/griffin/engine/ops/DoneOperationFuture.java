@@ -24,9 +24,9 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.griffin.QueryFuture;
+import io.questdb.cairo.sql.OperationFuture;
 
-public class DoneQueryFuture implements QueryFuture {
+public class DoneOperationFuture implements OperationFuture {
     private long affectedRowsCount;
 
     @Override
@@ -52,7 +52,7 @@ public class DoneQueryFuture implements QueryFuture {
     public void close() {
     }
 
-    public QueryFuture of(long affectedRowsCount) {
+    public OperationFuture of(long affectedRowsCount) {
         this.affectedRowsCount = affectedRowsCount;
         return this;
     }

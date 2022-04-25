@@ -1349,7 +1349,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
         } else {
             // execute against writer from the engine, or async
-            try (QueryFuture fut = op.execute(sqlExecutionContext, tempSequence)) {
+            try (OperationFuture fut = op.execute(sqlExecutionContext, tempSequence)) {
                 fut.await();
                 rowCount = fut.getAffectedRowsCount();
             }
@@ -1929,7 +1929,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
                 try (QuietClosable op = cq.getOperation()) {
-                    try (QueryFuture fut = cq.getSender().execute(op, sqlExecutionContext, tempSequence)) {
+                    try (OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, tempSequence)) {
                         fut.await();
                     }
                 }

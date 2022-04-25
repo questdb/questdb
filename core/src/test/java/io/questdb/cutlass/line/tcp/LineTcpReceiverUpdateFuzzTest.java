@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
@@ -49,7 +50,7 @@ import org.junit.Test;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-import static io.questdb.griffin.QueryFuture.QUERY_COMPLETE;
+import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 
 public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverUpdateFuzzTest.class);
@@ -114,7 +115,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 LOG.info().$(sql).$();
                 try (
                         QuietClosable op = cc.getOperation();
-                        QueryFuture fut = cc.getSender().execute(op, sqlExecutionContext, waitSequence)
+                        OperationFuture fut = cc.getSender().execute(op, sqlExecutionContext, waitSequence)
                 ) {
                     if (fut.await(10 * Timestamps.SECOND_MICROS) != QUERY_COMPLETE) {
                         throw SqlException.$(0, "update query timeout");

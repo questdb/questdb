@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.griffin.InsertRowImpl;
-import io.questdb.griffin.QueryFuture;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -43,7 +43,7 @@ public class InsertOperationImpl implements InsertOperation {
     private final InsertMethodImpl insertMethod = new InsertMethodImpl();
     private final ObjList<InsertRowImpl> insertRows = new ObjList<>();
     private final CairoEngine engine;
-    private final InsertQueryFuture doneFuture = new InsertQueryFuture();
+    private final InsertOperationFuture doneFuture = new InsertOperationFuture();
 
     public InsertOperationImpl(
             CairoEngine engine,
@@ -85,7 +85,7 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     @Override
-    public QueryFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (InsertMethod insertMethod = createMethod(sqlExecutionContext)) {
             insertMethod.execute();
             insertMethod.commit();
@@ -130,7 +130,7 @@ public class InsertOperationImpl implements InsertOperation {
         }
     }
 
-    private class InsertQueryFuture implements QueryFuture {
+    private class InsertOperationFuture implements OperationFuture {
 
         @Override
         public void await() throws SqlException {

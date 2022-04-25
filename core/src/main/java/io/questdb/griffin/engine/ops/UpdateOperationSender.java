@@ -28,23 +28,23 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.griffin.QueryFuture;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import org.jetbrains.annotations.Nullable;
 
 public class UpdateOperationSender implements OperationSender<UpdateOperation> {
-    private final DoneQueryFuture doneFuture = new DoneQueryFuture();
+    private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final CairoEngine engine;
-    private final UpdateFutureImpl updateFuture;
+    private final OperationFutureImpl updateFuture;
 
     public UpdateOperationSender(CairoEngine engine) {
         this.engine = engine;
-        this.updateFuture = new UpdateFutureImpl(engine);
+        this.updateFuture = new OperationFutureImpl(engine);
     }
 
-    public QueryFuture execute(UpdateOperation operation, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+    public OperationFuture execute(UpdateOperation operation, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), operation.getTableName(), "sync 'UPDATE' execution")) {
             return doneFuture.of(writer.getUpdateOperator().executeUpdate(sqlExecutionContext, operation));
         } catch (EntryUnavailableException busyException) {

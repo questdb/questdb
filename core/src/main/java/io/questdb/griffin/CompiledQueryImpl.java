@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.ops.*;
@@ -40,7 +41,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     private TextLoader textLoader;
     private short type;
     private SqlExecutionContext sqlExecutionContext;
-    private final DoneQueryFuture doneFuture = new DoneQueryFuture();
+    private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final OperationSender<UpdateOperation> updateOperationSender;
     private final OperationSender<AlterOperation> alterOperationSender;
 
@@ -89,7 +90,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public QueryFuture execute(SCSequence eventSubSeq) throws SqlException {
+    public OperationFuture execute(SCSequence eventSubSeq) throws SqlException {
         switch (type) {
             case INSERT:
                 return insertOperation.execute(sqlExecutionContext);

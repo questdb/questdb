@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.*;
@@ -132,10 +133,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
 
-        QueryFuture continueExecution = state.getContinueExecution();
+        OperationFuture fut = state.getOperationFuture();
         final HttpConnectionContext context = state.getHttpConnectionContext();
 
-        if (continueExecution == null) {
+        if (fut == null) {
             metrics.jsonQuery().markStart();
             state.startExecutionTimer();
             // do not set random for new request to avoid copying random from previous request into next one
@@ -146,8 +147,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
         final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
         try {
-            if (continueExecution != null) {
-                retryQueryExecution(state, continueExecution);
+            if (fut != null) {
+                retryQueryExecution(state, fut);
                 return;
             }
 
@@ -185,16 +186,16 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private void retryQueryExecution(JsonQueryProcessorState state, QueryFuture continueExecution) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
-        if (continueExecution.await(0) != QueryFuture.QUERY_COMPLETE) {
+    private void retryQueryExecution(JsonQueryProcessorState state, OperationFuture fut) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+        if (fut.await(0) != OperationFuture.QUERY_COMPLETE) {
             if (state.getExecutionTime() < alterStartFullTimeoutNs) {
                 throw EntryUnavailableException.instance("retry alter table wait");
             } else {
-                state.setContinueExecution(Misc.free(continueExecution));
+                state.setOperationFuture(Misc.free(fut));
                 throw SqlException.$(0, "Timeout on waiting ALTER table to finish execution");
             }
         } else {
-            state.setContinueExecution(Misc.free(continueExecution));
+            state.setOperationFuture(Misc.free(fut));
             sendConfirmation(state, configuration.getKeepAliveHeader());
         }
     }
@@ -396,20 +397,20 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cc,
             CharSequence keepAliveHeader
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
-        QueryFuture queryFuture = null;
+        OperationFuture fut = null;
         try {
-            queryFuture = cc.execute(state.getEventSubSequence());
-            int waitResult = queryFuture.await(alterStartTimeout);
-            if (waitResult == QueryFuture.QUERY_NO_RESPONSE) {
+            fut = cc.execute(state.getEventSubSequence());
+            int waitResult = fut.await(alterStartTimeout);
+            if (waitResult == OperationFuture.QUERY_NO_RESPONSE) {
                 throw SqlException.$(0, "Timeout expired on waiting for the ALTER TABLE execution start");
-            } else if (waitResult == QueryFuture.QUERY_STARTED) {
-                state.setContinueExecution(queryFuture);
-                queryFuture = null;
+            } else if (waitResult == OperationFuture.QUERY_STARTED) {
+                state.setOperationFuture(fut);
+                fut = null;
                 throw EntryUnavailableException.instance("retry alter table wait");
             }
         } finally {
-            if (queryFuture != null) {
-                queryFuture.close();
+            if (fut != null) {
+                fut.close();
             }
         }
         metrics.jsonQuery().markComplete();
@@ -423,7 +424,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         try (
                 UpdateOperation op = cc.getUpdateOperation();
-                QueryFuture fut = op.execute(sqlExecutionContext, state.getEventSubSequence())
+                OperationFuture fut = op.execute(sqlExecutionContext, state.getEventSubSequence())
         ) {
             fut.await();
         }

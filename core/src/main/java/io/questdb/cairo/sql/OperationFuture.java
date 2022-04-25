@@ -22,11 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo.sql;
+
+import io.questdb.griffin.SqlException;
 
 import java.io.Closeable;
 
-public interface QueryFuture extends Closeable {
+public interface OperationFuture extends Closeable {
     int QUERY_NO_RESPONSE = 0;
     int QUERY_STARTED = 1;
     int QUERY_COMPLETE = 2;
@@ -39,7 +41,7 @@ public interface QueryFuture extends Closeable {
     void await() throws SqlException;
 
     /***
-     * Waits for completion within specified timeout. Can be called multiple times on the same QueryFuture instance.
+     * Waits for completion within specified timeout. Can be called multiple times on the same OperationFuture instance.
      * @param timeout - microseconds timeout
      * @return
      *  - QUERY_NO_RESPONSE if no writer response received

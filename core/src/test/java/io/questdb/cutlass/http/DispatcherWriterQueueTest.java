@@ -26,7 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.griffin.QueryFuture;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -382,7 +382,7 @@ public class DispatcherWriterQueueTest {
         return new QueryFutureUpdateListener() {
             @Override
             public void reportProgress(long commandId, int status) {
-                if (status == QueryFuture.QUERY_STARTED) {
+                if (status == OperationFuture.QUERY_STARTED) {
                     alterAckReceived.countDown();
                 }
             }

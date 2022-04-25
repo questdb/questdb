@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.griffin.QueryFuture;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
@@ -32,5 +32,5 @@ import io.questdb.std.QuietClosable;
 import org.jetbrains.annotations.Nullable;
 
 public interface OperationSender<T extends QuietClosable> {
-    QueryFuture execute(T operation, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException;
+    OperationFuture execute(T operation, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException;
 }

@@ -27,10 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import io.questdb.std.ThreadLocal;
@@ -157,7 +155,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
 
                             try (
                                     QuietClosable op = cc.getOperation();
-                                    QueryFuture fut = cc.getSender().execute(op, sqlExecutionContext, eventSubSequence.get())) {
+                                    OperationFuture fut = cc.getSender().execute(op, sqlExecutionContext, eventSubSequence.get())) {
                                 fut.await(10 * Timestamps.SECOND_MICROS);
                             }
                             current.incrementAndGet();

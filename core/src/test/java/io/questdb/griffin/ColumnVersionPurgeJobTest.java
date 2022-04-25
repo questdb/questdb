@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Sequence;
@@ -800,8 +801,8 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
         final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
         try (UpdateOperation op = cc.getUpdateOperation()) {
-            try (QueryFuture qf = op.execute(sqlExecutionContext, null)) {
-                qf.await();
+            try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+                fut.await();
             }
         }
     }

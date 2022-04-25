@@ -31,7 +31,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.QueryFuture;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
@@ -41,9 +41,9 @@ import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.Nullable;
 
 public class UpdateOperation extends AbstractOperation implements QuietClosable {
-    private final DoneQueryFuture doneFuture = new DoneQueryFuture();
+    private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final CairoEngine engine;
-    private final UpdateFutureImpl updateFuture;
+    private final OperationFutureImpl updateFuture;
     private RecordCursorFactory factory;
     private SqlExecutionContext sqlExecutionContext;
 
@@ -56,7 +56,7 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
             RecordCursorFactory factory
     ) {
         this.engine = engine;
-        this.updateFuture = new UpdateFutureImpl(engine);
+        this.updateFuture = new OperationFutureImpl(engine);
         init(TableWriterTask.CMD_UPDATE_TABLE, "UPDATE", tableName, tableId, tableVersion, tableNamePosition);
         this.factory = factory;
     }
@@ -76,7 +76,7 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
         factory = Misc.free(factory);
     }
 
-    public QueryFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), getTableName(), "Update table execute")) {
             return doneFuture.of(writer.getUpdateOperator().executeUpdate(sqlExecutionContext, this));
         } catch (EntryUnavailableException busyException) {

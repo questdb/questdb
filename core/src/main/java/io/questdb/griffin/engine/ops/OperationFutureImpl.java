@@ -28,7 +28,7 @@ import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.AsyncWriterCommand;
-import io.questdb.griffin.QueryFuture;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -45,8 +45,8 @@ import io.questdb.tasks.TableWriterTask;
 import static io.questdb.tasks.TableWriterTask.TSK_BEGIN;
 import static io.questdb.tasks.TableWriterTask.TSK_COMPLETE;
 
-class UpdateFutureImpl implements QueryFuture {
-    private static final Log LOG = LogFactory.getLog(UpdateFutureImpl.class);
+class OperationFutureImpl implements OperationFuture {
+    private static final Log LOG = LogFactory.getLog(OperationFutureImpl.class);
     private final CairoEngine engine;
     private SCSequence eventSubSeq;
     private int status;
@@ -55,7 +55,7 @@ class UpdateFutureImpl implements QueryFuture {
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private int tableNamePositionInSql;
 
-    UpdateFutureImpl(CairoEngine engine) {
+    OperationFutureImpl(CairoEngine engine) {
         this.engine = engine;
     }
 
@@ -100,7 +100,7 @@ class UpdateFutureImpl implements QueryFuture {
     }
 
     /***
-     * Initializes instance of QueryFuture with the parameters to wait for the new command
+     * Initializes instance of OperationFuture with the parameters to wait for the new command
      * @param eventSubSeq - event sequence used to wait for the command execution to be signaled as complete
      */
     public void of(

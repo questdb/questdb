@@ -29,6 +29,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -58,7 +59,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     private final SCSequence scSequence = new SCSequence();
     private SqlException sqlException;
-    private volatile QueryFuture alterCommandQueryFuture;
+    private volatile OperationFuture alterOperationFuture;
 
     @Test
     public void testAlterCommandAddColumn() throws Exception {
@@ -444,7 +445,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         assertTable(expected, "plug");
     }
 
-    private QueryFuture executeAlterSql(String sql) throws SqlException {
+    private OperationFuture executeAlterSql(String sql) throws SqlException {
         // Subscribe local writer even queue to the global engine writer response queue
         LOG.info().$("Started waiting for writer ASYNC event").$();
         try (SqlCompiler compiler = new SqlCompiler(engine);
@@ -486,8 +487,8 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 // Wait in parallel thread
                 try {
                     startBarrier.await();
-                    LOG.info().$("Busy waiting for writer ASYNC event ").$(alterCommandQueryFuture).$();
-                    alterCommandQueryFuture.await(10 * Timestamps.SECOND_MICROS);
+                    LOG.info().$("Busy waiting for writer ASYNC event ").$(alterOperationFuture).$();
+                    alterOperationFuture.await(10 * Timestamps.SECOND_MICROS);
                 } catch (SqlException exception) {
                     sqlException = exception;
                 } catch (Throwable e) {
@@ -497,7 +498,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     releaseLatch.countDown();
                     LOG.info().$("Stopped waiting for writer ASYNC event").$();
                     // If subscribed to global writer event queue, unsubscribe here
-                    alterCommandQueryFuture.close();
+                    alterOperationFuture.close();
                 }
             }).start();
         }
@@ -518,7 +519,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                     if (alterTableCommand != null) {
                                         try {
                                             // Execute ALTER in parallel thread
-                                            alterCommandQueryFuture = executeAlterSql(alterTableCommand);
+                                            alterOperationFuture = executeAlterSql(alterTableCommand);
                                             startBarrier.await();
                                         } catch (BrokenBarrierException | InterruptedException e) {
                                             e.printStackTrace();

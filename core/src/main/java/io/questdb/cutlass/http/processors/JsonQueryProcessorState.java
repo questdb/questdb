@@ -35,7 +35,7 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.griffin.QueryFuture;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
@@ -73,7 +73,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final int floatScale;
     private final int doubleScale;
     private final SCSequence eventSubSequence = new SCSequence();
-    private QueryFuture continueExecution;
+    private OperationFuture operationFuture;
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
     private RecordCursor cursor;
@@ -138,14 +138,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         countRows = false;
         explain = false;
         queryJitCompiled = false;
-        continueExecution = Misc.free(continueExecution);
+        operationFuture = Misc.free(operationFuture);
     }
 
     @Override
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
-        continueExecution = Misc.free(continueExecution);
+        operationFuture = Misc.free(operationFuture);
     }
 
     public void configure(
@@ -169,8 +169,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return LOG.error().$('[').$(getFd()).$("] ");
     }
 
-    public QueryFuture getContinueExecution() {
-        return continueExecution;
+    public OperationFuture getOperationFuture() {
+        return operationFuture;
     }
 
     public HttpConnectionContext getHttpConnectionContext() {
@@ -189,8 +189,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return eventSubSequence;
     }
 
-    public void setContinueExecution(QueryFuture execution) {
-        continueExecution = execution;
+    public void setOperationFuture(OperationFuture fut) {
+        operationFuture = fut;
     }
 
     public void setRnd(Rnd rnd) {

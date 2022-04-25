@@ -24,11 +24,10 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.QueryFuture;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
@@ -36,16 +35,16 @@ import org.jetbrains.annotations.Nullable;
 
 public class AlterOperationSender implements OperationSender<AlterOperation> {
     private final CairoEngine engine;
-    private final DoneQueryFuture doneFuture = new DoneQueryFuture();
-    private final QueryFutureImpl alterFut;
+    private final DoneOperationFuture doneFuture = new DoneOperationFuture();
+    private final OperationFutureImpl alterFut;
 
     public AlterOperationSender(CairoEngine engine) {
         this.engine = engine;
-        this.alterFut = new QueryFutureImpl(engine);
+        this.alterFut = new OperationFutureImpl(engine);
     }
 
     @Override
-    public QueryFuture execute(
+    public OperationFuture execute(
             AlterOperation operation,
             SqlExecutionContext sqlExecutionContext,
             @Nullable SCSequence eventSubSeq
@@ -62,7 +61,7 @@ public class AlterOperationSender implements OperationSender<AlterOperation> {
             if (eventSubSeq == null) {
                 throw busyException;
             }
-            alterFut.of(operation, sqlExecutionContext, eventSubSeq);
+            alterFut.of(operation, sqlExecutionContext, eventSubSeq, operation.getTableNamePosition());
             return alterFut;
         }
     }
