@@ -180,8 +180,7 @@ public class CompiledQueryImpl implements CompiledQuery {
         return of(BACKUP_TABLE);
     }
 
-    CompiledQuery ofCopyLocal(TextLoader textLoader) {
-        this.textLoader = textLoader;
+    CompiledQuery ofCopyLocal() {
         return of(COPY_LOCAL);
     }
 

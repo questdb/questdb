@@ -1688,9 +1688,11 @@ public class PGJobContextTest extends BasePGTest {
                 final Connection connection = getConnection(false, true)
         ) {
 
-            CopyManager copyManager = new CopyManager((BaseConnection) connection);
-            CopyIn copyIn = copyManager.copyIn("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true");
-            copyIn.endCopy();
+            try (
+                    final PreparedStatement statement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true");
+            ) {
+                statement.execute();
+            }
 
             try (
                     final PreparedStatement statement = connection.prepareStatement("select * FROM testLocalCopyFrom");

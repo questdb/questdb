@@ -1424,11 +1424,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case 'Q':
                 processQuery(msgLo, msgLimit, compiler);
                 break;
-            case 'c':
-                assert queryTag != null && Chars.equals(queryTag, TAG_COPY);
-                // the end of data section from COPY FROM fall-through
-                // qdb does not support copying from stdin via pgwire yet,
-                // but this is also used when copying from a local CSV file
             case 'd':
                 System.out.println("data " + msgLen);
                 // msgLen includes 4 bytes of self
@@ -1849,7 +1844,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case CompiledQuery.COPY_LOCAL:
                 // uncached
                 queryTag = TAG_COPY;
-                sendCopyInResponse(compiler.getEngine(), cq.getTextLoader());
                 break;
             case CompiledQuery.SET:
                 queryTag = TAG_SET;
@@ -2216,32 +2210,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void sendAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
         doSend(0, (int) (sendBufferPtr - sendBuffer));
         responseAsciiSink.reset();
-    }
-
-    private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (
-                TableUtils.TABLE_EXISTS == engine.getStatus(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        path,
-                        textLoader.getTableName()
-                )) {
-            responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
-            long addr = responseAsciiSink.skip();
-            responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName(), WRITER_LOCK_REASON)) {
-                RecordMetadata metadata = writer.getMetadata();
-                responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    responseAsciiSink.putNetworkShort((short) PGOids.getTypeOid(metadata.getColumnType(i)));
-                }
-            }
-            responseAsciiSink.putLen(addr);
-        } else {
-            final SqlException e = SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist");
-            prepareError(e.getPosition(), e.getFlyweightMessage(), 0);
-            prepareReadyForQuery();
-        }
-        sendAndReset();
     }
 
     private void sendCursor(
