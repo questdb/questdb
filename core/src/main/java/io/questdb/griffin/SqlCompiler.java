@@ -117,6 +117,7 @@ public class SqlCompiler implements Closeable {
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
+    private final VacuumColumnVersions vacuumColumnVersions;
 
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
@@ -144,6 +145,7 @@ public class SqlCompiler implements Closeable {
                         FunctionFactory.class, FunctionFactory.class.getClassLoader()))
         );
         this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
+        this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
         // we have cyclical dependency here
         functionParser.setSqlCodeGenerator(codeGenerator);
@@ -906,6 +908,7 @@ public class SqlCompiler implements Closeable {
     public void close() {
         backupAgent.close();
         codeGenerator.close();
+        vacuumColumnVersions.close();
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
@@ -2744,8 +2747,10 @@ public class SqlCompiler implements Closeable {
 
     private CompiledQuery vacuum(SqlExecutionContext executionContext) throws SqlException {
         executionContext.getCairoSecurityContext().checkWritePermission();
-        CharSequence tok = expectToken(lexer, "'partitions'");
-        if (isPartitionsKeyword(tok)) {
+        CharSequence tok = expectToken(lexer, "'table'");
+        // It used to be VACUUM PARTITIONS but become VACUUM TABLE
+        boolean partitionsKeyword = isPartitionsKeyword(tok);
+        if (partitionsKeyword || isTableKeyword(tok)) {
             CharSequence tableName = expectToken(lexer, "table name");
             tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition());
             int tableNamePos = lexer.lastTokenPosition();
@@ -2763,9 +2768,11 @@ public class SqlCompiler implements Closeable {
                                             "or increase Purge Discovery Queue Capacity"
                             );
                         }
-                        return compiledQuery.ofVacuum();
+                    } else if (partitionsKeyword) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' is not partitioned");
                     }
-                    throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' is not partitioned");
+                    vacuumColumnVersions.run(executionContext, rdr);
+                    return compiledQuery.ofVacuum();
                 }
             }
             throw SqlException.$(lexer.lastTokenPosition(), "end of line or ';' expected");

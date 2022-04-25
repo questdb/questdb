@@ -110,6 +110,13 @@ public class DirectLongList implements Mutable, Closeable {
         return capacity / Long.BYTES;
     }
 
+    public void shrink(long newCapacity) {
+        // deallocates memory but keeps reusable
+        if (newCapacity < capacity) {
+            extendBytes(newCapacity << 3);
+        }
+    }
+
     public long scanSearch(long v, long low, long high) {
         for (long i = low; i < high; i++) {
             long f = get(i);

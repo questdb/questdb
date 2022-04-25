@@ -96,6 +96,7 @@ public class AbstractCairoTest {
     protected static long writerCommandQueueSlotSize = 2048L;
     protected static double columnVersionPurgeWaitExponent = -1;
     protected static long columnVersionPurgeStartWaitTimeoutMicros = -1;
+    protected static int columnVersionPurgeQueueCapacity = -1;
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -281,6 +282,11 @@ public class AbstractCairoTest {
             public int getQueryCacheEventQueueCapacity() {
                 return queryCacheEventQueueCapacity < 0 ? super.getQueryCacheEventQueueCapacity() : queryCacheEventQueueCapacity;
             }
+
+            @Override
+            public int getColumnVersionPurgeQueueCapacity() {
+                return columnVersionPurgeQueueCapacity < 0 ? super.getColumnVersionPurgeQueueCapacity() : columnVersionPurgeQueueCapacity;
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -326,6 +332,7 @@ public class AbstractCairoTest {
         hideTelemetryTable = false;
         writerCommandQueueCapacity = 4;
         columnVersionPurgeWaitExponent = -1;
+        columnVersionPurgeQueueCapacity = -1;
     }
 
     protected static void configureForBackups() throws IOException {

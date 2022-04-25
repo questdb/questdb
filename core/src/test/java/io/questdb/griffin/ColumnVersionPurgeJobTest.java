@@ -37,6 +37,8 @@ import io.questdb.tasks.ColumnVersionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     private int iteration = 1;
 
@@ -111,26 +113,115 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                                 "1970-01-05T02:00:00.000000Z\t200\tu2\tD\tEE\n"
                 );
 
-                assertSql(purgeJob.getLogTableName(), "" +
+                assertSql(purgeJob.getLogTableName(),
                         "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part_o3_many\tx\t2\t0\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part_o3_many\tx\t2\t0\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000010Z\tup_part_o3_many\tx\t2\t0\t6\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000012Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000012Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000012Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000061Z\tup_part_o3_many\tx\t2\t0\t6\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000061Z\tup_part_o3_many\tx\t2\t0\t6\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000061Z\tup_part_o3_many\tx\t2\t0\t6\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000062Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000062Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000062Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000063Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000063Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
-                        "1970-01-01T00:00:00.000063Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n");
+                                "1970-01-01T00:00:00.000010Z\tup_part_o3_many\tx\t2\t0\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000010Z\tup_part_o3_many\tx\t2\t0\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000010Z\tup_part_o3_many\tx\t2\t0\t6\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000011Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000011Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000011Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000012Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000012Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000012Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000061Z\tup_part_o3_many\tx\t2\t0\t6\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000061Z\tup_part_o3_many\tx\t2\t0\t6\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000061Z\tup_part_o3_many\tx\t2\t0\t6\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000062Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000062Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000062Z\tup_part_o3_many\tstr\t2\t0\t11\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000063Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000063Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000151Z\n" +
+                                "1970-01-01T00:00:00.000063Z\tup_part_o3_many\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000151Z\n");
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+        });
+    }
+
+    @Test
+    public void testPurge() throws Exception {
+        assertMemoryLeak(() -> {
+            currentMicros = 0;
+            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+                ColumnVersionPurgeTask task = createTask("tbl_name", "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
+                task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialDate("2022-04-05"), 2);
+                appendTaskToQueue(task);
+
+                ColumnVersionPurgeTask task2 = createTask("tbl_name2", "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
+                appendTaskToQueue(task2);
+
+                purgeJob.run(0);
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t\n" +
+                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t\n" +
+                        "1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t\n");
+
+                runPurgeJob(purgeJob);
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000010Z\n" +
+                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t1970-01-01T00:00:00.000010Z\n" +
+                        "1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000010Z\n");
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeCannotAllocateFailure() throws Exception {
+        int deadline = Os.type == Os.WINDOWS ? 144 : 105;
+        assertMemoryLeak(() -> {
+            currentMicros = 0;
+            ff = new FilesFacadeImpl() {
+                private int counter = 0;
+
+                @Override
+                public boolean allocate(long fd, long size) {
+                    if (counter < deadline) {
+                        counter++;
+                        return super.allocate(fd, size);
+                    } else {
+                        throw new RuntimeException("TEST ERROR");
+                    }
+                }
+            };
+
+            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+                compiler.compile("create table up_part as" +
+                        " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                        " x," +
+                        " rnd_str('a', 'b', 'c', 'd') str," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                        " rnd_symbol('1', '2', '3', '4') sym2" +
+                        " from long_sequence(5)), index(sym2)" +
+                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
+
+                try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part")) {
+                    executeUpdate("UPDATE up_part SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
+                    // cannot purge column versions because of active reader
+                    runPurgeJob(purgeJob);
+                }
+
+                try (Path path = new Path()) {
+                    String[] partitions = new String[]{"1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
+                    assertFilesExist(partitions, path, "up_part", "", true);
+
+                    // reader has been closed, now it can purge but FilesFacade will throw error and purge log table will not be populated
+                    runPurgeJob(purgeJob);
+                    assertFilesExist(partitions, path, "up_part", "", false);
+                }
+
+                assertSql(
+                        "up_part",
+                        "ts\tx\tstr\tsym1\tsym2\n" +
+                                "1970-01-01T00:00:00.000000Z\t1\ta\tC\t2\n" +
+                                "1970-01-02T00:00:00.000000Z\t100\tabcd\tB\tEE\n" +
+                                "1970-01-03T00:00:00.000000Z\t100\tabcd\tD\tEE\n" +
+                                "1970-01-04T00:00:00.000000Z\t100\tabcd\tA\tEE\n" +
+                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\tEE\n"
+                );
+
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
     }
@@ -214,6 +305,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         "1970-02-02T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-03T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z\n" +
                         "1970-02-02T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-04T00:00:00.000000Z\t1\t1970-02-02T00:00:00.000070Z\n" +
                         "1970-02-02T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t4\t2\t1970-01-05T00:00:00.000000Z\t-1\t1970-02-02T00:00:00.000070Z\n");
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
     }
@@ -290,65 +382,8 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
                         "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
                         "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
-            }
-        });
-    }
 
-    @Test
-    public void testPurgeCannotAllocateFailure() throws Exception {
-        int deadline = Os.type == Os.WINDOWS ? 144 : 105;
-        assertMemoryLeak(() -> {
-            currentMicros = 0;
-            ff = new FilesFacadeImpl() {
-                private int counter = 0;
-
-                @Override
-                public boolean allocate(long fd, long size) {
-                    if (counter < deadline) {
-                        counter++;
-                        return super.allocate(fd, size);
-                    } else {
-                        throw new RuntimeException("TEST ERROR");
-                    }
-                }
-            };
-
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up_part as" +
-                        " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
-                        " x," +
-                        " rnd_str('a', 'b', 'c', 'd') str," +
-                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
-                        " rnd_symbol('1', '2', '3', '4') sym2" +
-                        " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
-
-                try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part")) {
-                    executeUpdate("UPDATE up_part SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
-                    // cannot purge column versions because of active reader
-                    runPurgeJob(purgeJob);
-                }
-
-                try (Path path = new Path()) {
-                    String[] partitions = new String[]{"1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
-                    assertFilesExist(partitions, path, "up_part", "", true);
-
-                    // reader has been closed, now it can purge but FilesFacade will throw error and purge log table will not be populated
-                    runPurgeJob(purgeJob);
-                    assertFilesExist(partitions, path, "up_part", "", false);
-                }
-
-                assertSql(
-                        "up_part",
-                        "ts\tx\tstr\tsym1\tsym2\n" +
-                                "1970-01-01T00:00:00.000000Z\t1\ta\tC\t2\n" +
-                                "1970-01-02T00:00:00.000000Z\t100\tabcd\tB\tEE\n" +
-                                "1970-01-03T00:00:00.000000Z\t100\tabcd\tD\tEE\n" +
-                                "1970-01-04T00:00:00.000000Z\t100\tabcd\tA\tEE\n" +
-                                "1970-01-05T00:00:00.000000Z\t100\tabcd\tD\tEE\n"
-                );
-
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
     }
@@ -405,50 +440,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-03T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
                         "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-04T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
                         "1970-01-01T00:00:00.000012Z\tup_part\tsym2\t2\t0\t12\t0\t2\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
-            }
-        });
-    }
-
-    @Test
-    public void testPurgeRespectsOpenReaderNonPartitioned() throws Exception {
-        assertMemoryLeak(() -> {
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile("create table up as" +
-                        " (select timestamp_sequence(0, 1000000) ts," +
-                        " x," +
-                        " rnd_str('a', 'b', 'c', 'd') str," +
-                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
-                        " rnd_symbol('1', '2', '3', '4') sym2" +
-                        " from long_sequence(5)), index(sym2)" +
-                        " timestamp(ts)", sqlExecutionContext);
-
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
-                    executeUpdate("UPDATE up SET x = 100, str='abcd', sym2='EE'");
-
-                    runPurgeJob(purgeJob);
-                    rdr.openPartition(0);
-                }
-
-                try (Path path = new Path()) {
-                    assertFilesExist(path, "up", "default", "", true);
-                    runPurgeJob(purgeJob);
-                    assertFilesExist(path, "up", "default", "", false);
-                }
-
-                assertSql(
-                        "up",
-                        "ts\tx\tstr\tsym1\tsym2\n" +
-                                "1970-01-01T00:00:00.000000Z\t100\tabcd\tC\tEE\n" +
-                                "1970-01-01T00:00:01.000000Z\t100\tabcd\tB\tEE\n" +
-                                "1970-01-01T00:00:02.000000Z\t100\tabcd\tD\tEE\n" +
-                                "1970-01-01T00:00:03.000000Z\t100\tabcd\tA\tEE\n" +
-                                "1970-01-01T00:00:04.000000Z\t100\tabcd\tD\tEE\n"
-                );
-
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000010Z\tup\tx\t2\t0\t6\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000011Z\tup\tstr\t2\t0\t11\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
-                        "1970-01-01T00:00:00.000012Z\tup\tsym2\t2\t0\t12\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
     }
@@ -547,6 +539,51 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPurgeRespectsOpenReaderNonPartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+                compiler.compile("create table up as" +
+                        " (select timestamp_sequence(0, 1000000) ts," +
+                        " x," +
+                        " rnd_str('a', 'b', 'c', 'd') str," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                        " rnd_symbol('1', '2', '3', '4') sym2" +
+                        " from long_sequence(5)), index(sym2)" +
+                        " timestamp(ts)", sqlExecutionContext);
+
+                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
+                    executeUpdate("UPDATE up SET x = 100, str='abcd', sym2='EE'");
+
+                    runPurgeJob(purgeJob);
+                    rdr.openPartition(0);
+                }
+
+                try (Path path = new Path()) {
+                    assertFilesExist(path, "up", "default", "", true);
+                    runPurgeJob(purgeJob);
+                    assertFilesExist(path, "up", "default", "", false);
+                }
+
+                assertSql(
+                        "up",
+                        "ts\tx\tstr\tsym1\tsym2\n" +
+                                "1970-01-01T00:00:00.000000Z\t100\tabcd\tC\tEE\n" +
+                                "1970-01-01T00:00:01.000000Z\t100\tabcd\tB\tEE\n" +
+                                "1970-01-01T00:00:02.000000Z\t100\tabcd\tD\tEE\n" +
+                                "1970-01-01T00:00:03.000000Z\t100\tabcd\tA\tEE\n" +
+                                "1970-01-01T00:00:04.000000Z\t100\tabcd\tD\tEE\n"
+                );
+
+                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                        "1970-01-01T00:00:00.000010Z\tup\tx\t2\t0\t6\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000011Z\tup\tstr\t2\t0\t11\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n" +
+                        "1970-01-01T00:00:00.000012Z\tup\tsym2\t2\t0\t12\t3\t2\t-1\t1970-01-01T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+        });
+    }
+
+    @Test
     public void testPurgeRetriesAfterRestart() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = 0;
@@ -611,33 +648,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:00.000012Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000060Z\n" +
                         "1970-01-01T00:00:00.000012Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000060Z\n" +
                         "1970-01-01T00:00:00.000012Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000060Z\n");
-            }
-        });
-    }
-
-    @Test
-    public void testPurge() throws Exception {
-        assertMemoryLeak(() -> {
-            currentMicros = 0;
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
-                ColumnVersionPurgeTask task = createTask("tbl_name", "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
-                task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialDate("2022-04-05"), 2);
-                appendTaskToQueue(task);
-
-                ColumnVersionPurgeTask task2 = createTask("tbl_name2", "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
-                appendTaskToQueue(task2);
-
-                purgeJob.run(0);
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t\n" +
-                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t\n" +
-                        "1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t\n");
-
-                runPurgeJob(purgeJob);
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t11\t2022-03-29T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000010Z\n" +
-                        "1970-01-01T00:00:00.000000Z\ttbl_name\tcol\t1\t0\t5\t3\t43\t-1\t2022-04-05T00:00:00.000000Z\t2\t1970-01-01T00:00:00.000010Z\n" +
-                        "1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000010Z\n");
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
     }
@@ -695,16 +706,20 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                                 "1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE\n"
                 );
 
-                assertSql(purgeJob.getLogTableName(), "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
-                        "1970-01-01T00:00:00.000030Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000030Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000030Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000031Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000031Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000031Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
-                        "1970-01-01T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z\n");
+                assertSql(
+                        purgeJob.getLogTableName(),
+                        "ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n" +
+                                "1970-01-01T00:00:00.000030Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
+                                "1970-01-01T00:00:00.000030Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
+                                "1970-01-01T00:00:00.000030Z\tup_part_o3\tx\t2\t0\t6\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z\n" +
+                                "1970-01-01T00:00:00.000031Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
+                                "1970-01-01T00:00:00.000031Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
+                                "1970-01-01T00:00:00.000031Z\tup_part_o3\tstr\t2\t0\t11\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z\n" +
+                                "1970-01-01T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-03T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
+                                "1970-01-01T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-04T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000070Z\n" +
+                                "1970-01-01T00:00:00.000032Z\tup_part_o3\tsym2\t2\t0\t12\t0\t3\t-1\t1970-01-05T00:00:00.000000Z\t-1\t1970-01-01T00:00:00.000070Z\n"
+                );
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
     }

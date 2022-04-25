@@ -122,6 +122,11 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
         return tableName;
     }
 
+    @TestOnly
+    public int getOutstandingPurgeTasks() {
+        return houseKeepingRunQueue.size();
+    }
+
     private static int compareHouseKeepingTasks(ColumnVersionPurgeTaskRun task1, ColumnVersionPurgeTaskRun task2) {
         return Long.compare(task1.nextRunTimestamp, task2.nextRunTimestamp);
     }

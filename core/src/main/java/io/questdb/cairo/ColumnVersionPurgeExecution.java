@@ -41,8 +41,8 @@ public class ColumnVersionPurgeExecution implements Closeable {
     private final FilesFacade ff;
     private final TableWriter purgeLogWriter;
     private final String updateCompleteColumnName;
-    private final TxnScoreboard txnScoreboard;
-    private final TxReader txReader;
+    private TxnScoreboard txnScoreboard;
+    private TxReader txReader;
     private final LongList completedRecordIds = new LongList();
     private final MicrosecondClock microClock;
     private final int updateCompleteColumnWriterIndex;
@@ -64,20 +64,49 @@ public class ColumnVersionPurgeExecution implements Closeable {
         longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
     }
 
+    public ColumnVersionPurgeExecution(CairoConfiguration configuration) {
+        this.ff = configuration.getFilesFacade();
+        this.purgeLogWriter = null;
+        this.updateCompleteColumnName = null;
+        this.updateCompleteColumnWriterIndex = -1;
+        path.of(configuration.getRoot());
+        pathRootLen = path.length();
+        txnScoreboard = null;
+        txReader = null;
+        microClock = configuration.getMicrosecondClock();
+        longBytes = 0;
+    }
+
     @Override
     public void close() throws IOException {
-        Unsafe.free(longBytes, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        longBytes = 0;
+        if (longBytes != 0L) {
+            Unsafe.free(longBytes, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            longBytes = 0;
+        }
         closeCleanupLogCompleteFile();
         path.close();
-        txnScoreboard.close();
+        if (txnScoreboard != null) {
+            txnScoreboard.close();
+        }
     }
 
     public boolean tryCleanup(ColumnVersionPurgeTask task) {
         try {
-            boolean done = tryCleanup0(task);
+            boolean done = tryCleanup0(task, false);
             setCompleteTimestamp(completedRecordIds, microClock.getTicks());
             return done;
+        } catch (Throwable ex) {
+            // Can be some IO exception
+            LOG.error().$("failed to clean column versions. ").$(ex).$();
+            return false;
+        }
+    }
+
+    public boolean tryCleanup(ColumnVersionPurgeTask task, TableReader tableReader) {
+        try {
+            txReader = tableReader.getTxFile();
+            txnScoreboard = tableReader.getTxnScoreboard();
+            return tryCleanup0(task, true);
         } catch (Throwable ex) {
             // Can be some IO exception
             LOG.error().$("failed to clean column versions. ").$(ex).$();
@@ -195,7 +224,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
         TableUtils.txnPartitionConditionally(path, partitionTxnName);
     }
 
-    private boolean tryCleanup0(ColumnVersionPurgeTask task) {
+    private boolean tryCleanup0(ColumnVersionPurgeTask task, boolean tableInitialized) {
         LOG.info().$("cleaning up column version [table=").$(task.getTableName())
                 .$(", column=").$(task.getColumnName())
                 .$(", tableId=").$(task.getTableId())
@@ -204,9 +233,10 @@ public class ColumnVersionPurgeExecution implements Closeable {
         setTablePath(task.getTableName());
 
         final LongList updatedColumnInfo = task.getUpdatedColumnInfo();
-        boolean tableInitied = false;
         long minUnlockedTxnRangeStarts = Long.MAX_VALUE;
         boolean allDone = true;
+        boolean tableCleanupNeeded = !tableInitialized;
+
         try {
             completedRecordIds.clear();
             for (int i = 0, n = updatedColumnInfo.size(); i < n; i += ColumnVersionPurgeTask.BLOCK_SIZE) {
@@ -236,7 +266,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
                 }
 
                 // Check that there are no readers before updateTxn
-                if (!tableInitied) {
+                if (!tableInitialized) {
                     txnScoreboard.ofRO(path.trimTo(pathTableLen));
 
                     int tableId = readTableId(path);
@@ -256,7 +286,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
                     setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
                     TableUtils.dFile(path, task.getColumnName(), columnVersion);
 
-                    tableInitied = true;
+                    tableInitialized = true;
                 }
 
                 if (columnVersion < minUnlockedTxnRangeStarts) {
@@ -307,8 +337,10 @@ public class ColumnVersionPurgeExecution implements Closeable {
                 completedRecordIds.add(updateRecordId);
             }
         } finally {
-            txnScoreboard.clear();
-            txReader.clear();
+            if (tableCleanupNeeded) {
+                txnScoreboard.clear();
+                txReader.clear();
+            }
         }
 
         return allDone;

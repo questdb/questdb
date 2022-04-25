@@ -584,8 +584,8 @@ public class UpdateOperator implements Closeable {
                 return;
             } else if (cursor == -1L) {
                 // Queue overflow
-                LOG.error().$("cannot schedule to purge updated column version async [table=").$(tableName)
-                        .$(", column=").$(columnName)
+                LOG.error().$("failed to schedule column version purge, queue is full. Please run 'VACUUM TABLE ").$(tableName)
+                        .$("' [columnName=").$(columnName)
                         .$(", lastTxn=").$(updatedTxn)
                         .I$();
                 return;

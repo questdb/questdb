@@ -94,7 +94,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     public void testInsertUpdateWithColumnAdds() throws Exception {
         initLoadParameters(50, 1, 2, 3, 75);
         initUpdateParameters(15, 1);
-        initFuzzParameters(-1, -1, 2, 2, -1, false, false, false, false);
+        initFuzzParameters(-1, 3, 2, 2, -1, false, false, false, false);
         runTest();
     }
 
