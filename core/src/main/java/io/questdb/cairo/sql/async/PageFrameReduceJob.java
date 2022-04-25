@@ -108,37 +108,34 @@ public class PageFrameReduceJob implements Job, Closeable {
             if (cursor > -1) {
                 final PageFrameReduceTask task = queue.get(cursor);
                 final PageFrameSequence<?> frameSequence = task.getFrameSequence();
+                final AtomicInteger framesReducedCounter = frameSequence.getReduceCounter();
                 try {
-                    final AtomicInteger framesReducedCounter = frameSequence.getReduceCounter();
-                    try {
-                        LOG.debug()
-                                .$("reducing [shard=").$(frameSequence.getShard())
-                                .$(", id=").$(frameSequence.getId())
-                                .$(", frameIndex=").$(task.getFrameIndex())
-                                .$(", frameCount=").$(frameSequence.getFrameCount())
-                                .$(", valid=").$(frameSequence.isValid())
-                                .$(", cursor=").$(cursor)
-                                .I$();
-                        if (frameSequence.isValid()) {
-                            // we deliberately hold the queue item because
-                            // processing is daisy-chained. If we were to release item before
-                            // finishing reduction, next step (job) will be processing an incomplete task
-                            if (!circuitBreaker.checkIfTripped(frameSequence.getStartTimeUs(), frameSequence.getCircuitBreakerFd())) {
-                                record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
-                                record.setFrameIndex(task.getFrameIndex());
-                                assert frameSequence.doneLatch.getCount() == 0;
-                                frameSequence.getReducer().reduce(record, task);
-                            } else {
-                                frameSequence.setValid(false);
-                            }
+                    LOG.debug()
+                            .$("reducing [shard=").$(frameSequence.getShard())
+                            .$(", id=").$(frameSequence.getId())
+                            .$(", frameIndex=").$(task.getFrameIndex())
+                            .$(", frameCount=").$(frameSequence.getFrameCount())
+                            .$(", valid=").$(frameSequence.isValid())
+                            .$(", cursor=").$(cursor)
+                            .I$();
+                    if (frameSequence.isValid()) {
+                        // we deliberately hold the queue item because
+                        // processing is daisy-chained. If we were to release item before
+                        // finishing reduction, next step (job) will be processing an incomplete task
+                        if (!circuitBreaker.checkIfTripped(frameSequence.getStartTimeUs(), frameSequence.getCircuitBreakerFd())) {
+                            record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+                            record.setFrameIndex(task.getFrameIndex());
+                            assert frameSequence.doneLatch.getCount() == 0;
+                            frameSequence.getReducer().reduce(record, task);
+                        } else {
+                            frameSequence.markInvalid();
                         }
-                    } catch (Throwable e) {
-                        frameSequence.setValid(false);
-                        throw e;
-                    } finally {
-                        framesReducedCounter.incrementAndGet();
                     }
+                } catch (Throwable e) {
+                    frameSequence.markInvalid();
+                    throw e;
                 } finally {
+                    framesReducedCounter.incrementAndGet();
                     subSeq.done(cursor);
                 }
                 return false;
@@ -157,7 +154,7 @@ public class PageFrameReduceJob implements Job, Closeable {
 
     @Override
     public boolean run(int workerId) {
-        // there is job instance per thread, the workerid must never change
+        // there is job instance per thread, the worker id must never change
         // for this job
         boolean useful = false;
         for (int i = 0; i < shardCount; i++) {

@@ -158,7 +158,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     private boolean checkLimit() {
         if (--rowsRemaining < 0) {
-            frameSequence.setValid(false);
+            frameSequence.markInvalid();
             return false;
         }
         return true;
