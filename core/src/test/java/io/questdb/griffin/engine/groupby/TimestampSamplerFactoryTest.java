@@ -105,7 +105,7 @@ public class TimestampSamplerFactoryTest {
             final TimestampSampler sampler = createTimestampSampler(k, 'T', sink);
             final long bucketSize = Timestamps.MILLI_MICROS * (k == 0 ? 1 : k);
             final long expectedTs = ts - ts % bucketSize;
-            for (int i = 0; i < bucketSize; i+=40) {
+            for (int i = 0; i < bucketSize; i+=4) {
                 long actualTs = sampler.round(expectedTs + i);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
