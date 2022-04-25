@@ -24,11 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableSyncModel;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -51,6 +47,7 @@ import static org.junit.Assert.assertEquals;
 
 public class ReplModelReconTest extends AbstractGriffinTest {
 
+    private final SCSequence eventSubSequence = new SCSequence();
     @Override
     public void setUp() {
         super.setUp();
@@ -531,6 +528,10 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             compile("create table y as (select * from x limit 80000) timestamp(k) partition by DAY", sqlExecutionContext);
 
             compile("alter table x add column z double", sqlExecutionContext);
+            for (int i = 0; i < 10; i++) {
+                compile("alter table x drop column z", sqlExecutionContext);
+                compile("alter table x add column z double", sqlExecutionContext);
+            }
 
             try (
                     TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
@@ -541,7 +542,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":292504}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-10T00:00:00.000000Z\",\"index\":27,\"nameTxn\":21,\"top\":0},{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":27,\"nameTxn\":21,\"top\":0},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":27,\"nameTxn\":21,\"top\":0},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":27,\"nameTxn\":21,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":292504}],\"partitions\":[{\"action\":\"columns\",\"ts\":\"2018-01-10T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"columns\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":11}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":6820495939660535106,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":27}]}",
                     sink
             );
         });
@@ -560,7 +561,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T23:04:59.970000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133802},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":424521},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":507396}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T23:04:59.970000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-10T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133802},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":424521},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":507396}],\"partitions\":[{\"action\":\"columns\",\"ts\":\"2018-01-10T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"columns\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -597,7 +598,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T23:04:59.970000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133802},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":424521},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":507396}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T23:04:59.970000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-10T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133802},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":424521},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":507396}],\"partitions\":[{\"action\":\"columns\",\"ts\":\"2018-01-10T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"columns\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -637,7 +638,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T23:04:59.970000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133802},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":424521},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":507396}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T23:04:59.970000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-10T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133802},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":424521},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":507396}],\"partitions\":[{\"action\":\"columns\",\"ts\":\"2018-01-10T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"columns\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -686,7 +687,6 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                     sink
             );
         });
-
     }
 
     @Test
@@ -781,7 +781,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":292504}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"o\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":16,\"toIndex\":16},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-10T00:00:00.000000Z\",\"index\":17,\"nameTxn\":2,\"top\":0},{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":17,\"nameTxn\":2,\"top\":0},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":17,\"nameTxn\":2,\"top\":0},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"nameTxn\":2,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":618176},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":292504}],\"partitions\":[{\"action\":\"columns\",\"ts\":\"2018-01-10T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"columns\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"o\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":16,\"toIndex\":16},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -834,7 +834,7 @@ public class ReplModelReconTest extends AbstractGriffinTest {
             }
 
             TestUtils.assertEquals(
-                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928}],\"partitions\":[{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"n\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":15,\"toIndex\":15},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-10T00:00:00.000000Z\",\"index\":17,\"nameTxn\":2,\"top\":0},{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":17,\"nameTxn\":2,\"top\":0},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":17,\"nameTxn\":2,\"top\":0},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"nameTxn\":2,\"top\":13600}],\"varColumns\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":5,\"size\":163194},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":14,\"size\":518900},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":77070},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":244928}],\"partitions\":[{\"action\":\"columns\",\"ts\":\"2018-01-10T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"columns\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"append\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":22400,\"rowCount\":6400,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":1}],\"columnMetaData\":[{\"name\":\"n\",\"type\":\"LONG256\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"remove\",\"fromIndex\":15,\"toIndex\":15},{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
                     sink
             );
         });
@@ -1391,6 +1391,198 @@ public class ReplModelReconTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testUpdatePartitionAddColumnAndMutates() throws Exception {
+        assertMemoryLeak(() -> {
+            compile(
+                    "create table x as  " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
+            compile("alter table x add column z double", sqlExecutionContext);
+            executeUpdate("UPDATE x SET z = -42.999 where k > to_timestamp('2018-01-11', 'yyyy-MM-dd') and k < to_timestamp('2018-01-12', 'yyyy-MM-dd')");
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
+            ) {
+                sink.clear();
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
+            }
+
+            TestUtils.assertEquals(
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-10T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":17,\"nameTxn\":2,\"top\":1},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":17,\"nameTxn\":1,\"top\":13600}],\"partitions\":[{\"action\":\"columns\",\"ts\":\"2018-01-10T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"columns\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":1},{\"action\":\"columns\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":-1},{\"action\":\"columns\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":13600,\"nameTxn\":-1,\"columnVersion\":2}],\"columnMetaData\":[{\"name\":\"z\",\"type\":\"DOUBLE\",\"hash\":-3546540271125917157,\"index\":false,\"indexCapacity\":256}],\"columnMetaIndex\":[{\"action\":\"add\",\"fromIndex\":0,\"toIndex\":17}]}",
+                    sink
+            );
+        });
+    }
+
+    @Test
+    public void testUpdatePartitionMutates() throws Exception {
+        assertMemoryLeak(() -> {
+            compile(
+                    "create table x as  " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
+
+            compile("insert into x " +
+                            "select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-11', 'yyyy-MM-dd'), 30000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(10000)",
+                    sqlExecutionContext
+            );
+
+            executeUpdate("UPDATE x SET i = -42, n = 'xyz' where k > to_timestamp('2018-01-12', 'yyyy-MM-dd') and k < to_timestamp('2018-01-13', 'yyyy-MM-dd')");
+
+            compile("insert into x " +
+                            "select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-13', 'yyyy-MM-dd'), 30000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(10000)",
+                    sqlExecutionContext
+            );
+
+            executeUpdate("UPDATE x SET i = -42, n = 'xyz' where k > to_timestamp('2018-01-13', 'yyyy-MM-dd') and k < to_timestamp('2018-01-14', 'yyyy-MM-dd')");
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
+            ) {
+                sink.clear();
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
+            }
+
+            TestUtils.assertEquals(
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":0,\"nameTxn\":2,\"top\":0},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"nameTxn\":2,\"top\":0},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":0,\"nameTxn\":4,\"top\":0},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"nameTxn\":4,\"top\":0}],\"varColumns\":[{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":5,\"size\":219590},{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":14,\"size\":699021},{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":15,\"size\":835104},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":288018},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":5,\"size\":133846},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":14,\"size\":426045},{\"ts\":\"2018-01-13T00:00:00.000000Z\",\"index\":15,\"size\":236026}],\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":38800,\"nameTxn\":1,\"columnVersion\":-1},{\"action\":\"columns\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":0},{\"action\":\"whole\",\"ts\":\"2018-01-13T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":23600,\"nameTxn\":3,\"columnVersion\":2}]}",
+                    sink
+            );
+        });
+    }
+
+    @Test
+    public void testUpdatePartitionMutatesSameTwice() throws Exception {
+        assertMemoryLeak(() -> {
+            compile(
+                    "create table x as  " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            compile("create table y as (x) timestamp(k) partition by DAY", sqlExecutionContext);
+
+            executeUpdate("UPDATE x SET i = -42, n = 'xyz' where k > to_timestamp('2018-01-11', 'yyyy-MM-dd') and k < to_timestamp('2018-01-12', 'yyyy-MM-dd')");
+
+            executeUpdate("UPDATE x SET i = -42, n = 'xyz' where k > to_timestamp('2018-01-12', 'yyyy-MM-dd') and k < to_timestamp('2018-01-13', 'yyyy-MM-dd')");
+            executeUpdate("UPDATE x SET i = -43, n = 'xyz' where k > to_timestamp('2018-01-12', 'yyyy-MM-dd') and k < to_timestamp('2018-01-13', 'yyyy-MM-dd')");
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
+            ) {
+                sink.clear();
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
+            }
+
+            TestUtils.assertEquals(
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"columnVersions\":[{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":0,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":15,\"nameTxn\":1,\"top\":0},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":0,\"nameTxn\":3,\"top\":0},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"nameTxn\":3,\"top\":0}],\"varColumns\":[{\"ts\":\"2018-01-11T00:00:00.000000Z\",\"index\":15,\"size\":288012},{\"ts\":\"2018-01-12T00:00:00.000000Z\",\"index\":15,\"size\":288018}],\"partitions\":[{\"action\":\"columns\",\"ts\":\"2018-01-11T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":0},{\"action\":\"columns\",\"ts\":\"2018-01-12T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":28800,\"nameTxn\":-1,\"columnVersion\":2}]}",
+                    sink
+            );
+        });
+    }
+
     private void createDataOrderedAddColumnTop() throws SqlException {
         compile(
                 "create table x as  " +
@@ -1444,6 +1636,14 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                         " from long_sequence(10000)",
                 sqlExecutionContext
         );
+    }
+
+    private void executeUpdate(String query) throws SqlException {
+        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
+        Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
+        try (QueryFuture qf = cc.execute(eventSubSequence)) {
+            qf.await();
+        }
     }
 
     private void sendAndAssertSync(

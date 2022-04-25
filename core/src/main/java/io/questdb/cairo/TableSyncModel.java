@@ -37,11 +37,14 @@ public class TableSyncModel implements Mutable, Sinkable {
     public static final int COLUMN_META_ACTION_MOVE = 2;
     public static final int COLUMN_META_ACTION_REMOVE = 3;
     public static final int COLUMN_META_ACTION_ADD = 4;
+    public static final int PARTITION_ACTION_SKIP = -1;
     public static final int PARTITION_ACTION_WHOLE = 0;
     public static final int PARTITION_ACTION_APPEND = 1;
+    public static final int PARTITION_ACTION_COLUMNS = 2;
     static final String[] ACTION_NAMES = {
             "whole",
-            "append"
+            "append",
+            "columns"
     };
     private static final int SLOTS_PER_PARTITION = 8;
     private static final int SLOTS_PER_COLUMN_META_INDEX = 2;

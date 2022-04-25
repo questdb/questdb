@@ -1259,8 +1259,10 @@ public class TableWriter implements Closeable {
                     }
                 }
             } else {
-                model.addColumnMetadata(metadata.getColumnQuick(masterIndex));
-                model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, newIndex++, masterIndex);
+                if (metadata.getColumnType(masterIndex) > 0) {
+                    model.addColumnMetadata(metadata.getColumnQuick(masterIndex));
+                    model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, newIndex++, masterIndex);
+                }
             }
         }
 
@@ -1274,7 +1276,24 @@ public class TableWriter implements Closeable {
                 final long ourSize = i < ourLast ? txWriter.getPartitionSize(i) : txWriter.transientRowCount;
                 final long ourColumnVersion = i < ourLast ? txWriter.getPartitionColumnVersion(i) : txWriter.columnVersion;
                 final int keyIndex = replPartitionHash.keyIndex(ts);
+
+                boolean columnVersionUpdated = false;
+                for (int j = 0; j < columnCount; j++) {
+                    long top = columnVersionWriter.getColumnTop(ts, j);
+                    long nameTxn = columnVersionWriter.getColumnNameTxn(ts, j);
+                    long theirNameTxn = slaveCvReader.getColumnNameTxn(ts, j); // returns -1 if j < slaveColumnCount
+                    long theirTop = slaveCvReader.getColumnTop(ts, j); // returns 0 if j < slaveColumnCount
+                    if (metadata.getColumnType(j) > 0) {
+                        if (nameTxn != theirNameTxn || top != theirTop) {
+                            //if (top > 0) {
+                            model.addColumnVersion(ts, j, nameTxn, top);
+                            columnVersionUpdated = true;
+                            //}
+                        }
+                    }
+                }
                 final long theirSize;
+                int partitionAction = TableSyncModel.PARTITION_ACTION_SKIP;
                 if (keyIndex < 0) {
                     int slavePartitionIndex = replPartitionHash.valueAt(keyIndex);
                     // check if partition name ourDataTxn is the same
@@ -1283,8 +1302,11 @@ public class TableWriter implements Closeable {
                         theirSize = slavePartitionIndex < theirLast ?
                                 slaveTxReader.getPartitionSize(slavePartitionIndex) :
                                 slaveTxReader.getTransientRowCount();
-
-                        if (theirSize > ourSize) {
+                        if (theirSize < ourSize) {
+                            partitionAction = TableSyncModel.PARTITION_ACTION_APPEND;
+                        } else if (theirSize == ourSize && columnVersionUpdated) {
+                            partitionAction = TableSyncModel.PARTITION_ACTION_COLUMNS;
+                        } else {
                             LOG.error()
                                     .$("slave partition is larger than that on master [table=").$(tableName)
                                     .$(", ts=").$ts(ts)
@@ -1293,36 +1315,20 @@ public class TableWriter implements Closeable {
                     } else {
                         // partition name ourDataTxn is different, partition mutated
                         theirSize = 0;
+                        partitionAction = TableSyncModel.PARTITION_ACTION_WHOLE;
                     }
                 } else {
                     theirSize = 0;
+                    partitionAction = TableSyncModel.PARTITION_ACTION_WHOLE;
                 }
 
-                for (int j = 0; j < columnCount; j++) {
-                    long top = columnVersionWriter.getColumnTop(ts, j);
-                    long nameTxn = columnVersionWriter.getColumnNameTxn(ts, j);
-                    if (j < slaveColumnCount && theirSize > 0) {
-                        long theirNameTxn = slaveCvReader.getColumnNameTxn(ts, j);
-                        long theirTop = slaveCvReader.getColumnTop(ts, j);
-                        if (top != theirTop || nameTxn > theirNameTxn) {
-                            model.addColumnVersion(ts, j, nameTxn, top);
-                        }
-                    } else {
-                        if (top > 0) {
-                            model.addColumnVersion(ts, j, nameTxn, top);
-                        }
-                    }
-                }
-
-                if (theirSize < ourSize) {
+                if (partitionAction != TableSyncModel.PARTITION_ACTION_SKIP) {
                     final long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     model.addPartitionAction(
-                            theirSize == 0 ?
-                                    TableSyncModel.PARTITION_ACTION_WHOLE :
-                                    TableSyncModel.PARTITION_ACTION_APPEND,
+                            partitionAction,
                             ts,
-                            theirSize,
-                            ourSize - theirSize,
+                            partitionAction == TableSyncModel.PARTITION_ACTION_COLUMNS ? 0 : theirSize,
+                            partitionAction == TableSyncModel.PARTITION_ACTION_COLUMNS ? ourSize : ourSize - theirSize,
                             partitionNameTxn,
                             ourColumnVersion
                     );
@@ -1334,20 +1340,24 @@ public class TableWriter implements Closeable {
                     }
 
                     int plen = path.length();
-
-                    // assuming master/slave metadata column order is the same
                     for (int j = 0; j < columnCount; j++) {
-                        final CharSequence columnName = metadata.getColumnName(j);
-                        if (ColumnType.isVariableLength(metadata.getColumnType(j))) {
-                            long columnNameTxn = columnVersionWriter.getColumnNameTxn(ts, j);
-                            iFile(path.trimTo(plen), columnName, columnNameTxn);
-                            long sz = TableUtils.readLongAtOffset(
-                                    ff,
-                                    path,
-                                    tempMem16b,
-                                    ourSize * 8L
-                            );
-                            model.addVarColumnSize(ts, j, sz);
+                        if (metadata.getColumnType(j) > 0) {
+                            final CharSequence columnName = metadata.getColumnName(j);
+                            if (ColumnType.isVariableLength(metadata.getColumnType(j))) {
+                                long columnNameTxn = columnVersionWriter.getColumnNameTxn(ts, j);
+                                iFile(path.trimTo(plen), columnName, columnNameTxn);
+                                long sz = TableUtils.readLongAtOffset(
+                                        ff,
+                                        path,
+                                        tempMem16b,
+                                        ourSize * 8L
+                                );
+                                long nameTxn = columnVersionWriter.getColumnNameTxn(ts, j);
+                                long theirNameTxn = slaveCvReader.getColumnNameTxn(ts, j);
+                                if (partitionAction != TableSyncModel.PARTITION_ACTION_COLUMNS || nameTxn > theirNameTxn) {
+                                    model.addVarColumnSize(ts, j, sz);
+                                }
+                            }
                         }
                     }
                 }
