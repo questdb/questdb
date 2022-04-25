@@ -2145,7 +2145,7 @@ public class SqlCompiler implements Closeable {
             return compiledQuery.ofCopyRemote(textLoader);
         }
         copyTable(executionContext, executionModel);
-        return compiledQuery.ofCopyLocal();
+        return compiledQuery.ofCopyLocal(textLoader);
     }
 
     private CompiledQuery executeWithRetries(

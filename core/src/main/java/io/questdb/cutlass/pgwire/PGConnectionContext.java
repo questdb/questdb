@@ -1424,6 +1424,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case 'Q':
                 processQuery(msgLo, msgLimit, compiler);
                 break;
+            case 'c':
+                assert queryTag != null && Chars.equals(queryTag, TAG_COPY);
+                // the end of data section from COPY FROM fall-through
+                // qdb does not support copying from stdin via pgwire yet,
+                // but this is also used when copying from a local CSV file
             case 'd':
                 System.out.println("data " + msgLen);
                 // msgLen includes 4 bytes of self

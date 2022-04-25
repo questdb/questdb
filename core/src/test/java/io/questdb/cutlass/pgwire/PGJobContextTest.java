@@ -62,6 +62,7 @@ import org.postgresql.core.BaseConnection;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.Date;
@@ -93,6 +94,7 @@ public class PGJobContextTest extends BasePGTest {
 
     @BeforeClass
     public static void init() {
+        inputRoot = new File(".").getAbsolutePath();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
@@ -1676,6 +1678,28 @@ public class PGJobContextTest extends BasePGTest {
             byte[] bytes = text.getBytes();
             copyIn.writeToCopy(bytes, 0, bytes.length);
             copyIn.endCopy();
+        }
+    }
+
+    @Test
+    public void testLocalCopyFrom() throws Exception {
+        try (
+                final PGWireServer ignored = createPGServer(2);
+                final Connection connection = getConnection(false, false)
+        ) {
+
+            CopyManager copyManager = new CopyManager((BaseConnection) connection);
+            CopyIn copyIn = copyManager.copyIn("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header true");
+            copyIn.endCopy();
+
+            try (PreparedStatement statement = connection.prepareStatement("select * FROM x")) {
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n" +
+                            "ABC,xy,a,brown fox jumped over the fence,10\n" +
+                            "CDE,bb,b,sentence 1\n" +
+                            "sentence 2,12\n", sink, rs);
+                }
+            }
         }
     }
 
