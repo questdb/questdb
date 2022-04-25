@@ -242,6 +242,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int o3PartitionPurgeListCapacity;
     private final long writerFileOpenOpts;
+    private final int queryCacheEventQueueCapacity;
     private int lineUdpDefaultPartitionBy;
     private int httpMinNetConnectionLimit;
     private boolean httpMinNetConnectionHint;
@@ -287,7 +288,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetBindPort;
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
-    private final int queryCacheEventQueueCapacity;
     private int jsonQueryFloatScale;
     private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
@@ -376,6 +376,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean isStringAsTagSupported;
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
+    private boolean replicationEnabled;
+    private int replicationRole;  // ReplicationRole.XYZ..
+    private boolean ctrlEnabled;
+    private int ctrlNetBindIPv4Address;
+    private int ctrlNetBindPort;
 
     public PropServerConfiguration(
             String root,
@@ -904,6 +909,9 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
+
+            configureCtrl(properties, env);
+            configureReplication(properties, env);
         }
     }
 
@@ -1043,6 +1051,22 @@ public class PropServerConfiguration implements ServerConfiguration {
         return metricsConfiguration;
     }
 
+    public int getCtrlNetBindIPv4Address() {
+        return ctrlNetBindIPv4Address;
+    }
+
+    public int getCtrlNetBindPort() {
+        return ctrlNetBindPort;
+    }
+
+    public int getReplicationRole() {
+        return replicationRole;
+    }
+
+    public boolean isCtrlEnabled() {
+        return ctrlEnabled;
+    }
+
     private static <KeyT> void registerReplacements(
             Map<KeyT, String> map,
             KeyT old,
@@ -1068,6 +1092,25 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private static void registerDeprecated(PropertyKey old, PropertyKey... replacements) {
         registerReplacements(DEPRECATED_SETTINGS, old, replacements);
+    }
+
+    private void configureCtrl(Properties properties, @Nullable Map<String, String> env) throws ServerConfigurationException {
+        ctrlEnabled = getBoolean(properties, env, PropertyKey.CTRL_ENABLED, false);
+        parseBindTo(properties, env, PropertyKey.CTRL_NET_BIND_TO, "0.0.0.0:9010", (a, p) -> {
+            ctrlNetBindIPv4Address = a;
+            ctrlNetBindPort = p;
+        });
+    }
+
+    private void configureReplication(Properties properties, @Nullable Map<String, String> env) throws ServerConfigurationException {
+        replicationEnabled = getBoolean(properties, env, PropertyKey.REPLICATION_ENABLED, false);
+        if (replicationEnabled && !ctrlEnabled) {
+            throw new ServerConfigurationException(
+                    "To enable `" + PropertyKey.REPLICATION_ENABLED.getPropertyPath() +
+                    "` you must also enable `" + PropertyKey.CTRL_ENABLED.getPropertyPath() + "`.");
+        }
+        Map<String, Integer> replicationRoleMappings = Map.of("primary", ReplicationRole.PRIMARY, "secondary", ReplicationRole.SECONDARY);
+        this.replicationRole = getEnum(properties, env, PropertyKey.REPLICATION_TMP_ROLE, replicationRoleMappings, ReplicationRole.PRIMARY);
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, PropertyKey key, int httpWorkerCount) throws ServerConfigurationException {
@@ -1125,6 +1168,22 @@ public class PropServerConfiguration implements ServerConfiguration {
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
+    }
+
+    private int getEnum(Properties properties, @Nullable Map<String, String> env, PropertyKey key, Map<String, Integer> enums, int defaultValue) throws ServerConfigurationException {
+        final String value = overrideWithEnv(properties, env, key);
+        if (value == null) {
+            if (enums.containsValue(defaultValue)) {
+                return defaultValue;
+            } else {
+                throw new IllegalArgumentException("defaultValue");
+            }
+        }
+        Integer enumIndex = enums.get(value);
+        if (enumIndex == null) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
+        }
+        return enumIndex;
     }
 
     @SuppressWarnings("SameParameterValue")
