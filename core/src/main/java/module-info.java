@@ -414,6 +414,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastStrToIntFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToBooleanFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastStrToBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToFloatFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToLongFunctionFactory,
@@ -562,7 +563,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory,
-            
+
 //            PostgreSQL advisory locks functions
             io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll,
 //                  concat()
