@@ -280,7 +280,7 @@ const Menu = () => {
       />
 
       <MenuLink
-        href="https://questdb.io/docs/reference/web-console/"
+        href="https://questdb.io/docs/develop/web-console/"
         icon={<HelpCircle size="18px" />}
         tooltipText="Go to Web Console help"
       />
