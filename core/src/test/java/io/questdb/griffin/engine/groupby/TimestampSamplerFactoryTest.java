@@ -63,10 +63,10 @@ public class TimestampSamplerFactoryTest {
         final long ts = TimestampFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
         for (int k = 0; k < 61; k++) {
             final TimestampSampler sampler = createTimestampSampler(k, 'm', sink);
-            final long bucketSize = 60 * (k == 0 ? 1 : k);
-            final long expectedTs = ts - ts % (Timestamps.SECOND_MICROS * bucketSize);
-            for (int i = 0; i < bucketSize; i+=4) {
-                long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
+            final long bucketSize = Timestamps.MINUTE_MICROS * (k == 0 ? 1 : k);
+            final long expectedTs = ts - ts % bucketSize;
+            for (int i = 0; i < bucketSize; i+=Timestamps.SECOND_MICROS) {
+                long actualTs = sampler.round(expectedTs + i);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
                             "Failed at: %s, i: %d. Expected: %s, actual: %s",
@@ -83,10 +83,10 @@ public class TimestampSamplerFactoryTest {
         final long ts = TimestampFormatUtils.parseUTCTimestamp("2022-04-23T10:33:00.123456Z");
         for (int k = 0; k < 61; k++) {
             final TimestampSampler sampler = createTimestampSampler(k, 's', sink);
-            final long bucketSize = Timestamps.SECOND_MILLIS * (k == 0 ? 1 : k);
-            final long expectedTs = ts - ts % (Timestamps.MILLI_MICROS * bucketSize);
-            for (int i = 0; i < bucketSize; i+=4) {
-                long actualTs = sampler.round(expectedTs + i * Timestamps.MILLI_MICROS);
+            final long bucketSize = Timestamps.SECOND_MICROS * (k == 0 ? 1 : k);
+            final long expectedTs = ts - ts % bucketSize;
+            for (int i = 0; i < bucketSize; i+=4 * Timestamps.MILLI_MICROS) {
+                long actualTs = sampler.round(expectedTs + i);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
                             "Failed at: %s, i: %d. Expected: %s, actual: %s",
