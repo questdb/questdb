@@ -520,15 +520,17 @@ public class CairoEngineTest extends AbstractCairoTest {
 
     @Test
     public void testDuplicateTableCreation() throws Exception {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
-                .col("a", ColumnType.INT)) {
-            engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model);
-            try {
-                engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model);
-                fail("duplicated tables should not be permitted!");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.INT)) {
+                CairoTestUtils.create(model);
+                try {
+                    engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model);
+                    fail("duplicated tables should not be permitted!");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
+                }
             }
-        }
+        });
     }
 }
