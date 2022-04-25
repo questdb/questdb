@@ -34,9 +34,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
@@ -57,10 +56,11 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
     private DirectLongList negativeLimitRows;
 
     public AsyncFilteredRecordCursorFactory(
-            CairoConfiguration configuration,
-            MessageBus messageBus,
-            RecordCursorFactory base,
-            Function filter,
+            @NotNull CairoConfiguration configuration,
+            @NotNull MessageBus messageBus,
+            @NotNull RecordCursorFactory base,
+            @NotNull Function filter,
+            @NotNull @Transient WeakAutoClosableObjectPool<PageFrameReduceTask> localTaskPool,
             @Nullable Function limitLoFunction,
             int limitLoPos
     ) {
@@ -69,7 +69,7 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
         this.cursor = new AsyncFilteredRecordCursor(filter, base.hasDescendingOrder());
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor();
         this.filter = filter;
-        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER);
+        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, localTaskPool);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();

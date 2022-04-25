@@ -364,6 +364,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPageFrameReduceTaskPoolCapacity() {
+        return 4;
+    }
+
+    @Override
     public int getParallelIndexThreshold() {
         return 100000;
     }

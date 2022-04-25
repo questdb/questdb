@@ -1008,7 +1008,7 @@ public class SqlCompiler implements Closeable {
     private  int goToQueryEnd() {
         CharSequence token;
         lexer.unparse();
-        while ( lexer.hasNext() ){
+        while (lexer.hasNext() ){
             token = SqlUtil.fetchNext(lexer);
             if (token == null || isSemicolon(token)) {
                 break;

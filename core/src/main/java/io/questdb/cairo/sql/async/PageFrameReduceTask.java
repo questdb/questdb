@@ -42,10 +42,10 @@ public class PageFrameReduceTask implements Closeable {
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
 
-    public PageFrameReduceTask(CairoConfiguration configuration, int pageFrameQueueCapacity) {
+    public PageFrameReduceTask(CairoConfiguration configuration) {
         this.rows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
         this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
-        this.pageFrameQueueCapacity = pageFrameQueueCapacity;
+        this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
     }
 
     @Override
@@ -65,8 +65,7 @@ public class PageFrameReduceTask implements Closeable {
         // is 32 items. If our particular producer resizes queue items to 10x of the initial size
         // we let these sizes stick until produce starts to wind down.
         if (forceCollect || frameIndex >= frameCount - pageFrameQueueCapacity) {
-            rows.resetCapacity();
-            columns.resetCapacity();
+            resetCapacities();
         }
 
         // we assume that frame indexes are published in ascending order
@@ -76,6 +75,11 @@ public class PageFrameReduceTask implements Closeable {
         }
 
         frameSequence = null;
+    }
+
+    public void resetCapacities() {
+        rows.resetCapacity();
+        columns.resetCapacity();
     }
 
     public DirectLongList getColumns() {

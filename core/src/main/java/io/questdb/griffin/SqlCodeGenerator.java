@@ -29,6 +29,7 @@ import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
@@ -123,6 +124,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
     private final ObjectPool<ExpressionNode> expressionNodePool;
+    private final WeakAutoClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
 
     public SqlCodeGenerator(
             CairoEngine engine,
@@ -141,6 +143,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         jitIRMem.putByte((byte) 0);
         jitIRMem.truncate();
         this.expressionNodePool = expressionNodePool;
+        this.reduceTaskPool = new WeakAutoClosableObjectPool<>(
+                (p) -> new PageFrameReduceTask(configuration),
+                configuration.getPageFrameReduceTaskPoolCapacity()
+        );
     }
 
     @Override
@@ -151,6 +157,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @Override
     public void close() {
         jitIRMem.close();
+        Misc.free(reduceTaskPool);
     }
 
     @NotNull
@@ -769,7 +776,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     LOG.info()
                             .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
                             .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
-                    return new AsyncJitFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, bindVarFunctions, f, jitFilter, limitLoFunction, limitLoPos);
+                    return new AsyncJitFilteredRecordCursorFactory(
+                            configuration,
+                            executionContext.getMessageBus(),
+                            factory,
+                            bindVarFunctions,
+                            f,
+                            jitFilter,
+                            reduceTaskPool,
+                            limitLoFunction,
+                            limitLoPos
+                    );
                 } catch (SqlException | LimitOverflowException ex) {
                     LOG.debug()
                             .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
@@ -785,7 +802,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (factory.supportPageFrameCursor()) {
             final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
             final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
-            return new AsyncFilteredRecordCursorFactory(configuration, executionContext.getMessageBus(), factory, f, limitLoFunction, limitLoPos);
+            return new AsyncFilteredRecordCursorFactory(
+                    configuration,
+                    executionContext.getMessageBus(),
+                    factory,
+                    f,
+                    reduceTaskPool,
+                    limitLoFunction,
+                    limitLoPos
+            );
         }
         return new FilteredRecordCursorFactory(factory, f);
     }
@@ -998,6 +1023,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 executionContext.getMessageBus(),
                                 master,
                                 functionParser.parseFunction(filter, master.getMetadata(), executionContext),
+                                reduceTaskPool,
                                 null,
                                 0
                         );

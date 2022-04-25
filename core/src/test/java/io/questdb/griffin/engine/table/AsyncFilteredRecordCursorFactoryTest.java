@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.table;
 import io.questdb.Metrics;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
@@ -38,6 +40,8 @@ import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.BeforeClass;
@@ -47,16 +51,15 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 
 public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
+    private static final int QUEUE_CAPACITY = 4;
+
     @BeforeClass
     public static void setUpStatic() {
-        // Some tests, e.g. testNoLimitJit, may lead to only a fraction of the page frames being
-        // reduced in the middle of the test. When that happens, row id and column lists' capacities
-        // don't get reset to initial values, so the memory leak check fails. So, we use a single
-        // shard only to let subsequent query executions within the same test release the memory.
-        // TODO: come up with a better solution
+        // Having a single shard is important for many tests in this suite. See resetTaskCapacities
+        // method for more detail.
         pageFrameReduceShardCount = 1;
         // We intentionally use a small capacity for the reduce queue to exhibit various edge cases.
-        pageFrameReduceQueueCapacity = 4;
+        pageFrameReduceQueueCapacity = QUEUE_CAPACITY;
 
         jitMode = SqlJitMode.JIT_MODE_DISABLED;
         AbstractGriffinTest.setUpStatic();
@@ -181,6 +184,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     sqlExecutionContext,
                     true // cursor for negative limit accumulates row ids, so it supports size
             );
+
+            resetTaskCapacities();
         });
     }
 
@@ -220,6 +225,21 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         testSimple(SqlJitMode.JIT_MODE_DISABLED, io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class);
     }
 
+    @Test
+    public void testFullQueueNoLimit() throws Exception {
+        testFullQueue("x where a > 0.42");
+    }
+
+    @Test
+    public void testFullQueuePositiveLimit() throws Exception {
+        testFullQueue("x where a > 0.42 limit 3");
+    }
+
+    @Test
+    public void testFullQueueNegativeLimit() throws Exception {
+        testFullQueue("x where a > 0.42 limit -3");
+    }
+
     private void testNoLimit(int jitMode, Class<?> expectedFactoryClass) throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(jitMode);
@@ -250,7 +270,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
             sqlExecutionContext.setJitMode(jitMode);
 
-            compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(20000000)) timestamp(t) partition by hour", sqlExecutionContext);
+            compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             try (RecordCursorFactory f = compiler.compile("x where a > 0.34", sqlExecutionContext).getRecordCursorFactory()) {
 
                 Assert.assertEquals(expectedFactoryClass.getName(), f.getClass().getName());
@@ -263,7 +283,9 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 while (true) {
                     long cursor = subSeq.next();
                     if (cursor < 0) {
-                        frameSequence.tryDispatch();
+                        boolean dispatched = frameSequence.tryDispatch();
+                        // The queue size should be sufficient for this test, so we don't bother with the local task.
+                        Assert.assertTrue(dispatched);
                         continue;
                     }
                     PageFrameReduceTask task = queue.get(cursor);
@@ -283,6 +305,67 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 frameSequence.clear();
             }
         });
+    }
+
+    private void testFullQueue(String query) throws Exception {
+        final int pageFrameRows = 100;
+        pageFrameMaxRows = pageFrameRows;
+
+        withPool((engine, compiler, sqlExecutionContext) -> {
+            compiler.compile("create table x as (" +
+                    "  select rnd_double() a," +
+                    "  timestamp_sequence(0, 100000) t from long_sequence(" + (10 * pageFrameRows * QUEUE_CAPACITY) + ")" +
+                    ") timestamp(t) partition by hour", sqlExecutionContext);
+
+            try (
+                    RecordCursorFactory f1 = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                    RecordCursorFactory f2 = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class.getName(), f1.getClass().getName());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class.getName(), f2.getClass().getName());
+
+                try (
+                        RecordCursor c1 = f1.getCursor(sqlExecutionContext);
+                        RecordCursor c2 = f2.getCursor(sqlExecutionContext)
+                ) {
+                    StringSink sink1 = new StringSink();
+                    StringSink sink2 = new StringSink();
+
+                    Record r1 = c1.getRecord();
+                    Record r2 = c2.getRecord();
+
+                    // We expect both cursors to be able to make progress even although only one of them
+                    // occupies the reduce queue most of the time. The second one should be using a local task.
+                    while (c1.hasNext()) {
+                        printer.print(r1, f1.getMetadata(), sink1);
+                        if (c2.hasNext()) {
+                            printer.print(r2, f2.getMetadata(), sink2);
+                        }
+                    }
+
+                    Assert.assertFalse(c1.hasNext());
+                    Assert.assertFalse(c2.hasNext());
+
+                    TestUtils.assertEquals(sink1, sink2);
+                }
+            }
+
+            resetTaskCapacities();
+        });
+    }
+
+    private void resetTaskCapacities() {
+        // Some tests, e.g. testFullQueue, may lead to only a fraction of the page frames being
+        // reduced and/or collected before the factory gets closed. When that happens, row id and
+        // column lists' capacities in the reduce queue's tasks don't get reset to initial values,
+        // so the memory leak check fails. As a workaround, we clean up the memory manually.
+        final long maxPageFrameRows = configuration.getSqlPageFrameMaxRows();
+        final RingQueue<PageFrameReduceTask> tasks = engine.getMessageBus().getPageFrameReduceQueue(0);
+        for (int i = 0; i < tasks.getCycle(); i++) {
+            PageFrameReduceTask task = tasks.get(i);
+            Assert.assertTrue("Row id list capacity exceeds max page frame rows", task.getRows().getCapacity() <= maxPageFrameRows);
+            task.resetCapacities();
+        }
     }
 
     private void withPool(CustomisableRunnable runnable) throws Exception {

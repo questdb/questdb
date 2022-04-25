@@ -108,7 +108,6 @@ public class PageFrameReduceJob implements Job, Closeable {
             if (cursor > -1) {
                 final PageFrameReduceTask task = queue.get(cursor);
                 final PageFrameSequence<?> frameSequence = task.getFrameSequence();
-                final AtomicInteger framesReducedCounter = frameSequence.getReduceCounter();
                 try {
                     LOG.debug()
                             .$("reducing [shard=").$(frameSequence.getShard())
@@ -119,23 +118,12 @@ public class PageFrameReduceJob implements Job, Closeable {
                             .$(", cursor=").$(cursor)
                             .I$();
                     if (frameSequence.isValid()) {
-                        // we deliberately hold the queue item because
-                        // processing is daisy-chained. If we were to release item before
-                        // finishing reduction, next step (job) will be processing an incomplete task
-                        if (!circuitBreaker.checkIfTripped(frameSequence.getStartTimeUs(), frameSequence.getCircuitBreakerFd())) {
-                            record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
-                            record.setFrameIndex(task.getFrameIndex());
-                            assert frameSequence.doneLatch.getCount() == 0;
-                            frameSequence.getReducer().reduce(record, task);
-                        } else {
-                            frameSequence.markInvalid();
-                        }
+                        reduce(record, circuitBreaker, task, frameSequence);
                     }
                 } catch (Throwable e) {
                     frameSequence.markInvalid();
                     throw e;
                 } finally {
-                    framesReducedCounter.incrementAndGet();
                     subSeq.done(cursor);
                 }
                 return false;
@@ -145,6 +133,30 @@ public class PageFrameReduceJob implements Job, Closeable {
             }
         } while (true);
         return true;
+    }
+
+    public static void reduce(
+            PageAddressCacheRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            PageFrameReduceTask task,
+            PageFrameSequence<?> frameSequence
+    ) {
+        final AtomicInteger framesReducedCounter = frameSequence.getReduceCounter();
+        try {
+            // we deliberately hold the queue item because
+            // processing is daisy-chained. If we were to release item before
+            // finishing reduction, next step (job) will be processing an incomplete task
+            if (!circuitBreaker.checkIfTripped(frameSequence.getStartTimeUs(), frameSequence.getCircuitBreakerFd())) {
+                record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+                record.setFrameIndex(task.getFrameIndex());
+                assert frameSequence.doneLatch.getCount() == 0;
+                frameSequence.getReducer().reduce(record, task);
+            } else {
+                frameSequence.markInvalid();
+            }
+        } finally {
+            framesReducedCounter.incrementAndGet();
+        }
     }
 
     @Override

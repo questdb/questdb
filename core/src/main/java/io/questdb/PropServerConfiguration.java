@@ -246,6 +246,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceQueueCapacity;
     private final int cairoPageFrameReduceRowIdListCapacity;
     private final int cairoPageFrameReduceColumnListCapacity;
+    private final int cairoPageFrameReduceTaskPoolCapacity;
     private final long writerFileOpenOpts;
     private final int cairoPageFrameReduceShardCount;
     private int lineUdpDefaultPartitionBy;
@@ -696,6 +697,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 16);
+            this.cairoPageFrameReduceTaskPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY, 4);
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 16 * 1024 * 1024));
@@ -2406,6 +2408,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPageFrameReduceColumnListCapacity() {
             return cairoPageFrameReduceColumnListCapacity;
+        }
+
+        @Override
+        public int getPageFrameReduceTaskPoolCapacity() {
+            return cairoPageFrameReduceTaskPoolCapacity;
         }
 
         @Override

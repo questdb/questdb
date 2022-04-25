@@ -143,36 +143,52 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                 PageFrameReduceTask task = reduceQueue.get(cursor);
                 PageFrameSequence<?> thatFrameSequence = task.getFrameSequence();
                 if (thatFrameSequence == this.frameSequence) {
-                    LOG.debug()
-                            .$("collected [shard=").$(frameSequence.getShard())
-                            .$(", frameIndex=").$(task.getFrameIndex())
-                            .$(", frameCount=").$(frameSequence.getFrameCount())
-                            .$(", valid=").$(frameSequence.isValid())
-                            .$(", cursor=").$(cursor)
-                            .I$();
-
                     frameIndex = task.getFrameIndex();
-                    final DirectLongList frameRows = task.getRows();
-                    final long frameRowCount = frameRows.size();
-
-                    if (frameRowCount > 0 && rowCount < rowLimit + 1 && frameSequence.isValid()) {
-                        // Copy rows into the buffer.
-                        for (long i = frameRowCount - 1; i > -1 && rowCount < rowLimit; i--, rowCount++) {
-                            rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
-                        }
-                    }
-                    // It is necessary to clear 'cursor' value
-                    // because we updated frameIndex and loop can exit due to lack of frames.
-                    // Non-update of 'cursor' could cause double-free.
-                    unsafeCollectCursor(cursor);
+                    handleTask(cursor, task);
                 } else {
                     // not our task, nothing to collect
                     collectSubSeq.done(cursor);
                 }
             } else {
-                frameSequence.tryDispatch();
+                if (frameSequence.tryDispatch()) {
+                    // We have dispatched something, so let's try to collect it.
+                    continue;
+                }
+                if (frameSequence.isNothingDispatchedSince(frameIndex)) {
+                    // We haven't dispatched anything, and we have collected everything
+                    // that was dispatched previously. Use local task to avoid being
+                    // blocked in case of full reduce queue.
+                    PageFrameReduceTask task = frameSequence.reduceLocally();
+                    frameIndex = task.getFrameIndex();
+                    handleTask(cursor, task);
+                }
             }
         } while (frameIndex < frameLimit);
+    }
+
+    private void handleTask(long cursor, PageFrameReduceTask task) {
+        LOG.debug()
+                .$("collected [shard=").$(frameSequence.getShard())
+                .$(", frameIndex=").$(task.getFrameIndex())
+                .$(", frameCount=").$(frameSequence.getFrameCount())
+                .$(", valid=").$(frameSequence.isValid())
+                .$(", cursor=").$(cursor)
+                .I$();
+
+        final DirectLongList frameRows = task.getRows();
+        final long frameRowCount = frameRows.size();
+        final int frameIndex = task.getFrameIndex();
+
+        if (frameRowCount > 0 && rowCount < rowLimit + 1 && frameSequence.isValid()) {
+            // Copy rows into the buffer.
+            for (long i = frameRowCount - 1; i > -1 && rowCount < rowLimit; i--, rowCount++) {
+                rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
+            }
+        }
+        // It is necessary to clear 'cursor' value
+        // because we updated frameIndex and loop can exit due to lack of frames.
+        // Non-update of 'cursor' could cause double-free.
+        collectCursor(cursor);
     }
 
     void of(SCSequence collectSubSeq, PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) throws SqlException {
@@ -192,8 +208,12 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         }
     }
 
-    private void unsafeCollectCursor(long cursor) {
-        reduceQueue.get(cursor).collected(false);
-        collectSubSeq.done(cursor);
+    private void collectCursor(long cursor) {
+        if (cursor > -1) {
+            reduceQueue.get(cursor).collected(false);
+            collectSubSeq.done(cursor);
+        } else {
+            frameSequence.collectLocalTask();
+        }
     }
 }

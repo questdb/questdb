@@ -190,6 +190,12 @@ public interface CairoConfiguration {
 
     int getPageFrameReduceShardCount();
 
+    int getPageFrameReduceRowIdListCapacity();
+
+    int getPageFrameReduceColumnListCapacity();
+
+    int getPageFrameReduceTaskPoolCapacity();
+
     int getParallelIndexThreshold();
 
     int getPartitionPurgeListCapacity();
@@ -343,10 +349,6 @@ public interface CairoConfiguration {
     boolean isParallelIndexingEnabled();
 
     boolean isSqlJitDebugEnabled();
-
-    int getPageFrameReduceRowIdListCapacity();
-
-    int getPageFrameReduceColumnListCapacity();
 
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 

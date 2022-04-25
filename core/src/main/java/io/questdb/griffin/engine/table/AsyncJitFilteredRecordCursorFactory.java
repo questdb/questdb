@@ -39,10 +39,7 @@ import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -73,6 +70,7 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
             @NotNull ObjList<Function> bindVarFunctions,
             @NotNull Function filter,
             @NotNull CompiledFilter compiledFilter,
+            @NotNull @Transient WeakAutoClosableObjectPool<PageFrameReduceTask> localTaskPool,
             @Nullable Function limitLoFunction,
             int limitLoPos
     ) {
@@ -86,7 +84,7 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
         this.bindVarMemory = Vm.getCARWInstance(configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(), MemoryTag.NATIVE_JIT);
         this.atom = new FilterAtom(filter, compiledFilter, bindVarMemory, bindVarFunctions);
-        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER);
+        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, REDUCER, localTaskPool);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
