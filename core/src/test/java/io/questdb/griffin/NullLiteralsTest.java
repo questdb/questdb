@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class NullLiteralsTest extends AbstractGriffinTest {
@@ -220,20 +219,14 @@ public class NullLiteralsTest extends AbstractGriffinTest {
     public void testBooleanSelectCast() throws Exception {
         assertSql("select cast(0 AS BOOLEAN) IS NULL", "column\nfalse\n");
         assertSql("select cast(0L AS BOOLEAN) IS NULL", "column\nfalse\n");
+        assertSql("select cast('' AS BOOLEAN) IS NULL", "column\nfalse\n");
         assertSql("select cast(NULL AS BOOLEAN) IS NULL", "column\nfalse\n");
         assertSql("select cast(false AS BOOLEAN) IS NULL", "column\nfalse\n");
         assertSql("select cast(0 AS BOOLEAN) IS NOT NULL", "column\ntrue\n");
         assertSql("select cast(0L AS BOOLEAN) IS NOT NULL", "column\ntrue\n");
+        assertSql("select cast('' AS BOOLEAN) IS NOT NULL", "column\ntrue\n");
         assertSql("select cast(NULL AS BOOLEAN) IS NOT NULL", "column\ntrue\n");
         assertSql("select cast(false AS BOOLEAN) IS NOT NULL", "column\ntrue\n");
-    }
-
-    // TODO: the following test evidences a bug
-    @Test
-    @Ignore
-    public void testBooleanEmptySelectCast() throws Exception {
-        assertSql("select cast('' AS BOOLEAN) IS NULL", "column\nfalse\n");
-        assertSql("select cast('' AS BOOLEAN) IS NOT NULL", "column\ntrue\n");
     }
 
     @Test

@@ -4500,6 +4500,31 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStrToBoolean() throws Exception {
+        assertQuery(
+                "boolean\n" +
+                        "false\n" +
+                        "false\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "false\n" +
+                        "true\n" +
+                        "false\n" +
+                        "false\n",
+                "select boolean from tab",
+                "create table tab as (" +
+                        "select cast(rnd_str('28', 'TRuE', '', null, 'false', 'true') as boolean) boolean from long_sequence(10)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testStrToByte() throws Exception {
         assertQuery(
                 "a\n",
