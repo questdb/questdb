@@ -65,8 +65,8 @@ public class TimestampSamplerFactoryTest {
             final TimestampSampler sampler = createTimestampSampler(k, 'm', sink);
             final long bucketSize = Timestamps.MINUTE_MICROS * (k == 0 ? 1 : k);
             final long expectedTs = ts - ts % bucketSize;
-            for (long i = 0; i < bucketSize; i+=Timestamps.SECOND_MICROS) {
-                long actualTs = sampler.round(expectedTs + i);
+            for (int i = 0; i < (int)(bucketSize / Timestamps.SECOND_MICROS); i+=4) {
+                long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
                             "Failed at: %s, i: %d. Expected: %s, actual: %s",
@@ -85,8 +85,8 @@ public class TimestampSamplerFactoryTest {
             final TimestampSampler sampler = createTimestampSampler(k, 's', sink);
             final long bucketSize = Timestamps.SECOND_MICROS * (k == 0 ? 1 : k);
             final long expectedTs = ts - ts % bucketSize;
-            for (int i = 0; i < bucketSize; i+=4 * Timestamps.MILLI_MICROS) {
-                long actualTs = sampler.round(expectedTs + i);
+            for (int i = 0; i < (int)(bucketSize / Timestamps.SECOND_MICROS); i++) {
+                long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
                             "Failed at: %s, i: %d. Expected: %s, actual: %s",
@@ -105,7 +105,7 @@ public class TimestampSamplerFactoryTest {
             final TimestampSampler sampler = createTimestampSampler(k, 'T', sink);
             final long bucketSize = Timestamps.MILLI_MICROS * (k == 0 ? 1 : k);
             final long expectedTs = ts - ts % bucketSize;
-            for (int i = 0; i < bucketSize; i+=4) {
+            for (int i = 0; i < bucketSize; i+=40) {
                 long actualTs = sampler.round(expectedTs + i);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
