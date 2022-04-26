@@ -762,14 +762,13 @@ public final class TableUtils {
             }
 
             final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+            if (columnCount < 0) {
+                throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
+            }
+
             long offset = getColumnNameOffset(columnCount);
             if (memSize < offset) {
                 throw validationException(metaMem).put("File is too small, column types are missing ").put(memSize);
-            }
-
-            if (offset < columnCount || (
-                    columnCount > 0 && (offset < 0 || offset >= memSize))) {
-                throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
             }
 
             final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
@@ -805,9 +804,10 @@ public final class TableUtils {
             // validate column names
             int denseCount = 0;
             for (int i = 0; i < columnCount; i++) {
-                if (offset + 4 >= memSize) {
+                if (offset + 4 > memSize) {
                     throw validationException(metaMem).put("File is too small, column length for column ").put(i).put(" is missing");
                 }
+
                 int strLength = metaMem.getInt(offset);
                 if (strLength == TableUtils.NULL_LEN) {
                     throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
@@ -821,15 +821,10 @@ public final class TableUtils {
                 }
 
                 CharSequence name = metaMem.getStr(offset);
-
                 if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
                     offset += Vm.getStorageLength(name);
                 } else {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
-                }
-
-                if (offset >= memSize) {
-                    throw validationException(metaMem).put("File is too small, column names are missing ").put(memSize);
                 }
             }
         } catch (Throwable e) {
