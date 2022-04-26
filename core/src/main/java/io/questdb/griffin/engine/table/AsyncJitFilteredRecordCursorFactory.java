@@ -147,7 +147,7 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
 
     @Override
     public PageFrameSequence<FilterAtom> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
-        return frameSequence.dispatch(base, executionContext, collectSubSeq, atom, order);
+        return frameSequence.of(base, executionContext, collectSubSeq, atom, order);
     }
 
     @Override

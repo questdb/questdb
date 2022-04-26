@@ -121,6 +121,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 }
             }
         }
+
+        assert reduceCounter.get() == dispatchStartIndex;
     }
 
     public void clear() {
@@ -148,7 +150,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         Misc.free(circuitBreakers);
     }
 
-    public PageFrameSequence<T> dispatch(
+    public PageFrameSequence<T> of(
             RecordCursorFactory base,
             SqlExecutionContext executionContext,
             Sequence collectSubSeq,

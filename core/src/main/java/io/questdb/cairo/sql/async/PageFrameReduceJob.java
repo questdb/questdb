@@ -39,7 +39,6 @@ import io.questdb.std.Rnd;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class PageFrameReduceJob implements Job, Closeable {
 
@@ -119,6 +118,8 @@ public class PageFrameReduceJob implements Job, Closeable {
                             .I$();
                     if (frameSequence.isValid()) {
                         reduce(record, circuitBreaker, task, frameSequence);
+                    } else {
+                        frameSequence.getReduceCounter().incrementAndGet();
                     }
                 } catch (Throwable e) {
                     frameSequence.markInvalid();
@@ -141,7 +142,6 @@ public class PageFrameReduceJob implements Job, Closeable {
             PageFrameReduceTask task,
             PageFrameSequence<?> frameSequence
     ) {
-        final AtomicInteger framesReducedCounter = frameSequence.getReduceCounter();
         try {
             // we deliberately hold the queue item because
             // processing is daisy-chained. If we were to release item before
@@ -155,7 +155,7 @@ public class PageFrameReduceJob implements Job, Closeable {
                 frameSequence.markInvalid();
             }
         } finally {
-            framesReducedCounter.incrementAndGet();
+            frameSequence.getReduceCounter().incrementAndGet();
         }
     }
 
