@@ -24,11 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.*;
@@ -213,8 +209,8 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(1000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
-        Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceShardCount());
-        Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceQueueCapacity());
+        Assert.assertEquals(4, configuration.getCairoConfiguration().getPageFrameReduceShardCount());
+        Assert.assertEquals(64, configuration.getCairoConfiguration().getPageFrameReduceQueueCapacity());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getPageFrameReduceTaskPoolCapacity());
