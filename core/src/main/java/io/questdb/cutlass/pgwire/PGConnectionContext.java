@@ -2350,6 +2350,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     appendSingleRecord(record, columnCount);
                 }
             } catch (SqlException e) {
+                clearCursorAndFactory();
                 responseAsciiSink.resetToBookmark();
                 throw e;
             }
@@ -2499,7 +2500,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
 
         @Override
-        public void preCompile(SqlCompiler compiler) throws SqlException {
+        public void preCompile(SqlCompiler compiler) {
             prepareForNewBatchQuery();
             PGConnectionContext.this.typesAndInsert = null;
             PGConnectionContext.this.typesAndUpdate = null;

@@ -130,14 +130,14 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     public void testVacuumSupportsWithO3InsertsUpdates() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
-                String tableName = "testPurge";
+                String tableName = "testPurge1";
                 String[] partitions = update3ColumnsWithOpenReader(purgeJob, tableName);
 
                 String[] files = {"x.d"};
-                assertFilesExist(partitions, "testPurge", files, ".2", true);
+                assertFilesExist(partitions, tableName, files, ".2", true);
 
-                runTableVacuum("testPurge");
-                assertFilesExist(partitions, "testPurge", files, ".2", false);
+                runTableVacuum(tableName);
+                assertFilesExist(partitions, tableName, files, ".2", false);
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
@@ -235,38 +235,35 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     @Test
     public void testVacuumSyncFailsQueueSize() throws Exception {
         assertMemoryLeak(() -> {
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
-                compiler.compile(
-                        "create table testPurge as" +
-                                " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
-                                " x," +
-                                " rnd_str('a', 'b', 'c', 'd') str," +
-                                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
-                                " rnd_symbol('1', '2', '3', '4') sym2" +
-                                " from long_sequence(5)), index(sym2)" +
-                                " timestamp(ts) PARTITION BY DAY",
-                        sqlExecutionContext
-                );
+            compiler.compile(
+                    "create table testPurge as" +
+                            " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                            " x," +
+                            " rnd_str('a', 'b', 'c', 'd') str," +
+                            " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                            " rnd_symbol('1', '2', '3', '4') sym2" +
+                            " from long_sequence(5)), index(sym2)" +
+                            " timestamp(ts) PARTITION BY DAY",
+                    sqlExecutionContext
+            );
 
-                try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge")) {
-                    executeUpdate("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
-                    rdr.openPartition(0);
+            try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "testPurge")) {
+                executeUpdate("UPDATE testPurge SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
+                rdr.openPartition(0);
 
-                    String[] partitions = new String[]{"1970-01-02", "1970-01-03", "1970-01-04"};
-                    String[] files = {"sym2.d", "sym2.k", "sym2.v"};
-                    assertFilesExist(partitions, "testPurge", files, "", true);
+                String[] partitions = new String[]{"1970-01-02", "1970-01-03", "1970-01-04"};
+                String[] files = {"sym2.d", "sym2.k", "sym2.v"};
+                assertFilesExist(partitions, "testPurge", files, "", true);
 
-                    try {
-                        runTableVacuum("testPurge");
-                        Assert.fail();
-                    } catch (CairoException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(),
-                                "cairo.sql.column.version.clean.queue.capacity");
-                        TestUtils.assertContains(ex.getFlyweightMessage(),
-                                "failed to schedule column version purge, queue is full");
-                    }
+                try {
+                    runTableVacuum("testPurge");
+                    Assert.fail();
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(),
+                            "cairo.sql.column.version.clean.queue.capacity");
+                    TestUtils.assertContains(ex.getFlyweightMessage(),
+                            "failed to schedule column version purge, queue is full");
                 }
-                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
     }
@@ -313,7 +310,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     public void testVacuumWithInvalidFileNames() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
-                String tableName = "testPurge";
+                String tableName = "testPurge2";
                 String[] partitions = update3ColumnsWithOpenReader(purgeJob, tableName);
 
                 Path path = Path.getThreadLocal(configuration.getRoot());
@@ -343,7 +340,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     public void testVacuumWithInvalidPartitionDirectoryNames() throws Exception {
         assertMemoryLeak(() -> {
             try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
-                String tableName = "testPurge";
+                String tableName = "testPurge3";
                 String[] partitions = update3ColumnsWithOpenReader(purgeJob, tableName);
 
                 Path path = Path.getThreadLocal(configuration.getRoot());
