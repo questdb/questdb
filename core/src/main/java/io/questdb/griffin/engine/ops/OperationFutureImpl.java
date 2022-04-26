@@ -145,6 +145,7 @@ class OperationFutureImpl implements OperationFuture {
                             .$(",tableName=").$(tableName)
                             .$(",instance=").$(correlationId)
                             .I$();
+                    affectedRowsCount = 0;
                     status = QUERY_NO_RESPONSE;
                 }
             }
@@ -207,5 +208,4 @@ class OperationFutureImpl implements OperationFuture {
             }
         }
     }
-
 }
