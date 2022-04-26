@@ -829,6 +829,17 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "jerrinot",
+      "name": "Jaromir Hamala",
+      "avatar_url": "https://avatars.githubusercontent.com/u/158619?v=4",
+      "profile": "https://github.com/jerrinot",
+      "contributions": [
+        "code",
+        "ideas",
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
