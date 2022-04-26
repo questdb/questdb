@@ -849,6 +849,15 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "Cobalt-27",
+      "name": "Cobalt-27",
+      "avatar_url": "https://avatars.githubusercontent.com/u/34511059?v=4",
+      "profile": "https://github.com/Cobalt-27",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
