@@ -914,6 +914,41 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         }
     }
 
+    @Test
+    public void testMetaDataSizeToHitExactly16K() throws Exception {
+        final String tableName = "weather";
+        final int numOfColumns = 255;
+        final Rnd rnd = new Rnd();
+
+        final SOCountDownLatch finished = new SOCountDownLatch(1);
+        runInContext(receiver -> {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    if (name.equals(tableName)) {
+                        finished.countDown();
+                    }
+                }
+            });
+
+            try (Socket socket = getSocket()) {
+                // this loop adds columns to the table
+                // after the 252th column has been added the metadata size will be exactly 16k
+                // adding an extra 2 columns, just in case
+                for (int i = 1; i < numOfColumns; i++) {
+                    sendToSocket(socket, tableName + ",abcdefghijklmnopqrs=x, " + rnd.nextString(13-(int) Math.log10(i)) + i + "=32 " + i + "\n");
+                }
+                finished.await(10_000_000_000L);
+            } finally {
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                });
+            }
+        }, false, 250);
+
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            Assert.assertEquals(numOfColumns+1, reader.getMetadata().getColumnCount());
+        }
+    }
+
     private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait) {
         send(receiver, tableName, wait, () -> sendToSocket(lineData));
     }

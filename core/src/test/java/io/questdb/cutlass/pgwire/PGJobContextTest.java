@@ -62,6 +62,7 @@ import org.postgresql.core.BaseConnection;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.Date;
@@ -93,6 +94,7 @@ public class PGJobContextTest extends BasePGTest {
 
     @BeforeClass
     public static void init() {
+        inputRoot = new File(".").getAbsolutePath();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
@@ -1680,6 +1682,25 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testLocalCopyFrom() throws Exception {
+        try (final PGWireServer ignored = createPGServer(2);
+             final Connection connection = getConnection(false, true);
+             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true")) {
+
+            copyStatement.execute();
+
+            try (final PreparedStatement selectStatement = connection.prepareStatement("select * FROM testLocalCopyFrom");
+                 final ResultSet rs = selectStatement.executeQuery()) {
+                sink.clear();
+                assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
+                        + "ABC,xy,a,brown fox jumped over the fence,10\n"
+                        + "CDE,bb,b,sentence 1\n"
+                        + "sentence 2,12\n", sink, rs);
+            }
+        }
+    }
+
+    @Test
     public void testCursorFetch() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -2673,6 +2694,72 @@ nodejs code:
                 script,
                 getHexPgWireConfig()
         );
+    }
+
+    @Test
+    public void testInsertBooleans() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    PGWireServer ignored = createPGServer(4);
+                    Connection conn = getConnection(true, true)
+            ) {
+                conn.prepareStatement(
+                        "create table booleans (value boolean, ts timestamp) timestamp(ts)"
+                ).execute();
+
+                Rnd rand = new Rnd();
+                String [] values = {"TrUE", null, "", "false", "true", "banana", "22"};
+
+                try (PreparedStatement insert = conn.prepareStatement("insert into booleans values (cast(? as boolean), ?)")) {
+                    long micros = TimestampFormatUtils.parseTimestamp("2022-04-19T18:50:00.998666Z");
+                    for (int i = 0; i < 30; i++) {
+                        insert.setString(1, values[rand.nextInt(values.length)]);
+                        insert.setTimestamp(2, new Timestamp(micros / 1000L));
+                        insert.execute();
+                        Assert.assertEquals(1, insert.getUpdateCount());
+                        micros += 1_000_000L;
+                    }
+                }
+
+                try (ResultSet resultSet = conn.prepareStatement("booleans").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "value[BIT],ts[TIMESTAMP]\n" +
+                                    "true,2022-04-19 18:50:00.998\n" +
+                                    "false,2022-04-19 18:50:01.998\n" +
+                                    "false,2022-04-19 18:50:02.998\n" +
+                                    "true,2022-04-19 18:50:03.998\n" +
+                                    "false,2022-04-19 18:50:04.998\n" +
+                                    "false,2022-04-19 18:50:05.998\n" +
+                                    "false,2022-04-19 18:50:06.998\n" +
+                                    "false,2022-04-19 18:50:07.998\n" +
+                                    "false,2022-04-19 18:50:08.998\n" +
+                                    "true,2022-04-19 18:50:09.998\n" +
+                                    "false,2022-04-19 18:50:10.998\n" +
+                                    "false,2022-04-19 18:50:11.998\n" +
+                                    "false,2022-04-19 18:50:12.998\n" +
+                                    "false,2022-04-19 18:50:13.998\n" +
+                                    "false,2022-04-19 18:50:14.998\n" +
+                                    "false,2022-04-19 18:50:15.998\n" +
+                                    "false,2022-04-19 18:50:16.998\n" +
+                                    "true,2022-04-19 18:50:17.998\n" +
+                                    "false,2022-04-19 18:50:18.998\n" +
+                                    "true,2022-04-19 18:50:19.998\n" +
+                                    "false,2022-04-19 18:50:20.998\n" +
+                                    "false,2022-04-19 18:50:21.998\n" +
+                                    "false,2022-04-19 18:50:22.998\n" +
+                                    "true,2022-04-19 18:50:23.998\n" +
+                                    "true,2022-04-19 18:50:24.998\n" +
+                                    "true,2022-04-19 18:50:25.998\n" +
+                                    "true,2022-04-19 18:50:26.998\n" +
+                                    "false,2022-04-19 18:50:27.998\n" +
+                                    "false,2022-04-19 18:50:28.998\n" +
+                                    "false,2022-04-19 18:50:29.998\n",
+                            sink,
+                            resultSet);
+                }
+            }
+        });
     }
 
     @Test
@@ -5804,7 +5891,7 @@ create table tab as (
                         // -> microsecond precision is kept
                         long questdbTs = TimestampFormatUtils.parseTimestamp("2021-09-27T16:45:03.202345Z");
                         long time = questdbTs / 1000;
-                        int nanos = (int)(questdbTs - (int)(questdbTs / 1e6) * 1e6) * 1000;
+                        int nanos = (int) (questdbTs - (int) (questdbTs / 1e6) * 1e6) * 1000;
                         assertEquals(1632761103202345L, questdbTs);
                         assertEquals(1632761103202L, time);
                         assertEquals(202345000, nanos);
