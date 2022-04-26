@@ -894,6 +894,16 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "tris0laris",
+      "name": "tris0laris",
+      "avatar_url": "https://avatars.githubusercontent.com/u/57298792?v=4",
+      "profile": "https://github.com/tris0laris",
+      "contributions": [
+        "blog",
+        "ideas"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
