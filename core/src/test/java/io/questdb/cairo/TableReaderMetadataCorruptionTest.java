@@ -39,22 +39,6 @@ import org.junit.Test;
 public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
 
     @Test
-    public void testColumnNameInvalid() throws Exception {
-        final String[] names = new String[]{"a", "b", "c", "d", "e", "f"};
-        final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
-
-        assertMetaConstructorFailure(
-                names,
-                types,
-                names.length,
-                5,
-                "File is too small, column names are missing 356",
-                4906,
-                356
-        );
-    }
-
-    @Test
     public void testColumnNameMissing() throws Exception {
         final String[] names = new String[]{"a", "b", "c", "d", "b", "f"};
         final int[] types = new int[]{ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP};
@@ -126,7 +110,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 5,
                 "File is too small, column length for column 3 is missing",
                 4906,
-                342
+                341
         );
     }
 
