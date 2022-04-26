@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -391,10 +390,10 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     }
 
     private void executeUpdate(String query) throws SqlException {
-        final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
-        try (UpdateOperation op = cc.getUpdateOperation()) {
-            try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+        final CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
+        Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
+        try (QuietClosable op = cq.getOperation()) {
+            try (OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, null)) {
                 fut.await();
             }
         }

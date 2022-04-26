@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
@@ -36,8 +35,6 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnVersionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
-
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     private int iteration = 1;
@@ -813,10 +810,10 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     }
 
     private void executeUpdate(String query) throws SqlException {
-        final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
-        try (UpdateOperation op = cc.getUpdateOperation()) {
-            try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+        final CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
+        Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
+        try (QuietClosable op = cq.getOperation()) {
+            try (OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, null)) {
                 fut.await();
             }
         }

@@ -69,7 +69,7 @@ public class CompiledQueryImpl implements CompiledQuery {
     }
 
     @Override
-    public AlterOperation getAlterStatement() {
+    public AlterOperation getAlterOperation() {
         return alterOperation;
     }
 

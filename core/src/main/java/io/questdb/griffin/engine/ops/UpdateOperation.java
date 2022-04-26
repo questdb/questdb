@@ -24,39 +24,26 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.AsyncWriterCommand;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.mp.SCSequence;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietClosable;
 import io.questdb.tasks.TableWriterTask;
-import org.jetbrains.annotations.Nullable;
 
 public class UpdateOperation extends AbstractOperation implements QuietClosable {
-    private final DoneOperationFuture doneFuture = new DoneOperationFuture();
-    private final CairoEngine engine;
-    private final OperationFutureImpl updateFuture;
     private RecordCursorFactory factory;
     private SqlExecutionContext sqlExecutionContext;
 
     public UpdateOperation(
-            CairoEngine engine,
             String tableName,
             int tableId,
             long tableVersion,
             int tableNamePosition,
             RecordCursorFactory factory
     ) {
-        this.engine = engine;
-        this.updateFuture = new OperationFutureImpl(engine);
         init(TableWriterTask.CMD_UPDATE_TABLE, "UPDATE", tableName, tableId, tableVersion, tableNamePosition);
         this.factory = factory;
     }
@@ -74,30 +61,6 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
     @Override
     public void close() {
         factory = Misc.free(factory);
-    }
-
-    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
-        try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), getTableName(), "Update table execute")) {
-            return doneFuture.of(writer.getUpdateOperator().executeUpdate(sqlExecutionContext, this));
-        } catch (EntryUnavailableException busyException) {
-            if (eventSubSeq == null) {
-                throw busyException;
-            }
-            try {
-                // storing execution context for asynchronous execution
-                // writer thread will call `apply()` when thread is ready to do so
-                // `apply()` will use context stored in the operation
-                withContext(sqlExecutionContext);
-                updateFuture.of(this, sqlExecutionContext, eventSubSeq, this.tableNamePosition);
-                return updateFuture;
-            } catch (AlterTableContextException e) {
-                assert false : "This must never happen, command is either UPDATE or parameter acceptStructureChange=true";
-                return doneFuture;
-            }
-        } catch (ReaderOutOfDateException e) {
-            assert false : "This must never happen for UPDATE, tableName=" + getTableName();
-            return doneFuture;
-        }
     }
 
     public RecordCursorFactory getFactory() {

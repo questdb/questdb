@@ -459,7 +459,7 @@ public class AlterTableLineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                      )
         ) {
             CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
-            AlterOperation alterOperation = cc.getAlterStatement();
+            AlterOperation alterOperation = cc.getAlterOperation();
             assert alterOperation != null;
 
             return cc.execute(scSequence);

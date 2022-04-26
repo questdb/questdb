@@ -68,7 +68,7 @@ public interface CompiledQuery {
 
     UpdateOperation getUpdateOperation();
 
-    AlterOperation getAlterStatement();
+    AlterOperation getAlterOperation();
 
     short getType();
 

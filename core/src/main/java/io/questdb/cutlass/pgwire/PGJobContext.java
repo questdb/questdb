@@ -52,17 +52,18 @@ public class PGJobContext implements Closeable {
             DatabaseSnapshotAgent snapshotAgent
     ) {
         this.compiler = new SqlCompiler(engine, functionFactoryCache, snapshotAgent);
+
         final boolean enableSelectCache = configuration.isSelectCacheEnabled();
         final int blockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
         final int rowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;
-        this.typesAndSelectCache = new AssociativeCache<>(blockCount, rowCount);
-        this.typesAndSelectPool = new WeakAutoClosableObjectPool<>(TypesAndSelect::new, blockCount * rowCount);
+        typesAndSelectCache = new AssociativeCache<>(blockCount, rowCount);
+        typesAndSelectPool = new WeakAutoClosableObjectPool<>(TypesAndSelect::new, blockCount * rowCount);
 
         final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
         final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1; // 8
         final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1; // 8
-        this.typesAndUpdateCache = new AssociativeCache<>(updateBlockCount, updateRowCount);
-        this.typesAndUpdatePool = new WeakAutoClosableObjectPool<TypesAndUpdate>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
+        typesAndUpdateCache = new AssociativeCache<>(updateBlockCount, updateRowCount);
+        typesAndUpdatePool = new WeakAutoClosableObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
     }
 
     @Override

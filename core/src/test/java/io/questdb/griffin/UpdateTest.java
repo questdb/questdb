@@ -264,9 +264,10 @@ public class UpdateTest extends AbstractGriffinTest {
             th.start();
 
             barrier.await(); // table is locked
+            CompiledQuery cq = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 4", sqlExecutionContext);
             try (
-                    UpdateOperation op = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 4", sqlExecutionContext).getUpdateOperation();
-                    OperationFuture fut = op.execute(sqlExecutionContext, eventSubSequence)
+                    UpdateOperation op = cq.getUpdateOperation();
+                    OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, eventSubSequence)
             ) {
                 Assert.assertEquals(OperationFuture.QUERY_NO_RESPONSE, fut.getStatus());
                 Assert.assertEquals(0, fut.getAffectedRowsCount());
@@ -811,9 +812,10 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5))" +
                     " timestamp(ts)", sqlExecutionContext);
 
+            CompiledQuery cq = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 5", sqlExecutionContext);
             try (
-                    UpdateOperation op = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 5", sqlExecutionContext).getUpdateOperation();
-                    OperationFuture fut = op.execute(sqlExecutionContext, eventSubSequence)
+                    UpdateOperation op = cq.getUpdateOperation();
+                    OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, eventSubSequence)
             ) {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                 Assert.assertEquals(3, fut.getAffectedRowsCount());
@@ -860,10 +862,10 @@ public class UpdateTest extends AbstractGriffinTest {
             SqlExecutionContext roExecutionContext = new SqlExecutionContextImpl(engine, 1).with(new CairoSecurityContextImpl(false), bindVariableService, null, -1, null);
 
             try {
-                CompiledQuery cc = compiler.compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
+                CompiledQuery cq = compiler.compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
                 try (
-                        UpdateOperation op = cc.getUpdateOperation();
-                        OperationFuture fut = op.execute(roExecutionContext, null)
+                        UpdateOperation op = cq.getUpdateOperation();
+                        OperationFuture fut = cq.getSender().execute(op, roExecutionContext, null)
                 ) {
                     fut.await();
                     Assert.fail();
@@ -1182,9 +1184,10 @@ public class UpdateTest extends AbstractGriffinTest {
                     " from long_sequence(5)), index(symCol)" +
                     " timestamp(ts)", sqlExecutionContext);
 
+            CompiledQuery cq = compiler.compile("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'", sqlExecutionContext);
             try (
-                    UpdateOperation op = compiler.compile("UPDATE up SET symCol = 'VTJ' WHERE symCol != 'WCP'", sqlExecutionContext).getUpdateOperation();
-                    OperationFuture fut = op.execute(sqlExecutionContext, eventSubSequence)
+                    UpdateOperation op = cq.getUpdateOperation();
+                    OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, eventSubSequence)
             ) {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                 Assert.assertEquals(2, fut.getAffectedRowsCount());
@@ -1702,9 +1705,10 @@ public class UpdateTest extends AbstractGriffinTest {
                     "GZS\t1970-01-01T00:00:03.000000Z\t4\n" +
                     "\t1970-01-01T00:00:04.000000Z\t5\n");
 
+            CompiledQuery cq = compiler.compile("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2", sqlExecutionContext);
             try (
-                    UpdateOperation op = compiler.compile("UPDATE up SET symCol = 'VTJ' FROM t2 WHERE up.symCol = t2.symCol2", sqlExecutionContext).getUpdateOperation();
-                    OperationFuture fut = op.execute(sqlExecutionContext, eventSubSequence)
+                    UpdateOperation op = cq.getUpdateOperation();
+                    OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, eventSubSequence)
             ) {
                 Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                 Assert.assertEquals(1, fut.getAffectedRowsCount());
@@ -1751,11 +1755,11 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     private void executeUpdate(String query) throws SqlException {
-        CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
-        Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
+        CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
+        Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
         try (
-                UpdateOperation op = cc.getUpdateOperation();
-                OperationFuture fut = op.execute(sqlExecutionContext, eventSubSequence)
+                UpdateOperation op = cq.getUpdateOperation();
+                OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, eventSubSequence)
         ) {
             fut.await();
         }

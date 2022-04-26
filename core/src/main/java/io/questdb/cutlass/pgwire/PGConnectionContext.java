@@ -45,8 +45,6 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
@@ -78,7 +76,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_BIND = 3;
     private static final int SYNC_DESCRIBE_PORTAL = 4;
-
 
     private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
@@ -1109,7 +1106,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
             // not cached - compile to see what it is
             final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
-            processCompiledQuery(compiler, cc);
+            processCompiledQuery(cc);
         } else {
             isEmptyQuery = true;
         }
@@ -1338,7 +1335,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void executeUpdate0() throws SqlException {
-        final UpdateOperation op = typesAndUpdate.getCompiledQuery().getUpdateOperation();
+        final CompiledQuery cq = typesAndUpdate.getCompiledQuery();
+        final UpdateOperation op = cq.getUpdateOperation();
         // check if there is pending writer, which would be pending if there is active transaction
         // when we have writer, execution is synchronous
         final int index = pendingWriters.keyIndex(op.getTableName());
@@ -1351,7 +1349,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
         } else {
             // execute against writer from the engine, or async
-            try (OperationFuture fut = op.execute(sqlExecutionContext, tempSequence)) {
+            try (OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, tempSequence)) {
                 fut.await();
                 rowCount = fut.getAffectedRowsCount();
             }
@@ -1871,8 +1869,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         prepareCloseComplete();
     }
 
-    private void processCompiledQuery(SqlCompiler compiler, CompiledQuery cq)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    private void processCompiledQuery(CompiledQuery cq) throws SqlException {
         sqlExecutionContext.storeTelemetry(cq.getType(), Telemetry.ORIGIN_POSTGRES);
 
         switch (cq.getType()) {
@@ -2476,7 +2473,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
             PGConnectionContext.this.queryText = text;
             LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(text).I$();
-            processCompiledQuery(compiler, cq);
+            processCompiledQuery(cq);
 
             if (typesAndSelect != null) {
                 activeSelectColumnTypes = selectColumnTypes;

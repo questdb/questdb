@@ -2159,7 +2159,6 @@ public class SqlCompiler implements Closeable {
         );
 
         return new UpdateOperation(
-                engine,
                 updateQueryModel.getUpdateTableName(),
                 selectQueryModel.getTableId(),
                 selectQueryModel.getTableVersion(),
