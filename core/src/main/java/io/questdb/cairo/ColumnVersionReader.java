@@ -103,9 +103,28 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : -1L;
     }
 
+    // returns 0 if not exists
     public long getColumnTop(long partitionTimestamp, int columnIndex) {
         int index = getRecordIndex(partitionTimestamp, columnIndex);
         return getColumnTopByIndex(index);
+    }
+
+    // returns defaultValue if not exists
+    public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
+        // Check if there is explicit record for this partitionTimestamp / columnIndex combination
+        int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
+        if (recordIndex > -1L) {
+            return getColumnTopByIndex(recordIndex);
+        }
+
+        // Check if column has been already added before this partition
+        long columnTopDefaultPartition = getColumnTopPartitionTimestamp(columnIndex);
+        if (columnTopDefaultPartition <= partitionTimestamp) {
+            return 0;
+        }
+
+        // This column does not exist in the partition
+        return defaultValue;
     }
 
     public long getColumnTopByIndex(int versionRecordIndex) {

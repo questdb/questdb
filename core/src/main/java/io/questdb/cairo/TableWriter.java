@@ -747,20 +747,7 @@ public class TableWriter implements Closeable {
     }
 
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
-        // Check if there is explicit record for this partitionTimestamp / columnIndex combination
-        int recordIndex = columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex);
-        if (recordIndex > -1L) {
-            return columnVersionWriter.getColumnTopByIndex(recordIndex);
-        }
-
-        // Check if column has been already added before this partition
-        long columnTopDefaultPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
-        if (columnTopDefaultPartition <= partitionTimestamp) {
-            return 0;
-        }
-
-        // This column does not exist in the partition
-        return defaultValue;
+        return columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex, defaultValue);
     }
 
     public long getColumnVersion() {
@@ -1279,16 +1266,16 @@ public class TableWriter implements Closeable {
 
                 boolean columnVersionUpdated = false;
                 for (int j = 0; j < columnCount; j++) {
-                    long top = columnVersionWriter.getColumnTop(ts, j);
+                    long top = columnVersionWriter.getColumnTop(ts, j, -1);
                     long nameTxn = columnVersionWriter.getColumnNameTxn(ts, j);
                     long theirNameTxn = slaveCvReader.getColumnNameTxn(ts, j); // returns -1 if j < slaveColumnCount
-                    long theirTop = slaveCvReader.getColumnTop(ts, j); // returns 0 if j < slaveColumnCount
+                    long theirTop = slaveCvReader.getColumnTop(ts, j, -1); // returns -1 if j < slaveColumnCount
                     if (metadata.getColumnType(j) > 0) {
                         if (nameTxn != theirNameTxn || top != theirTop) {
-                            //if (top > 0) {
-                            model.addColumnVersion(ts, j, nameTxn, top);
-                            columnVersionUpdated = true;
-                            //}
+                            if (top > -1) {
+                                model.addColumnVersion(ts, j, nameTxn, top);
+                                columnVersionUpdated = true;
+                            }
                         }
                     }
                 }
