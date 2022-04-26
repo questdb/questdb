@@ -57,7 +57,7 @@ public class NegFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNegDouble() throws Exception {
-        assertNeg("select -x, typeOf(-x) from (select 5.6 x)", "-5.6000000000000005\tDOUBLE\n");
+        assertNeg("select -x, typeOf(-x) from (select 5.6 x)", "-5.6\tDOUBLE\n");
     }
 
     @Test

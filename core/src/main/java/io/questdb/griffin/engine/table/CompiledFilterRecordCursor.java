@@ -107,6 +107,7 @@ class CompiledFilterRecordCursor implements RecordCursor {
         this.bindVarMemory = bindVarMemory;
         this.bindVarCount = bindVarFunctions.size();
         colTopsFilter.init(this, executionContext);
+        Function.init(bindVarFunctions, this, executionContext);
         prepareBindVarMemory(bindVarFunctions, executionContext);
     }
 

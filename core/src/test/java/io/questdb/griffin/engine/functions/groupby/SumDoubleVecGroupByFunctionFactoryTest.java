@@ -75,7 +75,7 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 null,
                 "insert into tab select 0.9822 from long_sequence(1)",
                 "sum\n" +
-                        "0.9822000000000001\n",
+                        "0.9822\n",
                 false,
                 true,
                 true

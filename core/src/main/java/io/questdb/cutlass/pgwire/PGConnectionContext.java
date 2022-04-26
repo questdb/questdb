@@ -1844,7 +1844,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case CompiledQuery.COPY_LOCAL:
                 // uncached
                 queryTag = TAG_COPY;
-                sendCopyInResponse(compiler.getEngine(), cq.getTextLoader());
                 break;
             case CompiledQuery.SET:
                 queryTag = TAG_SET;
@@ -2213,6 +2212,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         responseAsciiSink.reset();
     }
 
+    // This method is currently unused. it's used for the COPY sub-protocol, which is currently not implemented.
+    // It's left here so when we add the sub-protocol later we won't need to reimplemented it.
+    // We could keep it just in git history, but chances are nobody would recall to search for it there
     private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (
                 TableUtils.TABLE_EXISTS == engine.getStatus(
