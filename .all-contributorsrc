@@ -811,6 +811,15 @@
         "doc",
         "bug"
       ]
+    },
+    {
+      "login": "GothamsJoker",
+      "name": "Dylan LaMott",
+      "avatar_url": "https://avatars.githubusercontent.com/u/66742430?v=4",
+      "profile": "https://lamottsjourney.wordpress.com/",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
