@@ -885,6 +885,15 @@
       "contributions": [
         "doc"
       ]
+    },
+    {
+      "login": "PlamenHristov",
+      "name": "Plamen Hristov",
+      "avatar_url": "https://avatars.githubusercontent.com/u/3893599?v=4",
+      "profile": "https://www.linkedin.com/in/hristovdeveloper",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
