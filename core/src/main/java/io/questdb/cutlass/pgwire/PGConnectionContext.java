@@ -2212,6 +2212,35 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         responseAsciiSink.reset();
     }
 
+    // This method is currently unused. it's used for the COPY sub-protocol, which is currently not implemented.
+    // It's left here so when we add the sub-protocol later we won't need to reimplemented it.
+    // We could keep it just in git history, but chances are nobody would recall to search for it there
+    private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (
+                TableUtils.TABLE_EXISTS == engine.getStatus(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        path,
+                        textLoader.getTableName()
+                )) {
+            responseAsciiSink.put(MESSAGE_TYPE_COPY_IN_RESPONSE);
+            long addr = responseAsciiSink.skip();
+            responseAsciiSink.put((byte) 0); // TEXT (1=BINARY, which we do not support yet)
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), textLoader.getTableName(), WRITER_LOCK_REASON)) {
+                RecordMetadata metadata = writer.getMetadata();
+                responseAsciiSink.putNetworkShort((short) metadata.getColumnCount());
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    responseAsciiSink.putNetworkShort((short) PGOids.getTypeOid(metadata.getColumnType(i)));
+                }
+            }
+            responseAsciiSink.putLen(addr);
+        } else {
+            final SqlException e = SqlException.$(0, "table '").put(textLoader.getTableName()).put("' does not exist");
+            prepareError(e.getPosition(), e.getFlyweightMessage(), 0);
+            prepareReadyForQuery();
+        }
+        sendAndReset();
+    }
+
     private void sendCursor(
             int maxRows,
             PGResumeProcessor cursorResumeProcessor,

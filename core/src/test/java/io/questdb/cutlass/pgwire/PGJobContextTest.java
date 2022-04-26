@@ -1683,26 +1683,19 @@ public class PGJobContextTest extends BasePGTest {
 
     @Test
     public void testLocalCopyFrom() throws Exception {
-        try (
-                final PGWireServer ignored = createPGServer(2);
-                final Connection connection = getConnection(false, true)
-        ) {
+        try (final PGWireServer ignored = createPGServer(2);
+             final Connection connection = getConnection(false, true);
+             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true")) {
 
-            try (
-                    final PreparedStatement statement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true");
-            ) {
-                statement.execute();
-            }
+            copyStatement.execute();
 
-            try (
-                    final PreparedStatement statement = connection.prepareStatement("select * FROM testLocalCopyFrom");
-                    final ResultSet rs = statement.executeQuery();
-            ) {
+            try (final PreparedStatement selectStatement = connection.prepareStatement("select * FROM testLocalCopyFrom");
+                 final ResultSet rs = selectStatement.executeQuery()) {
                 sink.clear();
-                assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n" +
-                        "ABC,xy,a,brown fox jumped over the fence,10\n" +
-                        "CDE,bb,b,sentence 1\n" +
-                        "sentence 2,12\n", sink, rs);
+                assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
+                        + "ABC,xy,a,brown fox jumped over the fence,10\n"
+                        + "CDE,bb,b,sentence 1\n"
+                        + "sentence 2,12\n", sink, rs);
             }
         }
     }
