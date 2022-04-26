@@ -961,6 +961,8 @@ public final class SqlParser {
                                 && target.getOrderBy().size() == 0
                                 && target.getLatestBy().size() == 0
                                 && target.getNestedModel() == null
+                                && target.getSampleBy() == null
+                                && target.getGroupBy().size() == 0
                                 && proposedNested.getLimitLo() == null
                                 && proposedNested.getLimitHi() == null
                 ) {

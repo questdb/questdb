@@ -57,6 +57,72 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testLimitSansSelect() throws SqlException {
+        assertQuery(
+                "select-choose ts, x from (select-choose [ts, x] ts, x from (select [ts, x] from t1) limit 5)",
+                "(t1 limit 5)",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testSampleBySansSelect() throws Exception {
+        assertSyntaxError(
+                "(t1 sample by 1m)",
+                14,
+                "at least one aggregation function must be present in 'select' clause",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testLatestBySansSelect() throws Exception {
+        assertQuery(
+                "select-choose ts, x from (select-choose [ts, x] ts, x from (select [ts, x] from t1 latest by x))",
+                "(t1 latest by x)",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+    }
+
+
+    @Test
+    @Ignore
+    // todo: this is not parsed correctly. Parser/Optimiser removes group by clause.
+    public void testGroupBySansSelect() throws Exception {
+        assertQuery(
+                "select-choose ts, x from (select-choose [ts, x] ts, x from (select [ts, x] from t1 latest by x))",
+                "(t1 group by x)",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
+    }
+
+    @Test
+    public void testUnionSansSelect() throws Exception {
+        assertQuery(
+                "select-choose ts, x from (select-choose [ts, x] ts, x from (select [ts, x] from t1) union all select-choose [ts, x] ts, x from (select [ts, x] from t2))",
+                "(t1 union all t2)",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                modelOf("t2").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testExceptSansSelect() throws Exception {
+        assertQuery(
+                "select-choose ts, x from (select-choose [ts, x] ts, x from (select [ts, x] from t1) except select-choose [ts, x] ts, x from (select [ts, x] from t2))",
+                "(t1 except t2)",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                modelOf("t2").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testJoinSansSelect() throws Exception {
+        assertQuery(
+                "select-choose t1.ts ts, t1.x x, t2.ts ts1, t2.x x1 from (select [ts, x] from t1 join select [ts, x] from t2 on t2.x = t1.x)",
+                "(t1 join t2 on x)",
+                modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT),
+                modelOf("t2").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testPushWhereThroughUnionAll() throws SqlException {
         assertQuery(
                 "select-choose sm from (select-group-by [sum(x) sm] sum(x) sm from (select-choose [x] x from (select [x] from t1) union all select-choose [x] x from (select [x] from t2)) where sm = 1)",
