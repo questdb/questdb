@@ -103,13 +103,13 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : -1L;
     }
 
-    // returns 0 if not exists
+    // returns 0 if the entry does not exist
     public long getColumnTop(long partitionTimestamp, int columnIndex) {
         int index = getRecordIndex(partitionTimestamp, columnIndex);
         return getColumnTopByIndex(index);
     }
 
-    // returns defaultValue if not exists
+    // returns defaultValue if the entry does not exist
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         // Check if there is explicit record for this partitionTimestamp / columnIndex combination
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
