@@ -820,6 +820,15 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "kocko",
+      "name": "Konstantin Yovkov",
+      "avatar_url": "https://avatars.githubusercontent.com/u/862000?v=4",
+      "profile": "https://github.com/kocko",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
