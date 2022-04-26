@@ -788,6 +788,18 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "argshook",
+      "name": "Arijus Šukys",
+      "avatar_url": "https://avatars.githubusercontent.com/u/4284659?v=4",
+      "profile": "https://arijus.net",
+      "contributions": [
+        "code",
+        "ideas",
+        "design",
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
