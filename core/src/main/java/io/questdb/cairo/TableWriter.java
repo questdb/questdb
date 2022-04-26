@@ -1188,7 +1188,10 @@ public class TableWriter implements Closeable {
         model.setPartitionBy(partitionBy);
         model.setTableName(tableName);
         for (int masterIndex = 0; masterIndex < columnCount; masterIndex++) {
-            model.addColumnMetadata(metadata.getColumnQuick(masterIndex));
+            MapWriter symbolMapWriter = getSymbolMapWriter(masterIndex);
+            boolean cached = symbolMapWriter.isCached();
+            int capacity = symbolMapWriter.getCapacity();
+            model.addColumnMetadata(metadata.getColumnQuick(masterIndex), cached, capacity);
             model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, masterIndex, masterIndex);
         }
         return model;
@@ -1241,6 +1244,9 @@ public class TableWriter implements Closeable {
 
         int newIndex = 0;
         for (int masterIndex = 0; masterIndex < columnCount; masterIndex++) {
+            MapWriter symbolMapWriter = getSymbolMapWriter(masterIndex);
+            boolean cached = symbolMapWriter.isCached();
+            int capacity = symbolMapWriter.getCapacity();
             if (masterIndex < slaveColumnCount) {
                 CharSequence slaveName = slaveMetaMem.getStr(offset);
                 replSlaveColumnIndex.put(slaveName, masterIndex);
@@ -1254,13 +1260,13 @@ public class TableWriter implements Closeable {
                         || isSlaveIndexed != metadata.isColumnIndexed(masterIndex)) {
                     model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_REMOVE, masterIndex, masterIndex);
                     if (metadata.getColumnType(masterIndex) > 0) {
-                        model.addColumnMetadata(metadata.getColumnQuick(masterIndex));
+                        model.addColumnMetadata(metadata.getColumnQuick(masterIndex), cached, capacity);
                         model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, newIndex++, masterIndex);
                     }
                 }
             } else {
                 if (metadata.getColumnType(masterIndex) > 0) {
-                    model.addColumnMetadata(metadata.getColumnQuick(masterIndex));
+                    model.addColumnMetadata(metadata.getColumnQuick(masterIndex), cached, capacity);
                     model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, newIndex++, masterIndex);
                 }
             }
@@ -2171,6 +2177,9 @@ public class TableWriter implements Closeable {
 
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
                 denseSymbolMapWriters.add(symbolMapWriter);
+            } else {
+                // insert a null writer to keep it consistent with addColumn() - never have null in the sparse symbol writer list
+                symbolMapWriters.extendAndSet(i, NullMapWriter.INSTANCE);
             }
 
             if (metadata.isColumnIndexed(i)) {

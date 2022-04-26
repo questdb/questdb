@@ -57,6 +57,10 @@ public class TableSyncModel implements Mutable, Sinkable {
     private final LongList columnMetaIndex = new LongList();
     // this metadata is only for columns that need to added on slave
     private final ObjList<TableColumnMetadata> addedColumnMetadata = new ObjList<>();
+    // encodes (int, int) configuration of symbol map.
+    // when the first int == 1 then symbol cache is enabled, 0 means cache is disabled
+    // the second int is symbol map capacity. capacity is 0 for non-symbol columns.
+    private final LongList addedColumnsSymbolConfig = new LongList();
 
     // this encodes (long,long,long,long) per column version
     // the idea here is to store versions densely to avoid issues sending a bunch of zeroes
@@ -86,9 +90,10 @@ public class TableSyncModel implements Mutable, Sinkable {
         columnMetaIndex.add((long) action, Numbers.encodeLowHighInts(from, to));
     }
 
-    public void addColumnMetadata(TableColumnMetadata columnMetadata) {
+    public void addColumnMetadata(TableColumnMetadata columnMetadata, boolean cached, int capacity) {
         assert columnMetadata.getType() > 0;
         this.addedColumnMetadata.add(columnMetadata);
+        this.addedColumnsSymbolConfig.add(Numbers.encodeLowHighInts(cached ? 1 : 0, capacity));
     }
 
     public void addColumnVersion(long timestamp, int columnIndex, long columnNameTxn, long topValue) {
@@ -239,6 +244,18 @@ public class TableSyncModel implements Mutable, Sinkable {
 
     public TableColumnMetadata getAddedColumnMetadata(int columnIndex) {
         return addedColumnMetadata.get(columnIndex);
+    }
+
+    public boolean getAddedColumnSymbolCache(int columnIndex) {
+        long l = addedColumnsSymbolConfig.get(columnIndex);
+        int cacheFlag = Numbers.decodeLowInt(l);
+        assert cacheFlag == 0 || cacheFlag == 1;
+        return cacheFlag == 1;
+    }
+
+    public int getAddedColumnSymbolCapacity(int columnIndex) {
+        long l = addedColumnsSymbolConfig.get(columnIndex);
+        return Numbers.decodeHighInt(l);
     }
 
     public void setTableAction(int tableAction) {

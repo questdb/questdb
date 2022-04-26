@@ -35,6 +35,11 @@ public class NullMapWriter implements MapWriter {
     }
 
     @Override
+    public int getCapacity() {
+        return 0;
+    }
+
+    @Override
     public int getSymbolCount() {
         throw new UnsupportedOperationException();
     }

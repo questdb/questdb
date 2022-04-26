@@ -164,6 +164,10 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return offsetToKey(offsetMem.getAppendOffset() - Long.BYTES);
     }
 
+    public int getCapacity() {
+        return offsetMem.getInt(HEADER_CAPACITY);
+    }
+
     public boolean isCached() {
         return cache != null;
     }

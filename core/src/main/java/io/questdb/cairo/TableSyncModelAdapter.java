@@ -63,7 +63,7 @@ class TableSyncModelAdapter implements TableStructure {
 
     @Override
     public boolean isSequential(int columnIndex) {
-        //todo: what is it?
+        //todo: this is a reserved flag. we should replicate it neverthless.
         return false;
     }
 
@@ -74,14 +74,12 @@ class TableSyncModelAdapter implements TableStructure {
 
     @Override
     public boolean getSymbolCacheFlag(int columnIndex) {
-        // todo - probably will have to add to the replication model metadata
-        return false;
+        return model.getAddedColumnSymbolCache(columnIndex);
     }
 
     @Override
     public int getSymbolCapacity(int columnIndex) {
-        // todo - probably will have to add to the replication model metadata
-        return 0;
+        return model.getAddedColumnSymbolCapacity(columnIndex);
     }
 
     @Override
