@@ -31,9 +31,8 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Os;
 import io.questdb.std.Rows;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
@@ -44,8 +43,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private final boolean hasDescendingOrder;
     private final PageAddressCacheRecord record;
     private PageAddressCacheRecord recordB;
-    private SCSequence collectSubSeq;
-    private RingQueue<PageFrameReduceTask> reduceQueue;
     private DirectLongList rows;
     private long cursor = -1;
     private long frameRowIndex;
@@ -166,64 +163,35 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     private void fetchNextFrame() {
         do {
-            this.cursor = collectSubSeq.next();
+            this.cursor = frameSequence.next();
             if (cursor > -1) {
-                PageFrameReduceTask task = reduceQueue.get(cursor);
-                PageFrameSequence<?> thatFrameSequence = task.getFrameSequence();
-                if (thatFrameSequence == this.frameSequence) {
-                    if (handleTask(task)) {
-                        break;
-                    }
+                PageFrameReduceTask task = frameSequence.getTask(cursor);
+                LOG.debug()
+                        .$("collected [shard=").$(frameSequence.getShard())
+                        .$(", frameIndex=").$(task.getFrameIndex())
+                        .$(", frameCount=").$(frameSequence.getFrameCount())
+                        .$(", valid=").$(frameSequence.isValid())
+                        .$(", cursor=").$(cursor)
+                        .I$();
+
+                this.rows = task.getRows();
+                this.frameRowCount = rows.size();
+                this.frameIndex = task.getFrameIndex();
+                if (this.frameRowCount > 0 && frameSequence.isValid()) {
+                    this.frameRowIndex = 0;
+                    record.setFrameIndex(task.getFrameIndex());
+                    break;
                 } else {
-                    // Not our task, nothing to collect.
-                    collectSubSeq.done(cursor);
+                    collectCursor(false);
                 }
             } else {
-                if (frameSequence.tryDispatch()) {
-                    // We have dispatched something, so let's try to collect it.
-                    continue;
-                }
-                if (frameSequence.isNothingDispatchedSince(frameIndex)) {
-                    // We haven't dispatched anything, and we have collected everything
-                    // that was dispatched previously. Use local task to avoid being
-                    // blocked in case of full reduce queue.
-                    PageFrameReduceTask task = frameSequence.reduceLocally();
-                    if (handleTask(task)) {
-                        break;
-                    }
-                }
+                Os.pause();
             }
         } while (this.frameIndex < frameLimit);
     }
 
-    private boolean handleTask(PageFrameReduceTask task) {
-        LOG.debug()
-                .$("collected [shard=").$(frameSequence.getShard())
-                .$(", frameIndex=").$(task.getFrameIndex())
-                .$(", frameCount=").$(frameSequence.getFrameCount())
-                .$(", valid=").$(frameSequence.isValid())
-                .$(", cursor=").$(cursor)
-                .I$();
-        this.rows = task.getRows();
-        this.frameRowCount = rows.size();
-        this.frameIndex = task.getFrameIndex();
-        if (this.frameRowCount > 0 && frameSequence.isValid()) {
-            this.frameRowIndex = 0;
-            record.setFrameIndex(task.getFrameIndex());
-            return true;
-        } else {
-            // It is necessary to clear 'cursor' value (or local task)
-            // because we updated frameIndex and loop can exit due to lack of frames.
-            // Non-update of 'cursor' could cause double-free.
-            collectCursor(false);
-        }
-        return false;
-    }
-
-    void of(SCSequence collectSubSeq, PageFrameSequence<?> frameSequence, long rowsRemaining) throws SqlException {
-        this.collectSubSeq = collectSubSeq;
+    void of(PageFrameSequence<?> frameSequence, long rowsRemaining) throws SqlException {
         this.frameSequence = frameSequence;
-        this.reduceQueue = frameSequence.getPageFrameReduceQueue();
         this.frameIndex = -1;
         this.frameLimit = frameSequence.getFrameCount() - 1;
         this.ogRowsRemaining = rowsRemaining;
@@ -238,11 +206,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     private void collectCursor(boolean forceCollect) {
         if (cursor > -1) {
-            reduceQueue.get(cursor).collected(forceCollect);
-            collectSubSeq.done(cursor);
+            frameSequence.collect(cursor, forceCollect);
+            // It is necessary to clear 'cursor' value
+            // because we updated frameIndex and loop can exit due to lack of frames.
+            // Non-update of 'cursor' could cause double-free.
             cursor = -1;
-        } else {
-            frameSequence.collectLocalTask();
         }
     }
 }

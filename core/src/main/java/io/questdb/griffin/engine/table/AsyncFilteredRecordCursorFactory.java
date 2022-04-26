@@ -115,11 +115,11 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
             if (negativeLimitRows == null) {
                 negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
             }
-            negativeLimitCursor.of(collectSubSeq, execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
+            negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
             return negativeLimitCursor;
         }
 
-        cursor.of(collectSubSeq, execute(executionContext, collectSubSeq, order), rowsRemaining);
+        cursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining);
         return cursor;
     }
 

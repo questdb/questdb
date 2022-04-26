@@ -33,9 +33,8 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Os;
 import io.questdb.std.Rows;
 
 /**
@@ -59,8 +58,6 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     private final PageAddressCacheRecord record;
     private PageAddressCacheRecord recordB;
-    private SCSequence collectSubSeq;
-    private RingQueue<PageFrameReduceTask> reduceQueue;
     // Buffer used to accumulate all filtered row ids.
     private DirectLongList rows;
     private long rowIndex;
@@ -138,63 +135,37 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     private void fetchAllFrames() {
         int frameIndex = -1;
         do {
-            long cursor = collectSubSeq.next();
+            long cursor = frameSequence.next();
             if (cursor > -1) {
-                PageFrameReduceTask task = reduceQueue.get(cursor);
-                PageFrameSequence<?> thatFrameSequence = task.getFrameSequence();
-                if (thatFrameSequence == this.frameSequence) {
-                    frameIndex = task.getFrameIndex();
-                    handleTask(cursor, task);
-                } else {
-                    // not our task, nothing to collect
-                    collectSubSeq.done(cursor);
+                PageFrameReduceTask task = frameSequence.getTask(cursor);
+                LOG.debug()
+                        .$("collected [shard=").$(frameSequence.getShard())
+                        .$(", frameIndex=").$(task.getFrameIndex())
+                        .$(", frameCount=").$(frameSequence.getFrameCount())
+                        .$(", valid=").$(frameSequence.isValid())
+                        .$(", cursor=").$(cursor)
+                        .I$();
+
+                final DirectLongList frameRows = task.getRows();
+                final long frameRowCount = frameRows.size();
+                frameIndex = task.getFrameIndex();
+
+                if (frameRowCount > 0 && rowCount < rowLimit + 1 && frameSequence.isValid()) {
+                    // Copy rows into the buffer.
+                    for (long i = frameRowCount - 1; i > -1 && rowCount < rowLimit; i--, rowCount++) {
+                        rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
+                    }
                 }
+
+                frameSequence.collect(cursor, false);
             } else {
-                if (frameSequence.tryDispatch()) {
-                    // We have dispatched something, so let's try to collect it.
-                    continue;
-                }
-                if (frameSequence.isNothingDispatchedSince(frameIndex)) {
-                    // We haven't dispatched anything, and we have collected everything
-                    // that was dispatched previously. Use local task to avoid being
-                    // blocked in case of full reduce queue.
-                    PageFrameReduceTask task = frameSequence.reduceLocally();
-                    frameIndex = task.getFrameIndex();
-                    handleTask(cursor, task);
-                }
+                Os.pause();
             }
         } while (frameIndex < frameLimit);
     }
 
-    private void handleTask(long cursor, PageFrameReduceTask task) {
-        LOG.debug()
-                .$("collected [shard=").$(frameSequence.getShard())
-                .$(", frameIndex=").$(task.getFrameIndex())
-                .$(", frameCount=").$(frameSequence.getFrameCount())
-                .$(", valid=").$(frameSequence.isValid())
-                .$(", cursor=").$(cursor)
-                .I$();
-
-        final DirectLongList frameRows = task.getRows();
-        final long frameRowCount = frameRows.size();
-        final int frameIndex = task.getFrameIndex();
-
-        if (frameRowCount > 0 && rowCount < rowLimit + 1 && frameSequence.isValid()) {
-            // Copy rows into the buffer.
-            for (long i = frameRowCount - 1; i > -1 && rowCount < rowLimit; i--, rowCount++) {
-                rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
-            }
-        }
-        // It is necessary to clear 'cursor' value
-        // because we updated frameIndex and loop can exit due to lack of frames.
-        // Non-update of 'cursor' could cause double-free.
-        collectCursor(cursor);
-    }
-
-    void of(SCSequence collectSubSeq, PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) throws SqlException {
-        this.collectSubSeq = collectSubSeq;
+    void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) throws SqlException {
         this.frameSequence = frameSequence;
-        this.reduceQueue = frameSequence.getPageFrameReduceQueue();
         this.frameLimit = frameSequence.getFrameCount() - 1;
         this.rowLimit = rowLimit;
         this.rows = negativeLimitRows;
@@ -205,15 +176,6 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         // we should not be attempting to fetch queue using it
         if (frameLimit > -1) {
             fetchAllFrames();
-        }
-    }
-
-    private void collectCursor(long cursor) {
-        if (cursor > -1) {
-            reduceQueue.get(cursor).collected(false);
-            collectSubSeq.done(cursor);
-        } else {
-            frameSequence.collectLocalTask();
         }
     }
 }

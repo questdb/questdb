@@ -54,11 +54,11 @@ public class PageFrameReduceTask implements Closeable {
         Misc.free(columns);
     }
 
-    public void collected() {
+    void collected() {
         collected(false);
     }
 
-    public void collected(boolean forceCollect) {
+    void collected(boolean forceCollect) {
         final long frameCount = frameSequence.getFrameCount();
         // We have to reset capacity only on max all queue items
         // What we are avoiding here is resetting capacity on 1000 frames given our queue size

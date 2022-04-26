@@ -277,28 +277,17 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 SCSequence subSeq = new SCSequence();
                 PageFrameSequence<?> frameSequence = f.execute(sqlExecutionContext, subSeq, ORDER_ANY);
 
-                final RingQueue<PageFrameReduceTask> queue = frameSequence.getPageFrameReduceQueue();
                 int frameCount = 0;
-
-                while (true) {
-                    long cursor = subSeq.next();
+                while (frameCount < frameSequence.getFrameCount()) {
+                    long cursor = frameSequence.next();
                     if (cursor < 0) {
-                        boolean dispatched = frameSequence.tryDispatch();
-                        // The queue size should be sufficient for this test, so we don't bother with the local task.
-                        Assert.assertTrue(dispatched);
                         continue;
                     }
-                    PageFrameReduceTask task = queue.get(cursor);
+                    PageFrameReduceTask task = frameSequence.getTask(cursor);
                     PageFrameSequence<?> taskSequence = task.getFrameSequence();
-                    if (taskSequence == frameSequence) {
-                        frameCount++;
-                        task.collected();
-                        if (frameCount == taskSequence.getFrameCount()) {
-                            subSeq.done(cursor);
-                            break;
-                        }
-                    }
-                    subSeq.done(cursor);
+                    Assert.assertEquals(frameSequence, taskSequence);
+                    frameCount++;
+                    frameSequence.collect(cursor, false);
                 }
                 frameSequence.await();
                 Misc.free(frameSequence.getSymbolTableSource());
