@@ -24,18 +24,30 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.network.Net;
+import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
+
+import java.util.concurrent.CyclicBarrier;
 
 public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverFuzzTest.class);
 
-    @Override
-    protected Log getLog() {
-        return LOG;
+    @Test
+    public void testAddColumns() throws Exception {
+        initLoadParameters(15, 2, 2, 5, 75);
+        initFuzzParameters(-1, -1, -1, 4, -1, false, true, false, false);
+        runTest();
     }
 
     @Test
@@ -46,9 +58,36 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
-    public void testAddColumns() throws Exception {
-        initLoadParameters(15, 2, 2, 5, 75);
-        initFuzzParameters(-1, -1, -1, 4, -1, false, true, false, false);
+    @Ignore
+    public void testCrash() {
+        int n = 1;
+        int k = 1;
+        CyclicBarrier barrier = new CyclicBarrier(n);
+        SOCountDownLatch doneLatch = new SOCountDownLatch(n);
+
+        for (int i = 0; i < n; i++) {
+            int a = i;
+            new Thread(() -> {
+                TestUtils.await(barrier);
+                try {
+                    po(k, a);
+                } catch (SqlException e) {
+                    e.printStackTrace();
+                } finally {
+                    doneLatch.countDown();
+                }
+
+            }).start();
+        }
+
+        doneLatch.await();
+
+    }
+
+    @Test
+    public void testDuplicatesReorderingColumns() throws Exception {
+        initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 5, 5, 50);
+        initFuzzParameters(4, 4, -1, -1, -1, true, true, false, false);
         runTest();
     }
 
@@ -60,16 +99,15 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
-    public void testDuplicatesReorderingColumns() throws Exception {
+    public void testDuplicatesReorderingColumnsSendSymbolsWithSpace() throws Exception {
         initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, -1, -1, -1, true, true, false, false);
+        initFuzzParameters(4, 4, -1, -1, -1, true, true, false, true);
         runTest();
     }
 
     @Test
-    public void testDuplicatesReorderingColumnsSendSymbolsWithSpace() throws Exception {
-        initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, -1, -1, -1, true, true, false, true);
+    public void testLoad() throws Exception {
+        initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 7, 12, 20);
         runTest();
     }
 
@@ -88,8 +126,9 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
-    public void testLoad() throws Exception {
-        initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 7, 12, 20);
+    public void testReorderingAddSkipDuplicateColumnsWithNonAscii() throws Exception {
+        initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 5, 5, 50);
+        initFuzzParameters(4, 4, 4, -1, 4, true, true, false, false);
         runTest();
     }
 
@@ -101,9 +140,9 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     @Test
-    public void testReorderingAddSkipDuplicateColumnsWithNonAscii() throws Exception {
+    public void testReorderingColumns() throws Exception {
         initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(4, 4, 4, -1, 4, true, true, false, false);
+        initFuzzParameters(-1, 4, -1, -1, -1, false, true, false, false);
         runTest();
     }
 
@@ -114,10 +153,50 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         runTest();
     }
 
-    @Test
-    public void testReorderingColumns() throws Exception {
-        initLoadParameters(100, Os.type == Os.WINDOWS ? 3 : 5, 5, 5, 50);
-        initFuzzParameters(-1, 4, -1, -1, -1, false, true, false, false);
-        runTest();
+    @Override
+    protected Log getLog() {
+        return LOG;
+    }
+
+    private void po(int k, int a) throws SqlException {
+        final String ilp = "conn pcap_id=\"a\" 1627046637414969856\n" +
+                "conn pcap_id=0.07 1627046637414969856\n";
+        final int len = ilp.length();
+        long mem = Unsafe.malloc(len * 2, MemoryTag.NATIVE_DEFAULT);
+        try {
+            long fd = Net.socketTcp(true);
+            if (fd != -1) {
+                int i = 0;
+                do {
+                    if (Net.connect(fd, Net.sockaddr("127.0.0.1", 9009)) == 0) {
+                        try {
+                            boolean repeat = false;
+                            for (; i < k; i++) {
+                                Chars.asciiStrCpy(ilp, len, mem);
+                                int sent = Net.send(fd, mem, len);
+                                if (sent < 0) {
+                                    i++;
+                                    repeat = true;
+                                    break;
+                                }
+                            }
+                            if (repeat) {
+                                continue;
+                            }
+                            break;
+                        } finally {
+                            Net.close(fd);
+                        }
+                    } else {
+                        System.out.println("could not connect");
+                        break;
+                    }
+                } while (true);
+            } else {
+                System.out.println("Could not open socket [errno=" + Os.errno() + "]");
+            }
+        } finally {
+            Unsafe.free(mem, len * 2, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 }
