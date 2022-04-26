@@ -71,7 +71,7 @@ methods.
 
 You can interact with QuestDB using the following interfaces:
 
-- [Web Console](https://questdb.io/docs/reference/web-console/) listening on
+- [Web Console](https://questdb.io/docs/develop/web-console/) listening on
   port `9000`
 - [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
 - [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) wire protocol on
