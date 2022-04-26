@@ -66,7 +66,7 @@ class OperationFutureImpl implements OperationFuture {
             await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
         }
         if (status != QUERY_COMPLETE) {
-            throw SqlException.$(tableNamePositionInSql, "Timeout expired on waiting for the async command execution result");
+            throw SqlException.$(tableNamePositionInSql, "Timeout expired on waiting for the async command execution result [cmdCorrelationId=").put(cmdCorrelationId).put(']');
         }
     }
 
@@ -119,9 +119,38 @@ class OperationFutureImpl implements OperationFuture {
 
         try {
             // Publish new command and get published command correlation id
-            cmdCorrelationId = publishTableWriterCommand(asyncWriterCommand, executionContext);
+            CharSequence cmdName = asyncWriterCommand.getCommandName();
+            CharSequence tableName = asyncWriterCommand.getTableName();
+            final long correlationId = engine.getCommandCorrelationId();
+            asyncWriterCommand.setCommandCorrelationId(correlationId);
+
+            // todo: deep copy execution context
+
+            try (TableWriter writer = engine.getWriterOrPublishCommand(
+                    executionContext.getCairoSecurityContext(),
+                    tableName,
+                    asyncWriterCommand
+            )) {
+                if (writer != null) {
+                    LOG.info()
+                            .$("published SYNC writer command [name=").$(cmdName)
+                            .$(",tableName=").$(tableName)
+                            .$(",instance=").$(correlationId)
+                            .I$();
+                    affectedRowsCount = asyncWriterCommand.apply(writer, true);
+                    status = QUERY_COMPLETE;
+                } else {
+                    LOG.info()
+                            .$("published ASYNC writer command [name=").$(cmdName)
+                            .$(",tableName=").$(tableName)
+                            .$(",instance=").$(correlationId)
+                            .I$();
+                    status = QUERY_NO_RESPONSE;
+                }
+            }
+
+            cmdCorrelationId = correlationId;
             queryFutureUpdateListener.reportStart(asyncWriterCommand.getTableName(), cmdCorrelationId);
-            status = QUERY_NO_RESPONSE;
         } catch (Throwable ex) {
             close();
             throw ex;
@@ -179,29 +208,4 @@ class OperationFutureImpl implements OperationFuture {
         }
     }
 
-    private long publishTableWriterCommand(AsyncWriterCommand asyncWriterCommand, SqlExecutionContext executionContext) throws SqlException {
-        CharSequence cmdName = asyncWriterCommand.getCommandName();
-        CharSequence tableName = asyncWriterCommand.getTableName();
-        final long correlationId = engine.getCommandCorrelationId();
-        asyncWriterCommand.setCommandCorrelationId(correlationId);
-
-        // todo: deep copy execution context
-
-        try (TableWriter writer = engine.getWriterOrPublishCommand(
-                executionContext.getCairoSecurityContext(),
-                tableName,
-                asyncWriterCommand
-        )) {
-            if (writer != null) {
-                asyncWriterCommand.apply(writer, true);
-            }
-        }
-
-        LOG.info()
-                .$("Published async writer command [name=").$(cmdName)
-                .$(",tableName=").$(tableName)
-                .$(",instance=").$(correlationId)
-                .I$();
-        return correlationId;
-    }
 }

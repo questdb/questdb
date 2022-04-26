@@ -105,8 +105,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 10000000000L;
-        writerAsyncCommandMaxTimeout = 1000000000;
+        writerAsyncCommandBusyWaitTimeout = 1000000L;
+        writerAsyncCommandMaxTimeout = 1000000;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();

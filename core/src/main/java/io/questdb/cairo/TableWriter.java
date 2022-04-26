@@ -35,7 +35,8 @@ import io.questdb.cairo.vm.MemoryFMCRImpl;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
-import io.questdb.griffin.*;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.UpdateOperator;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -683,6 +684,25 @@ public class TableWriter implements Closeable {
         updateMetaStructureVersion();
     }
 
+    public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
+        long lastCommittedTxn = txWriter.getTxn();
+        try {
+            if (txnScoreboard.acquireTxn(lastCommittedTxn)) {
+                txnScoreboard.releaseTxn(lastCommittedTxn);
+            }
+        } catch (CairoException ex) {
+            // Scoreboard can be over allocated, don't stall writing because of that.
+            // Schedule async purge and continue
+            LOG.error().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
+                    .$(tableName)
+                    .$(", txn=").$(lastCommittedTxn)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno()).I$();
+        }
+
+        return txnScoreboard.getMin() != lastCommittedTxn;
+    }
+
     @Override
     public void close() {
         if (isOpen() && lifecycleManager.close()) {
@@ -722,6 +742,27 @@ public class TableWriter implements Closeable {
         return columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
     }
 
+    public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
+        // Check if there is explicit record for this partitionTimestamp / columnIndex combination
+        int recordIndex = columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex);
+        if (recordIndex > -1L) {
+            return columnVersionWriter.getColumnTopByIndex(recordIndex);
+        }
+
+        // Check if column has been already added before this partition
+        long columnTopDefaultPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
+        if (columnTopDefaultPartition <= partitionTimestamp) {
+            return 0;
+        }
+
+        // This column does not exist in the partition
+        return defaultValue;
+    }
+
+    public long getColumnVersion() {
+        return columnVersionWriter.getVersion();
+    }
+
     public long getCommitInterval() {
         return commitInterval;
     }
@@ -754,6 +795,10 @@ public class TableWriter implements Closeable {
         return txWriter.getPartitionCount();
     }
 
+    public long getPartitionNameTxn(int partitionIndex) {
+        return txWriter.getPartitionNameTxn(partitionIndex);
+    }
+
     public long getPartitionSize(int partitionIndex) {
         if (partitionIndex == txWriter.getPartitionCount() - 1 || !PartitionBy.isPartitioned(partitionBy)) {
             return txWriter.getTransientRowCount();
@@ -763,25 +808,6 @@ public class TableWriter implements Closeable {
 
     public long getPartitionTimestamp(int partitionIndex) {
         return txWriter.getPartitionTimestamp(partitionIndex);
-    }
-
-    public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        long lastCommittedTxn = txWriter.getTxn();
-        try {
-            if (txnScoreboard.acquireTxn(lastCommittedTxn)) {
-                txnScoreboard.releaseTxn(lastCommittedTxn);
-            }
-        } catch (CairoException ex) {
-            // Scoreboard can be over allocated, don't stall writing because of that.
-            // Schedule async purge and continue
-            LOG.error().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
-                    .$(tableName)
-                    .$(", txn=").$(lastCommittedTxn)
-                    .$(", error=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno()).I$();
-        }
-
-        return txnScoreboard.getMin() != lastCommittedTxn;
     }
 
     public long getRawMetaMemory() {
@@ -825,10 +851,6 @@ public class TableWriter implements Closeable {
 
     public long getTxn() {
         return txWriter.getTxn();
-    }
-
-    public long getColumnVersion() {
-        return columnVersionWriter.getVersion();
     }
 
     public TxnScoreboard getTxnScoreboard() {
@@ -917,17 +939,13 @@ public class TableWriter implements Closeable {
         o3ErrorCount.incrementAndGet();
     }
 
-    public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {
-        while (true) {
-            long seq = commandPubSeq.next();
-            if (seq > -1) {
-                TableWriterTask task = commandQueue.get(seq);
-                asyncWriterCommand.serialize(task);
-                commandPubSeq.done(seq);
-                return;
-            } else if (seq == -1) {
-                throw CairoException.instance(0).put("cannot publish, command queue is full [table=").put(tableName).put(']');
-            }
+    public void openLastPartition() {
+        try {
+            openPartition(txWriter.getLastPartitionTimestamp());
+            setAppendPosition(txWriter.getTransientRowCount(), false);
+        } catch (Throwable e) {
+            freeColumns(false);
+            throw e;
         }
     }
 
@@ -951,6 +969,21 @@ public class TableWriter implements Closeable {
             }
         } else {
             commandSubSeq.done(cursor);
+        }
+    }
+
+    public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {
+        while (true) {
+            long seq = commandPubSeq.next();
+            if (seq > -1) {
+                TableWriterTask task = commandQueue.get(seq);
+                asyncWriterCommand.serialize(task);
+                System.out.println("published cmd at: " + seq + ", cmd: " + asyncWriterCommand);
+                commandPubSeq.done(seq);
+                return;
+            } else if (seq == -1) {
+                throw CairoException.instance(0).put("cannot publish, command queue is full [table=").put(tableName).put(']');
+            }
         }
     }
 
@@ -1459,14 +1492,9 @@ public class TableWriter implements Closeable {
         this.commitInterval = calculateCommitInterval();
     }
 
-    public void openLastPartition() {
-        try {
-            openPartition(txWriter.getLastPartitionTimestamp());
-            setAppendPosition(txWriter.getTransientRowCount(), false);
-        } catch (Throwable e) {
-            freeColumns(false);
-            throw e;
-        }
+    public void upsertColumnVersion(long partitionTimestamp, int columnIndex, long columnTop) {
+        columnVersionWriter.upsert(partitionTimestamp, columnIndex, txWriter.txn, columnTop);
+        txWriter.updatePartitionColumnVersion(partitionTimestamp);
     }
 
     /**
@@ -1613,6 +1641,56 @@ public class TableWriter implements Closeable {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    private int addColumnToMeta(
+            CharSequence name,
+            int type,
+            boolean indexFlag,
+            int indexValueBlockCapacity,
+            boolean sequentialFlag
+    ) {
+        int index;
+        try {
+            index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
+            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+
+            ddlMem.putInt(columnCount + 1);
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
+            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+            copyVersionAndLagValues();
+            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
+            for (int i = 0; i < columnCount; i++) {
+                writeColumnEntry(i, false);
+            }
+
+            // add new column metadata to bottom of list
+            ddlMem.putInt(type);
+            long flags = 0;
+            if (indexFlag) {
+                flags |= META_FLAG_BIT_INDEXED;
+            }
+
+            if (sequentialFlag) {
+                flags |= META_FLAG_BIT_SEQUENTIAL;
+            }
+
+            ddlMem.putLong(flags);
+            ddlMem.putInt(indexValueBlockCapacity);
+            ddlMem.putLong(configuration.getRandom().nextLong());
+            ddlMem.skip(8);
+
+            long nameOffset = getColumnNameOffset(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                CharSequence columnName = metaMem.getStr(nameOffset);
+                ddlMem.putStr(columnName);
+                nameOffset += Vm.getStorageLength(columnName);
+            }
+            ddlMem.putStr(name);
+        } finally {
+            ddlMem.close();
+        }
+        return index;
     }
 
     private void attachPartitionCheckFilesMatchFixedColumn(FilesFacade ff, Path path, int columnType, long partitionSize, String columnName, long columnNameTxn) {
@@ -1805,56 +1883,6 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int addColumnToMeta(
-            CharSequence name,
-            int type,
-            boolean indexFlag,
-            int indexValueBlockCapacity,
-            boolean sequentialFlag
-    ) {
-        int index;
-        try {
-            index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
-            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-
-            ddlMem.putInt(columnCount + 1);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
-            }
-
-            // add new column metadata to bottom of list
-            ddlMem.putInt(type);
-            long flags = 0;
-            if (indexFlag) {
-                flags |= META_FLAG_BIT_INDEXED;
-            }
-
-            if (sequentialFlag) {
-                flags |= META_FLAG_BIT_SEQUENTIAL;
-            }
-
-            ddlMem.putLong(flags);
-            ddlMem.putInt(indexValueBlockCapacity);
-            ddlMem.putLong(configuration.getRandom().nextLong());
-            ddlMem.skip(8);
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStr(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
-            ddlMem.putStr(name);
-        } finally {
-            ddlMem.close();
-        }
-        return index;
-    }
-
     private void bumpMasterRef() {
         if ((masterRef & 1) == 0) {
             masterRef++;
@@ -1885,10 +1913,6 @@ public class TableWriter implements Closeable {
             return;
         }
         throw new CairoError("Table '" + tableName + "' is distressed");
-    }
-
-    public long getPartitionNameTxn(int partitionIndex) {
-        return txWriter.getPartitionNameTxn(partitionIndex);
     }
 
     private void clearO3() {
@@ -2354,25 +2378,12 @@ public class TableWriter implements Closeable {
         return indexers.getQuick(columnIndex).getWriter();
     }
 
-    public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
-        // Check if there is explicit record for this partitionTimestamp / columnIndex combination
-        int recordIndex = columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex);
-        if (recordIndex > -1L) {
-            return columnVersionWriter.getColumnTopByIndex(recordIndex);
-        }
-
-        // Check if column has been already added before this partition
-        long columnTopDefaultPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
-        if (columnTopDefaultPartition <= partitionTimestamp) {
-            return 0;
-        }
-
-        // This column does not exist in the partition
-        return defaultValue;
-    }
-
     long getColumnTop(int columnIndex) {
         return columnTops.getQuick(columnIndex);
+    }
+
+    ColumnVersionWriter getColumnVersionWriter() {
+        return columnVersionWriter;
     }
 
     CairoConfiguration getConfiguration() {
@@ -3812,7 +3823,7 @@ public class TableWriter implements Closeable {
 
         try {
             mem1.of(ff, dFile(
-                    path.trimTo(pathTrimToLen), name, columnNameTxn),
+                            path.trimTo(pathTrimToLen), name, columnNameTxn),
                     configuration.getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
@@ -3996,6 +4007,7 @@ public class TableWriter implements Closeable {
                     .$(", tableName=").$(tableName)
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
+                    .$(", cursor=").$(cursor)
                     .I$();
             asyncWriterCommand = asyncWriterCommand.deserialize(cmd);
             affectedRowsCount = asyncWriterCommand.apply(this, contextAllowsAnyStructureChanges);
@@ -4026,6 +4038,94 @@ public class TableWriter implements Closeable {
         while ((cursor = commandSubSeq.next()) > -1) {
             TableWriterTask cmd = commandQueue.get(cursor);
             processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
+        }
+    }
+
+    private void processReplSyncCommand(TableWriterTask cmd, long cursor, Sequence sequence) {
+        long dst = cmd.getInstance();
+        long dstIP = cmd.getIp();
+        long tableId = cmd.getTableId();
+        TableSyncModel syncModel;
+
+        try {
+            LOG.info()
+                    .$("received replication SYNC cmd [tableName=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", src=").$(dst)
+                    .$(", srcIP=").$ip(dstIP)
+                    .I$();
+            syncModel = replHandleSyncCmd(cmd);
+        } finally {
+            // release command queue slot not to hold queues
+            sequence.done(cursor);
+        }
+        if (syncModel != null) {
+            publishTableWriterEvent(syncModel, tableId, dst, dstIP);
+        }
+    }
+
+    private void publishTableWriterEvent(int cmdType, long tableId, long correlationId, CharSequence error, long affectedRowsCount, int eventType) {
+        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        if (pubCursor > -1) {
+            try {
+                final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
+                event.of(eventType, tableId, tableName);
+                if (error != null) {
+                    event.putStr(error);
+                } else {
+                    event.putInt(-1);
+                    event.putLong(affectedRowsCount);
+                }
+                event.setInstance(correlationId);
+            } finally {
+                messageBus.getTableWriterEventPubSeq().done(pubCursor);
+            }
+
+            // Log result
+            if (eventType == TSK_COMPLETE) {
+                LogRecord lg = LOG.info()
+                        .$("published async command complete event [type=").$(cmdType)
+                        .$(",tableName=").$(tableName)
+                        .$(",tableId=").$(tableId)
+                        .$(",correlationId=").$(correlationId);
+                if (error != null) {
+                    lg.$(",error=").$(error);
+                }
+                lg.I$();
+            }
+        } else if (pubCursor == -1) {
+            // Queue is full
+            LOG.error()
+                    .$("cannot publish sync command complete event [type=").$(cmdType)
+                    .$(",tableName=").$(tableName)
+                    .$(",tableId=").$(tableId)
+                    .$(",correlationId=").$(correlationId)
+                    .I$();
+        }
+    }
+
+    void publishTableWriterEvent(TableSyncModel model, long tableId, long dst, long dstIP) {
+        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        if (pubCursor > -1) {
+            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
+            model.toBinary(event);
+            event.setInstance(dst);
+            event.setIp(dstIP);
+            event.setTableId(tableId);
+            messageBus.getTableWriterEventPubSeq().done(pubCursor);
+            LOG.info()
+                    .$("published replication SYNC event [table=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", dst=").$(dst)
+                    .$(", dstIP=").$ip(dstIP)
+                    .I$();
+        } else {
+            LOG.error()
+                    .$("could not publish slave sync event [table=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", dst=").$(dst)
+                    .$(", dstIP=").$ip(dstIP)
+                    .I$();
         }
     }
 
@@ -4566,46 +4666,6 @@ public class TableWriter implements Closeable {
         clearTodoLog();
     }
 
-    private void publishTableWriterEvent(int cmdType, long tableId, long correlationId, CharSequence error, long affectedRowsCount, int eventType) {
-        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
-        if (pubCursor > -1) {
-            try {
-                final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
-                event.of(eventType, tableId, tableName);
-                if (error != null) {
-                    event.putStr(error);
-                } else {
-                    event.putInt(-1);
-                    event.putLong(affectedRowsCount);
-                }
-                event.setInstance(correlationId);
-            } finally {
-                messageBus.getTableWriterEventPubSeq().done(pubCursor);
-            }
-
-            // Log result
-            if (eventType == TSK_COMPLETE) {
-                LogRecord lg = LOG.info()
-                        .$("published async command complete event [type=").$(cmdType)
-                        .$(",tableName=").$(tableName)
-                        .$(",tableId=").$(tableId)
-                        .$(",correlationId=").$(correlationId);
-                if (error != null) {
-                    lg.$(",error=").$(error);
-                }
-                lg.I$();
-            }
-        } else if (pubCursor == -1) {
-            // Queue is full
-            LOG.error()
-                    .$("cannot publish sync command complete event [type=").$(cmdType)
-                    .$(",tableName=").$(tableName)
-                    .$(",tableId=").$(tableId)
-                    .$(",correlationId=").$(correlationId)
-                    .I$();
-        }
-    }
-
     @Nullable TableSyncModel replHandleSyncCmd(TableWriterTask cmd) {
         final long instance = cmd.getInstance();
         final long sequence = cmd.getSequence();
@@ -4621,54 +4681,6 @@ public class TableWriter implements Closeable {
                 cmd.getData() + txMemSize + 16,
                 Unsafe.getUnsafe().getLong(cmd.getData() + txMemSize + 8)
         );
-    }
-
-    private void processReplSyncCommand(TableWriterTask cmd, long cursor, Sequence sequence) {
-        long dst = cmd.getInstance();
-        long dstIP = cmd.getIp();
-        long tableId = cmd.getTableId();
-        TableSyncModel syncModel;
-
-        try {
-            LOG.info()
-                    .$("received replication SYNC cmd [tableName=").$(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", src=").$(dst)
-                    .$(", srcIP=").$ip(dstIP)
-                    .I$();
-            syncModel = replHandleSyncCmd(cmd);
-        } finally {
-            // release command queue slot not to hold queues
-            sequence.done(cursor);
-        }
-        if (syncModel != null) {
-            publishTableWriterEvent(syncModel, tableId, dst, dstIP);
-        }
-    }
-
-    void publishTableWriterEvent(TableSyncModel model, long tableId, long dst, long dstIP) {
-        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
-        if (pubCursor > -1) {
-            final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
-            model.toBinary(event);
-            event.setInstance(dst);
-            event.setIp(dstIP);
-            event.setTableId(tableId);
-            messageBus.getTableWriterEventPubSeq().done(pubCursor);
-            LOG.info()
-                    .$("published replication SYNC event [table=").$(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", dst=").$(dst)
-                    .$(", dstIP=").$ip(dstIP)
-                    .I$();
-        } else {
-            LOG.error()
-                    .$("could not publish slave sync event [table=").$(tableName)
-                    .$(", tableId=").$(tableId)
-                    .$(", dst=").$(dst)
-                    .$(", dstIP=").$ip(dstIP)
-                    .I$();
-        }
     }
 
     private void resizeColumnTopSink(long srcOoo, long srcOooMax) {
@@ -5096,15 +5108,6 @@ public class TableWriter implements Closeable {
                 }
             }
         }
-    }
-
-    ColumnVersionWriter getColumnVersionWriter() {
-        return columnVersionWriter;
-    }
-
-    public void upsertColumnVersion(long partitionTimestamp, int columnIndex, long columnTop) {
-        columnVersionWriter.upsert(partitionTimestamp, columnIndex, txWriter.txn, columnTop);
-        txWriter.updatePartitionColumnVersion(partitionTimestamp);
     }
 
     private void validateSwapMeta(CharSequence columnName) {

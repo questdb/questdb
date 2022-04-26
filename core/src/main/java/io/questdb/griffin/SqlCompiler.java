@@ -2158,8 +2158,6 @@ public class SqlCompiler implements Closeable {
                 executionContext
         );
 
-        // todo: perhaps reuse instance ?
-
         return new UpdateOperation(
                 engine,
                 updateQueryModel.getUpdateTableName(),
