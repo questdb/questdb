@@ -858,6 +858,15 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "eschultz",
+      "name": "Eric Schultz",
+      "avatar_url": "https://avatars.githubusercontent.com/u/390064?v=4",
+      "profile": "https://github.com/eschultz",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
