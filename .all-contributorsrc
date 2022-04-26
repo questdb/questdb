@@ -904,6 +904,16 @@
         "blog",
         "ideas"
       ]
+    },
+    {
+      "login": "HeZean",
+      "name": "Chris",
+      "avatar_url": "https://avatars.githubusercontent.com/u/49837965?v=4",
+      "profile": "https://github.com/HeZean",
+      "contributions": [
+        "code",
+        "bug"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
