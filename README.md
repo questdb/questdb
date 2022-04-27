@@ -8,7 +8,7 @@
     <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/all-contributors/questdb/questdb" alt="QuestDB open source contributors"/>
+    <img src="https://img.shields.io/github/all-contributors/questdb/questdb/master" alt="QuestDB open source contributors"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
@@ -71,8 +71,8 @@ methods.
 
 You can interact with QuestDB using the following interfaces:
 
-- [Web Console](https://questdb.io/docs/develop/web-console/) listening on
-  port `9000`
+- [Web Console](https://questdb.io/docs/develop/web-console/) listening on port
+  `9000`
 - [REST API](https://questdb.io/docs/reference/api/rest/) on port `9000`
 - [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) wire protocol on
   port `8812`
