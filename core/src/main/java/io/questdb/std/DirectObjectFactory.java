@@ -26,5 +26,5 @@ package io.questdb.std;
 
 @FunctionalInterface
 public interface DirectObjectFactory<T> {
-    T newInstance(long address, long addressSize);
+    T newInstance(final long address, long addressSize);
 }

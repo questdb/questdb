@@ -62,6 +62,7 @@ import org.postgresql.core.BaseConnection;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.Date;
@@ -93,6 +94,7 @@ public class PGJobContextTest extends BasePGTest {
 
     @BeforeClass
     public static void init() {
+        inputRoot = new File(".").getAbsolutePath();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
@@ -1676,6 +1678,25 @@ public class PGJobContextTest extends BasePGTest {
             byte[] bytes = text.getBytes();
             copyIn.writeToCopy(bytes, 0, bytes.length);
             copyIn.endCopy();
+        }
+    }
+
+    @Test
+    public void testLocalCopyFrom() throws Exception {
+        try (final PGWireServer ignored = createPGServer(2);
+             final Connection connection = getConnection(false, true);
+             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true")) {
+
+            copyStatement.execute();
+
+            try (final PreparedStatement selectStatement = connection.prepareStatement("select * FROM testLocalCopyFrom");
+                 final ResultSet rs = selectStatement.executeQuery()) {
+                sink.clear();
+                assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
+                        + "ABC,xy,a,brown fox jumped over the fence,10\n"
+                        + "CDE,bb,b,sentence 1\n"
+                        + "sentence 2,12\n", sink, rs);
+            }
         }
     }
 
@@ -5137,7 +5158,7 @@ create table tab as (
                 ">50000000675f5f6173796e6370675f73746d745f315f5f000a20202020202020202020202073656c656374202a2066726f6d202774616232272077686572652061203e2024310a2020202020202020202020204c494d4954203130300a20202020202020200000004400000018535f5f6173796e6370675f73746d745f315f5f004800000004\n" +
                 "<3100000004740000000a0001000002bd540000001a00016100000000000001000002bd0008ffffffff0000\n" +
                 ">420000002e005f5f6173796e6370675f73746d745f315f5f00000100010001000000083fd999999999999a00010001450000000900000000005300000004\n" +
-                "<320000000444000000120001000000083fe6666666666667430000000d53454c4543542031005a0000000549\n" +
+                "<320000000444000000120001000000083fe6666666666666430000000d53454c4543542031005a0000000549\n" +
                 ">5800000004\n";
         assertHexScript(
                 getFragmentedSendFacade(),
@@ -6936,7 +6957,7 @@ create table tab as (
                     try (ResultSet rs = ps.executeQuery()) {
                         assertResultSet(
                                 "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                        "d1,c1,101.30000000000001,1970-01-01 00:00:00.000002\n",
+                                        "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
                                 sink,
                                 rs
                         );
@@ -6967,10 +6988,10 @@ create table tab as (
                     try (ResultSet rs = ps.executeQuery()) {
                         assertResultSet(
                                 "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
-                                        "d2,c1,201.20000000000002,1970-01-01 00:00:00.000001\n" +
+                                        "d2,c1,201.2,1970-01-01 00:00:00.000001\n" +
                                         "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
                                         "d2,c1,201.3,1970-01-01 00:00:00.000002\n" +
-                                        "d1,c1,101.30000000000001,1970-01-01 00:00:00.000002\n",
+                                        "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
                                 sink,
                                 rs
                         );
@@ -6986,7 +7007,7 @@ create table tab as (
                         assertResultSet(
                                 "device_id[VARCHAR],column_name[VARCHAR],value[DOUBLE],timestamp[TIMESTAMP]\n" +
                                         "d1,c1,101.2,1970-01-01 00:00:00.000001\n" +
-                                        "d1,c1,101.30000000000001,1970-01-01 00:00:00.000002\n",
+                                        "d1,c1,101.3,1970-01-01 00:00:00.000002\n",
                                 sink,
                                 rs
                         );
