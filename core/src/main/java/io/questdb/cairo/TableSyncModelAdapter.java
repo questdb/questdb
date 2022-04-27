@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-class TableSyncModelAdapter implements TableStructure {
+final class TableSyncModelAdapter implements TableStructure {
     private final TableSyncModel model;
 
     public TableSyncModelAdapter(TableSyncModel model) {
@@ -89,16 +89,16 @@ class TableSyncModelAdapter implements TableStructure {
 
     @Override
     public int getTimestampIndex() {
-        return 0;
+        return model.getTimestampIndex();
     }
 
     @Override
     public int getMaxUncommittedRows() {
-        return 0;
+        return model.getMaxUncommittedRows();
     }
 
     @Override
     public long getCommitLag() {
-        return 0;
+        return model.getCommitLag();
     }
 }

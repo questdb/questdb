@@ -1181,6 +1181,10 @@ public class TableWriter implements Closeable {
             model.addColumnMetadata(metadata.getColumnQuick(masterIndex), cached, capacity);
             model.addColumnMetaAction(TableSyncModel.COLUMN_META_ACTION_ADD, masterIndex, masterIndex);
         }
+        TableWriterMetadata metadata = getMetadata();
+        model.setCommitLag(metadata.getCommitLag());
+        model.setTimestampIndex(metadata.getTimestampIndex());
+        model.setMaxUncommittedRows(metadata.getMaxUncommittedRows());
         return model;
     }
 
@@ -1199,6 +1203,9 @@ public class TableWriter implements Closeable {
         final TableSyncModel model = new TableSyncModel();
         model.setPartitionBy(partitionBy);
         model.setTableName(tableName);
+        model.setCommitLag(metadata.getCommitLag());
+        model.setTimestampIndex(metadata.getTimestampIndex());
+        model.setMaxUncommittedRows(metadata.getMaxUncommittedRows());
 
         model.setMaxTimestamp(getMaxTimestamp());
 

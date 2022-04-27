@@ -39,6 +39,7 @@ import io.questdb.std.str.Path;
 import io.questdb.tasks.TableWriterTask;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.Closeable;
@@ -111,6 +112,84 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 );
 
             }
+        });
+    }
+
+    @Test
+    @Ignore("figure out the right assert for this scenario, the diff model looks funky")
+    public void testInitialAndInsert() throws Exception {
+        assertMemoryLeak(() -> {
+            compile(
+                    "create table x as  " +
+                            "(select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-10', 'yyyy-MM-dd'), 3000000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(100000)" +
+                            ") timestamp(k) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    MemoryMARW mem = Vm.getMARWInstance();
+                    Path path = new Path();
+            ) {
+                TableSyncModel model = w1.createInitialSyncModel();
+                model.setTableName("y");
+                engine.createTable(sqlExecutionContext.getCairoSecurityContext(), mem, path, model);
+            }
+
+            compile("insert into x " +
+                            "select" +
+                            " cast(x + 10 as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0)*100, 3) amt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp," +
+                            " rnd_boolean() b," +
+                            " rnd_str(1,1,2) c," +
+                            " rnd_double(2) d," +
+                            " rnd_float(2) e," +
+                            " rnd_short(10,1024) f," +
+                            " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                            " rnd_symbol(4,4,4,2) ik," +
+                            " rnd_long() j," +
+                            " timestamp_sequence(to_timestamp('2018-01-09', 'yyyy-MM-dd'), 30000) k," +
+                            " rnd_byte(2,50) l," +
+                            " rnd_bin(10, 20, 2) m," +
+                            " rnd_str(5,16,2) n," +
+                            " rnd_long256() o" +
+                            " from long_sequence(10000)",
+                    sqlExecutionContext
+            );
+
+            try (
+                    TableWriter w1 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "log test");
+                    TableWriter w2 = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "y", "log test")
+            ) {
+                sink.clear();
+                sink.put(w1.replCreateTableSyncModel(w2.getRawTxnMemory(), w2.getRawTxnMemorySize(), w2.getRawMetaMemory(), w2.getRawMetaMemorySize(), w2.getRawColumnVersionsMemory(), w2.getRawColumnVersionsMemorySize()));
+            }
+
+            TestUtils.assertEquals(
+                    "{\"table\":{\"action\":\"keep\",\"dataVersion\":0,maxTimestamp:\"2018-01-13T11:19:57.000000Z\"},\"varColumns\":[{\"ts\":\"2018-01-09T00:00:00.000000Z\",\"index\":5,\"size\":56526},{\"ts\":\"2018-01-09T00:00:00.000000Z\",\"index\":14,\"size\":181399},{\"ts\":\"2018-01-09T00:00:00.000000Z\",\"index\":15,\"size\":215132}],\"partitions\":[{\"action\":\"whole\",\"ts\":\"2018-01-09T00:00:00.000000Z\",\"startRow\":0,\"rowCount\":10000,\"nameTxn\":-1,\"columnVersion\":-1}]}",
+                    sink
+            );
+
         });
     }
 

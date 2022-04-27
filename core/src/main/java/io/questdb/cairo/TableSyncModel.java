@@ -85,6 +85,9 @@ public class TableSyncModel implements Mutable, Sinkable {
     private long maxTimestamp;
     private String tableName;
     private int partitionBy;
+    private int timestampIndex;
+    private int maxUncommittedRows;
+    private long commitLag;
 
     public void addColumnMetaAction(int action, int from, int to) {
         columnMetaIndex.add((long) action, Numbers.encodeLowHighInts(from, to));
@@ -258,6 +261,18 @@ public class TableSyncModel implements Mutable, Sinkable {
         return Numbers.decodeHighInt(l);
     }
 
+    public int getTimestampIndex() {
+        return timestampIndex;
+    }
+
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    public long getCommitLag() {
+        return commitLag;
+    }
+
     public void setTableAction(int tableAction) {
         this.tableAction = tableAction;
     }
@@ -272,6 +287,18 @@ public class TableSyncModel implements Mutable, Sinkable {
 
     public void setTableName(String tableName) {
         this.tableName = tableName;
+    }
+
+    public void setTimestampIndex(int timestampIndex) {
+        this.timestampIndex = timestampIndex;
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        this.maxUncommittedRows = maxUncommittedRows;
+    }
+
+    public void setCommitLag(long commitLag) {
+        this.commitLag = commitLag;
     }
 
     public void toBinary(TableWriterTask sink) {
