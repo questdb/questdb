@@ -179,6 +179,10 @@ public class LineUdpParserSupport {
     }
 
     public static int getValueType(CharSequence value) {
+        return getValueType(value, ColumnType.DOUBLE, ColumnType.LONG);
+    }
+
+    public static int getValueType(CharSequence value, short defaultFloatColumnType, short defaultIntegerColumnType) {
         // method called for inbound ilp messages on each value.
         // returning UNDEFINED makes the whole line be skipped.
         // 0 len values, return null type.
@@ -193,7 +197,7 @@ public class LineUdpParserSupport {
                     if (valueLen > 3 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
                         return ColumnType.LONG256;
                     }
-                    return valueLen == 1 ? ColumnType.SYMBOL : ColumnType.LONG;
+                    return valueLen == 1 ? ColumnType.SYMBOL : defaultIntegerColumnType;
                 case 't':
                     if (valueLen > 1 && ((first >= '0' && first <= '9') || first == '-')) {
                         return ColumnType.TIMESTAMP;
@@ -223,10 +227,10 @@ public class LineUdpParserSupport {
                     return ColumnType.STRING;
                 default:
                     if (last >= '0' && last <= '9' && ((first >= '0' && first <= '9') || first == '-' || first == '.')) {
-                        return ColumnType.DOUBLE;
+                        return defaultFloatColumnType;
                     }
                     if (SqlKeywords.isNanKeyword(value)) {
-                        return ColumnType.DOUBLE;
+                        return defaultFloatColumnType;
                     }
                     if (value.charAt(0) == '"') {
                         return ColumnType.UNDEFINED;

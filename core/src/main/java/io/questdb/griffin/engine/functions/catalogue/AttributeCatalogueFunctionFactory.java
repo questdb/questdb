@@ -35,7 +35,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 
@@ -227,7 +226,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean getBool(int col) {
-                return false;
+                return col == 9;
             }
 
             @Override
@@ -261,7 +260,6 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
             public int getStrLen(int col) {
                 return getStr(col).length();
             }
-
         }
     }
 
@@ -276,6 +274,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("attlen", 7, ColumnType.SHORT));
         metadata.add(new TableColumnMetadata("attidentity", 8, ColumnType.CHAR));
         metadata.add(new TableColumnMetadata("attisdropped", 9, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("atthasdef", 10, ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

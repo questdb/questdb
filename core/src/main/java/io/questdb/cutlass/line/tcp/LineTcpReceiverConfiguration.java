@@ -87,4 +87,8 @@ public interface LineTcpReceiverConfiguration {
     boolean isSymbolAsFieldSupported();
 
     boolean isStringAsTagSupported();
+
+    short getDefaultColumnTypeForFloat();
+
+    short getDefaultColumnTypeForInteger();
 }

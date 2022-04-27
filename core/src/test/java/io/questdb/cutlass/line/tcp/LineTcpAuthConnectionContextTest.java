@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.Files;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
@@ -59,6 +60,8 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
         disconnected = true;
         netMsgBufferSize.set(1024);
         maxSendBytes = 1024;
+        floatDefaultColumnType = ColumnType.DOUBLE;
+        integerDefaultColumnType = ColumnType.LONG;
         lineTcpConfiguration = createReceiverConfiguration(true, new LineTcpNetworkFacade() {
             @Override
             public int send(long fd, long buffer, int bufferLen) {

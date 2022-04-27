@@ -427,7 +427,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             sendLinger(receiver, lineData, "tableCRASH");
 
             String expected = "tag_n_1\ttag_n_2\ttag_n_3\ttag_n_4\ttag_n_5\ttag_n_6\ttag_n_7\ttag_n_8\ttag_n_9\ttag_n_10\ttag_n_11\ttag_n_12\ttag_n_13\ttag_n_14\ttag_n_15\ttag_n_16\ttag_n_17\tvalue\ttimestamp\n" +
-                    "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.400000000000006\t2021-04-27T07:40:49.714000Z\n";
+                    "1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t42.4\t2021-04-27T07:40:49.714000Z\n";
             assertTable(expected, "tableCRASH");
         });
     }
@@ -911,6 +911,41 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
             Assert.assertEquals(count * writeIterations, reader.size());
+        }
+    }
+
+    @Test
+    public void testMetaDataSizeToHitExactly16K() throws Exception {
+        final String tableName = "weather";
+        final int numOfColumns = 255;
+        final Rnd rnd = new Rnd();
+
+        final SOCountDownLatch finished = new SOCountDownLatch(1);
+        runInContext(receiver -> {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    if (name.equals(tableName)) {
+                        finished.countDown();
+                    }
+                }
+            });
+
+            try (Socket socket = getSocket()) {
+                // this loop adds columns to the table
+                // after the 252th column has been added the metadata size will be exactly 16k
+                // adding an extra 2 columns, just in case
+                for (int i = 1; i < numOfColumns; i++) {
+                    sendToSocket(socket, tableName + ",abcdefghijklmnopqrs=x, " + rnd.nextString(13-(int) Math.log10(i)) + i + "=32 " + i + "\n");
+                }
+                finished.await(10_000_000_000L);
+            } finally {
+                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                });
+            }
+        }, false, 250);
+
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            Assert.assertEquals(numOfColumns+1, reader.getMetadata().getColumnCount());
         }
     }
 

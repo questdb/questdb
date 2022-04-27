@@ -42,7 +42,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_attrdef()";
+        return "pg_attrdef()";
     }
 
     @Override

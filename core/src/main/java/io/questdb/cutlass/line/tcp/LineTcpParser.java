@@ -50,13 +50,14 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_GEOINT = 11;
     public static final byte ENTITY_TYPE_GEOLONG = 12;
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
+    public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
     public static final byte ENTITY_TYPE_LONG = 14;
     public static final byte ENTITY_TYPE_DOUBLE = 15;
-    public static final int N_ENTITY_TYPES = ENTITY_TYPE_DOUBLE + 1;
     public static final byte ENTITY_TYPE_SHORT = 16;
     public static final byte ENTITY_TYPE_BYTE = 17;
     public static final byte ENTITY_TYPE_DATE = 18;
     public static final byte ENTITY_TYPE_CHAR = 19;
+    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_CHAR + 1;
     static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
 

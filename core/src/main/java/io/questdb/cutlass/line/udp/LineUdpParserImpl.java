@@ -68,6 +68,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final CairoSecurityContext cairoSecurityContext;
     private final LineProtoTimestampAdapter timestampAdapter;
     private final LineUdpReceiverConfiguration udpConfiguration;
+    private final short defaultFloatColumnType;
+    private final short defaultIntegerColumnType;
     // state
     // cache entry index is always a negative value
     private int cacheEntryIndex = 0;
@@ -99,6 +101,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         this.udpConfiguration = udpConfiguration;
         this.cairoSecurityContext = udpConfiguration.getCairoSecurityContext();
         this.timestampAdapter = udpConfiguration.getTimestampAdapter();
+
+        defaultFloatColumnType = udpConfiguration.getDefaultColumnTypeForFloat();
+        defaultIntegerColumnType = udpConfiguration.getDefaultColumnTypeForInteger();
     }
 
     @Override
@@ -324,7 +329,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void parseFieldValue(CachedCharSequence value, CharSequenceCache cache) {
-        int valueType = LineUdpParserSupport.getValueType(value);
+        int valueType = LineUdpParserSupport.getValueType(value, defaultFloatColumnType, defaultIntegerColumnType);
         if (valueType == ColumnType.UNDEFINED) {
             switchModeToSkipLine();
         } else {
@@ -334,7 +339,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
     @SuppressWarnings("unused")
     private void parseFieldValueNewTable(CachedCharSequence value, CharSequenceCache cache) {
-        int valueType = LineUdpParserSupport.getValueType(value);
+        int valueType = LineUdpParserSupport.getValueType(value, defaultFloatColumnType, defaultIntegerColumnType);
         if (valueType == ColumnType.UNDEFINED || valueType == ColumnType.NULL) { // cannot create a col of type null
             switchModeToSkipLine();
         } else {
@@ -368,6 +373,18 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                                 || columnTypeTag == ColumnType.TIMESTAMP
                                 || columnTypeTag == ColumnType.DATE;
                         break;
+                    case ColumnType.INT:
+                        valid = columnTypeTag == ColumnType.INT
+                                || columnTypeTag == ColumnType.SHORT
+                                || columnTypeTag == ColumnType.BYTE;
+                        break;
+                    case ColumnType.SHORT:
+                        valid = columnTypeTag == ColumnType.SHORT
+                                || columnTypeTag == ColumnType.BYTE;
+                        break;
+                    case ColumnType.BYTE:
+                        valid = columnTypeTag == ColumnType.BYTE;
+                        break;
                     case ColumnType.BOOLEAN:
                         valid = columnTypeTag == ColumnType.BOOLEAN;
                         break;
@@ -379,6 +396,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                         break;
                     case ColumnType.DOUBLE:
                         valid = columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;
+                        break;
+                    case ColumnType.FLOAT:
+                        valid = columnTypeTag == ColumnType.FLOAT;
                         break;
                     case ColumnType.SYMBOL:
                         valid = columnTypeTag == ColumnType.SYMBOL;

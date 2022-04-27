@@ -100,6 +100,7 @@ public final class TableUtils {
     public static final long TX_OFFSET_DATA_VERSION_64 = TX_OFFSET_STRUCT_VERSION_64 + 8;
     public static final long TX_OFFSET_PARTITION_TABLE_VERSION_64 = TX_OFFSET_DATA_VERSION_64 + 8;
     public static final long TX_OFFSET_COLUMN_VERSION_64 = TX_OFFSET_PARTITION_TABLE_VERSION_64 + 8;
+    public static final long TX_OFFSET_TRUNCATE_VERSION_64 = TX_OFFSET_COLUMN_VERSION_64 + 8;
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
 
@@ -246,7 +247,7 @@ public final class TableUtils {
                 }
             }
             mem.smallFile(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-            createTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L, 0L, 0L);
+            createTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
 
 
             mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
@@ -342,11 +343,11 @@ public final class TableUtils {
         return pTransitionIndex;
     }
 
-    public static void createTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion) {
+    public static void createTxn(MemoryMW txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion, long truncateVersion) {
         txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
         txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
         txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
-        resetTxn(txMem, TX_BASE_HEADER_SIZE, symbolMapCount, txn, dataVersion, partitionTableVersion, structureVersion, columnVersion);
+        resetTxn(txMem, TX_BASE_HEADER_SIZE, symbolMapCount, txn, dataVersion, partitionTableVersion, structureVersion, columnVersion, truncateVersion);
         txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
     }
 
@@ -637,7 +638,7 @@ public final class TableUtils {
         mem.jumpTo(40);
     }
 
-    public static void resetTxn(MemoryMW txMem, long baseOffset, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion) {
+    public static void resetTxn(MemoryMW txMem, long baseOffset, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion, long structureVersion, long columnVersion, long truncateVersion) {
         // txn to let readers know table is being reset
         txMem.putLong(baseOffset + TX_OFFSET_TXN_64, txn);
 
@@ -657,6 +658,8 @@ public final class TableUtils {
         txMem.putLong(baseOffset + TX_OFFSET_PARTITION_TABLE_VERSION_64, partitionTableVersion);
         // column version
         txMem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
+        // truncate version
+        txMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
 
         txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {
@@ -759,14 +762,13 @@ public final class TableUtils {
             }
 
             final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+            if (columnCount < 0) {
+                throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
+            }
+
             long offset = getColumnNameOffset(columnCount);
             if (memSize < offset) {
                 throw validationException(metaMem).put("File is too small, column types are missing ").put(memSize);
-            }
-
-            if (offset < columnCount || (
-                    columnCount > 0 && (offset < 0 || offset >= memSize))) {
-                throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
             }
 
             final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
@@ -802,9 +804,10 @@ public final class TableUtils {
             // validate column names
             int denseCount = 0;
             for (int i = 0; i < columnCount; i++) {
-                if (offset + 4 >= memSize) {
+                if (offset + 4 > memSize) {
                     throw validationException(metaMem).put("File is too small, column length for column ").put(i).put(" is missing");
                 }
+
                 int strLength = metaMem.getInt(offset);
                 if (strLength == TableUtils.NULL_LEN) {
                     throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
@@ -818,15 +821,10 @@ public final class TableUtils {
                 }
 
                 CharSequence name = metaMem.getStr(offset);
-
                 if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
                     offset += Vm.getStorageLength(name);
                 } else {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
-                }
-
-                if (offset >= memSize) {
-                    throw validationException(metaMem).put("File is too small, column names are missing ").put(memSize);
                 }
             }
         } catch (Throwable e) {
