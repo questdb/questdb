@@ -44,6 +44,7 @@ import static io.questdb.cutlass.line.tcp.LineTcpUtils.utf8ToUtf16;
 public class TableUpdateDetails implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableUpdateDetails.class);
     private static final SymbolLookup NOT_FOUND_LOOKUP = value -> SymbolTable.VALUE_NOT_FOUND;
+    private final DefaultColumnTypes defaultColumnTypes;
     private final String tableNameUtf16;
     private final ThreadLocalDetails[] localDetailsArray;
     private final int timestampIndex;
@@ -66,10 +67,12 @@ public class TableUpdateDetails implements Closeable {
             CairoEngine engine,
             TableWriter writer,
             int writerThreadId,
-            NetworkIOJob[] netIoJobs
+            NetworkIOJob[] netIoJobs,
+            DefaultColumnTypes defaultColumnTypes
     ) {
         this.writerThreadId = writerThreadId;
         this.engine = engine;
+        this.defaultColumnTypes = defaultColumnTypes;
         final int n = netIoJobs.length;
         this.localDetailsArray = new ThreadLocalDetails[n];
         for (int i = 0; i < n; i++) {
@@ -286,6 +289,9 @@ public class TableUpdateDetails implements Closeable {
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
         private final CharSequenceIntHashMap columnIndexByNameUtf8 = new CharSequenceIntHashMap();
+        // maps column names to their types, will be populated for dynamically added columns only
+        // keys are mangled strings created from the utf-8 encoded byte representations of the column names
+        private final CharSequenceIntHashMap columnTypeByNameUtf8 = new CharSequenceIntHashMap();
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
         private final ObjList<SymbolCache> unusedSymbolCaches;
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
@@ -356,6 +362,7 @@ public class TableUpdateDetails implements Closeable {
 
         void clear() {
             columnIndexByNameUtf8.clear();
+            columnTypeByNameUtf8.clear();
             for (int n = 0, sz = symbolCacheByColumnIndex.size(); n < sz; n++) {
                 SymbolCache symCache = symbolCacheByColumnIndex.getQuick(n);
                 if (null != symCache) {
@@ -433,6 +440,15 @@ public class TableUpdateDetails implements Closeable {
 
         int getColumnType(int colIndex) {
             return columnTypes.getQuick(colIndex);
+        }
+
+        int getColumnType(CharSequence colName, byte entityType) {
+            int colType = columnTypeByNameUtf8.get(colName);
+            if (colType < 0) {
+                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
+                columnTypeByNameUtf8.put(colName, colType);
+            }
+            return colType;
         }
 
         private int resolveSymbolIndexAndName(TableReaderMetadata metadata, int colWriterIndex) {

@@ -274,7 +274,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 CharSequence colName = localDetails.getColName();
                 if (TableUtils.isValidColumnName(colName)) {
                     offset = buffer.addColumnName(offset, colName);
-                    colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
+                    colType = localDetails.getColumnType(colName, entityType);
                 } else {
                     throw invalidColNameError(colName);
                 }

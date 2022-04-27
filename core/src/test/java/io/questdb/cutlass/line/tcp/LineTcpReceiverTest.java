@@ -949,6 +949,51 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         }
     }
 
+    @Test
+    public void testColumnTypeStaysTheSameWhileColumnAdded() throws Exception {
+        final String tableName = "weather";
+        final int numOfRows = 2000;
+
+        try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+            m.col("abcdef", ColumnType.SYMBOL).timestamp("ts");
+            CairoTestUtils.createTable(m);
+        }
+
+        final SOCountDownLatch finished = new SOCountDownLatch(1);
+        runInContext(receiver -> {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    if (name.equals(tableName)) {
+                        finished.countDown();
+                    }
+                }
+            });
+
+            new Thread(() -> {
+                try (Socket socket = getSocket()) {
+                    for (int i = 0; i < numOfRows; i++) {
+                        String value = (i % 2 == 0) ? "\"test" + i + "\"" : "" + i;
+                        sendToSocket(socket, tableName + ",abcdef=x col=" + value + "\n");
+                    }
+                } catch (Exception e) {
+                    Assert.fail("Data sending failed [e=" + e + "]");
+                    throw new RuntimeException(e);
+                }
+            }).start();
+
+            finished.await(15_000_000_000L);
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            });
+
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(numOfRows / 2, reader.getTransientRowCount());
+            } catch (Exception e) {
+                Assert.fail("Reader failed [e=" + e + "]");
+                throw new RuntimeException(e);
+            }
+        }, false, 250);
+    }
+
     private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait) {
         send(receiver, tableName, wait, () -> sendToSocket(lineData));
     }
