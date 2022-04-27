@@ -95,12 +95,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
-    private ExpressionNode sampleByTimezoneName = null;
-    private ExpressionNode sampleByOffset = null;
-    private int latestByType = LATEST_BY_NONE;
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntList orderByDirectionAdvice = new IntList();
+    private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
+    private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
+    private final IntList updateTableColumnTypes = new IntList();
+    private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
+    private ExpressionNode sampleByTimezoneName = null;
+    private ExpressionNode sampleByOffset = null;
+    private int latestByType = LATEST_BY_NONE;
     private ExpressionNode whereClause;
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
@@ -120,18 +124,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int joinType;
     private int joinKeywordPosition;
     private IntList orderedJoinModels = orderedJoinModels2;
-
     private ExpressionNode limitLo;
     private ExpressionNode limitHi;
-
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
-    //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .    
+    //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
-
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
-
     private int selectModelType = SELECT_MODEL_NONE;
     private boolean nestedModelIsSubQuery = false;
     private boolean distinct = false;
@@ -141,13 +141,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int orderByAdviceMnemonic;
     private int tableId;
     private boolean isUpdateModel;
-    private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
     private int modelType;
-    private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
-    private final IntList updateTableColumnTypes = new IntList();
-    private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private QueryModel updateTableModel;
     private String updateTableName;
+    private boolean artificialStar;
 
     private QueryModel() {
         joinModels.add(this);
@@ -179,11 +176,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnNameToAliasMap.put(ast.token, alias);
         bottomUpColumnNames.add(alias);
         aliasToColumnMap.put(alias, column);
-    }
-
-    public void addUpdateTableColumnMetadata(int columnType, String columnName) {
-        updateTableColumnTypes.add(columnType);
-        updateTableColumnNames.add(columnName);
     }
 
     public void addGroupBy(ExpressionNode node) {
@@ -220,6 +212,27 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (topDownNameSet.add(alias)) {
             topDownColumns.add(column);
         }
+    }
+
+    public void addUpdateTableColumnMetadata(int columnType, String columnName) {
+        updateTableColumnTypes.add(columnType);
+        updateTableColumnNames.add(columnName);
+    }
+
+    /* Determines whether this model allows pushing columns from parent model(s).
+     * If this is a UNION, EXCEPT or INTERSECT or contains a select distinct then it can't be done safely. */
+    public boolean allowsColumnsChange() {
+        QueryModel union = this;
+        while (union != null) {
+            if (union.getSetOperationType() != QueryModel.SET_OPERATION_UNION_ALL ||
+                    union.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
+                return false;
+            }
+
+            union = union.getUnionModel();
+        }
+
+        return true;
     }
 
     public void clear() {
@@ -281,6 +294,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         updateTableModel = null;
         updateTableName = null;
         setOperationType = SET_OPERATION_UNION_ALL;
+        artificialStar = false;
     }
 
     public void clearColumnMapStructs() {
@@ -367,50 +381,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return alias;
     }
 
-    public IntList getUpdateTableColumnTypes() {
-        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
-    }
-
-    public ObjList<CharSequence> getUpdateTableColumnNames() {
-        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
-    }
-
-    public ObjList<ExpressionNode> getUpdateExpressions() {
-        return updateSetColumns;
-    }
-
-    public String getUpdateTableName() {
-        return updateTableName;
-    }
-
-    public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
-        return withClauseModel;
-    }
-
-    public boolean isLimitImplemented() {
-        return isLimitImplemented;
-    }
-
-    public boolean isUpdate() {
-        return isUpdateModel;
-    }
-
-    public ExpressionNode getSampleByUnit() {
-        return sampleByUnit;
-    }
-
-    public int getTableId() {
-        return tableId;
-    }
-
-    public void moveAliasFrom(QueryModel that) {
-        final ExpressionNode alias = that.alias;
-        if (alias != null && !Chars.startsWith(alias.token, SUB_QUERY_ALIAS_PREFIX)) {
-            setAlias(alias);
-            addAliasIndex(alias, 0);
-        }
-    }
-
     public void setAlias(ExpressionNode alias) {
         this.alias = alias;
     }
@@ -487,10 +457,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return joinCriteria;
     }
 
-    public void setIsUpdate(boolean isUpdate) {
-        this.isUpdateModel = isUpdate;
-    }
-
     public void setJoinCriteria(ExpressionNode joinCriteria) {
         this.joinCriteria = joinCriteria;
     }
@@ -515,16 +481,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.joinType = joinType;
     }
 
+    public ObjList<ExpressionNode> getLatestBy() {
+        return latestBy;
+    }
+
     public int getLatestByType() {
         return latestByType;
     }
 
     public void setLatestByType(int latestByType) {
         this.latestByType = latestByType;
-    }
-
-    public ObjList<ExpressionNode> getLatestBy() {
-        return latestBy;
     }
 
     public ExpressionNode getLimitHi() {
@@ -539,10 +505,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return modelPosition;
     }
 
-    public void setLimitImplemented(boolean limitImplemented) {
-        isLimitImplemented = limitImplemented;
-    }
-
     public void setModelPosition(int modelPosition) {
         this.modelPosition = modelPosition;
     }
@@ -550,6 +512,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Override
     public int getModelType() {
         return modelType;
+    }
+
+    public void setModelType(int modelType) {
+        this.modelType = modelType;
     }
 
     public CharSequence getName() {
@@ -566,10 +532,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public QueryModel getNestedModel() {
         return nestedModel;
-    }
-
-    public void setModelType(int modelType) {
-        this.modelType = modelType;
     }
 
     public void setNestedModel(QueryModel nestedModel) {
@@ -633,17 +595,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleBy = sampleBy;
     }
 
-    public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
-        this.sampleBy = sampleBy;
-        this.sampleByUnit = sampleByUnit;
-    }
-
-    public ExpressionNode getSampleByTimezoneName() {
-        return sampleByTimezoneName;
-    }
-
-    public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
-        this.sampleByTimezoneName = sampleByTimezoneName;
+    public ObjList<ExpressionNode> getSampleByFill() {
+        return sampleByFill;
     }
 
     public ExpressionNode getSampleByOffset() {
@@ -654,8 +607,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleByOffset = sampleByOffset;
     }
 
-    public ObjList<ExpressionNode> getSampleByFill() {
-        return sampleByFill;
+    public ExpressionNode getSampleByTimezoneName() {
+        return sampleByTimezoneName;
+    }
+
+    public void setSampleByTimezoneName(ExpressionNode sampleByTimezoneName) {
+        this.sampleByTimezoneName = sampleByTimezoneName;
+    }
+
+    public ExpressionNode getSampleByUnit() {
+        return sampleByUnit;
     }
 
     public int getSelectModelType() {
@@ -674,12 +635,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.setOperationType = setOperationType;
     }
 
-    public ExpressionNode getTableName() {
-        return tableName;
+    public int getTableId() {
+        return tableId;
     }
 
     public void setTableId(int id) {
         this.tableId = id;
+    }
+
+    public ExpressionNode getTableName() {
+        return tableName;
     }
 
     public void setTableName(ExpressionNode tableName) {
@@ -768,6 +733,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+    public ObjList<ExpressionNode> getUpdateExpressions() {
+        return updateSetColumns;
+    }
+
+    public ObjList<CharSequence> getUpdateTableColumnNames() {
+        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
+    }
+
+    public IntList getUpdateTableColumnTypes() {
+        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
+    }
+
+    public String getUpdateTableName() {
+        return updateTableName;
+    }
+
     public ExpressionNode getWhereClause() {
         return whereClause;
     }
@@ -776,12 +757,32 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.whereClause = whereClause;
     }
 
+    public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
+        return withClauseModel;
+    }
+
+    public boolean isArtificialStar() {
+        return artificialStar;
+    }
+
+    public void setArtificialStar(boolean artificialStar) {
+        this.artificialStar = artificialStar;
+    }
+
     public boolean isDistinct() {
         return distinct;
     }
 
     public void setDistinct(boolean distinct) {
         this.distinct = distinct;
+    }
+
+    public boolean isLimitImplemented() {
+        return isLimitImplemented;
+    }
+
+    public void setLimitImplemented(boolean limitImplemented) {
+        isLimitImplemented = limitImplemented;
     }
 
     public boolean isNestedModelIsSubQuery() {
@@ -802,6 +803,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isTopDownNameMissing(CharSequence columnName) {
         return topDownNameSet.excludes(columnName);
+    }
+
+    public boolean isUpdate() {
+        return isUpdateModel;
+    }
+
+    public void moveAliasFrom(QueryModel that) {
+        final ExpressionNode alias = that.alias;
+        if (alias != null && !Chars.startsWith(alias.token, SUB_QUERY_ALIAS_PREFIX)) {
+            setAlias(alias);
+            addAliasIndex(alias, 0);
+        }
     }
 
     public void moveGroupByFrom(QueryModel model) {
@@ -878,25 +891,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.setQuick(pos, model);
     }
 
+    public void setIsUpdate(boolean isUpdate) {
+        this.isUpdateModel = isUpdate;
+    }
+
     public void setLimit(ExpressionNode lo, ExpressionNode hi) {
         this.limitLo = lo;
         this.limitHi = hi;
     }
 
-    /* Determines whether this model allows pushing columns from parent model(s).
-     * If this is a UNION, EXCEPT or INTERSECT or contains a select distinct then it can't be done safely. */
-    public boolean allowsColumnsChange() {
-        QueryModel union = this;
-        while (union != null) {
-            if (union.getSetOperationType() != QueryModel.SET_OPERATION_UNION_ALL ||
-                    union.getSelectModelType() == QueryModel.SELECT_MODEL_DISTINCT) {
-                return false;
-            }
-
-            union = union.getUnionModel();
-        }
-
-        return true;
+    public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
+        this.sampleBy = sampleBy;
+        this.sampleByUnit = sampleByUnit;
     }
 
     @Override
@@ -905,33 +911,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             toSink0(sink, false);
         } else if (modelType == ExecutionModel.UPDATE) {
             updateToSink(sink);
-        }
-    }
-
-    private void updateToSink(CharSink sink) {
-        sink.put("update ");
-        tableName.toSink(sink);
-        if (alias != null) {
-            sink.put(" as");
-            aliasToSink(alias.token, sink);
-        }
-        sink.put(" set ");
-        for (int i = 0, n = getUpdateExpressions().size(); i < n; i++) {
-
-            if (i > 0) {
-                sink.put(',');
-            }
-            CharSequence columnExpr = getUpdateExpressions().get(i).token;
-            sink.put(columnExpr);
-            sink.put(" = ");
-            QueryColumn setColumn = getNestedModel().getColumns().getQuick(i);
-            setColumn.getAst().toSink(sink);
-        }
-
-        if (getNestedModel() != null) {
-            sink.put(" from (");
-            getNestedModel().toSink(sink);
-            sink.put(")");
         }
     }
 
@@ -1013,7 +992,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    //returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ... 
+    //returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ...
     private void toSink0(CharSink sink, boolean joinSlave) {
         final boolean hasColumns = this.topDownColumns.size() > 0 || this.bottomUpColumns.size() > 0;
         if (hasColumns) {
@@ -1169,7 +1148,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     sink.put(sampleByTimezoneName);
                 }
 
-                if(sampleByOffset != null) {
+                if (sampleByOffset != null) {
                     sink.put(" with offset ");
                     sink.put(sampleByOffset);
                 }
@@ -1216,6 +1195,33 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 }
             }
             unionModel.toSink0(sink, false);
+        }
+    }
+
+    private void updateToSink(CharSink sink) {
+        sink.put("update ");
+        tableName.toSink(sink);
+        if (alias != null) {
+            sink.put(" as");
+            aliasToSink(alias.token, sink);
+        }
+        sink.put(" set ");
+        for (int i = 0, n = getUpdateExpressions().size(); i < n; i++) {
+
+            if (i > 0) {
+                sink.put(',');
+            }
+            CharSequence columnExpr = getUpdateExpressions().get(i).token;
+            sink.put(columnExpr);
+            sink.put(" = ");
+            QueryColumn setColumn = getNestedModel().getColumns().getQuick(i);
+            setColumn.getAst().toSink(sink);
+        }
+
+        if (getNestedModel() != null) {
+            sink.put(" from (");
+            getNestedModel().toSink(sink);
+            sink.put(")");
         }
     }
 
