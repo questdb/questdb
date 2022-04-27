@@ -509,7 +509,6 @@ class SqlOptimiser {
                         jc.slaveIndex = lhi;
                         jc.parents.add(rhi);
                         linkDependencies(parent, rhi, lhi);
-
                     }
                     addJoinContext(parent, jc);
                 } else if (bSize == 0
@@ -1541,7 +1540,7 @@ class SqlOptimiser {
 
         deletedContexts.clear();
         JoinContext r = contextPool.next();
-        // check if we merging a.x = b.x to a.y = b.y
+        // check if we are merging a.x = b.x to a.y = b.y
         // or a.x = b.x to a.x = b.y, e.g. one of columns in the same
         for (int i = 0, n = b.aNames.size(); i < n; i++) {
 
@@ -1628,10 +1627,10 @@ class SqlOptimiser {
                 r.bNodes.add(a.bNodes.getQuick(i));
 
                 r.parents.add(min);
+                r.slaveIndex = max;
                 linkDependencies(parent, min, max);
             }
         }
-
         return r;
     }
 
@@ -1644,11 +1643,11 @@ class SqlOptimiser {
 
         for (int i = 0, n = from.aIndexes.size(); i < n; i++) {
             // logically those clauses we move away from "from" context
-            // should not longer exist in "from", but instead of implementing
+            // should no longer exist in "from", but instead of implementing
             // "delete" function, which would be manipulating underlying array
             // on every invocation, we copy retained clauses to new context,
             // which is "result".
-            // hence whenever exists in "positions" we copy clause to "to"
+            // hence, whenever exists in "positions" we copy clause to "to"
             // otherwise copy to "result"
             JoinContext t = p < m && i == positions.getQuick(p) ? to : result;
             int ai = from.aIndexes.getQuick(i);
@@ -2140,7 +2139,7 @@ class SqlOptimiser {
 
             // for sake of clarity, "model" model is the first in the list of
             // joinModels, e.g. joinModels.get(0) == model
-            // only model model is allowed to have "where" clause
+            // only "model" model is allowed to have "where" clause,
             // so we can assume that "where" clauses of joinModel elements are all null (except for element 0).
             // in case one of joinModels is subquery, its entire query model will be set as
             // nestedModel, e.g. "where" clause is still null there as well
@@ -2460,7 +2459,7 @@ class SqlOptimiser {
      * join b on c.x = b.x
      * join c on c.y = a.y
      * <p>
-     * the system that prefers child table with lowest index will attribute c.x = b.x clause to
+     * the system that prefers child table with the lowest index will attribute c.x = b.x clause to
      * table "c" leaving "b" without clauses.
      */
     @SuppressWarnings({"StatementWithEmptyBody"})
@@ -2495,7 +2494,11 @@ class SqlOptimiser {
 
             IntList ordered = model.nextOrderedJoinModels();
             int thisCost = doReorderTables(model, ordered);
-            if (thisCost < cost) {
+
+            // we have to have root, even if it is expensive
+            // so the first iteration sets the root regardless
+            // the following iterations might improve it
+            if (thisCost < cost || root == -1) {
                 root = z;
                 cost = thisCost;
                 model.setOrderedJoinModels(ordered);
@@ -3320,7 +3323,6 @@ class SqlOptimiser {
 
         if (clausesToSteal.size() < zc) {
             QueryModel target = parent.getJoinModels().getQuick(to);
-            target.getDependencies().clear();
             if (jc == null) {
                 target.setContext(jc = contextPool.next());
             }

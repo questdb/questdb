@@ -24,36 +24,27 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class ShowSearchPathCursorFactory implements RecordCursorFactory {
-    private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private static final StringValueRecord RECORD = new StringValueRecord("\"$user\", public");
-    private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(RECORD);
-
+public class PgGetSIExprFunctionFactory implements FunctionFactory {
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.toTop();
-        return cursor;
+    public String getSignature() {
+        return "pg_get_expr(SI)";
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return METADATA;
+    public boolean isRuntimeConstant() {
+        return true;
     }
 
     @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    static {
-        METADATA.add(new TableColumnMetadata("search_path", 1, ColumnType.STRING));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return StrConstant.NULL;
     }
 }
