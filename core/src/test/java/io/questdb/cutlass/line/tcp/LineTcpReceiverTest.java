@@ -981,7 +981,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             }).start();
 
-            finished.await(15_000_000_000L);
+            finished.await(20_000_000_000L);
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
             });
 
