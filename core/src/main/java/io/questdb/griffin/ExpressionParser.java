@@ -603,6 +603,15 @@ class ExpressionParser {
                             }
                         } else if (SqlKeywords.isAtKeyword(tok)) {
                             thisBranch = BRANCH_TIMESTAMP_AT;
+//                            lexer.unparse();
+
+//                            tok = SqlUtil.fetchNext(lexer);
+//                            if (tok != null && SqlKeywords.isTimeKeyword(tok)) {
+//
+//                            } else {
+//                                lexer.unparse();
+//                            }
+
                         } else {
                             processDefaultBranch = true;
                         }
@@ -1208,9 +1217,6 @@ class ExpressionParser {
         backupArgStackDepthStack.copyTo(argStackDepthStack, argStackDepthStackSize);
         backupCastBraceCountStack.copyTo(castBraceCountStack, castBraceCountStackSize);
         backupCaseBraceCountStack.copyTo(caseBraceCountStack, caseBraceCountStackSize);
-
-        // re-introduce closing brace to this loop
-        lexer.unparse();
         return argStackDepth;
     }
 

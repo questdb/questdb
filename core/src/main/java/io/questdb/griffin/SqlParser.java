@@ -188,7 +188,7 @@ public final class SqlParser {
         if (n != null) {
             return n;
         }
-        throw SqlException.$(lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition(), "Expression expected");
+        throw SqlException.$(lexer.hasUnparsed() ? lexer.lastTokenPosition() : lexer.getPosition(), "Expression expected");
     }
 
     private int expectInt(GenericLexer lexer) throws SqlException {
@@ -255,7 +255,7 @@ public final class SqlParser {
         // This is complex expression of sample by period. It must follow time unit interval
         ExpressionNode periodUnit = expectLiteral(lexer);
         if (periodUnit == null || periodUnit.type != ExpressionNode.LITERAL || !isValidSampleByPeriodLetter(periodUnit.token)) {
-            int lexerPosition = lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition();
+            int lexerPosition = lexer.hasUnparsed() ? lexer.lastTokenPosition() : lexer.getPosition();
             throw SqlException.$(periodUnit != null ? periodUnit.position : lexerPosition, "one letter sample by period unit expected");
         }
         model.setSampleBy(n, periodUnit);
@@ -1685,13 +1685,12 @@ public final class SqlParser {
             return m;
         }
 
-        final int pos = lexer.getPosition();
-        final CharSequence unparsed = lexer.getUnparsed();
-        lexer.goToPosition(wcm.getPosition(), null);
+        lexer.parkUnparsed();
+        lexer.goToPosition(wcm.getPosition());
         // this will not throw exception because this is second pass over the same sub-query
         // we wouldn't be here is syntax was wrong
         m = parseAsSubQueryAndExpectClosingBrace(lexer, withClauses);
-        lexer.goToPosition(pos, unparsed);
+        lexer.unparkUnparsed();
         return m;
     }
 

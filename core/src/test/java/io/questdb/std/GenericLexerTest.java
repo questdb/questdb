@@ -367,7 +367,7 @@ public class GenericLexerTest {
         CharSequence cs = ts.next();
         ts.immutablePairOf(GenericLexer.immutableOf(cs), cs);
         Assert.assertEquals("orange", ts.getContent());
-        Assert.assertNull(ts.getUnparsed());
+        Assert.assertFalse(ts.hasUnparsed());
         Assert.assertEquals(6, ts.getPosition());
         Assert.assertEquals(6, ts.getTokenHi());
     }

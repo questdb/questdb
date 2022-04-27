@@ -198,6 +198,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    @Ignore
+    public void testAtAsColumnAlias() throws Exception {
+        assertQuery("select-choose l at from (select [l] from testat timestamp (ts))",
+                "select l at from testat",
+                modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
     public void testColumnAliasDoubleQuoted() throws Exception {
         assertQuery("select-choose x aaaasssss from (select [x] from x where x > 1)",
                 "select x \"aaaasssss\" from x where x > 1",
