@@ -27,11 +27,11 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 
-class StringValueRecordCursor implements RecordCursor {
+class SingleValueRecordCursor implements RecordCursor {
     private final Record record;
     private int remaining = 1;
 
-    public StringValueRecordCursor(Record record) {
+    public SingleValueRecordCursor(Record record) {
         this.record = record;
     }
 

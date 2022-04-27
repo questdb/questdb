@@ -1007,7 +1007,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                 } catch (Throwable th) {
-                    Misc.free(master);
+                    master = Misc.free(master);
                     Misc.free(slave);
                     throw th;
                 } finally {

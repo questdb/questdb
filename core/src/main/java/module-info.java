@@ -107,6 +107,7 @@ open module io.questdb {
 
             // [] operators
             io.questdb.griffin.engine.functions.array.StrArrayDereferenceFunctionFactory,
+            io.questdb.griffin.engine.functions.array.IntArrayDereferenceHackFunctionFactory,
             // '=' operators
             io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory,
@@ -123,6 +124,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqBooleanFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqBooleanCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqBinaryFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqGeoHashGeoHashFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqGeoHashStrFunctionFactory,
@@ -531,6 +533,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory,
 //                  PostgeSQL catalogue functions
             io.questdb.griffin.engine.functions.catalogue.AttrDefCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedAttrDefCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.AttributeCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedClassCatalogueFunctionFactory,
@@ -555,6 +558,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSITExprFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSIExprFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PgGetSIExprFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.ProcCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.RangeCatalogueFunctionFactory,

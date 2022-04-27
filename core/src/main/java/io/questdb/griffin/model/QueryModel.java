@@ -146,6 +146,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int modelType;
     private QueryModel updateTableModel;
     private String updateTableName;
+    private boolean artificialStar;
 
     private QueryModel() {
         joinModels.add(this);
@@ -297,6 +298,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         updateTableModel = null;
         updateTableName = null;
         setOperationType = SET_OPERATION_UNION_ALL;
+        artificialStar = false;
     }
 
     public void clearColumnMapStructs() {
@@ -697,22 +699,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.unionModel = unionModel;
     }
 
-    public ObjList<ExpressionNode> getUpdateExpressions() {
-        return updateSetColumns;
-    }
-
-    public ObjList<CharSequence> getUpdateTableColumnNames() {
-        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
-    }
-
-    public IntList getUpdateTableColumnTypes() {
-        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
-    }
-
-    public String getUpdateTableName() {
-        return updateTableName;
-    }
-
     public void setUpdateTableName(String tableName) {
         this.updateTableName = tableName;
     }
@@ -759,6 +745,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+    public ObjList<ExpressionNode> getUpdateExpressions() {
+        return updateSetColumns;
+    }
+
+    public ObjList<CharSequence> getUpdateTableColumnNames() {
+        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
+    }
+
+    public IntList getUpdateTableColumnTypes() {
+        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
+    }
+
+    public String getUpdateTableName() {
+        return updateTableName;
+    }
+
     public ExpressionNode getWhereClause() {
         return whereClause;
     }
@@ -769,6 +771,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
         return withClauseModel;
+    }
+
+    public boolean isArtificialStar() {
+        return artificialStar;
+    }
+
+    public void setArtificialStar(boolean artificialStar) {
+        this.artificialStar = artificialStar;
     }
 
     public boolean isDistinct() {
