@@ -97,7 +97,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
         return null;
     }
 
-    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int direction) throws SqlException {
+    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
         return null;
     }
 
