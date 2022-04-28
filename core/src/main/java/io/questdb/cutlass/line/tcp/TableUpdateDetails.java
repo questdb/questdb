@@ -442,7 +442,7 @@ public class TableUpdateDetails implements Closeable {
             return columnTypes.getQuick(colIndex);
         }
 
-        int getColumnType(CharSequence colName, byte entityType) {
+        int getColumnType(String colName, byte entityType) {
             int colType = columnTypeByNameUtf8.get(colName);
             if (colType < 0) {
                 colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
