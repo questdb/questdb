@@ -113,6 +113,8 @@ DECLARE_DISPATCHER_TYPE (merge_copy_var_column_int64, index_t *merge_index, int6
 
 DECLARE_DISPATCHER_TYPE(platform_memcpy, void *dst, const void *src, const size_t len);
 
+DECLARE_DISPATCHER_TYPE_R(platform_memcmp, int, void *dst, const void *src, const size_t len);
+
 DECLARE_DISPATCHER_TYPE(platform_memset, void *dst, const int val, const size_t len);
 
 DECLARE_DISPATCHER_TYPE(platform_memmove, void *dst, const void *src, const size_t len);
