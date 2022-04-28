@@ -36,6 +36,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
+import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -102,6 +103,40 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     @Test
     public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
         testConcurrency(4, 10, 8, PartitionMode.NONE);
+    }
+
+    @Test
+    public void testUpdateTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGWireServer ignore1 = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, true)) {
+                    PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
+                            " (select timestamp_sequence(0, 1000000) ts," +
+                            " 0 as x" +
+                            " from long_sequence(5))" +
+                            " timestamp(ts)" +
+                            " partition by DAY");
+                    create.execute();
+                    create.close();
+                }
+
+                try (TableWriter ignore = engine.getWriter(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        "testUpdateTimeout",
+                        "test")) {
+
+                    try (final Connection connection = getConnection(false, true)) {
+                        try (PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ?")) {
+                            update.setInt(1, 4);
+                            update.executeUpdate();
+                            Assert.fail();
+                        } catch (PSQLException ex) {
+                            TestUtils.assertContains(ex.getMessage(), "Timeout expired");
+                        }
+                    }
+                }
+            }
+        });
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
