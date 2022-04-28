@@ -55,6 +55,7 @@ set(
         src/main/c/share/jit/compiler.cpp
         src/main/c/share/cpprt_overrides.h
         src/main/c/share/cpprt_overrides.cpp
+        src/main/c/share/binview.cpp
 )
 
 # JNI includes

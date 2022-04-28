@@ -174,23 +174,35 @@ public final class MsgPackReader implements Closeable {
     public boolean readBin(BinView dest) {
         final long rem = remaining();
         long binSize = 0;
+        long begin = 0;
         switch (peekByte()) {
             case MsgPackTypeEncoding.BIN8:
                 if (rem < 2) {  // 1 for type byte, 1 for len
                     return false;
                 }
-                binSize = Unsafe.getByte(lo + 1) & 0xff;  // unsigned cast
+                binSize = Unsafe.getByte(lo + 1) & 0xffL;  // unsigned cast
+                begin = lo + 1 + 1;
                 break;
             case MsgPackTypeEncoding.BIN16:
                 if (rem < 3) {  // 1 for type byte, 2 for len
                     return false;
                 }
-                // binSize = Unsafe.get
+                binSize = Unsafe.getUnsafe().getShort(lo + 1) & 0xffffL;
+                begin = lo + 1 + 2;
+                break;
             case MsgPackTypeEncoding.BIN32:
+                if (rem < 5) {  // 1 for type byte, 4 for len
+                    return false;
+                }
+                binSize = Unsafe.getUnsafe().getInt(lo + 1) & 0xffffffffL;
+                begin = lo + 1 + 4;
             default:
                 throw BAD_API_CALL;
         }
-        throw BAD_API_CALL; // Working on this.. not yet implemented.
+        final long end = begin + binSize;
+        dest.reset(begin, end);
+        lo = end;
+        return true;
     }
 
     @Override

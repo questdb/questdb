@@ -1,9 +1,10 @@
 package io.questdb.cutlass.msgpack;
 
+import io.questdb.std.Mutable;
 import io.questdb.std.Vect;
 
 /** A non-owning range of bytes. The object can be re-used. */
-public class BinView {
+public class BinView implements Mutable {
     private long lo;
     private long hi;
 
@@ -16,8 +17,9 @@ public class BinView {
         reset(hi, lo);
     }
 
-    public BinView clear() {
-        return reset(0, 0);
+    @Override
+    public void clear() {
+        reset(0, 0);
     }
 
     public BinView reset(long lo, long hi) {
@@ -44,6 +46,8 @@ public class BinView {
         return lo == 0;
     }
 
+    private static native int blobHashCode(long lo, long hi);
+
     @Override
     public boolean equals(Object other) {
         if (this == other) {
@@ -66,11 +70,7 @@ public class BinView {
             assert hi == 0: "Both must be unset";
             return 0;
         }
-        // TODO: [adam] Implement, probably the easiest impl is to just
-        // reuse C++'s impl for std::hash<std::string_view> and then
-        // XOR the top 32 bits agains the bottom ones... because JAVA hashes are
-        // 32-bit (ouch!).
-        return 1;
+        return blobHashCode(lo, hi);
     }
 
     @Override
