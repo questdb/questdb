@@ -411,7 +411,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
 
     private void runTableVacuum(String tableName) throws SqlException {
         if (Os.type == Os.WINDOWS) {
-            engine.releaseAllReaders();
+            engine.releaseInactive();
         }
         compile("VACUUM TABLE " + tableName);
     }
