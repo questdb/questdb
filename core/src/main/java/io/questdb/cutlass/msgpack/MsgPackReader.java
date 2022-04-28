@@ -75,8 +75,8 @@ public final class MsgPackReader implements Closeable {
             Vect.memmove(cache, lo, outstandingLen);
             hi = cache + outstandingLen;
             lo = cache;
-            readComplete = false;
         }
+        readComplete = false;
     }
 
     /**
@@ -165,6 +165,32 @@ public final class MsgPackReader implements Closeable {
             default:
                 throw BAD_API_CALL;
         }
+    }
+
+    /**
+     * Attempt to read a binary blob into the `dest` object.
+     * Returns `false` if there wasn't enough data.
+    */
+    public boolean readBin(BinView dest) {
+        final long rem = remaining();
+        long binSize = 0;
+        switch (peekByte()) {
+            case MsgPackTypeEncoding.BIN8:
+                if (rem < 2) {  // 1 for type byte, 1 for len
+                    return false;
+                }
+                binSize = Unsafe.getByte(lo + 1) & 0xff;  // unsigned cast
+                break;
+            case MsgPackTypeEncoding.BIN16:
+                if (rem < 3) {  // 1 for type byte, 2 for len
+                    return false;
+                }
+                // binSize = Unsafe.get
+            case MsgPackTypeEncoding.BIN32:
+            default:
+                throw BAD_API_CALL;
+        }
+        throw BAD_API_CALL; // Working on this.. not yet implemented.
     }
 
     @Override

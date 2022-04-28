@@ -96,6 +96,10 @@ void platform_memmove(void *dst, const void *src, const size_t len) {
     __MEMMOVE(dst, src, len);
 }
 
+int platform_memcmp(const void *buf1, const void *buf2, size_t count) {
+    return __MEMCMP(buf1, buf2, count);
+}
+
 // 0
 void merge_copy_var_column_int32(
         index_t *merge_index,

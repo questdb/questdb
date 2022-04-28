@@ -114,6 +114,8 @@ public final class Vect {
         }
     }
 
+    public static native int memcmp(long buf1, long buf2, long count);
+
     public static native void memmove(long dst, long src, long len);
 
     public static native void memset(long dst, long len, int value);

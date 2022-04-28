@@ -31,12 +31,14 @@
 #include "asmlib/asmlib.h"
 #define __MEMCPY A_memcpy
 #define __MEMSET A_memset
+#define __MEMCMP A_memcmp
 //TODO: replace with A_memmove (-fPIC asm lib)
 #define __MEMMOVE memmove
 #else
 #define __MEMCPY memcpy
 #define __MEMSET memset
 #define __MEMMOVE memmove
+#define __MEMCMP memcmp
 #endif
 
 
