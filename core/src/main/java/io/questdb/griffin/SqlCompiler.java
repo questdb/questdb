@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
@@ -37,10 +37,7 @@ import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
-import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
-import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
-import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
-import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -941,8 +938,14 @@ public class SqlCompiler implements Closeable {
      * @param batchCallback    - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
      * @see <a href="https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4">PostgreSQL documentation</a>
      */
-    public void compileBatch(@NotNull CharSequence query, @NotNull SqlExecutionContext executionContext, BatchCallback batchCallback)
-            throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+    public void compileBatch(
+            @NotNull CharSequence query,
+            @NotNull SqlExecutionContext executionContext,
+            BatchCallback batchCallback
+    ) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+
+        LOG.info().$("batch [text=").$(query).I$();
+
         clear();
         lexer.of(query);
         isSingleQueryMode = false;
@@ -1065,6 +1068,49 @@ public class SqlCompiler implements Closeable {
         }
 
         return tok;
+    }
+
+    private static UpdateStatement generateUpdateStatement(
+            @Transient QueryModel updateQueryModel,
+            @Transient IntList tableColumnTypes,
+            @Transient ObjList<CharSequence> tableColumnNames,
+            int tableId,
+            long tableVersion,
+            RecordCursorFactory updateToCursorFactory
+    ) throws SqlException {
+        try {
+            String tableName = updateQueryModel.getUpdateTableName();
+            if (!updateToCursorFactory.supportsUpdateRowId(tableName)) {
+                throw SqlException.$(updateQueryModel.getModelPosition(), "Only simple UPDATE statements without joins are supported");
+            }
+
+            // Check that updateDataFactoryMetadata match types of table to be updated exactly
+            RecordMetadata updateDataFactoryMetadata = updateToCursorFactory.getMetadata();
+
+            for (int i = 0, n = updateDataFactoryMetadata.getColumnCount(); i < n; i++) {
+                int virtualColumnType = updateDataFactoryMetadata.getColumnType(i);
+                CharSequence updateColumnName = updateDataFactoryMetadata.getColumnName(i);
+                int tableColumnIndex = tableColumnNames.indexOf(updateColumnName);
+                int tableColumnType = tableColumnTypes.get(tableColumnIndex);
+
+                if (virtualColumnType != tableColumnType) {
+                    // get column position
+                    ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
+                    int position = setRhs.position;
+                    throw SqlException.inconvertibleTypes(position, virtualColumnType, "", tableColumnType, updateColumnName);
+                }
+            }
+
+            return new UpdateStatement(
+                    tableName,
+                    tableId,
+                    tableVersion,
+                    updateToCursorFactory
+            );
+        } catch (Throwable e) {
+            Misc.free(updateToCursorFactory);
+            throw e;
+        }
     }
 
     private CompiledQuery alterSystemLockWriter(SqlExecutionContext executionContext) throws SqlException {
@@ -1713,9 +1759,8 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofRollback();
     }
 
-    private CompiledQuery compileSet(SqlExecutionContext executionContext) {
-        return compiledQuery.ofSet();
-    }
+    private CompiledQuery compileInner(@NotNull SqlExecutionContext executionContext) throws SqlException {
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
 
     private void compileUsingModel(SqlExecutionContext executionContext) throws SqlException {
         // This method will not populate sql cache directly;
@@ -2590,6 +2635,14 @@ public class SqlCompiler implements Closeable {
                 return sqlShowTransaction();
             }
 
+            if (isTransactionIsolationKeyword(tok)) {
+                return compiledQuery.of(new ShowTransactionIsolationLevelCursorFactory());
+            }
+
+            if (isMaxIdentifierLengthKeyword(tok)) {
+                return compiledQuery.of(new ShowMaxIdentifierLengthCursorFactory());
+            }
+
             if (isStandardConformingStringsKeyword(tok)) {
                 return compiledQuery.of(new ShowStandardConformingStringsCursorFactory());
             }
@@ -2603,7 +2656,6 @@ public class SqlCompiler implements Closeable {
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {
                     return compiledQuery.of(new ShowTimeZoneFactory());
                 }
-                // todo: what if or rather what else?!
             }
         }
 

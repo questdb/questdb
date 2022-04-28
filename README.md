@@ -8,7 +8,7 @@
     <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
   </a>
   <a href="#contribute">
-    <img src="https://img.shields.io/github/all-contributors/questdb/questdb" alt="QuestDB open source contributors"/>
+    <img src="https://img.shields.io/github/all-contributors/questdb/questdb/master" alt="QuestDB open source contributors"/>
   </a>
   <a href="https://search.maven.org/search?q=g:org.questdb">
     <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>

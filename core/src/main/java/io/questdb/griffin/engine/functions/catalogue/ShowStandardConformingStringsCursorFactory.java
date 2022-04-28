@@ -35,7 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 public class ShowStandardConformingStringsCursorFactory implements RecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private static final StringValueRecord RECORD = new StringValueRecord("on");
-    private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
+    private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(RECORD);
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {

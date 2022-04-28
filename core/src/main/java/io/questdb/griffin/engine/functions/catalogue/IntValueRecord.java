@@ -24,36 +24,17 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.cairo.sql.Record;
 
-public class ShowSearchPathCursorFactory implements RecordCursorFactory {
-    private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private static final StringValueRecord RECORD = new StringValueRecord("\"$user\", public");
-    private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(RECORD);
+class IntValueRecord implements Record {
+    private final int value;
 
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.toTop();
-        return cursor;
+    public IntValueRecord(int value) {
+        this.value = value;
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return METADATA;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    static {
-        METADATA.add(new TableColumnMetadata("search_path", 1, ColumnType.STRING));
+    public int getInt(int col) {
+        return value;
     }
 }
