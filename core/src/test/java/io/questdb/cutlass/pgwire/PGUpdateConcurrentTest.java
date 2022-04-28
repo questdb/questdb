@@ -48,14 +48,14 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
     @BeforeClass
     public static void setUpStatic() {
-        writerCommandQueueCapacity = 128;
+        writerCommandQueueCapacity = 256;
         AbstractGriffinTest.setUpStatic();
     }
 
     @Override
     @Before
     public void setUp() {
-        writerCommandQueueCapacity = 128;
+        writerCommandQueueCapacity = 256;
         super.setUp();
     }
 
@@ -105,8 +105,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 1_000_000L;
-        writerAsyncCommandMaxTimeout = 5_000_000;
+        writerAsyncCommandBusyWaitTimeout = 5_000_000L;
+        writerAsyncCommandMaxTimeout = 10_000_000L;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();

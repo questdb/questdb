@@ -978,7 +978,6 @@ public class TableWriter implements Closeable {
             if (seq > -1) {
                 TableWriterTask task = commandQueue.get(seq);
                 asyncWriterCommand.serialize(task);
-                System.out.println("published cmd at: " + seq + ", cmd: " + asyncWriterCommand);
                 commandPubSeq.done(seq);
                 return;
             } else if (seq == -1) {
