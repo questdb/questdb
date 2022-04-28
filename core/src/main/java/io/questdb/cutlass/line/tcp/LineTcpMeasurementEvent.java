@@ -271,12 +271,12 @@ class LineTcpMeasurementEvent implements Closeable {
                 colType = localDetails.getColumnType(columnWriterIndex);
             } else if (columnWriterIndex == COLUMN_NOT_FOUND) {
                 // send column by name
-                final String colName = localDetails.getColName();
-                if (TableUtils.isValidColumnName(colName)) {
-                    offset = buffer.addColumnName(offset, colName);
-                    colType = localDetails.getColumnType(colName, entityType);
+                final String columnName = localDetails.getColName();
+                if (TableUtils.isValidColumnName(columnName)) {
+                    offset = buffer.addColumnName(offset, columnName);
+                    colType = localDetails.getColumnType(columnName, entityType);
                 } else {
-                    throw invalidColNameError(colName);
+                    throw invalidColNameError(columnName);
                 }
             } else {
                 // duplicate column, skip
