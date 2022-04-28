@@ -35,7 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 public class ShowTransactionIsolationLevelCursorFactory implements RecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final static StringValueRecord RECORD = new StringValueRecord("read committed");
-    private final StringValueRecordCursor cursor = new StringValueRecordCursor(RECORD);
+    private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(RECORD);
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {

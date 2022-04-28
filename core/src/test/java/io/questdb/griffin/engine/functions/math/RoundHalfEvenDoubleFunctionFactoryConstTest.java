@@ -146,7 +146,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractGriffin
     public void testOKPosScale17() throws SqlException {
         assertQuery(
                 "round_half_even\n" +
-                        "14.777800000000003\n",
+                        "14.777800000000001\n",
                 "select round_half_even(14.7778, 15) from long_sequence(1)",
                 null,
                 true,

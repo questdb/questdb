@@ -24,36 +24,9 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlExecutionContext;
-
-public class ShowSearchPathCursorFactory implements RecordCursorFactory {
-    private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private static final StringValueRecord RECORD = new StringValueRecord("\"$user\", public");
-    private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(RECORD);
-
+public class PrefixedAttrDefCatalogueFunctionFactory extends AttrDefCatalogueFunctionFactory {
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.toTop();
-        return cursor;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return METADATA;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    static {
-        METADATA.add(new TableColumnMetadata("search_path", 1, ColumnType.STRING));
+    public String getSignature() {
+        return "pg_catalog.pg_attrdef()";
     }
 }

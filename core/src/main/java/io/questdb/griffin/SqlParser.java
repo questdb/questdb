@@ -24,10 +24,12 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -753,20 +755,6 @@ public final class SqlParser {
         return null;
     }
 
-    @NotNull
-    private ExecutionModel parseWith(GenericLexer lexer) throws SqlException {
-        parseWithClauses(lexer, topLevelWithModel);
-        CharSequence tok = tok(lexer, "'select', 'update' or name expected");
-        if (!isUpdateKeyword(tok)) {
-            // SELECT
-            lexer.unparse();
-            return parseDml(lexer, null);
-        } else {
-            // UPDATE
-            return parseUpdate(lexer);
-        }
-    }
-
     private QueryModel parseDml(GenericLexer lexer, @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
         QueryModel model = null;
         QueryModel prevModel = null;
@@ -859,6 +847,7 @@ public final class SqlParser {
         } else {
             lexer.unparse();
             model.addBottomUpColumn(SqlUtil.nextColumn(queryColumnPool, expressionNodePool, "*", "*"));
+            model.setArtificialStar(true);
         }
 
         QueryModel nestedModel = queryModelPool.next();
@@ -950,69 +939,54 @@ public final class SqlParser {
         return updateQueryModel;
     }
 
-    private void parseUpdateClause(GenericLexer lexer, QueryModel updateQueryModel, QueryModel fromModel) throws SqlException {
-        CharSequence tok = tok(lexer, "table name or alias");
-        CharSequence tableName = GenericLexer.immutableOf(tok);
-        ExpressionNode tableNameExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0);
-        updateQueryModel.setTableName(tableNameExpr);
-        fromModel.setTableName(tableNameExpr);
-
-        tok = tok(lexer, "AS, SET or table alias expected");
-        if (isAsKeyword(tok)) {
-            tok = tok(lexer, "table alias expected");
-            if (isSetKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "table alias expected");
-            }
-        }
-
-        if (!isAsKeyword(tok) && !isSetKeyword(tok)) {
-            // This is table alias
-            CharSequence tableAlias = GenericLexer.immutableOf(tok);
-            ExpressionNode tableAliasExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableAlias, 0, 0);
-            updateQueryModel.setAlias(tableAliasExpr);
-            tok = tok(lexer, "SET expected");
-        }
-
-        if (!isSetKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "SET expected");
-        }
-
-        while (true) {
-            // Column
-            tok = tok(lexer, "column name");
-            CharSequence col = GenericLexer.immutableOf(GenericLexer.unquote(tok));
-            int colPosition = lexer.lastTokenPosition();
-
-            expectTok(lexer, "=");
-
-            // Value expression
-            ExpressionNode expr = expr(lexer, (QueryModel) null);
-            ExpressionNode setColumnExpression = expressionNodePool.next().of(ExpressionNode.LITERAL, col, 0, colPosition);
-            updateQueryModel.getUpdateExpressions().add(setColumnExpression);
-
-            QueryColumn valueColumn = queryColumnPool.next().of(col, expr);
-            fromModel.addBottomUpColumn(valueColumn);
-
-            tok = optTok(lexer);
-            if (tok == null) {
-                break;
-            }
-
-            if (tok.length() != 1 || tok.charAt(0) != ',') {
-                lexer.unparse();
-                break;
-            }
-        }
-    }
-
     private void parseFromClause(GenericLexer lexer, QueryModel model, QueryModel masterModel) throws SqlException {
         CharSequence tok = expectTableNameOrSubQuery(lexer);
         // expect "(" in case of sub-query
 
         if (Chars.equals(tok, '(')) {
-            model.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses()));
-            model.setNestedModelIsSubQuery(true);
-            tok = setModelAliasAndTimestamp(lexer, model);
+            QueryModel proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses());
+            tok = optTok(lexer);
+
+            // do not collapse aliased sub-queries or those that have timestamp()
+            // select * from (table) x
+            if (tok == null || (tableAliasStop.contains(tok) && !SqlKeywords.isTimestampKeyword(tok))) {
+
+                final QueryModel target = proposedNested.getNestedModel();
+                // when * is artificial, there is no union, there is no "where" clause inside sub-query,
+                // e.g. there was no "select * from" we should collapse sub-query to a regular table
+                if (
+                        proposedNested.isArtificialStar()
+                                && proposedNested.getUnionModel() == null
+                                && target.getWhereClause() == null
+                                && target.getOrderBy().size() == 0
+                                && target.getLatestBy().size() == 0
+                                && target.getNestedModel() == null
+                                && target.getSampleBy() == null
+                                && target.getGroupBy().size() == 0
+                                && proposedNested.getLimitLo() == null
+                                && proposedNested.getLimitHi() == null
+                ) {
+                    model.setTableName(target.getTableName());
+                    model.setAlias(target.getAlias());
+                    model.setTimestamp(target.getTimestamp());
+
+                    int n = target.getJoinModels().size();
+                    for (int i = 1; i < n; i++) {
+                        model.addJoinModel(target.getJoinModels().getQuick(i));
+                    }
+                    proposedNested = null;
+                } else {
+                    lexer.unparse();
+                }
+            } else {
+                lexer.unparse();
+            }
+
+            if (proposedNested != null) {
+                model.setNestedModel(proposedNested);
+                model.setNestedModelIsSubQuery(true);
+                tok = setModelAliasAndTimestamp(lexer, model);
+            }
         } else {
             lexer.unparse();
             parseSelectFrom(lexer, model, masterModel.getWithClauses());
@@ -1561,7 +1535,7 @@ public final class SqlParser {
             col.setAlias(alias);
             model.addBottomUpColumn(col);
 
-            if (tok == null || Chars.equals(tok, ';') ) {
+            if (tok == null || Chars.equals(tok, ';')) {
                 lexer.unparse();
                 break;
             }
@@ -1626,6 +1600,85 @@ public final class SqlParser {
         return null;
     }
 
+    private ExecutionModel parseUpdate(GenericLexer lexer) throws SqlException {
+        lexer.unparse();
+        final QueryModel model = parseDmlUpdate(lexer);
+        final CharSequence tok = optTok(lexer);
+        if (tok == null || Chars.equals(tok, ';')) {
+            return model;
+        }
+        throw errUnexpected(lexer, tok);
+    }
+
+    private void parseUpdateClause(GenericLexer lexer, QueryModel updateQueryModel, QueryModel fromModel) throws SqlException {
+        CharSequence tok = tok(lexer, "table name or alias");
+        CharSequence tableName = GenericLexer.immutableOf(tok);
+        ExpressionNode tableNameExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0);
+        updateQueryModel.setTableName(tableNameExpr);
+        fromModel.setTableName(tableNameExpr);
+
+        tok = tok(lexer, "AS, SET or table alias expected");
+        if (isAsKeyword(tok)) {
+            tok = tok(lexer, "table alias expected");
+            if (isSetKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "table alias expected");
+            }
+        }
+
+        if (!isAsKeyword(tok) && !isSetKeyword(tok)) {
+            // This is table alias
+            CharSequence tableAlias = GenericLexer.immutableOf(tok);
+            ExpressionNode tableAliasExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableAlias, 0, 0);
+            updateQueryModel.setAlias(tableAliasExpr);
+            tok = tok(lexer, "SET expected");
+        }
+
+        if (!isSetKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "SET expected");
+        }
+
+        while (true) {
+            // Column
+            tok = tok(lexer, "column name");
+            CharSequence col = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+            int colPosition = lexer.lastTokenPosition();
+
+            expectTok(lexer, "=");
+
+            // Value expression
+            ExpressionNode expr = expr(lexer, (QueryModel) null);
+            ExpressionNode setColumnExpression = expressionNodePool.next().of(ExpressionNode.LITERAL, col, 0, colPosition);
+            updateQueryModel.getUpdateExpressions().add(setColumnExpression);
+
+            QueryColumn valueColumn = queryColumnPool.next().of(col, expr);
+            fromModel.addBottomUpColumn(valueColumn);
+
+            tok = optTok(lexer);
+            if (tok == null) {
+                break;
+            }
+
+            if (tok.length() != 1 || tok.charAt(0) != ',') {
+                lexer.unparse();
+                break;
+            }
+        }
+    }
+
+    @NotNull
+    private ExecutionModel parseWith(GenericLexer lexer) throws SqlException {
+        parseWithClauses(lexer, topLevelWithModel);
+        CharSequence tok = tok(lexer, "'select', 'update' or name expected");
+        if (!isUpdateKeyword(tok)) {
+            // SELECT
+            lexer.unparse();
+            return parseDml(lexer, null);
+        } else {
+            // UPDATE
+            return parseUpdate(lexer);
+        }
+    }
+
     private QueryModel parseWith(GenericLexer lexer, WithClauseModel wcm, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
         QueryModel m = wcm.popModel();
         if (m != null) {
@@ -1671,16 +1724,6 @@ public final class SqlParser {
         model.setSampleByOffset(expectExpr(lexer));
         tok = optTok(lexer);
         return tok;
-    }
-
-    private ExecutionModel parseUpdate(GenericLexer lexer) throws SqlException {
-        lexer.unparse();
-        final QueryModel model = parseDmlUpdate(lexer);
-        final CharSequence tok = optTok(lexer);
-        if (tok == null || Chars.equals(tok, ';')) {
-            return model;
-        }
-        throw errUnexpected(lexer, tok);
     }
 
     private ExpressionNode rewriteCase(ExpressionNode parent) throws SqlException {

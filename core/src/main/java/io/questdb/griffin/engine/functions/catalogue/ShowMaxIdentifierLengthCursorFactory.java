@@ -32,9 +32,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 
-public class ShowSearchPathCursorFactory implements RecordCursorFactory {
+public class ShowMaxIdentifierLengthCursorFactory implements RecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private static final StringValueRecord RECORD = new StringValueRecord("\"$user\", public");
+    private final static IntValueRecord RECORD = new IntValueRecord(63);
     private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(RECORD);
 
     @Override
@@ -54,6 +54,6 @@ public class ShowSearchPathCursorFactory implements RecordCursorFactory {
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("search_path", 1, ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("max_identifier_length", 1, ColumnType.INT));
     }
 }
