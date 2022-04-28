@@ -61,13 +61,13 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     }
 
     @Test
-    public void testConcurrencySingleWriterSingleReaderSinglePartitioned() throws Exception {
-        testConcurrency(1, 1, 50, PartitionMode.SINGLE);
+    public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
+        testConcurrency(4, 10, 8, PartitionMode.MULTIPLE);
     }
 
     @Test
-    public void testConcurrencySingleWriterMultipleReaderSinglePartitioned() throws Exception {
-        testConcurrency(1, 10, 40, PartitionMode.SINGLE);
+    public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
+        testConcurrency(4, 10, 8, PartitionMode.NONE);
     }
 
     @Test
@@ -76,23 +76,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     }
 
     @Test
-    public void testConcurrencySingleWriterSingleReaderMultiPartitioned() throws Exception {
-        testConcurrency(1, 1, 30, PartitionMode.MULTIPLE);
-    }
-
-    @Test
     public void testConcurrencySingleWriterMultipleReaderMultiPartitioned() throws Exception {
         testConcurrency(1, 10, 25, PartitionMode.MULTIPLE);
-    }
-
-    @Test
-    public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
-        testConcurrency(4, 10, 8, PartitionMode.MULTIPLE);
-    }
-
-    @Test
-    public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
-        testConcurrency(1, 1, 50, PartitionMode.NONE);
     }
 
     @Test
@@ -101,8 +86,23 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     }
 
     @Test
-    public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
-        testConcurrency(4, 10, 8, PartitionMode.NONE);
+    public void testConcurrencySingleWriterMultipleReaderSinglePartitioned() throws Exception {
+        testConcurrency(1, 10, 40, PartitionMode.SINGLE);
+    }
+
+    @Test
+    public void testConcurrencySingleWriterSingleReaderMultiPartitioned() throws Exception {
+        testConcurrency(1, 1, 30, PartitionMode.MULTIPLE);
+    }
+
+    @Test
+    public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
+        testConcurrency(1, 1, 50, PartitionMode.NONE);
+    }
+
+    @Test
+    public void testConcurrencySingleWriterSingleReaderSinglePartitioned() throws Exception {
+        testConcurrency(1, 1, 50, PartitionMode.SINGLE);
     }
 
     @Test
@@ -139,9 +139,38 @@ public class PGUpdateConcurrentTest extends BasePGTest {
         });
     }
 
+    private void assertSql(String sql, IntObjHashMap<CharSequence[]> expectedValues, IntObjHashMap<Validator> validators, SqlCompiler readerCompiler) throws SqlException {
+        try (RecordCursorFactory factory = readerCompiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            final RecordMetadata metadata = factory.getMetadata();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                validators.get(i).reset();
+            }
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                int recordIndex = 0;
+                while (cursor.hasNext()) {
+                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                        final StringSink readerSink = this.readerSink.get();
+                        readerSink.clear();
+                        TestUtils.printColumn(record, metadata, i, readerSink);
+                        CharSequence[] expectedValueArray = expectedValues.get(i);
+                        CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
+                        if (!validators.get(i).validate(expectedValue, readerSink)) {
+                            throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
+                                    .put(", columnIndex=").put(i)
+                                    .put(", expected=").put(expectedValue)
+                                    .put(", actual=").put(readerSink);
+                        }
+                    }
+                    recordIndex++;
+                }
+            }
+        }
+    }
+
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 5_000_000L;
-        writerAsyncCommandMaxTimeout = 10_000_000L;
+        writerAsyncCommandBusyWaitTimeout = 20_000_000L; // On in CI Windows updates are particularly slow
+        writerAsyncCommandMaxTimeout = 30_000_000L;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
@@ -246,41 +275,6 @@ public class PGUpdateConcurrentTest extends BasePGTest {
         });
     }
 
-    private interface Validator {
-        boolean validate(CharSequence expected, CharSequence actual);
-        default void reset() {
-        }
-    }
-
-    private void assertSql(String sql, IntObjHashMap<CharSequence[]> expectedValues, IntObjHashMap<Validator> validators, SqlCompiler readerCompiler) throws SqlException {
-        try (RecordCursorFactory factory = readerCompiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            final RecordMetadata metadata = factory.getMetadata();
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                validators.get(i).reset();
-            }
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                final Record record = cursor.getRecord();
-                int recordIndex = 0;
-                while (cursor.hasNext()) {
-                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                        final StringSink readerSink = this.readerSink.get();
-                        readerSink.clear();
-                        TestUtils.printColumn(record, metadata, i, readerSink);
-                        CharSequence[] expectedValueArray = expectedValues.get(i);
-                        CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
-                        if (!validators.get(i).validate(expectedValue, readerSink)) {
-                            throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
-                                    .put(", columnIndex=").put(i)
-                                    .put(", expected=").put(expectedValue)
-                                    .put(", actual=").put(readerSink);
-                        }
-                    }
-                    recordIndex++;
-                }
-            }
-        }
-    }
-
     private enum PartitionMode {
         NONE, SINGLE, MULTIPLE;
 
@@ -294,14 +288,14 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
         static CharSequence[] getExpectedTimestamps(PartitionMode mode) {
             return mode == MULTIPLE ?
-                    new CharSequence[] {
+                    new CharSequence[]{
                             "1970-01-01T00:00:00.000000Z",
                             "1970-01-01T12:00:00.000000Z",
                             "1970-01-02T00:00:00.000000Z",
                             "1970-01-02T12:00:00.000000Z",
                             "1970-01-03T00:00:00.000000Z"
                     } :
-                    new CharSequence[] {
+                    new CharSequence[]{
                             "1970-01-01T00:00:00.000000Z",
                             "1970-01-01T00:00:01.000000Z",
                             "1970-01-01T00:00:02.000000Z",
@@ -309,5 +303,12 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                             "1970-01-01T00:00:04.000000Z"
                     };
         }
+    }
+
+    private interface Validator {
+        default void reset() {
+        }
+
+        boolean validate(CharSequence expected, CharSequence actual);
     }
 }
