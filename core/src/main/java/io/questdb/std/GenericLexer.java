@@ -30,6 +30,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayDeque;
 import java.util.Comparator;
 
 public class GenericLexer implements ImmutableIterator<CharSequence> {
@@ -40,8 +41,9 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     private final CharSequence flyweightSequence = new InternalFloatingSequence();
     private final ObjectPool<FloatingSequence> csPool;
     private final ObjectPool<FloatingSequencePair> csPairPool;
-    private final ObjStack<CharSequence> unparsed = new ObjStack<>();
-    private final ObjStack<CharSequence> parkedUnparsed = new ObjStack<>();
+    private final ArrayDeque<CharSequence> unparsed = new ArrayDeque<>();
+    private final IntStack unparsedPosition = new IntStack();
+    private final ArrayDeque<CharSequence> parkedUnparsed = new ArrayDeque<>();
     private final IntStack parkedPosition = new IntStack();
     private CharSequence next = null;
     private int _lo;
@@ -154,10 +156,12 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return _hi;
     }
 
-    public void parkUnparsed() {
+    public void stash() {
         int count = 0;
         while (unparsed.size() > 0) {
             parkedUnparsed.push(unparsed.pop());
+            parkedPosition.push(unparsedPosition.pop());
+            parkedPosition.push(unparsedPosition.pop());
             count++;
         }
         parkedPosition.push(getPosition());
@@ -166,16 +170,20 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         next = null;
     }
 
-    public void unparkUnparsed() {
+    public void unStash() {
         int count = parkedPosition.pop();
+        _pos = parkedPosition.pop();
+
         unparsed.clear();
+        unparsedPosition.clear();
         while (count > 0) {
             unparsed.push(parkedUnparsed.pop());
+            unparsedPosition.push(parkedPosition.pop()); // last
+            unparsedPosition.push(parkedPosition.pop()); // pos
             count--;
         }
         // clear next because we create a new parsing context
         next = null;
-        _pos = parkedPosition.pop();
     }
 
     public boolean hasUnparsed() {
@@ -200,7 +208,11 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
     public CharSequence next() {
 
         if (unparsed.size() > 0) {
-            return last = unparsed.pop();
+
+            this._lo  = unparsedPosition.pollLast();
+            this._pos = unparsedPosition.pollLast();
+
+            return last = unparsed.pollLast();
         }
 
         this._lo = this._hi;
@@ -316,6 +328,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         this._len = hi;
         this.next = null;
         this.unparsed.clear();
+        this.unparsedPosition.clear();
         this.last = null;
     }
 
@@ -325,15 +338,24 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         this._pos = this._start;
         this.next = null;
         this.unparsed.clear();
+        this.unparsedPosition.clear();
         this.last = null;
         this.parkedPosition.clear();
         this.parkedUnparsed.clear();
     }
 
-    public void unparse() {
+    public void unparseLast() {
         if (last != null) {
             unparsed.push(immutableOf(last));
+            unparsedPosition.push(lastTokenPosition());
+            unparsedPosition.push(getPosition());
         }
+    }
+
+    public void unparse(CharSequence what, int last, int pos) {
+        unparsed.push(what);
+        unparsedPosition.push(last);
+        unparsedPosition.push(pos);
     }
 
     public void backTo(int position, CharSequence lastSeen) {

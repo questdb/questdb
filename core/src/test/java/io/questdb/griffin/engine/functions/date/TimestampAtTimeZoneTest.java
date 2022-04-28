@@ -77,7 +77,7 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
                 "select to_timestamp('2022-03-11T22:00:30.555555Z') at 'UTC'",
                 null,
                 54,
-                "did you mean 'at time zone' ?"
+                "',', 'from' or 'over' expected"
         );
     }
 
@@ -87,16 +87,6 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
                 "select to_timestamp('2022-03-11T22:00:30.555555Z') at time 'UTC'",
                 null,
                 59,
-                "did you mean 'at time zone' ?"
-        );
-    }
-
-    @Test
-    public void testFailDangling1() throws Exception {
-        assertFailure(
-                "select to_timestamp('2022-03-11T22:00:30.555555Z') at",
-                null,
-                51,
                 "did you mean 'at time zone <tz>'?"
         );
     }
@@ -106,7 +96,17 @@ public class TimestampAtTimeZoneTest extends AbstractGriffinTest {
         assertFailure(
                 "select to_timestamp('2022-03-11T22:00:30.555555Z') at time",
                 null,
-                54,
+                58,
+                "did you mean 'at time zone <tz>'?"
+        );
+    }
+
+    @Test
+    public void testFailDangling3() throws Exception {
+        assertFailure(
+                "select to_timestamp('2022-03-11T22:00:30.555555Z') at time",
+                null,
+                58,
                 "did you mean 'at time zone <tz>'?"
         );
     }

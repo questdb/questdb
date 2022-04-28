@@ -198,11 +198,74 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    @Ignore
     public void testAtAsColumnAlias() throws Exception {
         assertQuery("select-choose l at from (select [l] from testat timestamp (ts))",
                 "select l at from testat",
                 modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsTableAliasStar() throws Exception {
+        assertQuery("select-choose l, ts from (select [l, ts] from testat at timestamp (ts)) at",
+                "select at.* from testat at",
+                modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsTableAlias() throws Exception {
+        assertQuery("select-choose l, ts from (select [l, ts] from testat at timestamp (ts)) at",
+                "select at.l, at.ts from testat at",
+                modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsTableAliasSingleColumn() throws Exception {
+        assertQuery("select-choose l from (select [l] from testat at timestamp (ts)) at",
+                "select at.l from testat as at",
+                modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsTableAliasInJoin() throws Exception {
+        assertQuery("select-choose at.l l, at.ts ts, at2.l l1, at2.ts ts1 from (select [l, ts] from testat at timestamp (ts) join select [l, ts] from testat at2 timestamp (ts) on at2.l = at.l) at",
+                "select * from testat at join testat at2 on at.l = at2.l",
+                modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsWithAlias() throws Exception {
+        assertQuery("select-choose l, ts from (select-choose [l, ts] l, ts from (select [l, ts] from testat timestamp (ts))) at",
+                "with at as (select * from testat )  selecT * from at",
+                modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsColumnName() throws Exception {
+        assertQuery("select-choose at from (select [at] from testat timestamp (ts))",
+                "select at from testat",
+                modelOf("testat").col("at", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsTableName() throws Exception {
+        assertQuery("select-choose at from (select [at] from at timestamp (ts))",
+                "select at.at from at",
+                modelOf("at").col("at", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsTableNameAndExpr() throws Exception {
+        assertQuery("select-virtual at1 + at column from (select-choose [at, at at1] at, at at1 from (select [at] from at timestamp (ts)))",
+                "select (at.at + at) from at",
+                modelOf("at").col("at", ColumnType.INT).timestamp("ts")
         );
     }
 
