@@ -44,6 +44,8 @@ import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.Assert.fail;
+
 public class CairoEngineTest extends AbstractCairoTest {
     private final static Path path = new Path();
     private final static Path otherPath = new Path();
@@ -514,5 +516,21 @@ public class CairoEngineTest extends AbstractCairoTest {
                 .col("b", ColumnType.INT)) {
             CairoTestUtils.create(model);
         }
+    }
+
+    @Test
+    public void testDuplicateTableCreation() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
+                    .col("a", ColumnType.INT)) {
+                CairoTestUtils.create(model);
+                try {
+                    engine.createTable(AllowAllCairoSecurityContext.INSTANCE, model.getMem(), model.getPath(), model);
+                    fail("duplicated tables should not be permitted!");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
+                }
+            }
+        });
     }
 }
