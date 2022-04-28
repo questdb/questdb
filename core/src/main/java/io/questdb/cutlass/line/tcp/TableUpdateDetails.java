@@ -289,8 +289,8 @@ public class TableUpdateDetails implements Closeable {
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
         private final CharSequenceIntHashMap columnIndexByNameUtf8 = new CharSequenceIntHashMap();
-        // maps column names to their types, will be populated for dynamically added columns only
-        // keys are mangled strings created from the utf-8 encoded byte representations of the column names
+        // maps column names to their types
+        // will be populated for dynamically added columns only
         private final CharSequenceIntHashMap columnTypeByNameUtf8 = new CharSequenceIntHashMap();
         private final ObjList<SymbolCache> symbolCacheByColumnIndex = new ObjList<>();
         private final ObjList<SymbolCache> unusedSymbolCaches;
