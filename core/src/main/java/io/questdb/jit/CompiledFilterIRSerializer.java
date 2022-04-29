@@ -25,7 +25,6 @@ package io.questdb.jit;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.*;
@@ -564,11 +563,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             symbol = symbol.subSequence(1, len - 1);
         }
 
-        if (predicateContext.symbolMapReader == null || predicateContext.symbolColumnIndex == -1) {
+        if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {
             throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
         }
 
-        final int key = predicateContext.symbolMapReader.keyOf(symbol);
+        final int key = predicateContext.symbolTable.keyOf(symbol);
         if (key != SymbolTable.VALUE_NOT_FOUND) {
             // Known symbol constant case
             putOperand(offset, IMM, I4_TYPE, key);
@@ -898,7 +897,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         private ExpressionNode rootNode;
         PredicateType type;
-        SymbolMapReader symbolMapReader; // used for known symbol constant lookups
+        StaticSymbolTable symbolTable; // used for known symbol constant lookups
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
         boolean singleBooleanColumn;
         boolean hasArithmeticOperations;
@@ -915,7 +914,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private void reset() {
             rootNode = null;
             type = null;
-            symbolMapReader = null;
+            symbolTable = null;
             symbolColumnIndex = -1;
             singleBooleanColumn = false;
             hasArithmeticOperations = false;
@@ -973,7 +972,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int columnType = metadata.getColumnType(columnIndex);
             final int columnTypeTag = ColumnType.tagOf(columnType);
             if (columnTypeTag == ColumnType.SYMBOL) {
-                symbolMapReader = pageFrameCursor.getSymbolMapReader(columnIndex);
+                symbolTable = (StaticSymbolTable) pageFrameCursor.getSymbolTable(columnIndex);
                 symbolColumnIndex = columnIndex;
             }
 

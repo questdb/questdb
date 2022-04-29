@@ -38,8 +38,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
-import io.questdb.mp.MPSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
@@ -1407,6 +1405,7 @@ public class PGJobContextTest extends BasePGTest {
 
                 Assert.fail();
             } catch (PSQLException e) {
+                Assert.assertNotNull(e.getServerErrorMessage());
                 TestUtils.assertContains(e.getServerErrorMessage().getMessage(), "blob is too large");
             }
         });
@@ -3263,8 +3262,6 @@ nodejs code:
                 return 512;
             }
         });
-
-        Thread.sleep(4000);
     }
 
     @Test
@@ -3482,32 +3479,9 @@ nodejs code:
         });
     }
 
-    @Test//NOTE: this test needs updating once limit issue is fixed!
-    public void testUnexpectedAssertionErrorDisconnectsClient() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1);
-                 final Connection connection = getConnection(false, false)) {
-
-                connection.setAutoCommit(false);
-
-                Statement stmt = connection.createStatement();
-                stmt.execute("create table ltest as (select cast(x as timestamp) ts from long_sequence(10))");
-                connection.commit();
-
-                try (PreparedStatement pstmt = connection.prepareStatement("select ts from ltest limit -9223372036854775807L-1, -1");
-                     ResultSet ignore = pstmt.executeQuery()) {
-                    Assert.fail("exception should be thrown");
-                } catch (PSQLException e) {
-                    Assert.assertEquals("An I/O error occurred while sending to the backend.", e.getMessage());
-                }
-
-            }
-        });
-    }
-
-    @Test
     //checks that function parser error doesn't persist and affect later queries issued through the same connection
-    public void testParseErrorDoesntCorruptConnection() throws Exception {
+    @Test
+    public void testParseErrorDoesNotCorruptConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final PGWireServer ignored = createPGServer(2);
                  final Connection connection = getConnection(false, false)) {
@@ -5565,7 +5539,6 @@ create table tab as (
     @Test
     public void testSlowClient() throws Exception {
         assertMemoryLeak(() -> {
-            final int delayedAttempts = 1000;
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
             PGWireConfiguration configuration = new DefaultPGWireConfiguration() {
                 @Override

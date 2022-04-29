@@ -31,6 +31,8 @@ public class MaxDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
 
     @Test
     public void testAddColumn() throws Exception {
+        // fix page frame size, because it affects AVG accuracy
+        pageFrameMaxRows = 10_000;
         assertQuery(
                 "avg\n" +
                         "0.511848387\n",
@@ -47,7 +49,7 @@ public class MaxDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
 
         assertQuery(
                 "avg\tmax\n" +
-                        "0.504722\t0.9997797234031688\n",
+                        "0.5008779999999999\t0.9997797234031688\n",
                 "select round(avg(f),6) avg, max(b) max from tab",
                 "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
                 null,

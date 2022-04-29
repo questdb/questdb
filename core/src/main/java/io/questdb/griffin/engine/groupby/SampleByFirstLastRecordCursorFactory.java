@@ -35,6 +35,8 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.*;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+
 public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory {
     private static final int FILTER_KEY_IS_NULL = 0;
     private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
@@ -105,7 +107,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext);
+        PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
         int groupByIndexKey = symbolFilter.getSymbolFilterKey();
         if (groupByIndexKey == SymbolMapReader.VALUE_NOT_FOUND) {
             Misc.free(pageFrameCursor);
@@ -245,7 +247,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[columnIndex]);
+            return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[columnIndex]);
         }
 
         @Override
@@ -716,7 +718,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                 @Override
                 public CharSequence getSym(int col) {
                     int symbolId = (int) crossFrameRow.getQuick(col);
-                    return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[col]).valueBOf(symbolId);
+                    return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);
                 }
 
                 @Override
@@ -808,7 +810,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
                     } else {
                         symbolId = SymbolTable.VALUE_IS_NULL;
                     }
-                    return pageFrameCursor.getSymbolMapReader(queryToFrameColumnMapping[col]).valueBOf(symbolId);
+                    return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);
                 }
 
                 @Override

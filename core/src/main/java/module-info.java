@@ -91,6 +91,7 @@ open module io.questdb {
     exports io.questdb.cairo.mig;
     exports io.questdb.griffin.engine.join;
     exports io.questdb.griffin.update;
+    exports io.questdb.cairo.sql.async;
 
     provides FunctionFactory with
             // test functions
@@ -568,7 +569,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory,
 
 //            PostgreSQL advisory locks functions
-            io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll,            
+            io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll,
 //                  concat()
             io.questdb.griffin.engine.functions.str.ConcatFunctionFactory,
             // replace()
