@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.mp.*;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -160,6 +161,13 @@ public class MessageBusImpl implements MessageBus {
             pageFrameReduceSubSeq[i] = reduceSubSeq;
             pageFrameCollectFanOut[i] = collectFanOut;
         }
+    }
+
+    @Override
+    public void close() {
+        // We need to close only queues with native backing memory.
+        Misc.free(getTableWriterEventQueue());
+        Misc.free(pageFrameReduceQueue);
     }
 
     @Override

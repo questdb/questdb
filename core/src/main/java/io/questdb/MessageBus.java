@@ -34,13 +34,7 @@ import java.io.Closeable;
 
 public interface MessageBus extends Closeable {
     @Override
-    default void close() {
-        // We need to close only queues with native backing memory.
-        Misc.free(getTableWriterEventQueue());
-        for (int i = 0, n = getPageFrameReduceShardCount(); i < n; i++) {
-            Misc.free(getPageFrameReduceQueue(i));
-        }
-    }
+    void close();
 
     CairoConfiguration getConfiguration();
 
