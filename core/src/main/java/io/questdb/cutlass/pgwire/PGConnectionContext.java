@@ -1072,6 +1072,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
+                LOG.info().$("query cache used [fd=").$(fd).I$();
                 // cache hit, define bind variables
                 bindVariableService.clear();
                 typesAndSelect.defineBindVariables(bindVariableService);
