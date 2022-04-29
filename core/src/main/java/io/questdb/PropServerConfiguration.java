@@ -141,6 +141,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final InputFormatConfiguration inputFormatConfiguration;
     private final LineProtoTimestampAdapter lineUdpTimestampAdapter;
     private final String inputRoot;
+    private final String inputWorkRoot;
     private final boolean lineUdpEnabled;
     private final int lineUdpOwnThreadAffinity;
     private final boolean lineUdpUnicast;
@@ -739,6 +740,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             this.inputRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
+            this.inputWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.inputRoot);
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
             this.backupTempDirName = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_TMP_NAME, "tmp");
@@ -1949,6 +1951,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getInputRoot() {
             return inputRoot;
+        }
+
+        @Override
+        public CharSequence getInputWorkRoot() {
+            return inputWorkRoot;
         }
 
         @Override

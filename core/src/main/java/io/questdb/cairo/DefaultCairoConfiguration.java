@@ -267,6 +267,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getInputWorkRoot() {
+        return null;
+    }
+
+    @Override
     public int getInsertPoolCapacity() {
         return 8;
     }

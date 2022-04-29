@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.FileSplitter;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
@@ -1941,6 +1942,26 @@ public class SqlCompiler implements Closeable {
                 if (fd == -1) {
                     throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
                 }
+
+                if (model.isParalell()) {
+                    if (model.getTimestampColumn() == -1) {
+                        model.setTimestampColumn(1);//TODO: throw error
+                    }
+                    if (model.getTimestampFormat() == null) {
+                        model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");//TODO: throw error 
+                    }
+
+                    try {
+                        FileSplitter sorter = new FileSplitter(engine);
+                        DateFormat dateFormat = engine.getConfiguration().getTextConfiguration().getInputFormatConfiguration().getTimestampFormatFactory().get(model.getTimestampFormat());
+                        sorter.split(name, fd, PartitionBy.DAY, (byte) ',', model.getTimestampColumn(), dateFormat, true);
+                    } finally {
+                        ff.close(fd);
+                    }
+
+                    return;
+                }
+
                 try {
                     long fileLen = ff.length(fd);
                     long n = ff.read(fd, buf, len, 0);

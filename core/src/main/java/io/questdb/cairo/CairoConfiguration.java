@@ -149,6 +149,8 @@ public interface CairoConfiguration {
     // null input root disables "copy" sql
     CharSequence getInputRoot();
 
+    CharSequence getInputWorkRoot();
+
     int getInsertPoolCapacity();
 
     int getLatestByQueueCapacity();

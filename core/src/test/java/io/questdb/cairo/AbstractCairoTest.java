@@ -68,6 +68,7 @@ public class AbstractCairoTest {
     protected static CairoEngine engine;
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String inputRoot = null;
+    protected static String inputWorkRoot = null;
     protected static FilesFacade ff;
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
@@ -159,6 +160,11 @@ public class AbstractCairoTest {
             @Override
             public CharSequence getInputRoot() {
                 return inputRoot;
+            }
+
+            @Override
+            public CharSequence getInputWorkRoot() {
+                return inputWorkRoot;
             }
 
             @Override

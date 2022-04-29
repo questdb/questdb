@@ -445,6 +445,14 @@ public final class SqlParser {
                     if (isHeaderKeyword(tok)) {
                         model.setHeader(isTrueKeyword(tok(lexer, "'true' or 'false'")));
                         tok = optTok(lexer);
+                    } else if (isParallelKeyword(tok)) {
+                        int parallelWorkers = expectInt(lexer);
+                        model.setParallelWorkersCount(parallelWorkers);
+                        tok = optTok(lexer);
+                    } else if (isLimitKeyword(tok)) {
+                        int rowsLimit = expectInt(lexer);
+                        model.setRowsLimit(rowsLimit);
+                        tok = optTok(lexer);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "unexpected option");
                     }

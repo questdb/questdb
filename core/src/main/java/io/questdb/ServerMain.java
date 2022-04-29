@@ -273,6 +273,7 @@ public class ServerMain {
             }));
         } catch (NetworkError e) {
             log.errorW().$((Sinkable) e).$();
+            System.out.println(e.getMessage());//prints error synchronously
             LockSupport.parkNanos(10000000L);
             System.exit(55);
         }

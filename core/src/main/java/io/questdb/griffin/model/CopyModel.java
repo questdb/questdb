@@ -35,12 +35,47 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private ExpressionNode fileName;
     private boolean header;
 
+    private int parallelWorkersCount = 1;
+
+    //limits memory used by parallel import to this number of bytes 
+    private int memoryLimit;
+
+    //limits number of rows imported and makes it possible to try out configuration before running full import 
+    private int rowsLimit;
+
+    private String timestampFormat;
+
+    private int timestampColumn = -1;
+
+    public CopyModel() {
+    }
+
     @Override
     public void clear() {
     }
 
     public ExpressionNode getFileName() {
         return fileName;
+    }
+
+    public int getMemoryLimit() {
+        return memoryLimit;
+    }
+
+    public int getParallelWorkersCount() {
+        return parallelWorkersCount;
+    }
+
+    public int getRowsLimit() {
+        return rowsLimit;
+    }
+
+    public int getTimestampColumn() {
+        return timestampColumn;
+    }
+
+    public String getTimestampFormat() {
+        return timestampFormat;
     }
 
     public void setFileName(ExpressionNode fileName) {
@@ -56,6 +91,14 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return tableName;
     }
 
+    public void setMemoryLimit(int memoryLimit) {
+        this.memoryLimit = memoryLimit;
+    }
+
+    public void setRowsLimit(int rowsLimit) {
+        this.rowsLimit = rowsLimit;
+    }
+
     public void setTableName(ExpressionNode tableName) {
         this.tableName = tableName;
     }
@@ -68,8 +111,24 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.header = header;
     }
 
+    public void setParallelWorkersCount(int workersCount) {
+        this.parallelWorkersCount = workersCount;
+    }
+
+    public void setTimestampColumn(int timestampColumn) {
+        this.timestampColumn = timestampColumn;
+    }
+
+    public void setTimestampFormat(String timestampFormat) {
+        this.timestampFormat = timestampFormat;
+    }
+
     @Override
     public void toSink(CharSink sink) {
 
+    }
+
+    public boolean isParalell() {
+        return parallelWorkersCount > 1;
     }
 }
