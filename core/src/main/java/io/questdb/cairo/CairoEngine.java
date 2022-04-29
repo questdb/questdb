@@ -135,11 +135,12 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         CharSequence lockedReason = lock(securityContext, struct.getTableName(), "createTable");
         if (null == lockedReason) {
-            if (writerPool.exists(struct.getTableName())) {
-                throw EntryUnavailableException.instance("table exists");
-            }
             boolean newTable = false;
             try {
+                if (getStatus(securityContext, path, struct.getTableName()) != TableUtils.TABLE_DOES_NOT_EXIST) {
+                    // RESERVE is the same as if exists
+                    throw EntryUnavailableException.instance("table exists");
+                }
                 createTableUnsafe(
                         securityContext,
                         mem,
@@ -293,9 +294,6 @@ public class CairoEngine implements Closeable, WriterSource {
             int lo,
             int hi
     ) {
-        if (writerPool.exists(tableName)) {
-            return TableUtils.TABLE_EXISTS;
-        }
         return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableName, lo, hi);
     }
 
