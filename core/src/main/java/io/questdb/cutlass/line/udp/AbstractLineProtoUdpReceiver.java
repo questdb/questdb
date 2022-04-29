@@ -143,8 +143,8 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                 throw NetworkError.instance(nf.errno())
                         .put("cannot join group ")
                         .put("[fd=").put(fd)
-                        .put(", bind=").put(configuration.getBindIPv4Address())
-                        .put(", group=").put(configuration.getGroupIPv4Address())
+                        .put(", bind=").ip(configuration.getBindIPv4Address())
+                        .put(", group=").ip(configuration.getGroupIPv4Address())
                         .put(']');
             }
         } else {

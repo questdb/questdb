@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.*;
@@ -115,7 +116,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_COMPLETE, sendConfirmation);
         this.sqlExecutionContext = sqlExecutionContext;
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
+        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration());
         this.metrics = engine.getMetrics();
         this.alterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
         this.alterStartFullTimeoutNs = engine.getConfiguration().getWriterAsyncCommandMaxTimeout() * 1000;

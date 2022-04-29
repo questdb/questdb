@@ -4414,7 +4414,7 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final int tableRowCount = 300_000;
+            final int tableRowCount = 3_000_000;
 
             SOCountDownLatch peerDisconnectLatch = new SOCountDownLatch(1);
 
@@ -4429,7 +4429,6 @@ public class IODispatcherTest {
                     .withOnPeerDisconnect(peerDisconnectLatch::countDown)
                     .build();
             QueryCache.configure(httpConfiguration);
-
 
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
@@ -4448,9 +4447,14 @@ public class IODispatcherTest {
                 }
             }, Metrics.disabled());
 
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
+            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir) {
+                @Override
+                public int getSqlPageFrameMaxRows() {
+                    // this is necessary to sufficiently fragment paged filter execution
+                    return 10_000;
+                }
+            }, metrics);
+                 HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
             ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
@@ -4502,6 +4506,13 @@ public class IODispatcherTest {
                         }
                     }
                 };
+
+                O3Utils.setupWorkerPool(
+                        workerPool,
+                        engine.getMessageBus(),
+                        null
+                );
+
                 workerPool.start(LOG);
 
                 try {
@@ -4514,7 +4525,7 @@ public class IODispatcherTest {
                     );
 
                     // send multipart request to server
-                    final String request = "GET /query?query=select+distinct+a+from+x+where+test_latched_counter() HTTP/1.1\r\n"
+                    final String request = "GET /query?query=select+a+from+x+where+test_latched_counter() HTTP/1.1\r\n"
                             + "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n"
                             + "Upgrade-Insecure-Requests: 1\r\n"
                             + "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n"
@@ -4693,6 +4704,11 @@ public class IODispatcherTest {
 
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
                 @Override
+                public boolean getHint() {
+                    return true;
+                }
+
+                @Override
                 public int getLimit() {
                     return activeConnectionLimit;
                 }
@@ -4700,11 +4716,6 @@ public class IODispatcherTest {
                 @Override
                 public long getQueueTimeout() {
                     return 300_000;
-                }
-
-                @Override
-                public boolean getHint() {
-                    return true;
                 }
             };
 
@@ -6998,26 +7009,6 @@ public class IODispatcherTest {
                 .run(code);
     }
 
-    private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
-        if (Files.exists(path)) {
-            Assert.assertTrue(Files.remove(path));
-        }
-        long fd = Files.openAppend(path);
-
-        long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
-        for (int i = 0; i < 1048576; i++) {
-            Unsafe.getUnsafe().putByte(buf + i, rnd.nextByte());
-        }
-
-        for (int i = 0; i < 20; i++) {
-            Assert.assertEquals(1048576, Files.append(fd, buf, 1048576));
-        }
-
-        Files.close(fd);
-        Files.setLastModified(path, lastModified);
-        Unsafe.free(buf, 1048576, MemoryTag.NATIVE_DEFAULT);
-    }
-
     private void testMaxConnections0(
             IODispatcher<HttpConnectionContext> dispatcher,
             long sockAddr,
@@ -7092,6 +7083,26 @@ public class IODispatcherTest {
         } finally {
             Unsafe.free(mem, request.length(), MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
+        if (Files.exists(path)) {
+            Assert.assertTrue(Files.remove(path));
+        }
+        long fd = Files.openAppend(path);
+
+        long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
+        for (int i = 0; i < 1048576; i++) {
+            Unsafe.getUnsafe().putByte(buf + i, rnd.nextByte());
+        }
+
+        for (int i = 0; i < 20; i++) {
+            Assert.assertEquals(1048576, Files.append(fd, buf, 1048576));
+        }
+
+        Files.close(fd);
+        Files.setLastModified(path, lastModified);
+        Unsafe.free(buf, 1048576, MemoryTag.NATIVE_DEFAULT);
     }
 
     private static class QueryThread extends Thread {

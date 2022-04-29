@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.RingQueue;
@@ -83,7 +82,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
     }
 
     @Override
-    protected void buildTreeMap(SqlExecutionContext executionContext) throws SqlException {
+    protected void buildTreeMap(SqlExecutionContext executionContext) {
         final MessageBus bus = executionContext.getMessageBus();
 
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
@@ -91,7 +90,7 @@ class LatestByAllIndexedRecordCursor extends AbstractRecordListCursor {
         final Sequence subSeq = bus.getLatestBySubSeq();
 
         int keyCount = getSymbolTable(columnIndex).getSymbolCount() + 1;
-        rows.extend(keyCount);
+        rows.setCapacity(keyCount);
         GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 
         final int workerCount = executionContext.getWorkerCount();

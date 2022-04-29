@@ -29,6 +29,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
 
+//contiguous appendable readable writable
 public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     default long putBin(BinarySequence value) {

@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.EmptyTableNoSizeRecordCursor;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.*;
@@ -85,7 +85,7 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             int n = groupByFunctions.size();
             final Record baseCursorRecord = baseCursor.getRecord();
             while (baseCursor.hasNext()) {
-                circuitBreaker.test();
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 MapKey key = map.withKey();
                 mapSink.copy(baseCursorRecord, key);
                 MapValue value = key.createValue();

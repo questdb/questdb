@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 

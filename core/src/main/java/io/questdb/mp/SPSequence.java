@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+//Single Producer Sequence
 public class SPSequence extends AbstractSSequence {
     private final int cycle;
 

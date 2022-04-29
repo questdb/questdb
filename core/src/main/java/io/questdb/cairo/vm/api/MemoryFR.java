@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+//fixed size readable 
 public interface MemoryFR extends MemoryR {
     void of(long pageAddress, long size);
 }

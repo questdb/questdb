@@ -16,7 +16,8 @@ steps:
     inputs:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
-      options: "compile -DskipTests -P build-web-console -Dhttp.keepAlive=false"
+      options:
+        "compile -DskipTests -P build-web-console  -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
     condition:
       or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
@@ -45,10 +46,10 @@ steps:
       mavenPomFile: "core/pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
-      options:
-        "--batch-mode --quiet -Dtest=$(includeTests)
+      options: "--batch-mode --quiet -Dtest=$(includeTests)
         -Dtest.exclude=$(excludeTests)
-        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false"
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf -Dhttp.keepAlive=false
+        "
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"

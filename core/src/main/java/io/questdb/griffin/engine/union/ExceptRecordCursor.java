@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;
 
 class ExceptRecordCursor implements RecordCursor {
@@ -64,7 +64,7 @@ class ExceptRecordCursor implements RecordCursor {
             MapKey key = map.withKey();
             key.put(record, recordSink);
             key.createValue();
-            circuitBreaker.test();
+            circuitBreaker.statefulThrowExceptionIfTripped();
         }
     }
 
@@ -88,7 +88,7 @@ class ExceptRecordCursor implements RecordCursor {
             if (key.notFound()) {
                 return true;
             }
-            circuitBreaker.test();
+            circuitBreaker.statefulThrowExceptionIfTripped();
         }
         return false;
     }

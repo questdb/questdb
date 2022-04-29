@@ -32,6 +32,9 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
 
     @Test
     public void testAddColumn() throws Exception {
+        // fix page frame size, because it affects AVG accuracy
+        pageFrameMaxRows = 10_000;
+
         Record[] expected = new Record[] {
                 new Record() {
                     @Override
@@ -53,7 +56,7 @@ public class SumDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
                 new Record() {
                     @Override
                     public double getDouble(int col) {
-                        return col == 0 ? 0.504722 : 188.82913096423943;
+                        return col == 0 ? 0.5008779999999999 : 188.82913096423943;
                     }
                 },
         };
