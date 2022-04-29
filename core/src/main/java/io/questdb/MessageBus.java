@@ -27,14 +27,11 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.mp.*;
-import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 
 import java.io.Closeable;
 
 public interface MessageBus extends Closeable {
-    @Override
-    void close();
 
     CairoConfiguration getConfiguration();
 

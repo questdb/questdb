@@ -180,7 +180,6 @@ public class PageAddressCacheRecord implements Record {
         if (cursor != null) {
             return cursor.getUpdateRowId(rowIndex);
         }
-
         return -1L;
     }
 

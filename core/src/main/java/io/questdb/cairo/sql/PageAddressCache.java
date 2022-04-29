@@ -64,7 +64,7 @@ public class PageAddressCache implements Mutable {
     @Override
     public void clear() {
         varLenColumnIndexes.clear();
-        if (pageAddresses.size() > cacheSizeThreshold) {
+        if (pageAddresses.size() < cacheSizeThreshold) {
             pageAddresses.clear();
             indexPageAddresses.clear();
             pageSizes.clear();
