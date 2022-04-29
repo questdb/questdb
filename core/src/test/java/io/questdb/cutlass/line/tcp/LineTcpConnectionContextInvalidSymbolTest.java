@@ -24,6 +24,9 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -46,12 +49,27 @@ public class LineTcpConnectionContextInvalidSymbolTest extends BaseLineTcpContex
         runInContext(() -> {
             recvBuffer =
                     table + ",ip_address=127.0.0.1 cpu=83 1465839830100500200\n" +
-                            table + ",ip_address=192.168.0.1 cpu=42 1465839830100500200\n" +
-                            table + ",ip_address=Invalid IP address. cpu=13 1465839830101400200\n";
+                            table + ",ip_address=Invalid IP address. cpu=13 1465839830101400200\n" +
+                            table + ",ip_address=192.168.0.1 cpu=42 1465839830100500200\n";
 
             handleContextIO();
             Assert.assertEquals(disconnectOnError, disconnected);
             closeContext();
+
+            String expected = "ip_address\tcpu\ttimestamp\n" +
+                    "127.0.0.1\t83.0\t2016-06-13T17:43:50.100500Z\n";
+            if (!disconnectOnError) {
+                // The very last measurement should be included if we tolerate invalid measurements.
+                expected += "192.168.0.1\t42.0\t2016-06-13T17:43:50.100500Z\n";
+            }
+            try (TableReader reader = new TableReader(configuration, table)) {
+                TableReaderMetadata meta = reader.getMetadata();
+                assertCursorTwoPass(expected, reader.getCursor(), meta);
+                Assert.assertEquals(3, meta.getColumnCount());
+                Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("ip_address"));
+                Assert.assertEquals(ColumnType.DOUBLE, meta.getColumnType("cpu"));
+                Assert.assertEquals(ColumnType.TIMESTAMP, meta.getColumnType("timestamp"));
+            }
         });
     }
 }
