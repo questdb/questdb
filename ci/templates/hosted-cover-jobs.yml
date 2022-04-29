@@ -24,6 +24,7 @@ jobs:
           jdk: "1.11"
           testset: "coverage"
           excludeTests: "**/griffin/**,**/cairo/**"
+          includeTests: "**.*?"
     pool:
       vmImage: $(imageName)
       name: $(poolName)
@@ -34,6 +35,6 @@ jobs:
       CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
       MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
       MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m"
-      ARCHIVED_GRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
     steps:
       - template: steps.yml
