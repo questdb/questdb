@@ -113,16 +113,16 @@ public class PageFrameReduceJob implements Job, Closeable {
                             .$(", id=").$(frameSequence.getId())
                             .$(", frameIndex=").$(task.getFrameIndex())
                             .$(", frameCount=").$(frameSequence.getFrameCount())
-                            .$(", valid=").$(frameSequence.isValid())
+                            .$(", active=").$(frameSequence.isActive())
                             .$(", cursor=").$(cursor)
                             .I$();
-                    if (frameSequence.isValid()) {
+                    if (frameSequence.isActive()) {
                         reduce(record, circuitBreaker, task, frameSequence);
                     } else {
                         frameSequence.getReduceCounter().incrementAndGet();
                     }
                 } catch (Throwable e) {
-                    frameSequence.markInvalid();
+                    frameSequence.cancel();
                     throw e;
                 } finally {
                     subSeq.done(cursor);
@@ -152,7 +152,7 @@ public class PageFrameReduceJob implements Job, Closeable {
                 assert frameSequence.doneLatch.getCount() == 0;
                 frameSequence.getReducer().reduce(record, task);
             } else {
-                frameSequence.markInvalid();
+                frameSequence.cancel();
             }
         } finally {
             frameSequence.getReduceCounter().incrementAndGet();

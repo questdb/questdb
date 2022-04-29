@@ -155,7 +155,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     private boolean checkLimit() {
         if (--rowsRemaining < 0) {
-            frameSequence.markInvalid();
+            frameSequence.cancel();
             return false;
         }
         return true;
@@ -170,14 +170,14 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                         .$("collected [shard=").$(frameSequence.getShard())
                         .$(", frameIndex=").$(task.getFrameIndex())
                         .$(", frameCount=").$(frameSequence.getFrameCount())
-                        .$(", valid=").$(frameSequence.isValid())
+                        .$(", active=").$(frameSequence.isActive())
                         .$(", cursor=").$(cursor)
                         .I$();
 
                 this.rows = task.getRows();
                 this.frameRowCount = rows.size();
                 this.frameIndex = task.getFrameIndex();
-                if (this.frameRowCount > 0 && frameSequence.isValid()) {
+                if (this.frameRowCount > 0 && frameSequence.isActive()) {
                     this.frameRowIndex = 0;
                     record.setFrameIndex(task.getFrameIndex());
                     break;

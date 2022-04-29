@@ -142,7 +142,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                         .$("collected [shard=").$(frameSequence.getShard())
                         .$(", frameIndex=").$(task.getFrameIndex())
                         .$(", frameCount=").$(frameSequence.getFrameCount())
-                        .$(", valid=").$(frameSequence.isValid())
+                        .$(", active=").$(frameSequence.isActive())
                         .$(", cursor=").$(cursor)
                         .I$();
 
@@ -150,10 +150,14 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
                 final long frameRowCount = frameRows.size();
                 frameIndex = task.getFrameIndex();
 
-                if (frameRowCount > 0 && rowCount < rowLimit + 1 && frameSequence.isValid()) {
+                if (frameRowCount > 0 && rowCount < rowLimit + 1 && frameSequence.isActive()) {
                     // Copy rows into the buffer.
                     for (long i = frameRowCount - 1; i > -1 && rowCount < rowLimit; i--, rowCount++) {
                         rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
+                    }
+
+                    if (rowCount >= rowLimit) {
+                        frameSequence.cancel();
                     }
                 }
 

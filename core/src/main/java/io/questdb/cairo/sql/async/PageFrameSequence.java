@@ -253,11 +253,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return symbolTableSource;
     }
 
-    public boolean isValid() {
+    public boolean isActive() {
         return valid.get();
     }
 
-    public void markInvalid() {
+    public void cancel() {
         this.valid.compareAndSet(true, false);
     }
 
@@ -373,7 +373,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         while (reduceCounter.get() < frameCount) {
             idle = false;
             if (stealWork(reduceQueue, reduceSubSeq, record, circuitBreaker)) {
-                if (isValid()) {
+                if (isActive()) {
                     continue;
                 }
             }
