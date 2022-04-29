@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
@@ -37,7 +38,6 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
-import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -109,6 +109,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
     private final int sqlModelPoolCapacity;
+    private final int sqlMaxNegativeLimit;
     private final long sqlSortKeyPageSize;
     private final int sqlSortKeyMaxPages;
     private final long sqlSortLightValuePageSize;
@@ -158,7 +159,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlGroupByMapCapacity;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlBindVariablePoolSize;
-    private final int sqlPageFrameMaxSize;
+    private final int sqlPageFrameMinRows;
+    private final int sqlPageFrameMaxRows;
     private final int sqlJitMode;
     private final int sqlJitIRMemoryPageSize;
     private final int sqlJitIRMemoryMaxPages;
@@ -241,7 +243,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int writerTickRowsCountMod;
     private final long writerAsyncCommandMaxWaitTimeout;
     private final int o3PartitionPurgeListCapacity;
+    private final int cairoPageFrameReduceQueueCapacity;
+    private final int cairoPageFrameReduceRowIdListCapacity;
+    private final int cairoPageFrameReduceColumnListCapacity;
+    private final int cairoPageFrameReduceTaskPoolCapacity;
     private final long writerFileOpenOpts;
+    private final int cairoPageFrameReduceShardCount;
     private int lineUdpDefaultPartitionBy;
     private int httpMinNetConnectionLimit;
     private boolean httpMinNetConnectionHint;
@@ -661,6 +668,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
+            this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
             this.sqlSortKeyPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 4 * 1024 * 1024);
             this.sqlSortKeyMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlSortLightValuePageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, 8 * 1048576);
@@ -685,6 +693,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * 1024 * 1024);
 
+            this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64));
+            this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
+            this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
+            this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
+            this.cairoPageFrameReduceTaskPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY, 4);
+
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 16 * 1024 * 1024));
             this.writerDataAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 16 * 1024 * 1024));
@@ -705,7 +719,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.sqlDistinctTimestampKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY, 512);
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR, 0.5);
-            this.sqlPageFrameMaxSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_SIZE, 8 * 1024 * 1024));
+            this.sqlPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
+            this.sqlPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
 
             this.sqlJitMode = getSqlJitMode(properties, env);
             this.sqlJitIRMemoryPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JIT_IR_MEMORY_PAGE_SIZE, 8 * 1024);
@@ -2032,6 +2047,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getPageFrameReduceQueueCapacity() {
+            return cairoPageFrameReduceQueueCapacity;
+        }
+
+        @Override
+        public int getPageFrameReduceShardCount() {
+            return cairoPageFrameReduceShardCount;
+        }
+
+        @Override
         public int getParallelIndexThreshold() {
             return parallelIndexThreshold;
         }
@@ -2257,8 +2282,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlPageFrameMaxSize() {
-            return sqlPageFrameMaxSize;
+        public int getSqlMaxNegativeLimit() {
+            return sqlMaxNegativeLimit;
+        }
+
+        @Override
+        public int getSqlPageFrameMinRows() {
+            return sqlPageFrameMinRows;
+        }
+
+        @Override
+        public int getSqlPageFrameMaxRows() {
+            return sqlPageFrameMaxRows;
         }
 
         @Override
@@ -2363,6 +2398,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlJitDebugEnabled() {
             return sqlJitDebugEnabled;
+        }
+
+        @Override
+        public int getPageFrameReduceRowIdListCapacity() {
+            return cairoPageFrameReduceRowIdListCapacity;
+        }
+
+        @Override
+        public int getPageFrameReduceColumnListCapacity() {
+            return cairoPageFrameReduceColumnListCapacity;
+        }
+
+        @Override
+        public int getPageFrameReduceTaskPoolCapacity() {
+            return cairoPageFrameReduceTaskPoolCapacity;
+        }
+
+        @Override
+        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+            return circuitBreakerConfiguration;
         }
 
         @Override
@@ -2743,6 +2798,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
+
         @Override
         public MillisecondClock getClock() {
             return httpFrozenClock ? StationaryMillisClock.INSTANCE : MillisecondClockImpl.INSTANCE;
@@ -2776,11 +2832,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMaxQueryResponseRowLimit() {
             return maxHttpQueryResponseRowLimit;
-        }
-
-        @Override
-        public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-            return circuitBreakerConfiguration;
         }
     }
 

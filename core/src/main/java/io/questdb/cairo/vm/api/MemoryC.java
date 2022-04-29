@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+//contiguous 
 public interface MemoryC {
 
     long resize(long size);

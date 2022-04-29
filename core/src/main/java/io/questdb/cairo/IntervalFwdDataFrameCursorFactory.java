@@ -48,9 +48,12 @@ public class IntervalFwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
     }
 
     @Override
-    public DataFrameCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(getReader(executionContext.getCairoSecurityContext()), executionContext);
-        return cursor;
+    public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        if (order == ORDER_ASC || order == ORDER_ANY) {
+            cursor.of(getReader(executionContext.getCairoSecurityContext()), executionContext);
+            return cursor;
+        }
+        throw new UnsupportedOperationException();
     }
 
     @Override

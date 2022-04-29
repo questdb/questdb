@@ -2473,7 +2473,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         private final Sequence pubSeq;
         private final Sequence subSeq;
 
-
         public MyWorkScheduler(Sequence pubSequence, Sequence subSequence) {
 
             super(configuration);

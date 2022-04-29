@@ -31,6 +31,9 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
 
     @Test
     public void testAddColumn() throws Exception {
+        // fix page frame size, because it affects AVG accuracy
+        pageFrameMaxRows = 10_000;
+
         assertQuery(
                 "avg\n" +
                         "0.511848387\n",
@@ -47,7 +50,7 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
 
         assertQuery(
                 "avg\tavg2\n" +
-                        "0.504722\t0.487931\n",
+                        "0.5008779999999999\t0.487931\n",
                 "select round(avg(f),6) avg, round(avg(b),6) avg2 from tab",
                 "insert into tab select rnd_double(2), rnd_double(2) from long_sequence(469)",
                 null,
@@ -76,6 +79,10 @@ public class AvgDoubleVecGroupByFunctionFactoryTest extends AbstractGriffinTest 
 
     @Test
     public void testSimple() throws Exception {
+        // fix page frame size, because it affects AVG accuracy
+
+        pageFrameMaxRows = 10_000;
+
         assertQuery(
                 "avg\n" +
                         "0.511848387\n",

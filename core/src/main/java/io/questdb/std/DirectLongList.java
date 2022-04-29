@@ -33,13 +33,13 @@ import java.io.Closeable;
 public class DirectLongList implements Mutable, Closeable {
 
     private static final Log LOG = LogFactory.getLog(DirectLongList.class);
-
+    private final int memoryTag;
+    private final long initialCapacity;
     private long pos;
     private long start;
     private long limit;
     private long address;
     private long capacity;
-    private final int memoryTag;
 
     public DirectLongList(long capacity, int memoryTag) {
         this.memoryTag = memoryTag;
@@ -47,6 +47,7 @@ public class DirectLongList implements Mutable, Closeable {
         this.address = Unsafe.malloc(this.capacity, memoryTag);
         this.start = this.pos = address;
         this.limit = pos + this.capacity;
+        this.initialCapacity = this.capacity;
     }
 
     public void add(long x) {
@@ -59,7 +60,7 @@ public class DirectLongList implements Mutable, Closeable {
     public final void add(DirectLongList that) {
         long thatSize = that.pos - that.start;
         if (limit - pos < thatSize) {
-            extendBytes(this.capacity + thatSize - (limit - pos));
+            setCapacityBytes(this.capacity + thatSize - (limit - pos));
         }
         Vect.memcpy(this.pos, that.start, thatSize);
         this.pos += thatSize;
@@ -91,11 +92,6 @@ public class DirectLongList implements Mutable, Closeable {
         }
     }
 
-    // desired capacity in LONGs (not count of bytes)
-    public void extend(long capacity) {
-        extendBytes(capacity * Long.BYTES);
-    }
-
     public long get(long p) {
         return Unsafe.getUnsafe().getLong(start + (p << 3));
     }
@@ -108,6 +104,15 @@ public class DirectLongList implements Mutable, Closeable {
     // capacity in LONGs
     public long getCapacity() {
         return capacity / Long.BYTES;
+    }
+
+    // desired capacity in LONGs (not count of bytes)
+    public void setCapacity(long capacity) {
+        setCapacityBytes(capacity * Long.BYTES);
+    }
+
+    public void resetCapacity() {
+        setCapacityBytes(initialCapacity);
     }
 
     public long scanSearch(long v, long low, long high) {
@@ -167,18 +172,20 @@ public class DirectLongList implements Mutable, Closeable {
         if (this.pos < limit) {
             return;
         }
-        extendBytes(this.capacity * 2);
+        setCapacityBytes(this.capacity * 2);
     }
 
     // desired capacity in bytes (not count of LONG values)
-    private void extendBytes(long capacity) {
-        final long oldCapacity = this.capacity;
-        this.capacity = capacity;
-        long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
-        this.pos = address + (this.pos - this.start);
-        this.address = address;
-        this.start = address;
-        this.limit = address + capacity;
-        LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+    private void setCapacityBytes(long capacity) {
+        if (this.capacity != capacity) {
+            final long oldCapacity = this.capacity;
+            this.capacity = capacity;
+            long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
+            this.pos = address + (this.pos - this.start);
+            this.address = address;
+            this.start = address;
+            this.limit = address + capacity;
+            LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+        }
     }
 }

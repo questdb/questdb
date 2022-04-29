@@ -83,8 +83,8 @@ public interface RecordMetadata extends ColumnTypes {
      * Will not throw an exception if the column does not exist.
      *
      * @param columnName name of the column
-     * @param lo TODO
-     * @param hi TODO
+     * @param lo the low boundary index of the columnName chars, inclusive
+     * @param hi the hi boundary index of the columnName chars, exclusive
      * @return index of the column
      */
     int getColumnIndexQuiet(CharSequence columnName, int lo, int hi);

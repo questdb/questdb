@@ -33,6 +33,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
+
 public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testReload() throws Exception {
@@ -88,7 +90,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_ID,0);
                 final TableReaderRecord record = new TableReaderRecord();
 
-                try (final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
+                try (final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_DESC)) {
                     printCursor(record, cursor);
 
                     TestUtils.assertEquals(expected, sink);
@@ -113,7 +115,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 w.removeColumn("a");
 
                 try {
-                    factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
+                    factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_DESC);
                     Assert.fail();
                 } catch (ReaderOutOfDateException ignored) {
                 }

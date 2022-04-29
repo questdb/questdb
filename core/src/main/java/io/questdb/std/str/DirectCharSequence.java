@@ -65,7 +65,7 @@ public class DirectCharSequence extends AbstractCharSequence implements Mutable 
 
     @Override
     public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(lo + ((long) index << 1));
+        return Unsafe.getUnsafe().getChar(lo + ((long) index * 2L));
     }
 
     public DirectCharSequence of(long lo, long hi) {

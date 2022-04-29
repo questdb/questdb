@@ -126,6 +126,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private IntList orderedJoinModels = orderedJoinModels2;
     private ExpressionNode limitLo;
     private ExpressionNode limitHi;
+    private ExpressionNode limitAdviceLo;
+    private ExpressionNode limitAdviceHi;
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
@@ -266,6 +268,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         orderedJoinModels = orderedJoinModels2;
         limitHi = null;
         limitLo = null;
+        limitAdviceHi = null;
+        limitAdviceLo = null;
         isLimitImplemented = false;
         timestamp = null;
         sqlNodeStack.clear();
@@ -493,6 +497,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.latestByType = latestByType;
     }
 
+    public ExpressionNode getLimitAdviceHi() {
+        return limitAdviceHi;
+    }
+
+    public ExpressionNode getLimitAdviceLo() {
+        return limitAdviceLo;
+    }
+
     public ExpressionNode getLimitHi() {
         return limitHi;
     }
@@ -687,6 +699,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.unionModel = unionModel;
     }
 
+    public void setUpdateTableName(String tableName) {
+        this.updateTableName = tableName;
+    }
+
     // Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
     public static void backupWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
         QueryModel current = model;
@@ -706,10 +722,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             current.backupWhereClause = ExpressionNode.deepClone(pool, current.whereClause);
             current = current.nestedModel;
         }
-    }
-
-    public void setUpdateTableName(String tableName) {
-        this.updateTableName = tableName;
     }
 
     // Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
@@ -898,6 +910,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void setLimit(ExpressionNode lo, ExpressionNode hi) {
         this.limitLo = lo;
         this.limitHi = hi;
+    }
+
+    public void setLimitAdvice(ExpressionNode lo, ExpressionNode hi) {
+        this.limitAdviceLo = lo;
+        this.limitAdviceHi = hi;
     }
 
     public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {

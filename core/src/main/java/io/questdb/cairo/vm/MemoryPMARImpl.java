@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
+//paged mapped appendable readable 
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
     private FilesFacade ff;

@@ -163,10 +163,10 @@ public class DirectLongListTest {
         DirectLongList list = new DirectLongList(1024, MemoryTag.NATIVE_LONG_LIST);
         Assert.assertEquals(1024, list.getCapacity());
 
-        list.extend(2048);
+        list.setCapacity(2048);
         Assert.assertEquals(2048, list.getCapacity());
         // verify that extend also shrinks capacity
-        list.extend(1024);
+        list.setCapacity(1024);
         Assert.assertEquals(1024, list.getCapacity());
 
         Assert.assertEquals(0, list.size());
