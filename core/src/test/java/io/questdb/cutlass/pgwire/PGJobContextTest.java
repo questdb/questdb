@@ -1322,13 +1322,13 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
-    public void testBindVariableIsNullBinaryTransfer() throws Exception {
-        testBindVariableIsNull(true);
+    public void testBindVariableInFilterBinaryTransfer() throws Exception {
+        testBindVariableInFilter(true);
     }
 
     @Test
-    public void testBindVariableIsNullStringTransfer() throws Exception {
-        testBindVariableIsNull(false);
+    public void testBindVariableInFilterStringTransfer() throws Exception {
+        testBindVariableInFilter(false);
     }
 
     @Test
@@ -1342,13 +1342,13 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
-    public void testBindVariableInFilterBinaryTransfer() throws Exception {
-        testBindVariableInFilter(true);
+    public void testBindVariableIsNullBinaryTransfer() throws Exception {
+        testBindVariableIsNull(true);
     }
 
     @Test
-    public void testBindVariableInFilterStringTransfer() throws Exception {
-        testBindVariableInFilter(false);
+    public void testBindVariableIsNullStringTransfer() throws Exception {
+        testBindVariableIsNull(false);
     }
 
     @Test
@@ -1680,25 +1680,6 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
-    public void testLocalCopyFrom() throws Exception {
-        try (final PGWireServer ignored = createPGServer(2);
-             final Connection connection = getConnection(false, true);
-             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true")) {
-
-            copyStatement.execute();
-
-            try (final PreparedStatement selectStatement = connection.prepareStatement("select * FROM testLocalCopyFrom");
-                 final ResultSet rs = selectStatement.executeQuery()) {
-                sink.clear();
-                assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
-                        + "ABC,xy,a,brown fox jumped over the fence,10\n"
-                        + "CDE,bb,b,sentence 1\n"
-                        + "sentence 2,12\n", sink, rs);
-            }
-        }
-    }
-
-    @Test
     public void testCursorFetch() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -1858,32 +1839,32 @@ public class PGJobContextTest extends BasePGTest {
     @Test
     public void testFetchDisconnectReleasesReaderCrossJoin() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                connection.setAutoCommit(false);
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, true)) {
+                    connection.setAutoCommit(false);
 
-                PreparedStatement tbl = connection.prepareStatement("create table xx as (" +
-                        "select x," +
-                        " timestamp_sequence(0, 1000) ts" +
-                        " from long_sequence(100000)) timestamp (ts)");
-                tbl.execute();
+                    PreparedStatement tbl = connection.prepareStatement("create table xx as (" +
+                            "select x," +
+                            " timestamp_sequence(0, 1000) ts" +
+                            " from long_sequence(100000)) timestamp (ts)");
+                    tbl.execute();
 
-                PreparedStatement stmt = connection.prepareStatement("with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj");
+                    PreparedStatement stmt = connection.prepareStatement("with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj");
 
-                connection.setNetworkTimeout(Runnable::run, 5);
-                int testSize = 100000;
-                stmt.setFetchSize(testSize);
-                assertEquals(testSize, stmt.getFetchSize());
+                    connection.setNetworkTimeout(Runnable::run, 5);
+                    int testSize = 100000;
+                    stmt.setFetchSize(testSize);
+                    assertEquals(testSize, stmt.getFetchSize());
 
-                try {
-                    stmt.executeQuery();
-                    Assert.fail();
-                } catch (PSQLException ex) {
-                    // expected
-                    Assert.assertNotNull(ex);
+                    try {
+                        stmt.executeQuery();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        // expected
+                        Assert.assertNotNull(ex);
+                    }
                 }
+                Thread.sleep(100); // Give connection some time to close before closing the server.
             }
             // Assertion that no open readers left will be performed in assertMemoryLeak
         });
@@ -2489,6 +2470,72 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testInsertBooleans() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    PGWireServer ignored = createPGServer(4);
+                    Connection conn = getConnection(true, true)
+            ) {
+                conn.prepareStatement(
+                        "create table booleans (value boolean, ts timestamp) timestamp(ts)"
+                ).execute();
+
+                Rnd rand = new Rnd();
+                String[] values = {"TrUE", null, "", "false", "true", "banana", "22"};
+
+                try (PreparedStatement insert = conn.prepareStatement("insert into booleans values (cast(? as boolean), ?)")) {
+                    long micros = TimestampFormatUtils.parseTimestamp("2022-04-19T18:50:00.998666Z");
+                    for (int i = 0; i < 30; i++) {
+                        insert.setString(1, values[rand.nextInt(values.length)]);
+                        insert.setTimestamp(2, new Timestamp(micros / 1000L));
+                        insert.execute();
+                        Assert.assertEquals(1, insert.getUpdateCount());
+                        micros += 1_000_000L;
+                    }
+                }
+
+                try (ResultSet resultSet = conn.prepareStatement("booleans").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "value[BIT],ts[TIMESTAMP]\n" +
+                                    "true,2022-04-19 18:50:00.998\n" +
+                                    "false,2022-04-19 18:50:01.998\n" +
+                                    "false,2022-04-19 18:50:02.998\n" +
+                                    "true,2022-04-19 18:50:03.998\n" +
+                                    "false,2022-04-19 18:50:04.998\n" +
+                                    "false,2022-04-19 18:50:05.998\n" +
+                                    "false,2022-04-19 18:50:06.998\n" +
+                                    "false,2022-04-19 18:50:07.998\n" +
+                                    "false,2022-04-19 18:50:08.998\n" +
+                                    "true,2022-04-19 18:50:09.998\n" +
+                                    "false,2022-04-19 18:50:10.998\n" +
+                                    "false,2022-04-19 18:50:11.998\n" +
+                                    "false,2022-04-19 18:50:12.998\n" +
+                                    "false,2022-04-19 18:50:13.998\n" +
+                                    "false,2022-04-19 18:50:14.998\n" +
+                                    "false,2022-04-19 18:50:15.998\n" +
+                                    "false,2022-04-19 18:50:16.998\n" +
+                                    "true,2022-04-19 18:50:17.998\n" +
+                                    "false,2022-04-19 18:50:18.998\n" +
+                                    "true,2022-04-19 18:50:19.998\n" +
+                                    "false,2022-04-19 18:50:20.998\n" +
+                                    "false,2022-04-19 18:50:21.998\n" +
+                                    "false,2022-04-19 18:50:22.998\n" +
+                                    "true,2022-04-19 18:50:23.998\n" +
+                                    "true,2022-04-19 18:50:24.998\n" +
+                                    "true,2022-04-19 18:50:25.998\n" +
+                                    "true,2022-04-19 18:50:26.998\n" +
+                                    "false,2022-04-19 18:50:27.998\n" +
+                                    "false,2022-04-19 18:50:28.998\n" +
+                                    "false,2022-04-19 18:50:29.998\n",
+                            sink,
+                            resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInsertDateAndTimestampFromRustHex() throws Exception {
         String script = ">0000004300030000636c69656e745f656e636f64696e6700555446380074696d657a6f6e650055544300757365720061646d696e006461746162617365007164620000\n" +
                 "<520000000800000003\n" +
@@ -2695,72 +2742,6 @@ nodejs code:
     }
 
     @Test
-    public void testInsertBooleans() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    PGWireServer ignored = createPGServer(4);
-                    Connection conn = getConnection(true, true)
-            ) {
-                conn.prepareStatement(
-                        "create table booleans (value boolean, ts timestamp) timestamp(ts)"
-                ).execute();
-
-                Rnd rand = new Rnd();
-                String [] values = {"TrUE", null, "", "false", "true", "banana", "22"};
-
-                try (PreparedStatement insert = conn.prepareStatement("insert into booleans values (cast(? as boolean), ?)")) {
-                    long micros = TimestampFormatUtils.parseTimestamp("2022-04-19T18:50:00.998666Z");
-                    for (int i = 0; i < 30; i++) {
-                        insert.setString(1, values[rand.nextInt(values.length)]);
-                        insert.setTimestamp(2, new Timestamp(micros / 1000L));
-                        insert.execute();
-                        Assert.assertEquals(1, insert.getUpdateCount());
-                        micros += 1_000_000L;
-                    }
-                }
-
-                try (ResultSet resultSet = conn.prepareStatement("booleans").executeQuery()) {
-                    sink.clear();
-                    assertResultSet(
-                            "value[BIT],ts[TIMESTAMP]\n" +
-                                    "true,2022-04-19 18:50:00.998\n" +
-                                    "false,2022-04-19 18:50:01.998\n" +
-                                    "false,2022-04-19 18:50:02.998\n" +
-                                    "true,2022-04-19 18:50:03.998\n" +
-                                    "false,2022-04-19 18:50:04.998\n" +
-                                    "false,2022-04-19 18:50:05.998\n" +
-                                    "false,2022-04-19 18:50:06.998\n" +
-                                    "false,2022-04-19 18:50:07.998\n" +
-                                    "false,2022-04-19 18:50:08.998\n" +
-                                    "true,2022-04-19 18:50:09.998\n" +
-                                    "false,2022-04-19 18:50:10.998\n" +
-                                    "false,2022-04-19 18:50:11.998\n" +
-                                    "false,2022-04-19 18:50:12.998\n" +
-                                    "false,2022-04-19 18:50:13.998\n" +
-                                    "false,2022-04-19 18:50:14.998\n" +
-                                    "false,2022-04-19 18:50:15.998\n" +
-                                    "false,2022-04-19 18:50:16.998\n" +
-                                    "true,2022-04-19 18:50:17.998\n" +
-                                    "false,2022-04-19 18:50:18.998\n" +
-                                    "true,2022-04-19 18:50:19.998\n" +
-                                    "false,2022-04-19 18:50:20.998\n" +
-                                    "false,2022-04-19 18:50:21.998\n" +
-                                    "false,2022-04-19 18:50:22.998\n" +
-                                    "true,2022-04-19 18:50:23.998\n" +
-                                    "true,2022-04-19 18:50:24.998\n" +
-                                    "true,2022-04-19 18:50:25.998\n" +
-                                    "true,2022-04-19 18:50:26.998\n" +
-                                    "false,2022-04-19 18:50:27.998\n" +
-                                    "false,2022-04-19 18:50:28.998\n" +
-                                    "false,2022-04-19 18:50:29.998\n",
-                            sink,
-                            resultSet);
-                }
-            }
-        });
-    }
-
-    @Test
     @Ignore
     public void testInsertSimpleText() throws Exception {
         testInsert0(true, false);
@@ -2847,217 +2828,6 @@ nodejs code:
                 try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
                     sink.clear();
                     assertResultSet(expected, sink, resultSet);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testUpdate() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(true, false)
-            ) {
-                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
-                statement.execute();
-
-                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
-                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
-                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
-                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
-                insert1.execute();
-
-                final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
-                int numOfRowsUpdated1 = update1.executeUpdate();
-                assertEquals(2, numOfRowsUpdated1);
-
-                final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
-                        "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
-                        "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
-                insert2.execute();
-
-                final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0");
-                int numOfRowsUpdated2 = update2.executeUpdate();
-                assertEquals(1, numOfRowsUpdated2);
-
-                final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
-                        "1,2.0,2020-06-01 00:00:02.0\n" +
-                        "9,2.6,2020-06-01 00:00:06.0\n" +
-                        "9,3.0,2020-06-01 00:00:12.0\n" +
-                        "8,4.0,2020-06-01 00:00:22.0\n" +
-                        "7,6.0,2020-06-01 00:00:32.0\n";
-                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, resultSet);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testUpdateBatch() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(true, false)
-            ) {
-                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
-                statement.execute();
-
-                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
-                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
-                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
-                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
-                insert1.execute();
-
-                final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5; update x set a=3 where b>2.7; update x set a=2 where b<2.2");
-                int numOfRowsUpdated1 = update1.executeUpdate();
-                assertEquals(2, numOfRowsUpdated1);
-
-                final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
-                        "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
-                        "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
-                insert2.execute();
-
-                final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0; update x set a=6 where a=2");
-                int numOfRowsUpdated2 = update2.executeUpdate();
-                assertEquals(1, numOfRowsUpdated2);
-
-                final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
-                        "6,2.0,2020-06-01 00:00:02.0\n" +
-                        "9,2.6,2020-06-01 00:00:06.0\n" +
-                        "3,3.0,2020-06-01 00:00:12.0\n" +
-                        "8,4.0,2020-06-01 00:00:22.0\n" +
-                        "7,6.0,2020-06-01 00:00:32.0\n";
-                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
-                    sink.clear();
-                    assertResultSet(expected, sink, resultSet);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testTimestamp() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection connection = getConnection(false, true)) {
-
-                    connection.setAutoCommit(false);
-                    connection.prepareStatement("CREATE TABLE ts (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
-                    connection.prepareStatement("INSERT INTO ts VALUES(0, '2021-09-27T16:45:03.202345Z')").execute();
-                    connection.commit();
-                    connection.setAutoCommit(true);
-
-                    // select the timestamp that we just inserted
-                    Timestamp ts;
-                    try (PreparedStatement statement = connection.prepareStatement("SELECT ts FROM ts")) {
-                        try (ResultSet rs = statement.executeQuery()) {
-                            assertTrue(rs.next());
-                            ts = rs.getTimestamp("ts");
-                        }
-                    }
-
-                    // NOTE: java.sql.Timestamp takes milliseconds from epoch as constructor parameter,
-                    // which is processed and stored internally coupling ts.getTime() and ts.getNanos():
-                    //   - ts.getTime(): the last 3 digits account for millisecond precision, e.g. 1632761103202L -> 202 milliseconds.
-                    //   - ts.getNanos(): the first 3 digits match the last 3 digits from ts.getTime(), then
-                    //         3 more digits follow for micros, and 3 more for nanos,, e.g. 202345000 -> (202)milli(345)micro(000)nano
-                    assertEquals(1632761103202L, ts.getTime());
-                    assertEquals(202345000, ts.getNanos());
-                    assertEquals("2021-09-27 16:45:03.202345", ts.toString());
-
-                    sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("INSERT INTO ts VALUES (?, ?)")) {
-                        int rowId = 1;
-
-                        // Case 1: insert timestamp as we selected it, no modifications
-                        // -> microsecond precision is kept
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, ts);
-                        ps.execute();
-
-                        // Case 2: we create a timestamp from another, but there is a catch, we must set the nanos too
-                        // -> microsecond precision is kept
-                        Timestamp aTs = new Timestamp(ts.getTime());
-                        aTs.setNanos(ts.getNanos());
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, aTs);
-                        ps.execute();
-
-                        // Case 3: we create a timestamp from another, and clear the micro precision
-                        // -> microsecond precision is dropped by us
-                        Timestamp bTs = new Timestamp(ts.getTime() * 1000);
-                        bTs.setNanos(202000000);
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, bTs);
-                        ps.execute();
-
-                        // Case 4: if we forget to setNanos, we get a broken timestamp
-                        // -> this results in a broken timestamp 1970-...
-                        Timestamp kaputTs = new Timestamp(ts.getTime());
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, kaputTs);
-                        ps.execute();
-
-                        // Case 4: if we setNanos to 0, we also get a broken timestamp! UNLESS we scale up time
-                        // to trick the constructor
-                        // -> microsecond precision is dropped by us, we keep millisecond precision
-                        Timestamp cTs = new Timestamp(ts.getTime() * 1000);
-                        cTs.setNanos(0); // <=== THIS requires ---- ^ ^
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, cTs);
-                        ps.execute();
-
-                        // Case 5: we use space-age mathematics to produce a long number which is
-                        // equivalent to a QuestDB timestamp WITH MICROSECOND precision, and then
-                        // we can feed it to java.sql.Timestamp without worrying for setNanos.
-                        // -> microsecond precision is lost in this case [*]
-                        long epochMicroNoMillis = (ts.getTime() / 1000) * 1000000;
-                        long actualTimestamp = epochMicroNoMillis + (ts.getNanos() / 1000);
-                        actualTimestamp = (actualTimestamp / 1000) * 1000; // [*] drop micros
-                        Timestamp dTs = new Timestamp(actualTimestamp);
-                        ps.setInt(1, rowId++);
-                        ps.setTimestamp(2, dTs);
-                        ps.execute();
-
-                        // Case 6: the complementary approach to Case 5, where we take a QuestDB
-                        // timestamp WITH microsecond precision and we massage it to extract two
-                        // numbers that can be used to create a java.sql.Timestamp.
-                        // -> microsecond precision is kept
-                        long questdbTs = TimestampFormatUtils.parseTimestamp("2021-09-27T16:45:03.202345Z");
-                        long time = questdbTs / 1000;
-                        int nanos = (int) (questdbTs - (int) (questdbTs / 1e6) * 1e6) * 1000;
-                        assertEquals(1632761103202345L, questdbTs);
-                        assertEquals(1632761103202L, time);
-                        assertEquals(202345000, nanos);
-                        Timestamp eTs = new Timestamp(time);
-                        eTs.setNanos(nanos);
-                        ps.setInt(1, rowId);
-                        ps.setTimestamp(2, eTs);
-                        ps.execute();
-                    }
-
-                    try (PreparedStatement statement = connection.prepareStatement("SELECT id as Case, ts FROM ts ORDER BY id ASC")) {
-                        sink.clear();
-                        try (ResultSet rs = statement.executeQuery()) {
-                            assertResultSet(
-                                    "Case[INTEGER],ts[TIMESTAMP]\n" +
-                                            "0,2021-09-27 16:45:03.202345\n" +
-                                            "1,2021-09-27 16:45:03.202345\n" +
-                                            "2,2021-09-27 16:45:03.202345\n" +
-                                            "3,2021-09-27 16:45:03.202202\n" +
-                                            "4,1970-01-19 21:32:41.103202\n" +
-                                            "5,2021-09-27 16:45:03.202\n" +
-                                            "6,2021-09-27 16:45:03.202\n" +
-                                            "7,2021-09-27 16:45:03.202345\n",
-                                    sink,
-                                    rs
-                            );
-                        }
-                    }
-                    connection.prepareStatement("drop table ts").execute();
                 }
             }
         });
@@ -3574,6 +3344,25 @@ nodejs code:
     }
 
     @Test
+    public void testLocalCopyFrom() throws Exception {
+        try (final PGWireServer ignored = createPGServer(2);
+             final Connection connection = getConnection(false, true);
+             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true")) {
+
+            copyStatement.execute();
+
+            try (final PreparedStatement selectStatement = connection.prepareStatement("select * FROM testLocalCopyFrom");
+                 final ResultSet rs = selectStatement.executeQuery()) {
+                sink.clear();
+                assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
+                        + "ABC,xy,a,brown fox jumped over the fence,10\n"
+                        + "CDE,bb,b,sentence 1\n"
+                        + "sentence 2,12\n", sink, rs);
+            }
+        }
+    }
+
+    @Test
     public void testLoginBadPassword() throws Exception {
         assertMemoryLeak(() -> {
             try (PGWireServer ignored = createPGServer(1)) {
@@ -3686,57 +3475,6 @@ nodejs code:
                 PreparedStatement sel = connection.prepareStatement("x");
                 ResultSet res = sel.executeQuery();
                 assertResultSet(expected, sink, res);
-            }
-        });
-    }
-
-    @Test//NOTE: this test needs updating once limit issue is fixed!
-    public void testUnexpectedAssertionErrorDisconnectsClient() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(1);
-                 final Connection connection = getConnection(false, false)) {
-
-                connection.setAutoCommit(false);
-
-                Statement stmt = connection.createStatement();
-                stmt.execute("create table ltest as (select cast(x as timestamp) ts from long_sequence(10))");
-                connection.commit();
-
-                try (PreparedStatement pstmt = connection.prepareStatement("select ts from ltest limit -9223372036854775807L-1, -1");
-                     ResultSet ignore = pstmt.executeQuery()) {
-                    Assert.fail("exception should be thrown");
-                } catch (PSQLException e) {
-                    Assert.assertEquals("An I/O error occurred while sending to the backend.", e.getMessage());
-                }
-
-            }
-        });
-    }
-
-    @Test
-    //checks that function parser error doesn't persist and affect later queries issued through the same connection
-    public void testParseErrorDoesntCorruptConnection() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(2);
-                 final Connection connection = getConnection(false, false)) {
-
-                try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
-                        "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
-                        "where ts between '2022-03-20' " +
-                        "AND id <> '0x05ab6d9fabdabb00066a5db735d17a' " +
-                        "AND id <> '0x05aba84839b9c7000006765675e630' " +
-                        "AND id <> '0x05abc58d80ba1f000001ed05351873'")) {
-                    ps1.executeQuery();
-                    Assert.fail("PSQLException should be thrown");
-                } catch (PSQLException e) {
-                    assertContains(e.getMessage(), "ERROR: unexpected argument for function: between");
-                }
-
-                try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
-                    StringSink sink = new StringSink();
-                    ResultSet result = s.executeQuery();
-                    assertResultSet("a[INTEGER],b[INTEGER]\n2,2\n", sink, result);
-                }
             }
         });
     }
@@ -3949,6 +3687,34 @@ nodejs code:
         assertHexScript(NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
+    }
+
+    @Test
+    //checks that function parser error doesn't persist and affect later queries issued through the same connection
+    public void testParseErrorDoesntCorruptConnection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(2);
+                 final Connection connection = getConnection(false, false)) {
+
+                try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
+                        "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
+                        "where ts between '2022-03-20' " +
+                        "AND id <> '0x05ab6d9fabdabb00066a5db735d17a' " +
+                        "AND id <> '0x05aba84839b9c7000006765675e630' " +
+                        "AND id <> '0x05abc58d80ba1f000001ed05351873'")) {
+                    ps1.executeQuery();
+                    Assert.fail("PSQLException should be thrown");
+                } catch (PSQLException e) {
+                    assertContains(e.getMessage(), "ERROR: unexpected argument for function: between");
+                }
+
+                try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
+                    StringSink sink = new StringSink();
+                    ResultSet result = s.executeQuery();
+                    assertResultSet("a[INTEGER],b[INTEGER]\n2,2\n", sink, result);
+                }
+            }
+        });
     }
 
     @Test
@@ -6009,6 +5775,314 @@ create table tab as (
     }
 
     @Test
+    public void testTimestamp() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, true)) {
+
+                    connection.setAutoCommit(false);
+                    connection.prepareStatement("CREATE TABLE ts (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
+                    connection.prepareStatement("INSERT INTO ts VALUES(0, '2021-09-27T16:45:03.202345Z')").execute();
+                    connection.commit();
+                    connection.setAutoCommit(true);
+
+                    // select the timestamp that we just inserted
+                    Timestamp ts;
+                    try (PreparedStatement statement = connection.prepareStatement("SELECT ts FROM ts")) {
+                        try (ResultSet rs = statement.executeQuery()) {
+                            assertTrue(rs.next());
+                            ts = rs.getTimestamp("ts");
+                        }
+                    }
+
+                    // NOTE: java.sql.Timestamp takes milliseconds from epoch as constructor parameter,
+                    // which is processed and stored internally coupling ts.getTime() and ts.getNanos():
+                    //   - ts.getTime(): the last 3 digits account for millisecond precision, e.g. 1632761103202L -> 202 milliseconds.
+                    //   - ts.getNanos(): the first 3 digits match the last 3 digits from ts.getTime(), then
+                    //         3 more digits follow for micros, and 3 more for nanos,, e.g. 202345000 -> (202)milli(345)micro(000)nano
+                    assertEquals(1632761103202L, ts.getTime());
+                    assertEquals(202345000, ts.getNanos());
+                    assertEquals("2021-09-27 16:45:03.202345", ts.toString());
+
+                    sink.clear();
+                    try (PreparedStatement ps = connection.prepareStatement("INSERT INTO ts VALUES (?, ?)")) {
+                        int rowId = 1;
+
+                        // Case 1: insert timestamp as we selected it, no modifications
+                        // -> microsecond precision is kept
+                        ps.setInt(1, rowId++);
+                        ps.setTimestamp(2, ts);
+                        ps.execute();
+
+                        // Case 2: we create a timestamp from another, but there is a catch, we must set the nanos too
+                        // -> microsecond precision is kept
+                        Timestamp aTs = new Timestamp(ts.getTime());
+                        aTs.setNanos(ts.getNanos());
+                        ps.setInt(1, rowId++);
+                        ps.setTimestamp(2, aTs);
+                        ps.execute();
+
+                        // Case 3: we create a timestamp from another, and clear the micro precision
+                        // -> microsecond precision is dropped by us
+                        Timestamp bTs = new Timestamp(ts.getTime() * 1000);
+                        bTs.setNanos(202000000);
+                        ps.setInt(1, rowId++);
+                        ps.setTimestamp(2, bTs);
+                        ps.execute();
+
+                        // Case 4: if we forget to setNanos, we get a broken timestamp
+                        // -> this results in a broken timestamp 1970-...
+                        Timestamp kaputTs = new Timestamp(ts.getTime());
+                        ps.setInt(1, rowId++);
+                        ps.setTimestamp(2, kaputTs);
+                        ps.execute();
+
+                        // Case 4: if we setNanos to 0, we also get a broken timestamp! UNLESS we scale up time
+                        // to trick the constructor
+                        // -> microsecond precision is dropped by us, we keep millisecond precision
+                        Timestamp cTs = new Timestamp(ts.getTime() * 1000);
+                        cTs.setNanos(0); // <=== THIS requires ---- ^ ^
+                        ps.setInt(1, rowId++);
+                        ps.setTimestamp(2, cTs);
+                        ps.execute();
+
+                        // Case 5: we use space-age mathematics to produce a long number which is
+                        // equivalent to a QuestDB timestamp WITH MICROSECOND precision, and then
+                        // we can feed it to java.sql.Timestamp without worrying for setNanos.
+                        // -> microsecond precision is lost in this case [*]
+                        long epochMicroNoMillis = (ts.getTime() / 1000) * 1000000;
+                        long actualTimestamp = epochMicroNoMillis + (ts.getNanos() / 1000);
+                        actualTimestamp = (actualTimestamp / 1000) * 1000; // [*] drop micros
+                        Timestamp dTs = new Timestamp(actualTimestamp);
+                        ps.setInt(1, rowId++);
+                        ps.setTimestamp(2, dTs);
+                        ps.execute();
+
+                        // Case 6: the complementary approach to Case 5, where we take a QuestDB
+                        // timestamp WITH microsecond precision and we massage it to extract two
+                        // numbers that can be used to create a java.sql.Timestamp.
+                        // -> microsecond precision is kept
+                        long questdbTs = TimestampFormatUtils.parseTimestamp("2021-09-27T16:45:03.202345Z");
+                        long time = questdbTs / 1000;
+                        int nanos = (int) (questdbTs - (int) (questdbTs / 1e6) * 1e6) * 1000;
+                        assertEquals(1632761103202345L, questdbTs);
+                        assertEquals(1632761103202L, time);
+                        assertEquals(202345000, nanos);
+                        Timestamp eTs = new Timestamp(time);
+                        eTs.setNanos(nanos);
+                        ps.setInt(1, rowId);
+                        ps.setTimestamp(2, eTs);
+                        ps.execute();
+                    }
+
+                    try (PreparedStatement statement = connection.prepareStatement("SELECT id as Case, ts FROM ts ORDER BY id ASC")) {
+                        sink.clear();
+                        try (ResultSet rs = statement.executeQuery()) {
+                            assertResultSet(
+                                    "Case[INTEGER],ts[TIMESTAMP]\n" +
+                                            "0,2021-09-27 16:45:03.202345\n" +
+                                            "1,2021-09-27 16:45:03.202345\n" +
+                                            "2,2021-09-27 16:45:03.202345\n" +
+                                            "3,2021-09-27 16:45:03.202202\n" +
+                                            "4,1970-01-19 21:32:41.103202\n" +
+                                            "5,2021-09-27 16:45:03.202\n" +
+                                            "6,2021-09-27 16:45:03.202\n" +
+                                            "7,2021-09-27 16:45:03.202345\n",
+                                    sink,
+                                    rs
+                            );
+                        }
+                    }
+                    connection.prepareStatement("drop table ts").execute();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampSentEqualsReceived() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+
+            final Timestamp expectedTs = new Timestamp(1632761103202L); // '2021-09-27T16:45:03.202000Z'
+            assertEquals(1632761103202L, expectedTs.getTime());
+            assertEquals(202000000, expectedTs.getNanos());
+
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection conn = getConnection(false, true)) {
+                    conn.setAutoCommit(false);
+                    conn.prepareStatement("CREATE TABLE ts (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
+                    conn.commit();
+                    conn.setAutoCommit(true);
+
+                    // insert
+                    final Timestamp ts = Timestamp.valueOf("2021-09-27 16:45:03.202");
+                    assertEquals(expectedTs.getTime(), ts.getTime());
+                    assertEquals(expectedTs.getNanos(), ts.getNanos());
+                    try (PreparedStatement insert = conn.prepareStatement("INSERT INTO ts VALUES (?)")) {
+                        // QuestDB timestamps have MICROSECOND precision and require you to be aware
+                        // of it if you use java.sql.Timestamp's constructor
+                        insert.setTimestamp(1, new Timestamp(ts.getTime() * 1000));
+                        insert.execute();
+                    }
+
+                    // select
+                    final Timestamp tsBack;
+                    try (ResultSet queryResult = conn.prepareStatement("SELECT * FROM ts").executeQuery()) {
+                        queryResult.next();
+                        tsBack = queryResult.getTimestamp("ts");
+                    }
+                    assertEquals(expectedTs.getTime(), tsBack.getTime());
+                    assertEquals(expectedTs.getNanos(), tsBack.getNanos());
+                    assertEquals(expectedTs, tsBack);
+
+                    // cleanup
+                    conn.prepareStatement("drop table ts").execute();
+                }
+            }
+        });
+    }
+
+    @Test//NOTE: this test needs updating once limit issue is fixed!
+    public void testUnexpectedAssertionErrorDisconnectsClient() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1);
+                 final Connection connection = getConnection(false, false)) {
+
+                connection.setAutoCommit(false);
+
+                Statement stmt = connection.createStatement();
+                stmt.execute("create table ltest as (select cast(x as timestamp) ts from long_sequence(10))");
+                connection.commit();
+
+                try (PreparedStatement pstmt = connection.prepareStatement("select ts from ltest limit -9223372036854775807L-1, -1");
+                     ResultSet ignore = pstmt.executeQuery()) {
+                    Assert.fail("exception should be thrown");
+                } catch (PSQLException e) {
+                    Assert.assertEquals("An I/O error occurred while sending to the backend.", e.getMessage());
+                }
+
+            }
+        });
+    }
+
+    @Test
+    public void testUnsupportedParameterType() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(false, false);
+                    final PreparedStatement statement = connection.prepareStatement("select x, ? from long_sequence(5)")
+            ) {
+                // TIME is passed over protocol as UNSPECIFIED type
+                // it will rely on date parser to work out what it is
+                // for now date parser does not parse just time, it could i guess if required.
+                statement.setTime(1, new Time(100L));
+
+                try (ResultSet rs = statement.executeQuery()) {
+                    StringSink sink = new StringSink();
+                    // dump metadata
+                    assertResultSet(
+                            "x[BIGINT],$1[VARCHAR]\n" +
+                                    "1,00:00:00.1+00\n" +
+                                    "2,00:00:00.1+00\n" +
+                                    "3,00:00:00.1+00\n" +
+                                    "4,00:00:00.1+00\n" +
+                                    "5,00:00:00.1+00\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
+                statement.execute();
+
+                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                insert1.execute();
+
+                final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
+                int numOfRowsUpdated1 = update1.executeUpdate();
+                assertEquals(2, numOfRowsUpdated1);
+
+                final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                        "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                        "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
+                insert2.execute();
+
+                final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0");
+                int numOfRowsUpdated2 = update2.executeUpdate();
+                assertEquals(1, numOfRowsUpdated2);
+
+                final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
+                        "1,2.0,2020-06-01 00:00:02.0\n" +
+                        "9,2.6,2020-06-01 00:00:06.0\n" +
+                        "9,3.0,2020-06-01 00:00:12.0\n" +
+                        "8,4.0,2020-06-01 00:00:22.0\n" +
+                        "7,6.0,2020-06-01 00:00:32.0\n";
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
+                statement.execute();
+
+                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                insert1.execute();
+
+                final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5; update x set a=3 where b>2.7; update x set a=2 where b<2.2");
+                int numOfRowsUpdated1 = update1.executeUpdate();
+                assertEquals(2, numOfRowsUpdated1);
+
+                final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                        "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                        "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
+                insert2.execute();
+
+                final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0; update x set a=6 where a=2");
+                int numOfRowsUpdated2 = update2.executeUpdate();
+                assertEquals(1, numOfRowsUpdated2);
+
+                final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
+                        "6,2.0,2020-06-01 00:00:02.0\n" +
+                        "9,2.6,2020-06-01 00:00:06.0\n" +
+                        "3,3.0,2020-06-01 00:00:12.0\n" +
+                        "8,4.0,2020-06-01 00:00:22.0\n" +
+                        "7,6.0,2020-06-01 00:00:32.0\n";
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUpdateNoAutoCommit() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -6079,80 +6153,6 @@ create table tab as (
                 try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
                     sink.clear();
                     assertResultSet(expected, sink, resultSet);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testTimestampSentEqualsReceived() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
-            final Timestamp expectedTs = new Timestamp(1632761103202L); // '2021-09-27T16:45:03.202000Z'
-            assertEquals(1632761103202L, expectedTs.getTime());
-            assertEquals(202000000, expectedTs.getNanos());
-
-            try (final PGWireServer ignored = createPGServer(1)) {
-                try (final Connection conn = getConnection(false, true)) {
-                    conn.setAutoCommit(false);
-                    conn.prepareStatement("CREATE TABLE ts (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH").execute();
-                    conn.commit();
-                    conn.setAutoCommit(true);
-
-                    // insert
-                    final Timestamp ts = Timestamp.valueOf("2021-09-27 16:45:03.202");
-                    assertEquals(expectedTs.getTime(), ts.getTime());
-                    assertEquals(expectedTs.getNanos(), ts.getNanos());
-                    try (PreparedStatement insert = conn.prepareStatement("INSERT INTO ts VALUES (?)")) {
-                        // QuestDB timestamps have MICROSECOND precision and require you to be aware
-                        // of it if you use java.sql.Timestamp's constructor
-                        insert.setTimestamp(1, new Timestamp(ts.getTime() * 1000));
-                        insert.execute();
-                    }
-
-                    // select
-                    final Timestamp tsBack;
-                    try (ResultSet queryResult = conn.prepareStatement("SELECT * FROM ts").executeQuery()) {
-                        queryResult.next();
-                        tsBack = queryResult.getTimestamp("ts");
-                    }
-                    assertEquals(expectedTs.getTime(), tsBack.getTime());
-                    assertEquals(expectedTs.getNanos(), tsBack.getNanos());
-                    assertEquals(expectedTs, tsBack);
-
-                    // cleanup
-                    conn.prepareStatement("drop table ts").execute();
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testUnsupportedParameterType() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(2);
-                    final Connection connection = getConnection(false, false);
-                    final PreparedStatement statement = connection.prepareStatement("select x, ? from long_sequence(5)")
-            ) {
-                // TIME is passed over protocol as UNSPECIFIED type
-                // it will rely on date parser to work out what it is
-                // for now date parser does not parse just time, it could i guess if required.
-                statement.setTime(1, new Time(100L));
-
-                try (ResultSet rs = statement.executeQuery()) {
-                    StringSink sink = new StringSink();
-                    // dump metadata
-                    assertResultSet(
-                            "x[BIGINT],$1[VARCHAR]\n" +
-                                    "1,00:00:00.1+00\n" +
-                                    "2,00:00:00.1+00\n" +
-                                    "3,00:00:00.1+00\n" +
-                                    "4,00:00:00.1+00\n" +
-                                    "5,00:00:00.1+00\n",
-                            sink,
-                            rs
-                    );
                 }
             }
         });
@@ -6736,156 +6736,33 @@ create table tab as (
         });
     }
 
-    private void testBindVariableIsNull(boolean binary) throws Exception {
+    private void testBindVariableInFilter(boolean binary) throws Exception {
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer ignored = createPGServer(1);
                     final Connection connection = getConnection(false, binary)
             ) {
                 connection.setAutoCommit(false);
-                connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
-                connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
-                connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
+                connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts)").execute();
+                connection.prepareStatement("insert into x values (100, 0)").execute();
+                connection.prepareStatement("insert into x values (101, 1)").execute();
+                connection.prepareStatement("insert into x values (102, 2)").execute();
+                connection.prepareStatement("insert into x values (103, 3)").execute();
                 connection.commit();
-                connection.setAutoCommit(true);
 
                 sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is null")) {
+                try (PreparedStatement ps = connection.prepareStatement("select * from x where l != ?")) {
+                    ps.setLong(1, 0);
                     try (ResultSet rs = ps.executeQuery()) {
-                        // all rows, null = null is always true
                         assertResultSet(
-                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                "l[BIGINT],ts[TIMESTAMP]\n" +
                                         "100,1970-01-01 00:00:00.0\n" +
-                                        "null,1970-01-01 00:00:00.000001\n",
+                                        "101,1970-01-01 00:00:00.000001\n" +
+                                        "102,1970-01-01 00:00:00.000002\n" +
+                                        "103,1970-01-01 00:00:00.000003\n",
                                 sink,
                                 rs
                         );
-                    }
-                }
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where (? | null) is null")) {
-                    ps.setLong(1, 1066);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "value[INTEGER],ts[TIMESTAMP]\n" +
-                                        "100,1970-01-01 00:00:00.0\n" +
-                                        "null,1970-01-01 00:00:00.000001\n",
-                                sink,
-                                rs
-                        );
-                    }
-                }
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                    // 'is' is an alias for '=', the matching type for this operator, with null
-                    // on the right, is DOUBLE (EqDoubleFunctionFactory)
-                    ps.setDouble(1, Double.NaN);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "value[INTEGER],ts[TIMESTAMP]\n" +
-                                        "100,1970-01-01 00:00:00.0\n" +
-                                        "null,1970-01-01 00:00:00.000001\n",
-                                sink,
-                                rs
-                        );
-                    }
-                }
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                    // INTEGER fits in a DOUBLE, however it is interpreted differently depending on
-                    // transfer type (binary, string)
-                    ps.setInt(1, Numbers.INT_NaN);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        if (binary) {
-                            // in binary protocol DOUBLE.null == INT.null
-                            assertResultSet(
-                                    "value[INTEGER],ts[TIMESTAMP]\n" +
-                                            "100,1970-01-01 00:00:00.0\n" +
-                                            "null,1970-01-01 00:00:00.000001\n",
-                                    sink,
-                                    rs
-                            );
-                        } else {
-                            // in string protocol DOUBLE.null != INT.null
-                            assertResultSet(
-                                    "value[INTEGER],ts[TIMESTAMP]\n",
-                                    sink,
-                                    rs
-                            );
-                        }
-                    }
-                }
-
-                sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                    // 'is' is an alias for '=', the matching type for this operator
-                    // (with null on the right) is DOUBLE, and thus INT is a valid
-                    // value type
-                    ps.setInt(1, 21);
-                    try (ResultSet rs = ps.executeQuery()) {
-                        assertResultSet(
-                                "value[INTEGER],ts[TIMESTAMP]\n",
-                                sink,
-                                rs
-                        );
-                    }
-                }
-
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                    ps.setString(1, "");
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
-                    }
-                }
-
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                    ps.setString(1, "cha-cha-cha");
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "could not parse [value='cha-cha-cha', as=DOUBLE, index=0]");
-                    }
-                }
-
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
-                    ps.setString(1, "NULL");
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
-
-                    }
-                }
-
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
-                    ps.setDouble(1, Double.NaN);
-                    try (ResultSet ignore1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
-                    }
-                }
-
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
-                    ps.setNull(1, Types.NULL);
-                    try (ResultSet ignored1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
-                    }
-                }
-
-                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
-                    ps.setString(1, "NULL");
-                    try (ResultSet ignored1 = ps.executeQuery()) {
-                        Assert.fail();
-                    } catch (PSQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
                     }
                 }
             }
@@ -7055,33 +6932,156 @@ create table tab as (
         });
     }
 
-    private void testBindVariableInFilter(boolean binary) throws Exception {
+    private void testBindVariableIsNull(boolean binary) throws Exception {
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer ignored = createPGServer(1);
                     final Connection connection = getConnection(false, binary)
             ) {
                 connection.setAutoCommit(false);
-                connection.prepareStatement("create table x (l long, ts timestamp) timestamp(ts)").execute();
-                connection.prepareStatement("insert into x values (100, 0)").execute();
-                connection.prepareStatement("insert into x values (101, 1)").execute();
-                connection.prepareStatement("insert into x values (102, 2)").execute();
-                connection.prepareStatement("insert into x values (103, 3)").execute();
+                connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts)").execute();
+                connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
+                connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
                 connection.commit();
+                connection.setAutoCommit(true);
 
                 sink.clear();
-                try (PreparedStatement ps = connection.prepareStatement("select * from x where l != ?")) {
-                    ps.setLong(1, 0);
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is null")) {
                     try (ResultSet rs = ps.executeQuery()) {
+                        // all rows, null = null is always true
                         assertResultSet(
-                                "l[BIGINT],ts[TIMESTAMP]\n" +
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
                                         "100,1970-01-01 00:00:00.0\n" +
-                                        "101,1970-01-01 00:00:00.000001\n" +
-                                        "102,1970-01-01 00:00:00.000002\n" +
-                                        "103,1970-01-01 00:00:00.000003\n",
+                                        "null,1970-01-01 00:00:00.000001\n",
                                 sink,
                                 rs
                         );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where (? | null) is null")) {
+                    ps.setLong(1, 1066);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    // 'is' is an alias for '=', the matching type for this operator, with null
+                    // on the right, is DOUBLE (EqDoubleFunctionFactory)
+                    ps.setDouble(1, Double.NaN);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    // INTEGER fits in a DOUBLE, however it is interpreted differently depending on
+                    // transfer type (binary, string)
+                    ps.setInt(1, Numbers.INT_NaN);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (binary) {
+                            // in binary protocol DOUBLE.null == INT.null
+                            assertResultSet(
+                                    "value[INTEGER],ts[TIMESTAMP]\n" +
+                                            "100,1970-01-01 00:00:00.0\n" +
+                                            "null,1970-01-01 00:00:00.000001\n",
+                                    sink,
+                                    rs
+                            );
+                        } else {
+                            // in string protocol DOUBLE.null != INT.null
+                            assertResultSet(
+                                    "value[INTEGER],ts[TIMESTAMP]\n",
+                                    sink,
+                                    rs
+                            );
+                        }
+                    }
+                }
+
+                sink.clear();
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    // 'is' is an alias for '=', the matching type for this operator
+                    // (with null on the right) is DOUBLE, and thus INT is a valid
+                    // value type
+                    ps.setInt(1, 21);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    ps.setString(1, "");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "could not parse [value='', as=DOUBLE, index=0]");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    ps.setString(1, "cha-cha-cha");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "could not parse [value='cha-cha-cha', as=DOUBLE, index=0]");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
+                    ps.setString(1, "NULL");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
+                    ps.setDouble(1, Double.NaN);
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where null is ?")) {
+                    ps.setNull(1, Types.NULL);
+                    try (ResultSet ignored1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where value is ?")) {
+                    ps.setString(1, "NULL");
+                    try (ResultSet ignored1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "IS must be followed by NULL");
                     }
                 }
             }
