@@ -3,20 +3,12 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        linux-griffin:
-          imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
-          os: Linux
-          jdk: "1.11"
-          testset: "coverage"
-          includeTests: "griffin.**.*?"
         linux-other:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.11"
           testset: "coverage"
-          excludeTests: "**/griffin/**"
     pool:
       vmImage: $(imageName)
       name: $(poolName)
