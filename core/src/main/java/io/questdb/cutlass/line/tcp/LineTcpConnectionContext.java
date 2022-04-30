@@ -67,7 +67,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         this.scheduler = scheduler;
         this.metrics = metrics;
         this.milliClock = configuration.getMillisecondClock();
-        this.parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
+        parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_DEFAULT);
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
         clear();
@@ -184,11 +184,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                                 return IOContextResult.QUEUE_FULL;
                             }
                         } else {
-                            int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
-                            assert position >= 0;
-                            LOG.error().$('[').$(fd).$("] could not parse measurement, ").$(parser.getErrorCode()).$(" at ").$(position)
-                                    .$(", line (may be mangled due to partial parsing): '")
-                                    .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$("'").$();
+                            logParseError();
                             goodMeasurement = true;
                         }
 
@@ -199,6 +195,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
 
                     case ERROR: {
                         if (disconnectOnError) {
+                            logParseError();
                             return IOContextResult.NEEDS_DISCONNECT;
                         }
                         goodMeasurement = false;
@@ -227,6 +224,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 if (disconnectOnError) {
+                    logParseError();
                     return IOContextResult.NEEDS_DISCONNECT;
                 }
                 goodMeasurement = false;
@@ -240,6 +238,14 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }
+    }
+
+    private void logParseError() {
+        int position = (int) (parser.getBufferAddress() - recvBufStartOfMeasurement);
+        assert position >= 0;
+        LOG.error().$('[').$(fd).$("] could not parse measurement, ").$(parser.getErrorCode()).$(" at ").$(position)
+                .$(", line (may be mangled due to partial parsing): '")
+                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$("'").$();
     }
 
     private void startNewMeasurement() {
