@@ -35,6 +35,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+
 public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
     private static final LongList intervals = new LongList();
 
@@ -396,7 +398,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             }
             final TableReaderRecord record = new TableReaderRecord();
             final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(engine, "x", -1, 0, new RuntimeIntervalModel(intervals), timestampIndex);
-            try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
+            try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_ASC)) {
 
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());
@@ -443,7 +445,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             try {
-                factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
+                factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_ASC);
                 Assert.fail();
             } catch (ReaderOutOfDateException ignored) {
             }
@@ -458,7 +460,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1984-01-06T00:00:00.000Z"));

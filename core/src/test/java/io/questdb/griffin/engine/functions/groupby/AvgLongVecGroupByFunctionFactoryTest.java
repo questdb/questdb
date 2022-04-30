@@ -31,6 +31,10 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAddColumn() throws Exception {
+        // fix page frame size, because it affects AVG accuracy
+
+        pageFrameMaxRows = 10_000;
+
         assertQuery(
                 "avg\n" +
                         "5261.376146789\n",
@@ -47,7 +51,7 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         assertQuery(
                 "avg\tavg2\n" +
-                        "2633.684612\t52790.018932\n",
+                        "14.792007\t52790.018932\n",
                 "select round(avg(f),6) avg, round(avg(b),6) avg2 from tab",
                 "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
                 null,
@@ -76,9 +80,13 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testSimple() throws Exception {
+        // fix page frame size, because it affects AVG accuracy
+
+        pageFrameMaxRows = 10_000;
+
         assertQuery(
                 "avg\n" +
-                        "4289.100917431193\n",
+                        "4289.100917431191\n",
                 "select avg(f) from tab",
                 "create table tab as (select rnd_long(-55, 9009, 2) f from long_sequence(131))",
                 null,

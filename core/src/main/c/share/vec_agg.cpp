@@ -32,17 +32,14 @@
 #define SUM_DOUBLE F_AVX512(sumDouble)
 #define SUM_DOUBLE_KAHAN F_AVX512(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_AVX512(sumDoubleNeumaier)
-#define AVG_DOUBLE F_AVX512(avgDouble)
 #define MIN_DOUBLE F_AVX512(minDouble)
 #define MAX_DOUBLE F_AVX512(maxDouble)
 
 #define SUM_INT F_AVX512(sumInt)
-#define AVG_INT F_AVX512(avgInt)
 #define MIN_INT F_AVX512(minInt)
 #define MAX_INT F_AVX512(maxInt)
 
 #define SUM_LONG F_AVX512(sumLong)
-#define AVG_LONG F_AVX512(avgLong)
 #define MIN_LONG F_AVX512(minLong)
 #define MAX_LONG F_AVX512(maxLong)
 
@@ -53,17 +50,14 @@
 #define SUM_DOUBLE F_AVX2(sumDouble)
 #define SUM_DOUBLE_KAHAN F_AVX2(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_AVX2(sumDoubleNeumaier)
-#define AVG_DOUBLE F_AVX2(avgDouble)
 #define MIN_DOUBLE F_AVX2(minDouble)
 #define MAX_DOUBLE F_AVX2(maxDouble)
 
 #define SUM_INT F_AVX2(sumInt)
-#define AVG_INT F_AVX2(avgInt)
 #define MIN_INT F_AVX2(minInt)
 #define MAX_INT F_AVX2(maxInt)
 
 #define SUM_LONG F_AVX2(sumLong)
-#define AVG_LONG F_AVX2(avgLong)
 #define MIN_LONG F_AVX2(minLong)
 #define MAX_LONG F_AVX2(maxLong)
 
@@ -74,17 +68,14 @@
 #define SUM_DOUBLE F_SSE41(sumDouble)
 #define SUM_DOUBLE_KAHAN F_SSE41(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_SSE41(sumDoubleNeumaier)
-#define AVG_DOUBLE F_SSE41(avgDouble)
 #define MIN_DOUBLE F_SSE41(minDouble)
 #define MAX_DOUBLE F_SSE41(maxDouble)
 
 #define SUM_INT F_SSE41(sumInt)
-#define AVG_INT F_SSE41(avgInt)
 #define MIN_INT F_SSE41(minInt)
 #define MAX_INT F_SSE41(maxInt)
 
 #define SUM_LONG F_SSE41(sumLong)
-#define AVG_LONG F_SSE41(avgLong)
 #define MIN_LONG F_SSE41(minLong)
 #define MAX_LONG F_SSE41(maxLong)
 
@@ -95,17 +86,14 @@
 #define SUM_DOUBLE F_SSE2(sumDouble)
 #define SUM_DOUBLE_KAHAN F_SSE2(sumDoubleKahan)
 #define SUM_DOUBLE_NEUMAIER F_SSE2(sumDoubleNeumaier)
-#define AVG_DOUBLE F_SSE2(avgDouble)
 #define MIN_DOUBLE F_SSE2(minDouble)
 #define MAX_DOUBLE F_SSE2(maxDouble)
 
 #define SUM_INT F_SSE2(sumInt)
-#define AVG_INT F_SSE2(avgInt)
 #define MIN_INT F_SSE2(minInt)
 #define MAX_INT F_SSE2(maxInt)
 
 #define SUM_LONG F_SSE2(sumLong)
-#define AVG_LONG F_SSE2(avgLong)
 #define MIN_LONG F_SSE2(minLong)
 #define MAX_LONG F_SSE2(maxLong)
 
@@ -225,40 +213,6 @@ int64_t MAX_LONG(int64_t *pl, int64_t count) {
     return max;
 }
 
-double AVG_LONG(int64_t *pl, int64_t count) {
-    Vec8q vec;
-    const int step = 8;
-    Vec8q vecsum = 0.;
-    Vec8qb bVec;
-    Vec8q nancount = 0;
-    int i;
-    for (i = 0; i < count - 7; i += step) {
-        _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
-        vec.load(pl + i);
-        bVec = vec == L_MIN;
-        vecsum = if_add(!bVec, vecsum, vec);
-        nancount = if_add(bVec, nancount, 1);
-    }
-
-    int64_t sum = 0;
-    int n = 0;
-    for (; i < count; i++) {
-        int64_t x = *(pl + i);
-        if (x != L_MIN) {
-            sum += x;
-        } else {
-            n++;
-        }
-    }
-
-    const int64_t nans = horizontal_add(nancount) + n;
-    if (nans < count) {
-        return (double) (horizontal_add(vecsum) + sum) / (double) (count - nans);
-    }
-
-    return NAN;
-}
-
 #endif
 
 #ifdef SUM_INT
@@ -343,36 +297,6 @@ int32_t MAX_INT(int32_t *pi, int64_t count) {
     return max;
 }
 
-double AVG_INT(int32_t *pi, int64_t count) {
-    const int32_t step = 16;
-    const auto remainder = (int32_t) (count - (count / step) * step);
-    const auto *lim = pi + count;
-    const auto *vec_lim = lim - remainder;
-
-    Vec16i vec;
-    Vec16ib bVec;
-    int64_t sum = 0;
-    int64_t sumCount = 0;
-    for (; pi < vec_lim; pi += step) {
-        _mm_prefetch(pi + 63 * step, _MM_HINT_T1);
-        vec.load(pi);
-        bVec = vec != I_MIN;
-        sumCount += horizontal_count(bVec);
-        sum += horizontal_add_x(select(bVec, vec, 0));
-    }
-
-    if (pi < lim) {
-        for (; pi < lim; pi++) {
-            int v = *pi;
-            if (v != I_MIN) {
-                sum += v;
-                sumCount++;
-            }
-        }
-    }
-    return (double_t) sum / sumCount;
-}
-
 #endif
 
 #ifdef SUM_DOUBLE
@@ -411,7 +335,6 @@ double SUM_DOUBLE(double *d, int64_t count) {
 }
 
 double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
-//    return sumDoubleKahan_Vanilla(d, count);
     Vec8d inputVec;
     const int step = 8;
     const auto *lim = d + count;
@@ -458,7 +381,6 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
 }
 
 double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
-//    return sumDoubleNeumaier_Vanilla(d, count);
     Vec8d inputVec;
     const int step = 8;
     const auto *lim = d + count;
@@ -502,39 +424,6 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
 
     if (nans < count) {
         return sum + c;
-    }
-
-    return D_NAN;
-}
-
-double AVG_DOUBLE(double *d, int64_t count) {
-    Vec8d vec;
-    const int step = 8;
-    Vec8d vecsum = 0.;
-    Vec8db bVec;
-    Vec8q nancount = 0;
-    int i;
-    for (i = 0; i < count - 7; i += step) {
-        _mm_prefetch(d + i + 63 * step, _MM_HINT_T1);
-        vec.load(d + i);
-        bVec = is_nan(vec);
-        vecsum += select(bVec, 0, vec);
-        nancount = if_add(bVec, nancount, 1);
-    }
-
-    double sum = horizontal_add(vecsum);
-    int64_t n = horizontal_add(nancount);
-    for (; i < count; i++) {
-        double x = *(d + i);
-        if (PREDICT_TRUE(std::isfinite(x))) {
-            sum += x;
-        } else {
-            n++;
-        }
-    }
-
-    if (n < count) {
-        return sum / (double) (count - n);
     }
 
     return D_NAN;
@@ -606,18 +495,15 @@ double MAX_DOUBLE(double *d, int64_t count) {
 DOUBLE_DISPATCHER(sumDouble)
 DOUBLE_DISPATCHER(sumDoubleKahan)
 DOUBLE_DISPATCHER(sumDoubleNeumaier)
-DOUBLE_DISPATCHER(avgDouble)
 DOUBLE_DISPATCHER(minDouble)
 DOUBLE_DISPATCHER(maxDouble)
 
 INT_LONG_DISPATCHER(sumInt)
 INT_BOOL_DISPATCHER(hasNull)
-INT_DOUBLE_DISPATCHER(avgInt)
 INT_INT_DISPATCHER(minInt)
 INT_INT_DISPATCHER(maxInt)
 
 LONG_LONG_DISPATCHER(sumLong)
-LONG_DOUBLE_DISPATCHER(avgLong)
 LONG_LONG_DISPATCHER(minLong)
 LONG_LONG_DISPATCHER(maxLong)
 
@@ -625,6 +511,5 @@ extern "C" {
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
     return instrset_detect();
 }
-
 }
 #endif  // INSTRSET == 2

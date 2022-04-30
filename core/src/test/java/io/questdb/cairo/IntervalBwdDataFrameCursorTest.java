@@ -35,6 +35,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
+
 public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
     private static final LongList intervals = new LongList();
 
@@ -363,7 +365,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                     0,
                     new RuntimeIntervalModel(intervals),
                     timestampIndex);
-            try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
+            try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_DESC)) {
 
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());
@@ -410,7 +412,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             try {
-                factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
+                factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_DESC);
                 Assert.fail();
             } catch (ReaderOutOfDateException ignored) {
             }

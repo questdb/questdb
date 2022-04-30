@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
+
 abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursorFactory {
     protected final DataFrameCursorFactory dataFrameCursorFactory;
 
@@ -42,7 +44,7 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
+        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
         try {
             return getCursorInstance(dataFrameCursor, executionContext);
         } catch (Throwable e) {

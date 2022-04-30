@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -44,13 +43,12 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory base,
-            ColumnTypes columnTypes,
             RecordSink recordSink,
             RecordComparator comparator
     ) {
         super(metadata);
         this.chain = new RecordTreeChain(
-                columnTypes,
+                metadata,
                 recordSink,
                 comparator,
                 configuration.getSqlSortKeyPageSize(),

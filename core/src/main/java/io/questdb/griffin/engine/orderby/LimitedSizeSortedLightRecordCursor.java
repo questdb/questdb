@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 
@@ -48,7 +48,13 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     private final long skipLast;  //skip last N rows
     private long rowsLeft;
 
-    public LimitedSizeSortedLightRecordCursor(LimitedSizeLongTreeChain chain, RecordComparator comparator, long limit, long skipFirst, long skipLast) {
+    public LimitedSizeSortedLightRecordCursor(
+            LimitedSizeLongTreeChain chain,
+            RecordComparator comparator,
+            long limit,
+            long skipFirst,
+            long skipLast
+    ) {
         this.chain = chain;
         this.comparator = comparator;
         this.chainCursor = chain.getCursor();
@@ -119,7 +125,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
         chain.clear();
         if (limit != 0) {
             while (base.hasNext()) {
-                circuitBreaker.test();
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 // Tree chain is liable to re-position record to
                 // other rows to do record comparison. We must use our
                 // own record instance in case base cursor keeps

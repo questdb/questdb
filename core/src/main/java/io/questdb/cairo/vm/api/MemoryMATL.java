@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+//mapped appendable tailing 
 public interface MemoryMATL extends MemoryMAT {
     void of(MemoryA log, MemoryMAT main);
 }

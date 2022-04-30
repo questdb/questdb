@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
@@ -194,7 +194,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             if (timestamp < next) {
                 adjustDSTInFlight(timestamp - tzOffset);
                 GroupByUtils.updateExisting(groupByFunctions, n, mapValue, baseRecord);
-                circuitBreaker.test();
+                circuitBreaker.statefulThrowExceptionIfTripped();
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
                 // unchanged. Timestamp columns uses this variable
