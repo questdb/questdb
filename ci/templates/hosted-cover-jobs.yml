@@ -24,6 +24,7 @@ jobs:
           jdk: "1.11"
           testset: "coverage"
           includeTests: "cutlass.**.*?"
+          excludeTests: "**/pgwire/**"
         linux-jit:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
