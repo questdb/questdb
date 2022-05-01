@@ -3,12 +3,48 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
+        linux-griffin:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.11"
+          testset: "coverage"
+          includeTests: "griffin.**.*?"
+        linux-cairo:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.11"
+          testset: "coverage"
+          includeTests: "cairo.**.*?"
+        linux-cutlass:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.11"
+          testset: "coverage"
+          includeTests: "cutlass.**.*?"
+        linux-jit:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.11"
+          testset: "coverage"
+          includeTests: "jit.**.*?"
+        linux-log:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.11"
+          testset: "coverage"
+          includeTests: "log.**.*?"
         linux-other:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.11"
           testset: "coverage"
+          excludeTests: "**/griffin/**,**/cairo/**,**/cutlass/**,**/jit/**,**/log/**"
     pool:
       vmImage: $(imageName)
       name: $(poolName)
