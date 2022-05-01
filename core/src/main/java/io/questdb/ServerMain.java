@@ -211,7 +211,11 @@ public class ServerMain {
         }
 
         workerPool.assignCleaner(Path.CLEANER);
-        O3Utils.setupWorkerPool(workerPool, cairoEngine.getMessageBus());
+        O3Utils.setupWorkerPool(
+                workerPool,
+                cairoEngine.getMessageBus(),
+                configuration.getCairoConfiguration().getCircuitBreakerConfiguration()
+        );
 
         try {
             initQuestDb(workerPool, cairoEngine, log);
@@ -404,7 +408,7 @@ public class ServerMain {
         }
     }
 
-    //made package level for testing only  
+    //made package level for testing only
     static void extractSite(BuildInformation buildInformation, String dir, Log log) throws IOException {
         final String publicZip = "/io/questdb/site/public.zip";
         final String publicDir = dir + "/public";

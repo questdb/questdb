@@ -22,11 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.CairoEngine;
+import io.questdb.network.NetworkFacade;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
-@FunctionalInterface
-interface O3Runnable {
-    void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
+public interface SqlExecutionCircuitBreakerConfiguration {
+    int getBufferSize();
+
+    int getCircuitBreakerThrottle();
+
+    NetworkFacade getNetworkFacade();
+
+    boolean isEnabled();
+
+    MicrosecondClock getClock();
+
+    // maximum SQL execution time in micros
+    long getMaxTime();
 }

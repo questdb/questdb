@@ -43,6 +43,7 @@ import org.junit.*;
 import java.util.HashMap;
 import java.util.Map;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 import static io.questdb.jit.CompiledFilterIRSerializer.*;
 
 public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
@@ -632,7 +633,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         bindVarFunctions.clear();
 
         ExpressionNode node = expr(seq);
-        try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext)) {
+        try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
             return serializer.of(irMemory, sqlExecutionContext, metadata, cursor, bindVarFunctions)
                     .serialize(node, scalar, debug, nullChecks);
         }

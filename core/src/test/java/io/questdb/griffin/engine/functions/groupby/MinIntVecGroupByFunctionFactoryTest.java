@@ -31,6 +31,8 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAddColumn() throws Exception {
+        // fix page frame size, because it affects AVG accuracy
+        pageFrameMaxRows = 10_000;
         assertQuery(
                 "avg\n" +
                         "5261.376146789\n",
@@ -47,7 +49,7 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         assertQuery(
                 "avg\tmin\n" +
-                        "2633.684612\t93\n",
+                        "14.792007\t93\n",
                 "select round(avg(f),6) avg, min(b) min from tab",
                 "insert into tab select rnd_int(2, 10, 2), rnd_int(93, 967, 4) from long_sequence(78057)",
                 null,

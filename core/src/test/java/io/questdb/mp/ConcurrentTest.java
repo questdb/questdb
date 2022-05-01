@@ -490,6 +490,46 @@ public class ConcurrentTest {
     }
 
     @Test
+    public void testManyToManyBusy() throws Exception {
+        LOG.info().$("testManyToManyBusy").$();
+        int cycle = 128;
+        int size = 1024 * cycle;
+        RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
+        MPSequence pubSeq = new MPSequence(cycle);
+        MCSequence subSeq = new MCSequence(cycle);
+        pubSeq.then(subSeq).then(pubSeq);
+
+        CyclicBarrier barrier = new CyclicBarrier(5);
+        CountDownLatch latch = new CountDownLatch(4);
+
+        BusyProducer[] producers = new BusyProducer[2];
+        producers[0] = new BusyProducer(size / 2, pubSeq, queue, barrier, latch);
+        producers[1] = new BusyProducer(size / 2, pubSeq, queue, barrier, latch);
+
+        producers[0].start();
+        producers[1].start();
+
+        BusyConsumer[] consumers = new BusyConsumer[2];
+        consumers[0] = new BusyConsumer(size, subSeq, queue, barrier, latch);
+        consumers[1] = new BusyConsumer(size, subSeq, queue, barrier, latch);
+
+        consumers[0].start();
+        consumers[1].start();
+
+        barrier.await();
+        latch.await();
+
+        int[] buf = new int[size];
+        System.arraycopy(consumers[0].buf, 0, buf, 0, consumers[0].finalIndex);
+        System.arraycopy(consumers[1].buf, 0, buf, consumers[0].finalIndex, consumers[1].finalIndex);
+        Arrays.sort(buf);
+        for (int i = 0; i < buf.length / 2; i++) {
+            Assert.assertEquals(i, buf[2 * i]);
+            Assert.assertEquals(i, buf[2 * i + 1]);
+        }
+    }
+
+    @Test
     public void testOneToManyWaiting() throws Exception {
         int cycle = 1024;
         int size = 1024 * cycle;
@@ -701,6 +741,39 @@ public class ConcurrentTest {
         }
     }
 
+    @Test
+    public void testManyHybrid() throws Exception {
+        LOG.info().$("testManyHybrid").$();
+        int threadCount = 4;
+        int cycle = 4;
+        int size = 1024 * cycle;
+        RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
+        MPSequence pubSeq = new MPSequence(cycle);
+        MCSequence subSeq = new MCSequence(cycle);
+        pubSeq.then(subSeq).then(pubSeq);
+
+        CyclicBarrier barrier = new CyclicBarrier(threadCount + 1);
+        CountDownLatch latch = new CountDownLatch(threadCount);
+
+        BusyProducerConsumer[] threads = new BusyProducerConsumer[threadCount];
+        for (int i = 0; i < threadCount; i++) {
+            threads[i] = new BusyProducerConsumer(size, pubSeq, subSeq, queue, barrier, latch);
+            threads[i].start();
+        }
+
+        barrier.await();
+        latch.await();
+
+        int totalProduced = 0;
+        int totalConsumed = 0;
+        for (int i = 0; i < threadCount; i++) {
+            totalProduced += threads[i].produced;
+            totalConsumed += threads[i].consumed;
+        }
+        Assert.assertEquals(threadCount * size, totalProduced);
+        Assert.assertEquals(threadCount * size, totalConsumed);
+    }
+
     static void publishEOE(RingQueue<Event> queue, Sequence sequence) {
         long cursor = sequence.nextBully();
         queue.get(cursor).value = Integer.MIN_VALUE;
@@ -709,6 +782,106 @@ public class ConcurrentTest {
 
     private static class LongMsg {
         public long correlationId;
+    }
+
+    private static class BusyProducerConsumer extends Thread {
+        private final Sequence producerSequence;
+        private final Sequence consumerSequence;
+        private final int cycle;
+        private final RingQueue<Event> queue;
+        private final CyclicBarrier barrier;
+        private final CountDownLatch doneLatch;
+        private int produced;
+        private int consumed;
+
+        BusyProducerConsumer(int cycle, Sequence producerSequence, Sequence consumerSequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
+            this.producerSequence = producerSequence;
+            this.consumerSequence = consumerSequence;
+            this.cycle = cycle;
+            this.queue = queue;
+            this.barrier = barrier;
+            this.doneLatch = doneLatch;
+        }
+
+        @Override
+        public void run() {
+            try {
+                barrier.await();
+
+                while (produced < cycle) {
+                    long producerCursor;
+                    do {
+                        producerCursor = producerSequence.next();
+                        if (producerCursor < 0) {
+                            consume();
+                        } else {
+                            break;
+                        }
+                    } while (true);
+                    assert queue.get(producerCursor).value == 0;
+                    queue.get(producerCursor).value = 42;
+                    producerSequence.done(producerCursor);
+                    produced++;
+                }
+                // Consume the remaining messages.
+                consume();
+
+                doneLatch.countDown();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        private void consume() {
+            while (true) {
+                final long cursor = consumerSequence.next();
+                if (cursor > -1) {
+                    assert queue.get(cursor).value == 42;
+                    queue.get(cursor).value = 0;
+                    consumerSequence.done(cursor);
+                    consumed++;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    private static class BusyProducer extends Thread {
+        private final Sequence sequence;
+        private final int cycle;
+        private final RingQueue<Event> queue;
+        private final CyclicBarrier barrier;
+        private final CountDownLatch doneLatch;
+
+        BusyProducer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch doneLatch) {
+            this.sequence = sequence;
+            this.cycle = cycle;
+            this.queue = queue;
+            this.barrier = barrier;
+            this.doneLatch = doneLatch;
+        }
+
+        @Override
+        public void run() {
+            try {
+                barrier.await();
+                int p = 0;
+                while (p < cycle) {
+                    long cursor = sequence.next();
+                    if (cursor < 0) {
+                        Os.pause();
+                        continue;
+                    }
+                    queue.get(cursor).value = ++p == cycle ? Integer.MIN_VALUE : p;
+                    sequence.done(cursor);
+                }
+
+                doneLatch.countDown();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     private static class BusyConsumer extends Thread {

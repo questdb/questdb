@@ -99,17 +99,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
     }
 
-    @Override
-    public long symbolCharsAddressOf(int symbolIndex) {
-        if (symbolIndex < symbolCount) {
-            long offset = offsetMem.getLong(SymbolMapWriter.keyToOffset(symbolIndex));
-            return charMem.addressOf(offset);
-        } else if (symbolIndex == symbolCount) {
-            return charMem.addressOf(charMem.getGrownLength());
-        }
-        return -1;
-    }
-
     public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, int symbolCount) {
         FilesFacade ff = configuration.getFilesFacade();
         this.symbolCount = symbolCount;

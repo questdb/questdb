@@ -37,6 +37,7 @@ import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
 
+//paged appendable readable writable
 public class MemoryPARWImpl implements MemoryARW {
     private static final Log LOG = LogFactory.getLog(MemoryPARWImpl.class);
     protected final LongList pages = new LongList(4, 0);

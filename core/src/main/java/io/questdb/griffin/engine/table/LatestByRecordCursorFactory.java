@@ -29,7 +29,7 @@ import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
@@ -96,7 +96,7 @@ public class LatestByRecordCursorFactory implements RecordCursorFactory {
             try (final RecordCursor mapCursor = latestByMap.getCursor()) {
                 final MapRecord mapRecord = (MapRecord) mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
-                    circuitBreaker.test();
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     final MapValue value = mapRecord.getValue();
                     final long rowId = value.getLong(RECORD_INDEX_VALUE_IDX);
                     rowIndexes.add(rowId);
@@ -122,7 +122,7 @@ public class LatestByRecordCursorFactory implements RecordCursorFactory {
     private void buildMap(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor baseCursor, Record baseRecord) {
         long index = 0;
         while (baseCursor.hasNext()) {
-            circuitBreaker.test();
+            circuitBreaker.statefulThrowExceptionIfTripped();
 
             final MapKey key = latestByMap.withKey();
             recordSink.copy(baseRecord, key);
@@ -185,7 +185,7 @@ public class LatestByRecordCursorFactory implements RecordCursorFactory {
             rowIndexes.clear();
             if (rowIndexes.getCapacity() > rowIndexesCapacityThreshold) {
                 // This call will shrink down the underlying array
-                rowIndexes.extend(rowIndexesCapacityThreshold);
+                rowIndexes.setCapacity(rowIndexesCapacityThreshold);
             }
         }
 
@@ -207,7 +207,7 @@ public class LatestByRecordCursorFactory implements RecordCursorFactory {
 
             final long nextIndex = rowIndexes.get(rowIndexesPos++);
             while (baseCursor.hasNext()) {
-                circuitBreaker.test();
+                circuitBreaker.statefulThrowExceptionIfTripped();
                 if (index++ == nextIndex) {
                     return true;
                 }

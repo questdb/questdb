@@ -2279,7 +2279,6 @@ public class JoinTest extends AbstractGriffinTest {
                             "9\t100\t8\t456\t448\n",
                     "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where y.b < 20",
                     null);
-
         });
     }
 

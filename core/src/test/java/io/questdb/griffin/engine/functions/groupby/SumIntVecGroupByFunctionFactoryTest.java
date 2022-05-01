@@ -31,6 +31,8 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAddColumn() throws Exception {
+        // fix page frame size, because it affects AVG accuracy
+        pageFrameMaxRows = 10_000;
         assertQuery(
                 "avg\n" +
                         "5261.376146789\n",
@@ -47,7 +49,7 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         assertQuery(
                 "avg\tsum\n" +
-                        "2633.684612\t37172355\n",
+                        "14.792007\t37172355\n",
                 "select round(avg(f),6) avg, sum(b) sum from tab",
                 "insert into tab select rnd_int(2, 10, 2), rnd_int(93, 967, 4) from long_sequence(78057)",
                 null,

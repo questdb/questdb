@@ -35,7 +35,10 @@ import io.questdb.jit.JitUtil;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
 
 /**
  * Tests for advanced features and scenarios, such as  col tops, bind variables,
@@ -234,8 +237,8 @@ public class CompiledFilterTest extends AbstractGriffinTest {
 
     @Test
     public void testPageFrameMaxSize() throws Exception {
-        pageFrameMaxSize = 128;
-        final long N = 8 * pageFrameMaxSize + 1;
+        pageFrameMaxRows = 128;
+        final long N = 8 * pageFrameMaxRows + 1;
         assertMemoryLeak(() -> {
             compiler.compile("create table t1 as (select " +
                     " x," +

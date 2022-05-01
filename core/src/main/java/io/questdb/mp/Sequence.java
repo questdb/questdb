@@ -24,7 +24,9 @@
 
 package io.questdb.mp;
 
-public interface Sequence extends Barrier {
+import io.questdb.std.Mutable;
+
+public interface Sequence extends Barrier, Mutable {
 
     void done(long cursor);
 
