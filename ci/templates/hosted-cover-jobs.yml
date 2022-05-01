@@ -23,7 +23,7 @@ jobs:
           os: Linux
           jdk: "1.11"
           testset: "coverage"
-          includeTests: "cutlass.http.*?,cutlass.json.*?,cutlass.line.*?,cutlass.text.*?"
+          includeTests: "cutlass.**.*?"
         linux-other:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
