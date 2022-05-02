@@ -4849,6 +4849,7 @@ nodejs code:
     }
 
     @Test
+    @Ignore
     public void testSchemasCall() throws Exception {
         assertMemoryLeak(() -> {
 
