@@ -108,7 +108,6 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         pageFrameReduceShardCount = 2;
         pageFrameReduceQueueCapacity = PAGE_FRAME_COUNT;
 
-        jitMode = SqlJitMode.JIT_MODE_DISABLED;
         AbstractGriffinTest.setUpStatic();
     }
 

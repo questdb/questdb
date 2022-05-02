@@ -62,7 +62,7 @@ public class HttpQueryTestBuilder {
     private int workerCount = 1;
     private long startWriterWaitTimeout = 500_000;
     private long maxWriterWaitTimeout = 30_000_000L;
-    private int jitMode = SqlJitMode.JIT_MODE_DISABLED;
+    private int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     private FilesFacade filesFacade = new FilesFacadeImpl();
     private QueryFutureUpdateListener queryFutureUpdateListener;
 

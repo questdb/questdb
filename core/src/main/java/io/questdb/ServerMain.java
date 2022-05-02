@@ -164,11 +164,9 @@ public class ServerMain {
             switch (jitMode) {
                 case SqlJitMode.JIT_MODE_ENABLED:
                     log.advisoryW().$("SQL JIT compiler mode: on").$();
-                    log.advisoryW().$("Note: JIT compiler mode is a beta feature.").$();
                     break;
                 case SqlJitMode.JIT_MODE_FORCE_SCALAR:
                     log.advisoryW().$("SQL JIT compiler mode: scalar").$();
-                    log.advisoryW().$("Note: JIT compiler mode is a beta feature.").$();
                     break;
                 case SqlJitMode.JIT_MODE_DISABLED:
                     log.advisoryW().$("SQL JIT compiler mode: off").$();
