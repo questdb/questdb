@@ -35,6 +35,7 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -42,6 +43,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
 
     private final static ColumnTypes keyTypes;
     private final static ColumnTypes valueTypes;
+    private final StringSink sink = new StringSink();
     private final Map map;
     private int refCount;
 
@@ -183,7 +185,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
 
         MapValue value = key.createValue();
         if (!value.isNew()) {
-            throw CairoException.instance(0).put("Duplicate column [name=").put(columnName).put(", tableAlias=").put(tableAlias).put(']');
+            throw duplicateColumnException(columnName, tableAlias);
         }
 
         value.putLong(0, columnCount++);
@@ -207,6 +209,17 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
             // we would treat this lookup as if column hadn't been found.
             value.putInt(0, -1);
         }
+    }
+
+    private CairoException duplicateColumnException(CharSequence tableAlias, CharSequence columnName) {
+        final CairoException exception = CairoException.instance(0).put("Duplicate column [name=");
+        sink.clear();
+        Chars.toLowerCase(columnName, sink);
+        exception.put(sink).put(", tableAlias=");
+        sink.clear();
+        Chars.toLowerCase(tableAlias, sink);
+        exception.put(sink).put(']');
+        return exception;
     }
 
     static {

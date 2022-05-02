@@ -37,6 +37,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.O3PurgeDiscoveryTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -824,7 +825,9 @@ public final class TableUtils {
                 if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
                     offset += Vm.getStorageLength(name);
                 } else {
-                    throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
+                    StringSink sink = Misc.getThreadLocalBuilder();
+                    Chars.toLowerCase(name, sink);
+                    throw validationException(metaMem).put("Duplicate column '").put(sink).put("' at [").put(i).put(']');
                 }
             }
         } catch (Throwable e) {

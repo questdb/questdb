@@ -99,6 +99,7 @@ class SqlOptimiser {
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<Function> functionsInFlight = new ObjList<>();
+    private final StringSink sink = new StringSink();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
 
@@ -1084,7 +1085,6 @@ class SqlOptimiser {
             final int joinCount = validatingModel.getJoinModels().size();
             if (joinCount > 1) {
                 boolean found = false;
-                final StringSink sink = Misc.getThreadLocalBuilder();
                 sink.clear();
                 for (int i = 0; i < joinCount; i++) {
                     final QueryModel jm = validatingModel.getJoinModels().getQuick(i);
@@ -3371,7 +3371,9 @@ class SqlOptimiser {
                     throw SqlException.$(position, "Designated timestamp column cannot be updated");
                 }
                 if (tempList.getQuick(columnIndex) == 1) {
-                    throw SqlException.$(position, "Duplicate column ").put(queryColumn.getName()).put(" in SET clause");
+                    sink.clear();
+                    Chars.toLowerCase(queryColumn.getName(), sink);
+                    throw SqlException.$(position, "Duplicate column '").put(sink).put("' in SET clause");
                 }
                 tempList.set(columnIndex, 1);
 

@@ -24,12 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -65,6 +63,7 @@ public final class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcat0Ref = this::rewriteConcat0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteTypeQualifier0Ref = this::rewriteTypeQualifier0;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
+    private final StringSink sink = new StringSink();
     private boolean subQueryMode = false;
 
     SqlParser(
@@ -164,6 +163,7 @@ public final class SqlParser {
         expressionTreeBuilder.reset();
         copyModelPool.clear();
         topLevelWithModel.clear();
+        sink.clear();
     }
 
     private CharSequence createColumnAlias(ExpressionNode node, QueryModel model) {
@@ -645,7 +645,7 @@ public final class SqlParser {
             }
 
             if (!model.addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong())) {
-                throw SqlException.$(position, "Duplicate column");
+                throw duplicateColumnException(position, name);
             }
 
             CharSequence tok;
@@ -1210,7 +1210,7 @@ public final class SqlParser {
                 }
 
                 if (!model.addColumn(GenericLexer.immutableOf(GenericLexer.unquote(tok)), lexer.lastTokenPosition())) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("duplicate column name: ").put(tok);
+                    throw duplicateColumnException(lexer.lastTokenPosition(), tok);
                 }
 
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
@@ -1468,6 +1468,7 @@ public final class SqlParser {
             tok = optTok(lexer);
 
             QueryColumn col;
+            final int colPosition = lexer.lastTokenPosition();
 
             if (tok != null && isOverKeyword(tok)) {
                 // analytic
@@ -1533,7 +1534,9 @@ public final class SqlParser {
             }
 
             col.setAlias(alias);
-            model.addBottomUpColumn(col);
+            if (!model.addBottomUpColumn(col)) {
+                throw duplicateColumnException(colPosition, col.getName());
+            }
 
             if (tok == null || Chars.equals(tok, ';')) {
                 lexer.unparse();
@@ -1651,7 +1654,9 @@ public final class SqlParser {
             updateQueryModel.getUpdateExpressions().add(setColumnExpression);
 
             QueryColumn valueColumn = queryColumnPool.next().of(col, expr);
-            fromModel.addBottomUpColumn(valueColumn);
+            if (!fromModel.addBottomUpColumn(valueColumn)) {
+                throw duplicateColumnException(colPosition, col, "in SET clause");
+            }
 
             tok = optTok(lexer);
             if (tok == null) {
@@ -1947,6 +1952,20 @@ public final class SqlParser {
             throw SqlException.position(pos).put(expectedList).put(" expected");
         }
         return tok;
+    }
+
+    private SqlException duplicateColumnException(int position, CharSequence colName) {
+        return duplicateColumnException(position, colName, null);
+    }
+
+    private SqlException duplicateColumnException(int position, CharSequence colName, CharSequence additionalMessage) {
+        sink.clear();
+        Chars.toLowerCase(colName, sink);
+        SqlException exception = SqlException.$(position, "Duplicate column '").put(sink).put('\'');
+        if (additionalMessage != null) {
+            exception.put(' ').put(additionalMessage);
+        }
+        return exception;
     }
 
     private @NotNull CharSequence tokIncludingLocalBrace(GenericLexer lexer, String expectedList) throws SqlException {

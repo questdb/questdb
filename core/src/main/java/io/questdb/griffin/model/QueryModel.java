@@ -156,9 +156,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return aliasIndexes.put(node.token, index);
     }
 
-    public void addBottomUpColumn(QueryColumn column) {
+    public boolean addBottomUpColumn(QueryColumn column) {
+        if (containsColumnByName(bottomUpColumns, column)) {
+            return false;
+        }
         bottomUpColumns.add(column);
         addField(column);
+        return true;
     }
 
     public void addDependency(int index) {
@@ -934,6 +938,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Override
     public CharSequence translateAlias(CharSequence column) {
         return aliasToColumnNameMap.get(column);
+    }
+
+    private static boolean containsColumnByName(ObjList<QueryColumn> columns, QueryColumn col) {
+        CharSequence colName = col.getName();
+        for (int i=0, limit=columns.size(); i < limit; i++) {
+            if (Chars.equalsIgnoreCase(columns.getQuick(i).getName(), colName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void aliasToSink(CharSequence alias, CharSink sink) {

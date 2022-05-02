@@ -726,6 +726,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateAsSelectDuplicateColumn() throws Exception {
+        assertSyntaxError(
+                "create table tab as (select rnd_byte() b, rnd_boolean() b from long_sequence(1))",
+                56,
+                "Duplicate column 'b'",
+                modelOf("tab")
+                        .col("b", ColumnType.BYTE)
+                        .col("b", ColumnType.BOOLEAN)
+        );
+    }
+
+    @Test
     public void testCreateAsSelectInvalidIndex() throws Exception {
         assertSyntaxError(
                 "create table X as ( select a, b, c from tab ), index(x)",
@@ -1132,11 +1144,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "t TIMESTAMP, " +
                         "x SYMBOL index, " +
                         "z STRING, " +
-                        "t BOOLEAN) " +
+                        "T BOOLEAN) " +
                         "timestamp(t) " +
                         "partition by YEAR",
                 122,
-                "Duplicate column"
+                "Duplicate column 't'"
+        );
+    }
+
+    @Test
+    public void testCreateTableDuplicateColumnNonAscii() throws Exception {
+        assertSyntaxError(
+                "create table x (侘寂 INT, 侘寂 BOOLEAN)",
+                22,
+                "Duplicate column '侘寂'"
         );
     }
 
@@ -2162,8 +2183,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertFailure(
                 "select (pg_catalog.pg_class()).n, (pg_catalog.pg_description()).z, pg_catalog.pg_class() x, pg_catalog.pg_description() x from long_sequence(2)",
                 null,
-                92,
-                "duplicate alias"
+                120,
+                "Duplicate column 'x'"
         );
     }
 
@@ -2216,10 +2237,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCursorInSelectSameTwice() throws SqlException {
-        assertQuery(
-                "select-virtual pg_class . n column, pg_class x, pg_class x from (select-choose [pg_class] pg_class, pg_class x from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1))",
-                "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x, pg_catalog.pg_class() x from long_sequence(2)"
+    public void testCursorInSelectSameTwice() throws Exception {
+        assertSyntaxError(
+                "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() x, pg_catalog.pg_class() X from long_sequence(2)",
+                81,
+                "Duplicate column 'x'"
+        );
+    }
+
+    @Test
+    public void testCursorInSelectSameTwiceNonAscii() throws Exception {
+        assertSyntaxError(
+                "select (pg_catalog.pg_class()).n, pg_catalog.pg_class() 侘寂, pg_catalog.pg_class() 侘寂 from long_sequence(2)",
+                82,
+                "Duplicate column '侘寂'"
         );
     }
 
@@ -2240,11 +2271,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCursorMultipleDuplicateAliases() throws SqlException {
-        assertQuery(
-                "select-choose cc, cc1 from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() cc] pg_catalog.pg_class() cc from (pg_catalog.pg_class()) _xQdbA1 cross join select-cursor [pg_catalog.pg_description() cc1] pg_catalog.pg_description() cc1 from (pg_catalog.pg_description()) _xQdbA2)",
-                "select pg_catalog.pg_class() cc, pg_catalog.pg_description() cc from long_sequence(2)"
-        );
+    public void testCursorMultipleDuplicateAliases() throws Exception {
+        assertSyntaxError(
+                "select pg_catalog.pg_class() cc, pg_catalog.pg_description() cc from long_sequence(2)",
+                61,
+                "Duplicate column 'cc'");
     }
 
     @Test
@@ -2833,7 +2864,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testInsertAsSelectDuplicateColumns() throws Exception {
         assertSyntaxError("insert into x (b,b) select * from y",
-                17, "duplicate column name",
+                17, "Duplicate column 'b'",
                 modelOf("x")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.STRING),
@@ -5696,11 +5727,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSelectDuplicateAlias() throws SqlException {
-        assertQuery(
-                "select-choose x, x x1 from (select-choose [x] x from (select [x] from long_sequence(1)))",
-                "select x x, x x from long_sequence(1)"
-        );
+    public void testSelectDuplicateAlias() throws Exception {
+        assertSyntaxError("select x x, x x from long_sequence(1)", 14, "Duplicate column 'x'");
     }
 
     @Test
@@ -5897,10 +5925,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSelectSumSquared() throws SqlException {
-        assertQuery(
-                "select-virtual x, sum * sum x1 from (select-group-by [x, sum(x) sum] x, sum(x) sum from (select [x] from long_sequence(2)))",
-                "select x, sum(x)*sum(x) x from long_sequence(2)"
+    public void testSelectSumSquared() throws Exception {
+        assertSyntaxError(
+                "select x, sum(x)*sum(x) x from long_sequence(2)",
+                24,
+                "Duplicate column 'x'"
         );
     }
 

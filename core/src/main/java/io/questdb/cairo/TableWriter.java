@@ -130,6 +130,7 @@ public class TableWriter implements Closeable {
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
     private final TxnScoreboard txnScoreboard;
     private final StringSink fileNameSink = new StringSink();
+    private final StringSink sink = new StringSink();
     private final FindVisitor removePartitionDirectories = this::removePartitionDirectories0;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final RingQueue<O3PartitionUpdateTask> o3PartitionUpdateQueue;
@@ -393,7 +394,9 @@ public class TableWriter implements Closeable {
         checkDistressed();
 
         if (getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
-            throw CairoException.instance(0).put("Duplicate column name: ").put(name);
+            sink.clear();
+            Chars.toLowerCase(name, sink);
+            throw CairoException.instance(0).put("Duplicate column '").put(sink).put('\'');
         }
 
         commit();

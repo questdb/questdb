@@ -100,10 +100,23 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "update tblx set x = 1, s = 'abc', x = 2",
                 "update tblx set x = 1, s = 'abc', ".length(),
-                "Duplicate column x in SET clause",
+                "Duplicate column 'x' in SET clause",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL)
+                        .timestamp()
+        );
+    }
+
+    @Test
+    public void testUpdateSameColumnTwiceFailsNonAscii() throws Exception {
+        assertSyntaxError(
+                "update tblx set 侘寂 = 1, s = 'abc', 侘寂 = 2",
+                35,
+                "Duplicate column '侘寂' in SET clause",
+                partitionedModelOf("tblx")
+                        .col("侘寂", ColumnType.TIMESTAMP)
                         .col("s", ColumnType.SYMBOL)
                         .timestamp()
         );
