@@ -38,6 +38,8 @@ import java.util.Arrays;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+    private static final int SUM_PADDING = Misc.CACHE_LINE_SIZE / Double.BYTES;
+    private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
 
     private final int columnIndex;
     private final double[] sum;
@@ -49,8 +51,8 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
 
     public KSumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
-        this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
-        this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];
+        this.sum = new double[workerCount * SUM_PADDING];
+        this.count = new long[workerCount * COUNT_PADDING];
         this.workerCount = workerCount;
         if (keyKind == GKK_HOUR_INT) {
             this.distinctFunc = Rosti::keyedHourDistinct;
@@ -67,13 +69,13 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
             // Kahan compensated summation
             final double x = Vect.sumDoubleKahan(address, addressSize / Double.BYTES);
             if (x == x) {
-                final int offset = workerId * Misc.CACHE_LINE_SIZE;
-                final double sum = this.sum[offset];
-                final double y = x - this.sum[offset + 1]; // y = x - c
+                final int sumOffset = workerId * SUM_PADDING;
+                final double sum = this.sum[sumOffset];
+                final double y = x - this.sum[sumOffset + 1]; // y = x - c
                 final double t = sum + y; // t = sum + y
-                this.sum[offset + 1] = t - sum - y; // c = t - sum - y
-                this.sum[offset] = t; // sum = t
-                this.count[offset]++;
+                this.sum[sumOffset + 1] = t - sum - y; // c = t - sum - y
+                this.sum[sumOffset] = t; // sum = t
+                this.count[workerId * COUNT_PADDING]++;
             }
         }
     }
@@ -123,12 +125,11 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
         long count = 0;
         double c = 0;
         for (int i = 0; i < workerCount; i++) {
-            final int offset = i * Misc.CACHE_LINE_SIZE;
-            double y = this.sum[offset] - c;
+            double y = this.sum[i * SUM_PADDING] - c;
             double t = sum + y;
             c = t - sum - y;
             sum = t;
-            count += this.count[offset];
+            count += this.count[i * COUNT_PADDING];
         }
         Rosti.keyedIntKSumDoubleWrapUp(pRosti, valueOffset, sum, count);
     }
@@ -145,12 +146,11 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
         long count = 0;
         double c = 0;
         for (int i = 0; i < workerCount; i++) {
-            final int offset = i * Misc.CACHE_LINE_SIZE;
-            double y = this.sum[offset] - c;
+            double y = this.sum[i * SUM_PADDING] - c;
             double t = sum + y;
             c = t - sum - y;
             sum = t;
-            count += this.count[offset];
+            count += this.count[i * COUNT_PADDING];
         }
         return count > 0 ? sum : Double.NaN;
     }
