@@ -50,8 +50,7 @@ public class CompiledFilterTest extends AbstractGriffinTest {
     public void setUp() {
         // Disable the test suite on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
-        // Enable JIT.
-        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
         super.setUp();
     }
 

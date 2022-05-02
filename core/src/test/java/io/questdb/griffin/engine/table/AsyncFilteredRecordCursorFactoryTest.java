@@ -61,7 +61,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         // We intentionally use a small capacity for the reduce queue to exhibit various edge cases.
         pageFrameReduceQueueCapacity = QUEUE_CAPACITY;
 
-        jitMode = SqlJitMode.JIT_MODE_DISABLED;
         AbstractGriffinTest.setUpStatic();
     }
 

@@ -1218,7 +1218,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         final String jitMode = overrideWithEnv(properties, env, PropertyKey.CAIRO_SQL_JIT_MODE);
 
         if (jitMode == null) {
-            return SqlJitMode.JIT_MODE_DISABLED;
+            return SqlJitMode.JIT_MODE_ENABLED;
         }
 
         if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
@@ -1233,7 +1233,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return SqlJitMode.JIT_MODE_FORCE_SCALAR;
         }
 
-        return SqlJitMode.JIT_MODE_DISABLED;
+        return SqlJitMode.JIT_MODE_ENABLED;
     }
 
     private String getString(Properties properties, @Nullable Map<String, String> env, PropertyKey key, String defaultValue) {

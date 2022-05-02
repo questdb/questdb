@@ -532,7 +532,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlJitMode() {
-        return SqlJitMode.JIT_MODE_DISABLED;
+        return SqlJitMode.JIT_MODE_ENABLED;
     }
 
     @Override
