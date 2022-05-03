@@ -17,20 +17,13 @@ jobs:
           jdk: "1.11"
           testset: "coverage"
           includeTests: "cairo.**.*?"
-        linux-cutlass:
-          imageName: "ubuntu-latest"
-          poolName: "Azure Pipelines"
-          os: Linux
-          jdk: "1.11"
-          testset: "coverage"
-          includeTests: "cutlass.**.*?"
         linux-other:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.11"
           testset: "coverage"
-          excludeTests: "**/griffin/**,**/cairo/**,**/cutlass/**"
+          excludeTests: "**/griffin/**,**/cairo/**"
     pool:
       vmImage: $(imageName)
       name: $(poolName)
