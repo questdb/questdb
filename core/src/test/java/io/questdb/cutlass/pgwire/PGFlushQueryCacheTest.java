@@ -80,7 +80,10 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                 pubSeq.waitForNext();
 
                 long memAfterFlush = Unsafe.getMemUsed();
-                Assert.assertTrue("flush_query_cache() should release native memory", memAfterFlush < memAfterJoin);
+                Assert.assertTrue(
+                        "flush_query_cache() should release native memory: " + memInitial + ", " + memAfterJoin + ", " + memAfterFlush,
+                        memAfterFlush < memAfterJoin
+                );
             }
         });
     }
