@@ -407,6 +407,10 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             return hi;
         }
 
+        public int getLo() {
+            return lo;
+        }
+
         public void setHi(int hi) {
             this.hi = hi;
         }
