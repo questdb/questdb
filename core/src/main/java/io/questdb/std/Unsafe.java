@@ -174,12 +174,8 @@ public final class Unsafe {
         recordMemAlloc(-size, memoryTag);
     }
 
-    public static byte getByte(long address) {
-        return UNSAFE.getByte(address);
-    }
-
     public static boolean getBool(long address) {
-        return getByte(address) == 1;
+        return UNSAFE.getByte(address) == 1;
     }
 
     public static long getFieldOffset(Class<?> clazz, String name) {
