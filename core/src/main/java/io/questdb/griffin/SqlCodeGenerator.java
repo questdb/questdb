@@ -1064,6 +1064,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         }
 
+        // We require timestamp with any order.
         final int timestampIndex = getTimestampIndex(model, factory);
         if (timestampIndex == -1) {
             Misc.free(factory);
@@ -1554,11 +1555,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
-            // we require timestamp
+            // We require timestamp with asc order.
             final int timestampIndex = getTimestampIndex(model, factory);
-            if (timestampIndex == -1) {
+            if (timestampIndex == -1 || factory.hasDescendingOrder()) {
                 Misc.free(factory);
-                throw SqlException.$(model.getModelPosition(), "base query does not provide dedicated TIMESTAMP column");
+                throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over dedicated TIMESTAMP column");
             }
 
             final RecordMetadata metadata = factory.getMetadata();
@@ -2114,10 +2115,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         }
 
+        // We require timestamp with asc order.
         final int timestampIndex = getTimestampIndex(model, factory);
-        if (timestampIndex == -1 && executionContext.isTimestampRequired()) {
+        if (executionContext.isTimestampRequired() && (timestampIndex == -1 || factory.hasDescendingOrder())) {
             Misc.free(factory);
-            throw SqlException.$(model.getModelPosition(), "TIMESTAMP column is required but not provided");
+            throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
         }
 
         final IntList columnCrossIndex = new IntList(selectColumnCount);

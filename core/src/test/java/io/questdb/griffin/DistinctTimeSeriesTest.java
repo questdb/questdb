@@ -40,7 +40,7 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " rnd_symbol('msft','ibm','googl') sym," +
                             " round(rnd_double(0)*100, 3) amt," +
                             " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                             " rnd_boolean() b," +
@@ -92,7 +92,7 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " rnd_symbol('msft','ibm','googl') sym," +
                             " round(rnd_double(0)*100, 3) amt," +
                             " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                             " rnd_boolean() b," +
@@ -141,11 +141,40 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " rnd_symbol('msft','ibm','googl') sym," +
                         " timestamp_sequence(500000000000L,330000000L) ts" +
                         " from long_sequence(10)" +
                         ") timestamp (ts) partition by DAY",
                 "ts",
+                true,
+                false,
+                false
+        ));
+    }
+
+    @Test
+    public void testTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "i\tsym\tts\n" +
+                        "10\tibm\t1970-01-06T19:42:50.000000Z\n" +
+                        "9\tmsft\t1970-01-06T19:37:20.000000Z\n" +
+                        "8\tibm\t1970-01-06T19:31:50.000000Z\n" +
+                        "7\tgoogl\t1970-01-06T19:26:20.000000Z\n" +
+                        "6\tgoogl\t1970-01-06T19:20:50.000000Z\n" +
+                        "5\tgoogl\t1970-01-06T19:15:20.000000Z\n" +
+                        "4\tgoogl\t1970-01-06T19:09:50.000000Z\n" +
+                        "3\tibm\t1970-01-06T19:04:20.000000Z\n" +
+                        "2\tmsft\t1970-01-06T18:58:50.000000Z\n" +
+                        "1\tmsft\t1970-01-06T18:53:20.000000Z\n",
+                "select distinct * from (x order by ts desc)",
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm','googl') sym," +
+                        " timestamp_sequence(500000000000L,330000000L) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp (ts) partition by DAY",
+                "ts###DESC",
                 true,
                 false,
                 false

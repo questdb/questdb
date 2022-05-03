@@ -29,7 +29,7 @@ import org.junit.Test;
 /*
  * This class tests various distinct with order by and limit combinations.
  */
-public class DistinctWhitLimitTest extends AbstractGriffinTest {
+public class DistinctWithLimitTest extends AbstractGriffinTest {
 
     @Test
     public void testDistinctWithLimitOnLongColumn() throws Exception {
