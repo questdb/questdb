@@ -937,7 +937,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 for (int i = 1; i < numOfColumns; i++) {
                     sendToSocket(socket, tableName + ",abcdefghijklmnopqrs=x, " + rnd.nextString(13-(int) Math.log10(i)) + i + "=32 " + i + "\n");
                 }
-                finished.await(10_000_000_000L);
+                finished.await(30_000_000_000L);
             } finally {
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 });
@@ -947,6 +947,51 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
             Assert.assertEquals(numOfColumns+1, reader.getMetadata().getColumnCount());
         }
+    }
+
+    @Test
+    public void testColumnTypeStaysTheSameWhileColumnAdded() throws Exception {
+        final String tableName = "weather";
+        final int numOfRows = 2000;
+
+        try (TableModel m = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+            m.col("abcdef", ColumnType.SYMBOL).timestamp("ts");
+            CairoTestUtils.createTable(m);
+        }
+
+        final SOCountDownLatch finished = new SOCountDownLatch(1);
+        runInContext(receiver -> {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
+                    if (name.equals(tableName)) {
+                        finished.countDown();
+                    }
+                }
+            });
+
+            new Thread(() -> {
+                try (Socket socket = getSocket()) {
+                    for (int i = 0; i < numOfRows; i++) {
+                        String value = (i % 2 == 0) ? "\"test" + i + "\"" : "" + i;
+                        sendToSocket(socket, tableName + ",abcdef=x col=" + value + "\n");
+                    }
+                } catch (Exception e) {
+                    Assert.fail("Data sending failed [e=" + e + "]");
+                    throw new RuntimeException(e);
+                }
+            }).start();
+
+            finished.await(20_000_000_000L);
+            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            });
+
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(numOfRows / 2, reader.getTransientRowCount());
+            } catch (Exception e) {
+                Assert.fail("Reader failed [e=" + e + "]");
+                throw new RuntimeException(e);
+            }
+        }, false, 250);
     }
 
     private void send(LineTcpReceiver receiver, String lineData, String tableName, int wait) {
