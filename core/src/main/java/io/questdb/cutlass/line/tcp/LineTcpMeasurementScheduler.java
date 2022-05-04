@@ -48,6 +48,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 
 class LineTcpMeasurementScheduler implements Closeable {
     private static final Log LOG = LogFactory.getLog(LineTcpMeasurementScheduler.class);
+    private final DefaultColumnTypes defaultColumnTypes;
     private final CairoEngine engine;
     private final CairoSecurityContext securityContext;
     private final RingQueue<LineTcpMeasurementEvent>[] queue;
@@ -77,7 +78,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         CairoConfiguration cairoConfiguration = engine.getConfiguration();
         this.configuration = lineConfiguration;
         MillisecondClock milliClock = cairoConfiguration.getMillisecondClock();
-        DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
+        this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
         int n = ioWorkerPool.getWorkerCount();
         this.netIoJobs = new NetworkIOJob[n];
         this.tableNameSinks = new StringSink[n];
@@ -378,7 +379,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                 // writer allocation fails
                 engine.getWriter(securityContext, tableNameUtf16, "tcpIlp"),
                 threadId,
-                netIoJobs
+                netIoJobs,
+                defaultColumnTypes
         );
         tableUpdateDetailsUtf16.putAt(tudKeyIndex, tableUpdateDetails.getTableNameUtf16(), tableUpdateDetails);
         LOG.info().$("assigned ").$(tableNameUtf16).$(" to thread ").$(threadId).$();
