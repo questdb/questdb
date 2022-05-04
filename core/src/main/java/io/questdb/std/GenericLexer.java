@@ -170,7 +170,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         next = null;
     }
 
-    public void unStash() {
+    public void unstash() {
         int count = parkedPosition.pop();
         _pos = parkedPosition.pop();
 

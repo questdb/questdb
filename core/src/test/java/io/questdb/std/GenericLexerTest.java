@@ -404,7 +404,7 @@ public class GenericLexerTest {
 
         Assert.assertNull(SqlUtil.fetchNext(lexer));
 
-        lexer.unStash();
+        lexer.unstash();
 
         blue = SqlUtil.fetchNext(lexer);
         blueLast = lexer.lastTokenPosition();

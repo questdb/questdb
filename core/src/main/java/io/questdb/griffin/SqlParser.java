@@ -1690,7 +1690,7 @@ public final class SqlParser {
         // this will not throw exception because this is second pass over the same sub-query
         // we wouldn't be here is syntax was wrong
         m = parseAsSubQueryAndExpectClosingBrace(lexer, withClauses);
-        lexer.unStash();
+        lexer.unstash();
         return m;
     }
 
