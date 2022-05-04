@@ -24,18 +24,29 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietClosable;
 import io.questdb.tasks.TableWriterTask;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class UpdateOperation extends AbstractOperation implements QuietClosable {
+    public static final int WRITER_CLOSED_INCREMENT = 10;
+    public static final int SENDER_CLOSED_INCREMENT = 7;
+    public static final int FULLY_CLOSED_STATE = WRITER_CLOSED_INCREMENT + SENDER_CLOSED_INCREMENT;
+    private final AtomicInteger closeState = new AtomicInteger();
     private RecordCursorFactory factory;
     private SqlExecutionContext sqlExecutionContext;
+    private volatile boolean requesterTimeout = false;
+    private boolean executingAsync;
+    private SqlExecutionCircuitBreaker circuitBreaker;
 
     public UpdateOperation(
             String tableName,
@@ -60,7 +71,39 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
 
     @Override
     public void close() {
-        factory = Misc.free(factory);
+        requesterTimeout = true;
+        if (!executingAsync || closeState.addAndGet(SENDER_CLOSED_INCREMENT) == FULLY_CLOSED_STATE) {
+            factory = Misc.free(factory);
+        }
+    }
+
+    public void closeWriter() {
+        if (executingAsync && closeState.addAndGet(WRITER_CLOSED_INCREMENT) == FULLY_CLOSED_STATE) {
+            factory = Misc.free(factory);
+        }
+    }
+
+    public boolean isWriterClosePending() {
+        return executingAsync && closeState.get() != WRITER_CLOSED_INCREMENT;
+    }
+
+    public void start() {
+        executingAsync = false;
+        closeState.set(0);
+        requesterTimeout = false;
+    }
+
+    @Override
+    public void startAsync() {
+        this.executingAsync = true;
+    }
+
+    public void testTimeout() {
+        if (requesterTimeout) {
+            throw CairoException.instance(0).put("requester timed out, update aborted").setInterruption(true);
+        }
+
+        circuitBreaker.test();
     }
 
     public RecordCursorFactory getFactory() {
@@ -75,5 +118,6 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
 
     public void withContext(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
+        this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
     }
 }

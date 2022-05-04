@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TimeoutSqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
@@ -66,7 +67,7 @@ class OperationFutureImpl implements OperationFuture {
             await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
         }
         if (status != QUERY_COMPLETE) {
-            throw SqlException.$(tableNamePositionInSql, "Timeout expired on waiting for the async command execution result [cmdCorrelationId=").put(cmdCorrelationId).put(']');
+            throw TimeoutSqlException.timeout("Timeout expired on waiting for the async command execution result [cmdCorrelationId=").put(cmdCorrelationId).put(']');
         }
     }
 
@@ -124,8 +125,6 @@ class OperationFutureImpl implements OperationFuture {
             final long correlationId = engine.getCommandCorrelationId();
             asyncWriterCommand.setCommandCorrelationId(correlationId);
 
-            // todo: deep copy execution context
-
             try (TableWriter writer = engine.getWriterOrPublishCommand(
                     executionContext.getCairoSecurityContext(),
                     tableName,
@@ -145,6 +144,7 @@ class OperationFutureImpl implements OperationFuture {
                             .$(",tableName=").$(tableName)
                             .$(",instance=").$(correlationId)
                             .I$();
+                    asyncWriterCommand.startAsync();
                     affectedRowsCount = 0;
                     status = QUERY_NO_RESPONSE;
                 }

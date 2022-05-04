@@ -33,7 +33,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.WeakAutoClosableObjectPool;
 
 public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
-    CompiledQueryImpl compiledQuery;
+    private final CompiledQueryImpl compiledQuery;
 
     public TypesAndUpdate(WeakAutoClosableObjectPool<TypesAndUpdate> parentPool, CairoEngine engine) {
         super(parentPool);
@@ -54,6 +54,6 @@ public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
     @Override
     public void close() {
         super.close();
-        Misc.free(compiledQuery.getUpdateOperation());
+        this.compiledQuery.ofUpdate(Misc.free(compiledQuery.getUpdateOperation()));
     }
 }

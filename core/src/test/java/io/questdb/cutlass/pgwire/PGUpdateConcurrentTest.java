@@ -120,21 +120,124 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     create.close();
                 }
 
-                try (TableWriter ignore = engine.getWriter(
+                TableWriter lockedWriter = engine.getWriter(
                         sqlExecutionContext.getCairoSecurityContext(),
                         "testUpdateTimeout",
-                        "test")) {
+                        "test");
 
-                    try (final Connection connection = getConnection(false, true)) {
-                        try (PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ?")) {
-                            update.setInt(1, 4);
-                            update.executeUpdate();
-                            Assert.fail();
-                        } catch (PSQLException ex) {
-                            TestUtils.assertContains(ex.getMessage(), "Timeout expired");
-                        }
+                try (final Connection connection = getConnection(false, true)) {
+                    PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? WHERE x != 4");
+                    update.setInt(1, 4);
+
+                    try {
+                        update.executeUpdate();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "Timeout expired");
+                    }
+
+                    lockedWriter.close();
+                    update.setInt(1, 5);
+                    update.executeUpdate();
+                    update.close();
+                }
+
+                assertSql("testUpdateTimeout", "ts\tx\n" +
+                        "1970-01-01T00:00:00.000000Z\t5\n" +
+                        "1970-01-01T00:00:01.000000Z\t5\n" +
+                        "1970-01-01T00:00:02.000000Z\t5\n" +
+                        "1970-01-01T00:00:03.000000Z\t5\n" +
+                        "1970-01-01T00:00:04.000000Z\t5\n");
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateWithQueryTimeout() throws Exception {
+        assertMemoryLeak(() -> {
+            writerAsyncCommandBusyWaitTimeout = 20_000_000L; // On in CI Windows updates are particularly slow
+            writerAsyncCommandMaxTimeout = 30_000_000L;
+            try (PGWireServer ignore1 = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, true)) {
+                    PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
+                            " (select timestamp_sequence(0, 60 * 1000000L) ts," +
+                            " 0 as x" +
+                            " from long_sequence(2000))" +
+                            " timestamp(ts)" +
+                            " partition by DAY");
+                    create.execute();
+                    create.close();
+                }
+
+                TableWriter lockedWriter = engine.getWriter(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        "testUpdateTimeout",
+                        "test");
+
+                // Non-simple connection
+                try (final Connection connection = getConnection(false, true, 1L)) {
+                    PreparedStatement update = connection.prepareStatement("" +
+                            "UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
+                    update.setQueryTimeout(1);
+                    update.setInt(1, 4);
+
+                    try {
+                        update.executeUpdate();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "timeout");
+                    }
+
+                    lockedWriter.close();
+
+                    // Check that timeout of 1ms is too tough anyway to execute even with writer closed
+                    try {
+                        update.executeUpdate();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "timeout");
                     }
                 }
+
+                lockedWriter = engine.getWriter(
+                        sqlExecutionContext.getCairoSecurityContext(),
+                        "testUpdateTimeout",
+                        "test");
+
+                // Simple connection
+                try (final Connection connection = getConnection(true, true, 1L)) {
+                    PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
+                    update.setQueryTimeout(1);
+                    update.setInt(1, 4);
+
+                    try {
+                        update.executeUpdate();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "timeout");
+                    }
+
+                    lockedWriter.close();
+
+                    // Check that timeout of 1ms is too tough anyway to execute even with writer closed
+                    try {
+                        update.executeUpdate();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        TestUtils.assertContains(ex.getMessage(), "timeout");
+                    }
+                }
+
+                // Connection with default timeout
+                try (final Connection connection = getConnection(false, true)) {
+                    PreparedStatement update = connection.prepareStatement("UPDATE testUpdateTimeout SET x = ? FROM tables() WHERE x != 4");
+                    update.setInt(1, 5);
+                    update.executeUpdate();
+                }
+
+                assertSql("select count() from testUpdateTimeout where x = 5",
+                        "count\n" +
+                                "2000\n");
             }
         });
     }

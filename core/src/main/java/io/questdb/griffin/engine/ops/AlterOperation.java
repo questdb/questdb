@@ -164,6 +164,10 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
     }
 
     @Override
+    public void startAsync() {
+    }
+
+    @Override
     public void clear() {
         command = DO_NOTHING;
         objCharList.clear();

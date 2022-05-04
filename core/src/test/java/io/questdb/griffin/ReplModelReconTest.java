@@ -1474,6 +1474,10 @@ public class ReplModelReconTest extends AbstractGriffinTest {
                 public String getCommandName() {
                     return "SYNC";
                 }
+
+                @Override
+                public void startAsync() {
+                }
             };
 
             try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, cmd)) {

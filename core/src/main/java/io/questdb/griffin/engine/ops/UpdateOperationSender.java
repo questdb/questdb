@@ -45,16 +45,16 @@ public class UpdateOperationSender implements OperationSender<UpdateOperation> {
     }
 
     public OperationFuture execute(UpdateOperation operation, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+        // storing execution context for UPDATE execution
+        // writer thread will call `apply()` when thread is ready to do so
+        // `apply()` will use context stored in the operation
+        operation.withContext(sqlExecutionContext);
         try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), operation.getTableName(), "sync 'UPDATE' execution")) {
             return doneFuture.of(writer.getUpdateOperator().executeUpdate(sqlExecutionContext, operation));
         } catch (EntryUnavailableException busyException) {
             if (eventSubSeq == null) {
                 throw busyException;
             }
-            // storing execution context for asynchronous execution
-            // writer thread will call `apply()` when thread is ready to do so
-            // `apply()` will use context stored in the operation
-            operation.withContext(sqlExecutionContext);
             updateFuture.of(operation, sqlExecutionContext, eventSubSeq, operation.getTableNamePosition());
             return updateFuture;
         } catch (ReaderOutOfDateException e) {

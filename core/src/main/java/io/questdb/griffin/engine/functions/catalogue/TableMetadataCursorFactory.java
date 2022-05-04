@@ -98,10 +98,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            if (null != path) {
-                path.close();
-                path = null;
-            }
+            path = Misc.free(path);
         }
 
         @Override

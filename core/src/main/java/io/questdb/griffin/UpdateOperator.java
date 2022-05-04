@@ -87,9 +87,10 @@ public class UpdateOperator implements Closeable {
 
         LOG.info().$("updating [table=").$(tableWriter.getTableName()).I$();
 
-        final int tableId = op.getTableId();
-        final long tableVersion = op.getTableVersion();
-        final RecordCursorFactory factory = op.getFactory();
+        try {
+            final int tableId = op.getTableId();
+            final long tableVersion = op.getTableVersion();
+            final RecordCursorFactory factory = op.getFactory();
 
         cleanupColumnVersions.clear();
 
@@ -127,10 +128,11 @@ public class UpdateOperator implements Closeable {
         int partitionIndex = -1;
         long rowsUpdated = 0;
 
-        // Row by row updates for now
-        // This should happen parallel per file (partition and column)
-        try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
-            Record masterRecord = recordCursor.getRecord();
+            op.testTimeout();
+            // Row by row updates for now
+            // This should happen parallel per file (partition and column)
+            try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
+                Record masterRecord = recordCursor.getRecord();
 
             long prevRow = 0;
             // We're assuming, but not enforcing the fact that
@@ -195,6 +197,8 @@ public class UpdateOperator implements Closeable {
 
                 prevRow = currentRow + 1;
                 rowsUpdated++;
+
+                op.testTimeout();
             }
 
             if (partitionIndex > -1) {
@@ -219,19 +223,27 @@ public class UpdateOperator implements Closeable {
             dstColumns.clear();
         }
 
-        if (partitionIndex > -1) {
-            rebuildIndexes(tableName, writerMetadata, tableWriter);
-            tableWriter.commit();
-            tableWriter.openLastPartition();
-            purgeOldColumnVersions(tableWriter, updateColumnIndexes, ff);
+            if (partitionIndex > -1) {
+                rebuildIndexes(tableName, writerMetadata, tableWriter);
+                op.testTimeout();
+                tableWriter.commit();
+                tableWriter.openLastPartition();
+                purgeOldColumnVersions(tableWriter, updateColumnIndexes, ff);
+            }
+
+            LOG.info().$("update finished [table=").$(tableName)
+                    .$(", updated=").$(rowsUpdated)
+                    .$(", txn=").$(tableWriter.getTxn())
+                    .I$();
+
+            return rowsUpdated;
+        } catch (Throwable th) {
+            LOG.error().$("UPDATE failed: ").$(th).$();
+            tableWriter.rollbackColumnVersions();
+            throw th;
+        } finally {
+            op.closeWriter();
         }
-
-        LOG.info().$("update finished [table=").$(tableName)
-                .$(", updated=").$(rowsUpdated)
-                .$(", txn=").$(tableWriter.getTxn())
-                .I$();
-
-        return rowsUpdated;
     }
 
     private static void updateEffectiveColumnTops(

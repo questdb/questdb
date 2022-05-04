@@ -22,31 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin;
 
-import io.questdb.cairo.AlterTableContextException;
-import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlException;
-import io.questdb.tasks.TableWriterTask;
+import io.questdb.std.ThreadLocal;
 
-public interface AsyncWriterCommand {
-    long apply(TableWriter tableWriter, boolean contextAllowsAnyStructureChanges) throws SqlException, AlterTableContextException;
+public class TimeoutSqlException extends SqlException {
+    private static final ThreadLocal<TimeoutSqlException> tlException = new ThreadLocal<>(TimeoutSqlException::new);
 
-    AsyncWriterCommand deserialize(TableWriterTask task);
-
-    String getCommandName();
-
-    int getTableId();
-
-    String getTableName();
-
-    int getTableNamePosition();
-
-    long getTableVersion();
-
-    void startAsync();
-
-    void serialize(TableWriterTask task);
-
-    void setCommandCorrelationId(long correlationId);
+    public static TimeoutSqlException timeout(CharSequence message) {
+        TimeoutSqlException ex = tlException.get();
+        ex.put(message);
+        return ex;
+    }
 }

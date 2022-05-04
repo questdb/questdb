@@ -1318,6 +1318,7 @@ public class TableWriter implements Closeable {
                 this.txWriter.unsafeLoadAll();
                 rollbackIndexes();
                 rollbackSymbolTables();
+                rollbackColumnVersions();
                 purgeUnusedPartitions();
                 configureAppendPosition();
                 o3InError = false;
@@ -1331,6 +1332,10 @@ public class TableWriter implements Closeable {
                 distressed = true;
             }
         }
+    }
+
+    public void rollbackColumnVersions() {
+        columnVersionWriter.readUnsafe();
     }
 
     public void setExtensionListener(ExtensionListener listener) {

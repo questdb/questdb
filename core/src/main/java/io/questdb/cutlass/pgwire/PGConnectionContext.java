@@ -45,6 +45,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT;
@@ -112,7 +113,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final long sendBuffer;
     private final int recvBufferSize;
     private final CharacterStore characterStore;
-    private final BindVariableService bindVariableService;
+    private BindVariableService bindVariableService;
     private final long sendBufferLimit;
     private final int sendBufferSize;
     private final ResponseAsciiSink responseAsciiSink = new ResponseAsciiSink();
@@ -122,7 +123,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final boolean dumpNetworkTraffic;
     private final String serverVersion;
     private final PGAuthenticator authenticator;
-    private final SqlExecutionContextImpl sqlExecutionContext;
+    private SqlExecutionContextImpl sqlExecutionContext;
     private final Path path = new Path();
     private final IntList bindVariableTypes = new IntList();
     private final IntList selectColumnTypes = new IntList();
@@ -158,6 +159,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private long recvBufferReadOffset = 0;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
+    private long statementTimeoutMs = -1L;
     private RecordCursor currentCursor = null;
     private RecordCursorFactory currentFactory = null;
     // these references are held by context only for a period of processing single request
@@ -314,6 +316,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         clearCursorAndFactory();
         totalReceived = 0;
         typesAndUpdateIsCached = false;
+        statementTimeoutMs = -1L;
+        circuitBreaker.resetToDefault();
     }
 
     public void clearWriters() {
@@ -1337,23 +1341,75 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void executeUpdate0() throws SqlException {
         final CompiledQuery cq = typesAndUpdate.getCompiledQuery();
         final UpdateOperation op = cq.getUpdateOperation();
+        op.start();
+
         // check if there is pending writer, which would be pending if there is active transaction
         // when we have writer, execution is synchronous
         final int index = pendingWriters.keyIndex(op.getTableName());
         if (index < 0) {
             try {
+                op.withContext(sqlExecutionContext);
                 pendingWriters.valueAt(index).getUpdateOperator().executeUpdate(sqlExecutionContext, op);
             } catch (ReaderOutOfDateException e) {
                 // todo: investigate and handle
                 e.printStackTrace();
             }
         } else {
+            if (statementTimeoutMs > 0) {
+                circuitBreaker.setMaxTime(statementTimeoutMs);
+            }
+
             // execute against writer from the engine, or async
             try (OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, tempSequence)) {
-                fut.await();
+                if (statementTimeoutMs > 0) {
+                    if (fut.await(statementTimeoutMs * 1000L) != QUERY_COMPLETE) {
+                        // Timeout
+                        if (op.isWriterClosePending()) {
+                            // Writer has not tried to execute the command
+                            freeUpdateCommand(op);
+                        }
+                        throw SqlException.$(0, "UPDATE query timeout ").put(statementTimeoutMs).put(" ms");
+                    }
+                } else {
+                    // Default timeouts, can be different for select and update part
+                    fut.await();
+                }
                 rowCount = fut.getAffectedRowsCount();
+            } catch (TimeoutSqlException ex) {
+                // After timeout, TableWriter can still use the UpdateCommand and Execution Context
+                if (op.isWriterClosePending()) {
+                    freeUpdateCommand(op);
+                }
+                throw ex;
+            } catch (SqlException | CairoException ex) {
+                // These exceptions mean the UpdateOperation cannot be used by writer anymore, and it's safe to re-use it.
+                throw ex;
+            } catch (Throwable ex) {
+                // Unknown exception, assume TableWriter can still use the UpdateCommand and Execution Context
+                if (op.isWriterClosePending()) {
+                    freeUpdateCommand(op);
+                }
+                throw ex;
             }
         }
+    }
+
+    private void freeUpdateCommand(UpdateOperation op) {
+        // Create a copy of sqlExecutionContext here
+        bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
+        SqlExecutionContextImpl newSqlExecutionContext = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount());
+        newSqlExecutionContext.with(
+                sqlExecutionContext.getCairoSecurityContext(),
+                bindVariableService,
+                sqlExecutionContext.getRandom(),
+                sqlExecutionContext.getRequestFd(),
+                circuitBreaker
+        );
+        sqlExecutionContext = newSqlExecutionContext;
+
+        // Do not cache, let last closing party free the resources
+        op.close();
+        typesAndUpdate = null;
     }
 
     @Nullable
@@ -2058,13 +2114,35 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
                     // store user
                     dbcs.of(nameLo, nameHi);
+                    boolean parsed = true;
                     if (Chars.equals(dbcs, "user")) {
                         CharacterStoreEntry e = characterStore.newEntry();
                         e.put(dbcs.of(valueLo, valueHi));
                         this.username = e.toImmutable();
                     }
 
-                    LOG.info().$("property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
+                    // store statement_timeout
+                    if (Chars.equals(dbcs, "options")) {
+                        dbcs.of(valueLo, valueHi);
+                        if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
+                            try {
+                                this.statementTimeoutMs = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
+                                if (this.statementTimeoutMs > 0) {
+                                    circuitBreaker.setMaxTime(statementTimeoutMs);
+                                }
+                            } catch (NumericException ex) {
+                                parsed = false;
+                            }
+                        } else {
+                            parsed = false;
+                        }
+                    }
+
+                    if (parsed) {
+                        LOG.info().$("property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
+                    } else {
+                        LOG.info().$("invalid property [name=").$(dbcs.of(nameLo, nameHi)).$(", value=").$(dbcs.of(valueLo, valueHi)).$(']').$();
+                    }
                 }
 
                 characterStore.clear();

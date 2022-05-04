@@ -6086,6 +6086,10 @@ create table tab as (
         });
     }
 
+    static {
+        LogFactory.configureSync();
+    }
+
     @Test
     public void testUpdateNoAutoCommit() throws Exception {
         assertMemoryLeak(() -> {
