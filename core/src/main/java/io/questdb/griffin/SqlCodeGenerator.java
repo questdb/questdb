@@ -921,6 +921,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     );
                                 }
                                 masterAlias = null;
+                                validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 break;
                             case JOIN_LT:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
@@ -966,6 +967,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     );
                                 }
                                 masterAlias = null;
+                                validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 break;
                             case JOIN_SPLICE:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
@@ -990,6 +992,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             ),
                                             masterMetadata.getColumnCount()
                                     );
+                                    validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 } else {
                                     assert false;
                                 }
@@ -3424,6 +3427,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (slaveMetadata.getTimestampIndex() == -1) {
             throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
+        }
+    }
+
+    private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {
+        if (masterFactory.hasDescendingOrder()) {
+            throw SqlException.$(position, "left side of time series join has DESC timestamp order");
+        }
+
+        if (slaveFactory.hasDescendingOrder()) {
+            throw SqlException.$(position, "right side of time series join has DESC timestamp order");
         }
     }
 
