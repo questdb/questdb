@@ -537,6 +537,28 @@ public class UpdateBasicTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateDuplicateColumnShouldFail() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table tabula as (" +
+                            "   select " +
+                            "     timestamp_sequence(0, 1000000) ts," +
+                            "     cast(x as int) x," +
+                            "     cast(x as int) y" +
+                            "   from long_sequence(5)" +
+                            ") timestamp(ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            executeUpdateFails(
+                    "UPDATE tabula SET x = 1, x = 3",
+                    25,
+                    "Duplicate column 'x' in SET clause"
+            );
+        });
+    }
+
+    @Test
     public void testUpdateOnAlteredTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
