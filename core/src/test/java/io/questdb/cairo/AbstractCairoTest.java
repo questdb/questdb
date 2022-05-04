@@ -204,8 +204,6 @@ public class AbstractCairoTest {
 
             @Override
             public int getSqlJitMode() {
-                // JIT compiler is a beta feature and thus is disabled by default,
-                // but we want to have it enabled in tests.
                 return jitMode;
             }
 
