@@ -35,6 +35,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -204,6 +205,20 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             true
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testStrippingRowId() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x (a int)", sqlExecutionContext);
+            RecordCursorFactory factory  = compiler.compile("select * from '*!*x'", sqlExecutionContext).getRecordCursorFactory();
+            Assert.assertNotNull(factory);
+            try {
+                Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
+            } finally {
+                Misc.free(factory);
             }
         });
     }
