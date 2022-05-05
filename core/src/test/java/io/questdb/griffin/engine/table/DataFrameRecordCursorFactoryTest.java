@@ -110,7 +110,8 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                         null,
                         false,
                         columnIndexes,
-                        columnSizes
+                        columnSizes,
+                        true
                 );
                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllCairoSecurityContext.INSTANCE, null, null, -1, null);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -236,7 +237,8 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                         null,
                         true,
                         columnIndexes,
-                        columnSizes
+                        columnSizes,
+                        true
                 );
 
                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(
@@ -353,7 +355,8 @@ public class DataFrameRecordCursorFactoryTest extends AbstractCairoTest {
                         null,
                         true,
                         columnIndexes,
-                        columnSizes
+                        columnSizes,
+                        true
                 );
 
                 SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(

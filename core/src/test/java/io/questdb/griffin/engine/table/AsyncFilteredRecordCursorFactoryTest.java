@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
@@ -66,19 +67,33 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNoLimit() throws Exception {
-        testNoLimit(SqlJitMode.JIT_MODE_DISABLED, io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class);
+        testNoLimit(true, SqlJitMode.JIT_MODE_DISABLED, io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class);
     }
 
     @Test
     public void testNoLimitJit() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
-        testNoLimit(SqlJitMode.JIT_MODE_ENABLED, io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.class);
+        testNoLimit(true, SqlJitMode.JIT_MODE_ENABLED, io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.class);
+    }
+
+    @Test
+    public void testNoLimitDisabledParallelFilterJit() throws Exception {
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        // JIT should be ignored since it's only supported for parallel filters.
+        testNoLimit(false, SqlJitMode.JIT_MODE_ENABLED, io.questdb.griffin.engine.table.FilteredRecordCursorFactory.class);
+    }
+
+    @Test
+    public void testNoLimitDisabledParallelFilterNonJit() throws Exception {
+        testNoLimit(false, SqlJitMode.JIT_MODE_DISABLED, io.questdb.griffin.engine.table.FilteredRecordCursorFactory.class);
     }
 
     @Test
     public void testPositiveLimit() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575 limit 5";
             try (RecordCursorFactory f = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
@@ -213,15 +228,15 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSimpleJit() throws Exception {
+    public void testPageFrameSequenceJit() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
-        testSimple(SqlJitMode.JIT_MODE_ENABLED, io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.class);
+        testPageFrameSequence(SqlJitMode.JIT_MODE_ENABLED, io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.class);
     }
 
     @Test
-    public void testSimpleNonJit() throws Exception {
-        testSimple(SqlJitMode.JIT_MODE_DISABLED, io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class);
+    public void testPageFrameSequenceNonJit() throws Exception {
+        testPageFrameSequence(SqlJitMode.JIT_MODE_DISABLED, io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class);
     }
 
     @Test
@@ -239,7 +254,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         testFullQueue("x where a > 0.42 limit -3");
     }
 
-    private void testNoLimit(int jitMode, Class<?> expectedFactoryClass) throws Exception {
+    private void testNoLimit(boolean enableParallelFilter, int jitMode, Class<?> expectedFactoryClass) throws Exception {
+        AbstractCairoTest.enableParallelFilter = enableParallelFilter;
         withPool((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(jitMode);
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
@@ -264,9 +280,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         });
     }
 
-    private void testSimple(int jitMode, Class<?> expectedFactoryClass) throws Exception {
+    private void testPageFrameSequence(int jitMode, Class<?> expectedFactoryClass) throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
-
             sqlExecutionContext.setJitMode(jitMode);
 
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
@@ -300,6 +315,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         pageFrameMaxRows = pageFrameRows;
 
         withPool((engine, compiler, sqlExecutionContext) -> {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
             compiler.compile("create table x as (" +
                     "  select rnd_double() a," +
                     "  timestamp_sequence(0, 100000) t from long_sequence(" + (10 * pageFrameRows * QUEUE_CAPACITY) + ")" +

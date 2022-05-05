@@ -5525,10 +5525,46 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByTimestampAscOrder() throws Exception {
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) sample by 2m",
+                "select x,sum(y) from (tab order by ts asc) sample by 2m",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testSampleByTimestampDescOrder() throws Exception {
+        assertSyntaxError("select x,sum(y) from (tab order by ts desc) sample by 2m",
+                7,
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testSampleByTimestampDescOrderVirtualColumn() throws Exception {
+        assertSyntaxError("select sum(x) from (select x+1 as x, ts from (tab order by ts desc)) sample by 2m",
+                7,
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testSampleByUndefinedTimestamp() throws Exception {
         assertSyntaxError("select x,sum(y) from tab sample by 2m",
                 7,
-                "base query does not provide dedicated TIMESTAMP column",
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -5539,7 +5575,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByUndefinedTimestampWithDistinct() throws Exception {
         assertSyntaxError("select x,sum(y) from (select distinct x, y from tab) sample by 2m",
                 7,
-                "base query does not provide dedicated TIMESTAMP column",
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -5547,10 +5583,40 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByTimestampAscOrderWithJoin() throws Exception {
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select-choose [tab.x x, y] tab.x x, y from (select [x, y] from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) tab join select [x] from tab2 on tab2.x = tab.x) tab) tab sample by 2m",
+                "select tab.x,sum(y) from (tab order by ts asc) tab join tab2 on (x) sample by 2m",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts"),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testSampleByTimestampDescOrderWithJoin() throws Exception {
+        assertSyntaxError("select tab.x,sum(y) from (tab order by ts desc) tab join tab2 on (x) sample by 2m",
+                0,
+                "ASC order over TIMESTAMP column is required but not provided",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts"),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
     public void testSampleByUndefinedTimestampWithJoin() throws Exception {
         assertSyntaxError("select tab.x,sum(y) from tab join tab2 on (x) sample by 2m",
                 0,
-                "TIMESTAMP column is required but not provided",
+                "ASC order over TIMESTAMP column is required but not provided",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT),

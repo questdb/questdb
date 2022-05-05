@@ -2067,8 +2067,9 @@ public class SqlCompiler implements Closeable {
     }
 
     private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
-        try (final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
-             final RecordCursor cursor = factory.getCursor(executionContext)
+        try (
+                final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
+                final RecordCursor cursor = factory.getCursor(executionContext)
         ) {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
@@ -2422,7 +2423,7 @@ public class SqlCompiler implements Closeable {
                 }
 
                 if (writerTimestampIndex > -1 && cursorTimestampIndex > -1 && writerTimestampIndex != cursorTimestampIndex) {
-                    throw SqlException.$(name.position, "nominated column of existing table (").put(writerTimestampIndex).put(") does not match nominated column in select query (").put(cursorTimestampIndex).put(')');
+                    throw SqlException.$(name.position, "designated timestamp of existing table (").put(writerTimestampIndex).put(") does not match designated timestamp in select query (").put(cursorTimestampIndex).put(')');
                 }
                 timestampIndexFound = writerTimestampIndex;
 

@@ -559,10 +559,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testJsonRecordTypeSelect() throws Exception {
-        testJsonQuery(
-                1,
-                "GET /exec?limit=0%2C1000&explain=true&count=true&src=con&query=%0D%0A%0D%0A%0D%0Aselect%20pg_catalog.pg_class()%20x%2C%20(pg_catalog.pg_class()).relnamespace%20from%20long_sequence(2) HTTP/1.1\r\n" +
+    public void testExpNull() throws Exception {
+        testJsonQuery(0, "GET /exp?query=select+null+from+long_sequence(1)&limit=1&src=con HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -573,20 +571,23 @@ public class IODispatcherTest {
                         "Referer: http://localhost:9000/index.html\r\n" +
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.392867896.1580123365\r\n" +
                         "\r\n",
                 "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "011d\r\n" +
-                        "{\"query\":\"\\r\\n\\r\\n\\r\\nselect pg_catalog.pg_class() x, (pg_catalog.pg_class()).relnamespace from long_sequence(2)\",\"columns\":[{\"name\":\"x1\",\"type\":\"RECORD\"},{\"name\":\"column\",\"type\":\"INT\"}],\"dataset\":[[null,11],[null,2200],[null,11],[null,2200]],\"count\":4,\"explain\":{\"jitCompiled\":false}}\r\n" +
+                        "0a\r\n" +
+                        "\"null\"\r\n" +
+                        "\r\n" +
+                        "\r\n" +
                         "00\r\n" +
                         "\r\n"
-        );
+                , 1);
     }
 
     @Test
@@ -1408,6 +1409,178 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testImportGeoHashesForExistingTable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine) -> {
+                            SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
+                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                                compiler.compile("create table test (geo1 geohash(1c), geo2 geohash(3c), geo4 geohash(6c), geo8 geohash(12c), geo2b geohash(2b))", executionContext);
+
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "POST /upload?name=test&forceHeader=true HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "User-Agent: curl/7.71.1\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "Content-Length: 372\r\n" +
+                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                                "\r\n" +
+                                                "geo1,geo2,geo4,geo8,geo2b\r\n" +
+                                                "null,null,null,null,null\r\n" +
+                                                "questdb1234567890,questdb1234567890,questdb1234567890,questdb1234567890,questdb1234567890\r\n" +
+                                                "u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/plain; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "0666\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                                "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|   Rows handled  |                                                 3  |                 |         |              |\r\n" +
+                                                "|  Rows imported  |                                                 3  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|              0  |                                              geo1  |              GEOHASH(1c)  |           0  |\r\n" +
+                                                "|              1  |                                              geo2  |              GEOHASH(3c)  |           0  |\r\n" +
+                                                "|              2  |                                              geo4  |              GEOHASH(6c)  |           0  |\r\n" +
+                                                "|              3  |                                              geo8  |             GEOHASH(12c)  |           0  |\r\n" +
+                                                "|              4  |                                             geo2b  |              GEOHASH(2b)  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false,
+                                        true
+                                );
+
+                                StringSink sink = new StringSink();
+                                TestUtils.assertSql(
+                                        compiler,
+                                        executionContext,
+                                        "test",
+                                        sink,
+                                        "geo1\tgeo2\tgeo4\tgeo8\tgeo2b\n" +
+                                                "\t\t\t\t\n" +
+                                                "q\tque\tquestd\tquestdb12345\t10\n" +
+                                                "u\tu10\tu10m99\tu10m99dd3pbj\t11\n"
+                                );
+                            }
+                        }
+                );
+    }
+
+    @Test
+    public void testImportGeoHashesForNewTable() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine) -> {
+                            SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
+                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "POST /upload?name=test&forceHeader=true HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "User-Agent: curl/7.71.1\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "Content-Length: 372\r\n" +
+                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"schema\"\r\n" +
+                                                "\r\n" +
+                                                "[\r\n" +
+                                                "{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"},\r\n" +
+                                                "{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"},\r\n" +
+                                                "{\"name\":\"geo4\",\"type\":\"GEOHASH(6c)\"},\r\n" +
+                                                "{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"},\r\n" +
+                                                "{\"name\":\"geo2b\",\"type\":\"GEOHASH(2b)\"}\r\n" +
+                                                "]\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                                "\r\n" +
+                                                "geo1,geo2,geo4,geo8,geo2b\r\n" +
+                                                "null,null,null,null,null\r\n" +
+                                                "questdb1234567890,questdb1234567890,questdb1234567890,questdb1234567890,questdb1234567890\r\n" +
+                                                "u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/plain; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "0666\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                                "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|   Rows handled  |                                                 3  |                 |         |              |\r\n" +
+                                                "|  Rows imported  |                                                 3  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|              0  |                                              geo1  |              GEOHASH(1c)  |           0  |\r\n" +
+                                                "|              1  |                                              geo2  |              GEOHASH(3c)  |           0  |\r\n" +
+                                                "|              2  |                                              geo4  |              GEOHASH(6c)  |           0  |\r\n" +
+                                                "|              3  |                                              geo8  |             GEOHASH(12c)  |           0  |\r\n" +
+                                                "|              4  |                                             geo2b  |              GEOHASH(2b)  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false,
+                                        true
+                                );
+
+                                StringSink sink = new StringSink();
+                                TestUtils.assertSql(
+                                        compiler,
+                                        executionContext,
+                                        "test",
+                                        sink,
+                                        "geo1\tgeo2\tgeo4\tgeo8\tgeo2b\n" +
+                                                "\t\t\t\t\n" +
+                                                "q\tque\tquestd\tquestdb12345\t10\n" +
+                                                "u\tu10\tu10m99\tu10m99dd3pbj\t11\n"
+                                );
+                            }
+                        }
+                );
+    }
+
+    @Test
     public void testImportMultipleOnSameConnection()
             throws Exception {
         testImport(
@@ -1981,207 +2154,36 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testImportGeoHashesForExistingTable() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(2)
-                .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder()
-                                .withNetwork(NetworkFacadeImpl.INSTANCE)
-                                .withDumpingTraffic(false)
-                                .withAllowDeflateBeforeSend(false)
-                                .withHttpProtocolVersion("HTTP/1.1 ")
-                                .withServerKeepAlive(true)
-                )
-                .run((engine) -> {
-                            SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
-                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                                compiler.compile("create table test (geo1 geohash(1c), geo2 geohash(3c), geo4 geohash(6c), geo8 geohash(12c), geo2b geohash(2b))", executionContext);
-
-                                sendAndReceive(
-                                        NetworkFacadeImpl.INSTANCE,
-                                        "POST /upload?name=test&forceHeader=true HTTP/1.1\r\n" +
-                                                "Host: localhost:9000\r\n" +
-                                                "User-Agent: curl/7.71.1\r\n" +
-                                                "Accept: */*\r\n" +
-                                                "Content-Length: 372\r\n" +
-                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                                                "\r\n" +
-                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
-                                                "\r\n" +
-                                                "geo1,geo2,geo4,geo8,geo2b\r\n" +
-                                                "null,null,null,null,null\r\n" +
-                                                "questdb1234567890,questdb1234567890,questdb1234567890,questdb1234567890,questdb1234567890\r\n" +
-                                                "u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj\r\n" +
-                                                "\r\n" +
-                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: text/plain; charset=utf-8\r\n" +
-                                                "\r\n" +
-                                                "0666\r\n" +
-                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
-                                                "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
-                                                "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
-                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                                "|   Rows handled  |                                                 3  |                 |         |              |\r\n" +
-                                                "|  Rows imported  |                                                 3  |                 |         |              |\r\n" +
-                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                                "|              0  |                                              geo1  |              GEOHASH(1c)  |           0  |\r\n" +
-                                                "|              1  |                                              geo2  |              GEOHASH(3c)  |           0  |\r\n" +
-                                                "|              2  |                                              geo4  |              GEOHASH(6c)  |           0  |\r\n" +
-                                                "|              3  |                                              geo8  |             GEOHASH(12c)  |           0  |\r\n" +
-                                                "|              4  |                                             geo2b  |              GEOHASH(2b)  |           0  |\r\n" +
-                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                                "\r\n" +
-                                                "00\r\n" +
-                                                "\r\n",
-                                        1,
-                                        0,
-                                        false,
-                                        true
-                                );
-
-                                StringSink sink = new StringSink();
-                                TestUtils.assertSql(
-                                        compiler,
-                                        executionContext,
-                                        "test",
-                                        sink,
-                                        "geo1\tgeo2\tgeo4\tgeo8\tgeo2b\n" +
-                                                "\t\t\t\t\n" +
-                                                "q\tque\tquestd\tquestdb12345\t10\n" +
-                                                "u\tu10\tu10m99\tu10m99dd3pbj\t11\n"
-                                );
-                            }
-                        }
-                );
-    }
-
-    @Test
-    public void testImportGeoHashesForNewTable() throws Exception {
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(2)
-                .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder()
-                                .withNetwork(NetworkFacadeImpl.INSTANCE)
-                                .withDumpingTraffic(false)
-                                .withAllowDeflateBeforeSend(false)
-                                .withHttpProtocolVersion("HTTP/1.1 ")
-                                .withServerKeepAlive(true)
-                )
-                .run((engine) -> {
-                            SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
-                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                                sendAndReceive(
-                                        NetworkFacadeImpl.INSTANCE,
-                                        "POST /upload?name=test&forceHeader=true HTTP/1.1\r\n" +
-                                                "Host: localhost:9000\r\n" +
-                                                "User-Agent: curl/7.71.1\r\n" +
-                                                "Accept: */*\r\n" +
-                                                "Content-Length: 372\r\n" +
-                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                                                "\r\n" +
-                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                                                "Content-Disposition: form-data; name=\"schema\"\r\n" +
-                                                "\r\n" +
-                                                "[\r\n" +
-                                                "{\"name\":\"geo1\",\"type\":\"GEOHASH(1c)\"},\r\n" +
-                                                "{\"name\":\"geo2\",\"type\":\"GEOHASH(3c)\"},\r\n" +
-                                                "{\"name\":\"geo4\",\"type\":\"GEOHASH(6c)\"},\r\n" +
-                                                "{\"name\":\"geo8\",\"type\":\"GEOHASH(12c)\"},\r\n" +
-                                                "{\"name\":\"geo2b\",\"type\":\"GEOHASH(2b)\"}\r\n" +
-                                                "]\r\n" +
-                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
-                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
-                                                "\r\n" +
-                                                "geo1,geo2,geo4,geo8,geo2b\r\n" +
-                                                "null,null,null,null,null\r\n" +
-                                                "questdb1234567890,questdb1234567890,questdb1234567890,questdb1234567890,questdb1234567890\r\n" +
-                                                "u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj,u10m99dd3pbj\r\n" +
-                                                "\r\n" +
-                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: text/plain; charset=utf-8\r\n" +
-                                                "\r\n" +
-                                                "0666\r\n" +
-                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
-                                                "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
-                                                "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
-                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                                "|   Rows handled  |                                                 3  |                 |         |              |\r\n" +
-                                                "|  Rows imported  |                                                 3  |                 |         |              |\r\n" +
-                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                                "|              0  |                                              geo1  |              GEOHASH(1c)  |           0  |\r\n" +
-                                                "|              1  |                                              geo2  |              GEOHASH(3c)  |           0  |\r\n" +
-                                                "|              2  |                                              geo4  |              GEOHASH(6c)  |           0  |\r\n" +
-                                                "|              3  |                                              geo8  |             GEOHASH(12c)  |           0  |\r\n" +
-                                                "|              4  |                                             geo2b  |              GEOHASH(2b)  |           0  |\r\n" +
-                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                                                "\r\n" +
-                                                "00\r\n" +
-                                                "\r\n",
-                                        1,
-                                        0,
-                                        false,
-                                        true
-                                );
-
-                                StringSink sink = new StringSink();
-                                TestUtils.assertSql(
-                                        compiler,
-                                        executionContext,
-                                        "test",
-                                        sink,
-                                        "geo1\tgeo2\tgeo4\tgeo8\tgeo2b\n" +
-                                                "\t\t\t\t\n" +
-                                                "q\tque\tquestd\tquestdb12345\t10\n" +
-                                                "u\tu10\tu10m99\tu10m99dd3pbj\t11\n"
-                                );
-                            }
-                        }
-                );
-    }
-
-    @Test
-    public void testJsonExpNull() throws Exception {
-        testJsonQuery(0, "GET /exp?query=select+null+from+long_sequence(1)&limit=1&src=con HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
+    public void testJsonNullColumnType() throws Exception {
+        testJsonQuery(0,
+                "GET /query?limit=0%2C1000&explain=true&count=true&src=con&query=%0D%0A%0D%0A%0D%0ASELECT%20*%20FROM%20(%0D%0A%20%20SELECT%20%0D%0A%20%20%20%20n.nspname%0D%0A%20%20%20%20%2Cc.relname%0D%0A%20%20%20%20%2Ca.attname%0D%0A%20%20%20%20%2Ca.atttypid%0D%0A%20%20%20%20%2Ca.attnotnull%20OR%20(t.typtype%20%3D%20%27d%27%20AND%20t.typnotnull)%20AS%20attnotnull%0D%0A%20%20%20%20%2Ca.atttypmod%0D%0A%20%20%20%20%2Ca.attlen%0D%0A%20%20%20%20%2Ct.typtypmod%0D%0A%20%20%20%20%2Crow_number()%20OVER%20(PARTITION%20BY%20a.attrelid%20ORDER%20BY%20a.attnum)%20AS%20attnum%0D%0A%20%20%20%20%2C%20nullif(a.attidentity%2C%20%27%27)%20as%20attidentity%0D%0A%20%20%20%20%2Cnull%20as%20attgenerated%0D%0A%20%20%20%20%2Cpg_catalog.pg_get_expr(def.adbin%2C%20def.adrelid)%20AS%20adsrc%0D%0A%20%20%20%20%2Cdsc.description%0D%0A%20%20%20%20%2Ct.typbasetype%0D%0A%20%20%20%20%2Ct.typtype%20%20%0D%0A%20%20FROM%20pg_catalog.pg_namespace%20n%0D%0A%20%20JOIN%20pg_catalog.pg_class%20c%20ON%20(c.relnamespace%20%3D%20n.oid)%0D%0A%20%20JOIN%20pg_catalog.pg_attribute%20a%20ON%20(a.attrelid%3Dc.oid)%0D%0A%20%20JOIN%20pg_catalog.pg_type%20t%20ON%20(a.atttypid%20%3D%20t.oid)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_attrdef%20def%20ON%20(a.attrelid%3Ddef.adrelid%20AND%20a.attnum%20%3D%20def.adnum)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_description%20dsc%20ON%20(c.oid%3Ddsc.objoid%20AND%20a.attnum%20%3D%20dsc.objsubid)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_class%20dc%20ON%20(dc.oid%3Ddsc.classoid%20AND%20dc.relname%3D%27pg_class%27)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_namespace%20dn%20ON%20(dc.relnamespace%3Ddn.oid%20AND%20dn.nspname%3D%27pg_catalog%27)%0D%0A%20%20WHERE%20%0D%0A%20%20%20%20c.relkind%20in%20(%27r%27%2C%27p%27%2C%27v%27%2C%27f%27%2C%27m%27)%0D%0A%20%20%20%20and%20a.attnum%20%3E%200%20%0D%0A%20%20%20%20AND%20NOT%20a.attisdropped%0D%0A%20%20%20%20AND%20c.relname%20LIKE%20E%27x%27%0D%0A%20%20)%20c%20WHERE%20true%0D%0A%20%20ORDER%20BY%20nspname%2Cc.relname%2Cattnum HTTP/1.1\r\n" +
                         "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.392867896.1580123365\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cookie: _ga=GA1.1.1723668823.1636741549\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Referer: http://localhost:9000/\r\n" +
+                        "Sec-Fetch-Dest: empty\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36\r\n" +
+                        "sec-ch-ua: \" Not A;Brand\";v=\"99\", \"Chromium\";v=\"100\", \"Google Chrome\";v=\"100\"\r\n" +
+                        "sec-ch-ua-mobile: ?0\r\n" +
+                        "sec-ch-ua-platform: \"Windows\"\r\n" +
                         "\r\n",
                 "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0a\r\n" +
-                        "\"null\"\r\n" +
-                        "\r\n" +
-                        "\r\n" +
+                        "0a7d\r\n" +
+                        "{\"query\":\"\\r\\n\\r\\n\\r\\nSELECT * FROM (\\r\\n  SELECT \\r\\n    n.nspname\\r\\n    ,c.relname\\r\\n    ,a.attname\\r\\n    ,a.atttypid\\r\\n    ,a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull\\r\\n    ,a.atttypmod\\r\\n    ,a.attlen\\r\\n    ,t.typtypmod\\r\\n    ,row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum\\r\\n    , nullif(a.attidentity, '') as attidentity\\r\\n    ,null as attgenerated\\r\\n    ,pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc\\r\\n    ,dsc.description\\r\\n    ,t.typbasetype\\r\\n    ,t.typtype  \\r\\n  FROM pg_catalog.pg_namespace n\\r\\n  JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid)\\r\\n  JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid)\\r\\n  JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid)\\r\\n  LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum)\\r\\n  LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)\\r\\n  LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class')\\r\\n  LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')\\r\\n  WHERE \\r\\n    c.relkind in ('r','p','v','f','m')\\r\\n    and a.attnum > 0 \\r\\n    AND NOT a.attisdropped\\r\\n    AND c.relname LIKE E'x'\\r\\n  ) c WHERE true\\r\\n  ORDER BY nspname,c.relname,attnum\",\"columns\":[{\"name\":\"nspname\",\"type\":\"STRING\"},{\"name\":\"relname\",\"type\":\"STRING\"},{\"name\":\"attname\",\"type\":\"STRING\"},{\"name\":\"atttypid\",\"type\":\"INT\"},{\"name\":\"attnotnull\",\"type\":\"BOOLEAN\"},{\"name\":\"atttypmod\",\"type\":\"INT\"},{\"name\":\"attlen\",\"type\":\"SHORT\"},{\"name\":\"typtypmod\",\"type\":\"INT\"},{\"name\":\"attnum\",\"type\":\"LONG\"},{\"name\":\"attidentity\",\"type\":\"STRING\"},{\"name\":\"attgenerated\",\"type\":\"STRING\"},{\"name\":\"adsrc\",\"type\":\"STRING\"},{\"name\":\"description\",\"type\":\"STRING\"},{\"name\":\"typbasetype\",\"type\":\"INT\"},{\"name\":\"typtype\",\"type\":\"CHAR\"}],\"dataset\":[[\"public\",\"x\",\"a\",21,false,0,2,0,0,null,null,null,null,0,\"b\"],[\"public\",\"x\",\"b\",21,false,0,2,0,1,null,null,null,null,0,\"b\"],[\"public\",\"x\",\"c\",23,false,0,4,0,2,null,null,null,null,0,\"b\"],[\"public\",\"x\",\"d\",20,false,0,8,0,3,null,null,null,null,0,\"b\"],[\"public\",\"x\",\"e\",1114,false,0,-1,0,4,null,null,null,null,0,\"b\"],[\"public\",\"x\",\"f\",1114,false,0,-1,0,5,null,null,null,null,0,\"b\"],[\"public\",\"x\",\"g\",700,false,0,4,0,6,null,null,null,null,0,\"b\"],[\"public\",\"x\",\"h\",701,false,0,8,0,7,null,null,null,null,0,\"b\"],[\"public\",\"x\",\"i\",1043,false,0,-1,0,8,null,null,null,null,0,\"b\"],[\"public\",\"x\",\"j\",1043,false,0,-1,0,9,null,null,null,null,0,\"b\"],[\"public\",\"x\",\"k\",16,false,0,1,0,10,null,null,null,null,0,\"b\"],[\"public\",\"x\",\"l\",17,false,0,-1,0,11,null,null,null,null,0,\"b\"]],\"count\":12,\"explain\":{\"jitCompiled\":false}}\r\n" +
                         "00\r\n" +
                         "\r\n"
-                , 1);
+                , 10);
     }
 
     @Test
@@ -3043,64 +3045,6 @@ public class IODispatcherTest {
                         "00\r\n" +
                         "\r\n"
         );
-    }
-
-    @Test
-    public void testTextQueryGeoHashColumnChars() throws Exception {
-        testHttpQueryGeoHashColumnChars(
-                "GET /exp?query=SELECT+*+FROM+y HTTP/1.1\r\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Cache-Control: max-age=0\r\n" +
-                        "Upgrade-Insecure-Requests: 1\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                        "Accept: */*\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
-                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "90\r\n" +
-                        "\"geo1\",\"geo2\",\"geo4\",\"geo8\",\"geo01\"\r\n" +
-                        "null,null,\"questd\",\"u10m99dd3pbj\",\"1\"\r\n" +
-                        "\"u\",\"u10\",\"questd\",null,\"1\"\r\n" +
-                        "\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"\r\n" +
-                        "\r\n" +
-                        "00\r\n" +
-                        "\r\n"
-        );
-    }
-
-    private void testHttpQueryGeoHashColumnChars(String request, String expectedResponse) throws Exception {
-        new HttpQueryTestBuilder()
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
-                        .withSendBufferSize(16 * 1024)
-                        .withConfiguredMaxQueryResponseRowLimit(configuredMaxQueryResponseRowLimit)
-                )
-                .withTempFolder(temp)
-                .run(engine -> {
-                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
-                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                        compiler.compile("create table y as (\n" +
-                                "select\n" +
-                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1c)) geo1,\n" +
-                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(3c)) geo2,\n" +
-                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(6c)) geo4,\n" +
-                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(12c)) geo8," +
-                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1b)) geo01\n" +
-                                "from long_sequence(3)\n" +
-                                ")", executionContext);
-
-                        new SendAndReceiveRequestBuilder().execute(request, expectedResponse);
-                    }
-                });
     }
 
     @Test
@@ -4594,6 +4538,37 @@ public class IODispatcherTest {
                         "\r\n" +
                         "0185\r\n" +
                         "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[],\"count\":0}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testJsonRecordTypeSelect() throws Exception {
+        testJsonQuery(
+                1,
+                "GET /exec?limit=0%2C1000&explain=true&count=true&src=con&query=%0D%0A%0D%0A%0D%0Aselect%20pg_catalog.pg_class()%20x%2C%20(pg_catalog.pg_class()).relnamespace%20from%20long_sequence(2) HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "011d\r\n" +
+                        "{\"query\":\"\\r\\n\\r\\n\\r\\nselect pg_catalog.pg_class() x, (pg_catalog.pg_class()).relnamespace from long_sequence(2)\",\"columns\":[{\"name\":\"x1\",\"type\":\"RECORD\"},{\"name\":\"column\",\"type\":\"INT\"}],\"dataset\":[[null,11],[null,2200],[null,11],[null,2200]],\"count\":4,\"explain\":{\"jitCompiled\":false}}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -6248,6 +6223,38 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testTextQueryGeoHashColumnChars() throws Exception {
+        testHttpQueryGeoHashColumnChars(
+                "GET /exp?query=SELECT+*+FROM+y HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "90\r\n" +
+                        "\"geo1\",\"geo2\",\"geo4\",\"geo8\",\"geo01\"\r\n" +
+                        "null,null,\"questd\",\"u10m99dd3pbj\",\"1\"\r\n" +
+                        "\"u\",\"u10\",\"questd\",null,\"1\"\r\n" +
+                        "\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
     public void testTextQueryInsertViaWrongEndpoint() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)
@@ -6261,72 +6268,68 @@ public class IODispatcherTest {
                                 .withServerKeepAlive(true)
                 )
                 .run((engine) -> {
-                            SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
-                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
-                                sendAndReceive(
-                                        NetworkFacadeImpl.INSTANCE,
-                                        "GET /exec?query=create%20table%20tab%20(x%20int) HTTP/1.1\r\n" +
-                                                "Host: localhost:9000\r\n" +
-                                                "Connection: keep-alive\r\n" +
-                                                "Accept: */*\r\n" +
-                                                "X-Requested-With: XMLHttpRequest\r\n" +
-                                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                                                "Sec-Fetch-Site: same-origin\r\n" +
-                                                "Sec-Fetch-Mode: cors\r\n" +
-                                                "Referer: http://localhost:9000/index.html\r\n" +
-                                                "Accept-Encoding: gzip, deflate, br\r\n" +
-                                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                                "\r\n",
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: application/json; charset=utf-8\r\n" +
-                                                "Keep-Alive: timeout=5, max=10000\r\n" +
-                                                "\r\n" +
-                                                JSON_DDL_RESPONSE,
-                                        1,
-                                        0,
-                                        false,
-                                        true
-                                );
+                            sendAndReceive(
+                                    NetworkFacadeImpl.INSTANCE,
+                                    "GET /exec?query=create%20table%20tab%20(x%20int) HTTP/1.1\r\n" +
+                                            "Host: localhost:9000\r\n" +
+                                            "Connection: keep-alive\r\n" +
+                                            "Accept: */*\r\n" +
+                                            "X-Requested-With: XMLHttpRequest\r\n" +
+                                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                            "Sec-Fetch-Site: same-origin\r\n" +
+                                            "Sec-Fetch-Mode: cors\r\n" +
+                                            "Referer: http://localhost:9000/index.html\r\n" +
+                                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                            "\r\n",
+                                    "HTTP/1.1 200 OK\r\n" +
+                                            "Server: questDB/1.0\r\n" +
+                                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                            "Transfer-Encoding: chunked\r\n" +
+                                            "Content-Type: application/json; charset=utf-8\r\n" +
+                                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                                            "\r\n" +
+                                            JSON_DDL_RESPONSE,
+                                    1,
+                                    0,
+                                    false,
+                                    true
+                            );
 
-                                sendAndReceive(
-                                        NetworkFacadeImpl.INSTANCE,
-                                        "GET /exp?query=insert%20into%20tab%20value%20(1) HTTP/1.1\r\n" +
-                                                "Host: localhost:9000\r\n" +
-                                                "Connection: keep-alive\r\n" +
-                                                "Accept: */*\r\n" +
-                                                "X-Requested-With: XMLHttpRequest\r\n" +
-                                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                                                "Sec-Fetch-Site: same-origin\r\n" +
-                                                "Sec-Fetch-Mode: cors\r\n" +
-                                                "Referer: http://localhost:9000/index.html\r\n" +
-                                                "Accept-Encoding: gzip, deflate, br\r\n" +
-                                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                                "\r\n",
-                                        "HTTP/1.1 400 Bad request\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: text/csv; charset=utf-8\r\n" +
-                                                "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                                                "Keep-Alive: timeout=5, max=10000\r\n" +
-                                                "\r\n" +
-                                                "5b\r\n" +
-                                                "{\"query\":\"insert into tab value (1)\",\"error\":\"'select' or 'values' expected\",\"position\":16}\r\n" +
-                                                "00\r\n" +
-                                                "\r\n",
-                                        1,
-                                        0,
-                                        false,
-                                        true
-                                );
-                            }
+                            sendAndReceive(
+                                    NetworkFacadeImpl.INSTANCE,
+                                    "GET /exp?query=insert%20into%20tab%20value%20(1) HTTP/1.1\r\n" +
+                                            "Host: localhost:9000\r\n" +
+                                            "Connection: keep-alive\r\n" +
+                                            "Accept: */*\r\n" +
+                                            "X-Requested-With: XMLHttpRequest\r\n" +
+                                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                            "Sec-Fetch-Site: same-origin\r\n" +
+                                            "Sec-Fetch-Mode: cors\r\n" +
+                                            "Referer: http://localhost:9000/index.html\r\n" +
+                                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                            "\r\n",
+                                    "HTTP/1.1 400 Bad request\r\n" +
+                                            "Server: questDB/1.0\r\n" +
+                                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                            "Transfer-Encoding: chunked\r\n" +
+                                            "Content-Type: text/csv; charset=utf-8\r\n" +
+                                            "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                                            "\r\n" +
+                                            "5b\r\n" +
+                                            "{\"query\":\"insert into tab value (1)\",\"error\":\"'select' or 'values' expected\",\"position\":16}\r\n" +
+                                            "00\r\n" +
+                                            "\r\n",
+                                    1,
+                                    0,
+                                    false,
+                                    true
+                            );
                         }
                 );
     }
-
 
     @Test
     public void testTextQueryPseudoRandomStability() throws Exception {
@@ -6961,6 +6964,32 @@ public class IODispatcherTest {
                 expectedMaxUncommittedRows,
                 expectedImportedRows,
                 expectedData);
+    }
+
+    private void testHttpQueryGeoHashColumnChars(String request, String expectedResponse) throws Exception {
+        new HttpQueryTestBuilder()
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
+                        .withSendBufferSize(16 * 1024)
+                        .withConfiguredMaxQueryResponseRowLimit(configuredMaxQueryResponseRowLimit)
+                )
+                .withTempFolder(temp)
+                .run(engine -> {
+                    SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
+                    try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                        compiler.compile("create table y as (\n" +
+                                "select\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1c)) geo1,\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(3c)) geo2,\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(6c)) geo4,\n" +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(12c)) geo8," +
+                                "cast(rnd_str(null, 'questdb1234567890', 'u10m99dd3pbj') as geohash(1b)) geo01\n" +
+                                "from long_sequence(3)\n" +
+                                ")", executionContext);
+
+                        new SendAndReceiveRequestBuilder().execute(request, expectedResponse);
+                    }
+                });
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {

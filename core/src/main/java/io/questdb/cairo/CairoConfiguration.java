@@ -186,6 +186,8 @@ public interface CairoConfiguration {
 
     int getO3PurgeDiscoveryQueueCapacity();
 
+    boolean isSqlParallelFilterEnabled();
+
     int getPageFrameReduceQueueCapacity();
 
     int getPageFrameReduceShardCount();
