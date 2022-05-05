@@ -84,6 +84,7 @@ public class AbstractCairoTest {
     protected static int rndFunctionMemoryMaxPages = -1;
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
+    protected static Boolean enableParallelFilter = null;
     protected static int queryCacheEventQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
@@ -278,6 +279,11 @@ public class AbstractCairoTest {
             public int getPageFrameReduceQueueCapacity() {
                 return pageFrameReduceQueueCapacity < 0 ? super.getPageFrameReduceQueueCapacity() : pageFrameReduceQueueCapacity;
             }
+
+            @Override
+            public boolean isSqlParallelFilterEnabled() {
+                return enableParallelFilter != null ? enableParallelFilter : super.isSqlParallelFilterEnabled();
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -323,6 +329,7 @@ public class AbstractCairoTest {
         spinLockTimeoutUs = -1;
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
+        enableParallelFilter = null;
         hideTelemetryTable = false;
         writerCommandQueueCapacity = 4;
         queryCacheEventQueueCapacity = -1;
