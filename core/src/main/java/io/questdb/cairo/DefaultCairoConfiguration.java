@@ -379,6 +379,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelFilterEnabled() {
+        return true;
+    }
+
+    @Override
     public int getPageFrameReduceQueueCapacity() {
         return 32;
     }
