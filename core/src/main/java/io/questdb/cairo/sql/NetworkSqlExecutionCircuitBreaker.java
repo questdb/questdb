@@ -37,8 +37,9 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final int throttle;
     private final int bufferSize;
     private final MicrosecondClock microsecondClock;
-    private final long maxTime;
+    private final long defaultMaxTime;
     private final SqlExecutionCircuitBreakerConfiguration configuration;
+    private long maxTime;
     private long buffer;
     private int testCount;
     private long fd = -1;
@@ -57,6 +58,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         } else {
             this.maxTime = Long.MAX_VALUE;
         }
+        this.defaultMaxTime = this.maxTime;
     }
 
     @Override
@@ -74,6 +76,14 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public long getFd() {
         return fd;
+    }
+
+    public void resetMaxTimeToDefault() {
+        this.maxTime = defaultMaxTime;
+    }
+
+    public void setMaxTime(long maxTime) {
+        this.maxTime = maxTime;
     }
 
     @Override

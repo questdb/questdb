@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietClosable;
@@ -103,7 +103,7 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
             throw CairoException.instance(0).put("requester timed out, update aborted").setInterruption(true);
         }
 
-        circuitBreaker.test();
+        circuitBreaker.statefulThrowExceptionIfTripped();
     }
 
     public RecordCursorFactory getFactory() {

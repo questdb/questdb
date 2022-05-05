@@ -92,41 +92,41 @@ public class UpdateOperator implements Closeable {
             final long tableVersion = op.getTableVersion();
             final RecordCursorFactory factory = op.getFactory();
 
-        cleanupColumnVersions.clear();
+            cleanupColumnVersions.clear();
 
-        final String tableName = tableWriter.getTableName();
-        if (tableWriter.inTransaction()) {
-            LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableName).I$();
-            tableWriter.commit();
-        }
+            final String tableName = tableWriter.getTableName();
+            if (tableWriter.inTransaction()) {
+                LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableName).I$();
+                tableWriter.commit();
+            }
 
-        TableWriterMetadata writerMetadata = tableWriter.getMetadata();
+            TableWriterMetadata writerMetadata = tableWriter.getMetadata();
 
-        // Check that table structure hasn't changed between planning and executing the UPDATE
-        if (writerMetadata.getId() != tableId || tableWriter.getStructureVersion() != tableVersion) {
-            throw ReaderOutOfDateException.of(tableName);
-        }
+            // Check that table structure hasn't changed between planning and executing the UPDATE
+            if (writerMetadata.getId() != tableId || tableWriter.getStructureVersion() != tableVersion) {
+                throw ReaderOutOfDateException.of(tableName);
+            }
 
-        // Select the rows to be updated
-        final RecordMetadata updateMetadata = factory.getMetadata();
-        final int affectedColumnCount = updateMetadata.getColumnCount();
+            // Select the rows to be updated
+            final RecordMetadata updateMetadata = factory.getMetadata();
+            final int affectedColumnCount = updateMetadata.getColumnCount();
 
-        // Build index column map from table to update to values returned from the update statement row cursors
-        updateColumnIndexes.clear();
-        for (int i = 0; i < affectedColumnCount; i++) {
-            CharSequence columnName = updateMetadata.getColumnName(i);
-            int tableColumnIndex = writerMetadata.getColumnIndex(columnName);
-            assert tableColumnIndex >= 0;
-            updateColumnIndexes.add(tableColumnIndex);
-        }
+            // Build index column map from table to update to values returned from the update statement row cursors
+            updateColumnIndexes.clear();
+            for (int i = 0; i < affectedColumnCount; i++) {
+                CharSequence columnName = updateMetadata.getColumnName(i);
+                int tableColumnIndex = writerMetadata.getColumnIndex(columnName);
+                assert tableColumnIndex >= 0;
+                updateColumnIndexes.add(tableColumnIndex);
+            }
 
-        // Create update memory list of all columns to be updated
-        configureColumns(writerMetadata, affectedColumnCount);
+            // Create update memory list of all columns to be updated
+            configureColumns(writerMetadata, affectedColumnCount);
 
-        // Start execution frame by frame
-        // Partition to update
-        int partitionIndex = -1;
-        long rowsUpdated = 0;
+            // Start execution frame by frame
+            // Partition to update
+            int partitionIndex = -1;
+            long rowsUpdated = 0;
 
             op.testTimeout();
             // Row by row updates for now
@@ -134,94 +134,94 @@ public class UpdateOperator implements Closeable {
             try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
                 Record masterRecord = recordCursor.getRecord();
 
-            long prevRow = 0;
-            // We're assuming, but not enforcing the fact that
-            // factory produces rows in incrementing order.
-            // todo: enforce
-            long minRow = -1L;
-            long lastRowId = Long.MAX_VALUE;
-            while (recordCursor.hasNext()) {
-                long rowId = masterRecord.getUpdateRowId();
+                long prevRow = 0;
+                // We're assuming, but not enforcing the fact that
+                // factory produces rows in incrementing order.
+                // todo: enforce
+                long minRow = -1L;
+                long lastRowId = Long.MAX_VALUE;
+                while (recordCursor.hasNext()) {
+                    long rowId = masterRecord.getUpdateRowId();
 
-                // Some joins expand results set and returns same row multiple times
-                if (rowId == lastRowId) {
-                    continue;
-                }
-                lastRowId = rowId;
+                    // Some joins expand results set and returns same row multiple times
+                    if (rowId == lastRowId) {
+                        continue;
+                    }
+                    lastRowId = rowId;
 
-                final int rowPartitionIndex = Rows.toPartitionIndex(rowId);
-                final long currentRow = Rows.toLocalRowID(rowId);
+                    final int rowPartitionIndex = Rows.toPartitionIndex(rowId);
+                    final long currentRow = Rows.toLocalRowID(rowId);
 
-                if (rowPartitionIndex != partitionIndex) {
-                    LOG.info()
-                            .$("updating partition [partitionIndex=").$(partitionIndex)
-                            .$(", rowPartitionIndex=").$(rowPartitionIndex)
-                            .$(", rowPartitionTs=").$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
-                            .$(", affectedColumnCount=").$(affectedColumnCount)
-                            .$(", prevRow=").$(prevRow)
-                            .$(", minRow=").$(minRow)
-                            .I$();
-                    if (partitionIndex > -1) {
-                        copyColumns(
-                                partitionIndex,
-                                affectedColumnCount,
-                                prevRow,
-                                minRow
-                        );
+                    if (rowPartitionIndex != partitionIndex) {
+                        LOG.info()
+                                .$("updating partition [partitionIndex=").$(partitionIndex)
+                                .$(", rowPartitionIndex=").$(rowPartitionIndex)
+                                .$(", rowPartitionTs=").$ts(tableWriter.getPartitionTimestamp(rowPartitionIndex))
+                                .$(", affectedColumnCount=").$(affectedColumnCount)
+                                .$(", prevRow=").$(prevRow)
+                                .$(", minRow=").$(minRow)
+                                .I$();
+                        if (partitionIndex > -1) {
+                            copyColumns(
+                                    partitionIndex,
+                                    affectedColumnCount,
+                                    prevRow,
+                                    minRow
+                            );
 
-                        updateEffectiveColumnTops(
-                                tableWriter,
-                                partitionIndex,
-                                updateColumnIndexes,
-                                affectedColumnCount,
-                                minRow
-                        );
+                            updateEffectiveColumnTops(
+                                    tableWriter,
+                                    partitionIndex,
+                                    updateColumnIndexes,
+                                    affectedColumnCount,
+                                    minRow
+                            );
+                        }
+
+                        openColumns(srcColumns, rowPartitionIndex, false);
+                        openColumns(dstColumns, rowPartitionIndex, true);
+
+                        partitionIndex = rowPartitionIndex;
+                        prevRow = 0;
+                        minRow = currentRow;
                     }
 
-                    openColumns(srcColumns, rowPartitionIndex, false);
-                    openColumns(dstColumns, rowPartitionIndex, true);
+                    appendRowUpdate(
+                            rowPartitionIndex,
+                            affectedColumnCount,
+                            prevRow,
+                            currentRow,
+                            masterRecord,
+                            minRow
+                    );
 
-                    partitionIndex = rowPartitionIndex;
-                    prevRow = 0;
-                    minRow = currentRow;
+                    prevRow = currentRow + 1;
+                    rowsUpdated++;
+
+                    op.testTimeout();
                 }
 
-                appendRowUpdate(
-                        rowPartitionIndex,
-                        affectedColumnCount,
-                        prevRow,
-                        currentRow,
-                        masterRecord,
-                        minRow
-                );
+                if (partitionIndex > -1) {
+                    copyColumns(partitionIndex, affectedColumnCount, prevRow, minRow);
 
-                prevRow = currentRow + 1;
-                rowsUpdated++;
+                    updateEffectiveColumnTops(
+                            tableWriter,
+                            partitionIndex,
+                            updateColumnIndexes,
+                            affectedColumnCount,
+                            minRow
+                    );
+                }
 
-                op.testTimeout();
+            } finally {
+                Misc.freeObjList(srcColumns);
+                Misc.freeObjList(dstColumns);
+                // todo: we are opening columns incrementally, e.g. if we don't have enough objects
+                //   but here we're always clearing columns, making incremental "open" pointless
+                //   perhaps we should keep N column object max to kick around ?
+                srcColumns.clear();
+                dstColumns.clear();
             }
-
-            if (partitionIndex > -1) {
-                copyColumns(partitionIndex, affectedColumnCount, prevRow, minRow);
-
-                updateEffectiveColumnTops(
-                        tableWriter,
-                        partitionIndex,
-                        updateColumnIndexes,
-                        affectedColumnCount,
-                        minRow
-                );
-            }
-
-        } finally {
-            Misc.freeObjList(srcColumns);
-            Misc.freeObjList(dstColumns);
-            // todo: we are opening columns incrementally, e.g. if we don't have enough objects
-            //   but here we're always clearing columns, making incremental "open" pointless
-            //   perhaps we should keep N column object max to kick around ?
-            srcColumns.clear();
-            dstColumns.clear();
-        }
 
             if (partitionIndex > -1) {
                 rebuildIndexes(tableName, writerMetadata, tableWriter);

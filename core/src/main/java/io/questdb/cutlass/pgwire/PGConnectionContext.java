@@ -317,7 +317,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         totalReceived = 0;
         typesAndUpdateIsCached = false;
         statementTimeoutMs = -1L;
-        circuitBreaker.resetToDefault();
+        circuitBreaker.resetMaxTimeToDefault();
     }
 
     public void clearWriters() {

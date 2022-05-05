@@ -73,6 +73,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final int floatScale;
     private final int doubleScale;
     private final SCSequence eventSubSequence = new SCSequence();
+    private final long statementTimeoutNs;
     private OperationFuture operationFuture;
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
@@ -93,6 +94,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean timings;
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
+    private short queryType;
+    private QuietClosable asyncOperation;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
@@ -113,6 +116,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.nanosecondClock = nanosecondClock;
         this.floatScale = floatScale;
         this.doubleScale = doubleScale;
+        this.statementTimeoutNs =
+                httpConnectionContext.getRequestHeader().getStatementTimeout() < (Long.MAX_VALUE >>> 6) ? // Overflow protection
+                        httpConnectionContext.getRequestHeader().getStatementTimeout() * 1_000_000L :
+                        httpConnectionContext.getRequestHeader().getStatementTimeout();
     }
 
     @Override
@@ -145,7 +152,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
-        operationFuture = Misc.free(operationFuture);
+        freeAsyncOperation();
     }
 
     public void configure(
@@ -169,6 +176,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return LOG.error().$('[').$(getFd()).$("] ");
     }
 
+    public void freeAsyncOperation() {
+        asyncOperation = Misc.free(asyncOperation);
+        operationFuture = Misc.free(operationFuture);
+    }
+
     public OperationFuture getOperationFuture() {
         return operationFuture;
     }
@@ -181,6 +193,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return query;
     }
 
+    public short getQueryType() {
+        return queryType;
+    }
+
     public Rnd getRnd() {
         return rnd;
     }
@@ -189,7 +205,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return eventSubSequence;
     }
 
-    public void setOperationFuture(OperationFuture fut) {
+    public void setQueryType(short type) {
+        queryType = type;
+    }
+
+    public long getStatementTimeoutNs() {
+        return statementTimeoutNs;
+    }
+
+    public void setOperationFuture(QuietClosable op, OperationFuture fut) {
+        asyncOperation = op;
         operationFuture = fut;
     }
 
