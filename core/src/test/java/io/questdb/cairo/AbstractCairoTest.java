@@ -100,7 +100,7 @@ public class AbstractCairoTest {
 
     @Rule
     public Timeout timeout = Timeout.builder()
-            .withTimeout(300000, TimeUnit.MILLISECONDS)
+            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
 
