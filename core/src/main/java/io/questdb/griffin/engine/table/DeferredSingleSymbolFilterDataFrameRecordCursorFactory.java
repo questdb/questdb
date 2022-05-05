@@ -48,7 +48,8 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
             DataFrameCursorFactory dataFrameCursorFactory,
             boolean followsOrderByAdvice,
             @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizes
+            @NotNull IntList columnSizes,
+            boolean supportsRandomAccess
     ) {
         super(
                 configuration,
@@ -59,7 +60,8 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
                 null,
                 false,
                 columnIndexes,
-                columnSizes
+                columnSizes,
+                supportsRandomAccess
         );
         this.symbolFunc = symbolFunc;
         this.symbolKey = SymbolTable.VALUE_NOT_FOUND;

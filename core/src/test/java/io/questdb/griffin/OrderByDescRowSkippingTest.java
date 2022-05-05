@@ -754,7 +754,8 @@ public class OrderByDescRowSkippingTest extends AbstractGriffinTest {
                 null,
                 true,
                 columnIndexes,
-                columnSizes
+                columnSizes,
+                true
         );
 
         return factory.getCursor(sqlExecutionContext);

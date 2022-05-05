@@ -121,10 +121,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final IntList recordFunctionPositions = new IntList();
     private final IntList groupByFunctionPositions = new IntList();
     private final LongList prefixes = new LongList();
-    private boolean enableJitNullChecks = true;
-    private boolean fullFatJoins = false;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final WeakAutoClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
+    private boolean enableJitNullChecks = true;
+    private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
             CairoEngine engine,
@@ -1218,7 +1218,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 null,
                                 false,
                                 columnIndexes,
-                                columnSizes
+                                columnSizes,
+                                true
                         );
                     }
 
@@ -2669,9 +2670,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
 
+        final GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) model.getTableName().token;
+        final boolean supportsRandomAccess;
+        if (Chars.startsWith(tab, NO_ROWID_MARKER)) {
+            tab.setLo(tab.getLo() + NO_ROWID_MARKER.length());
+            supportsRandomAccess = false;
+        } else {
+            supportsRandomAccess = true;
+        }
+
         try (TableReader reader = engine.getReader(
                 executionContext.getCairoSecurityContext(),
-                model.getTableName().token,
+                tab,
                 model.getTableId(),
                 model.getTableVersion())
         ) {
@@ -2689,7 +2699,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int readerTimestampIndex;
             readerTimestampIndex = getTimestampIndex(model, readerMeta);
 
-            // Latest by on a table requires provided timestamp column to be the designated timestamp.
+            // Latest by on a table requires the provided timestamp column to be the designated timestamp.
             if (latestBy.size() > 0 && readerTimestampIndex != readerMeta.getTimestampIndex()) {
                 throw SqlException.$(model.getTimestamp().position, "latest by over a table requires designated TIMESTAMP");
             }
@@ -2948,7 +2958,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         dfcFactory,
                                         orderByKeyColumn,
                                         columnIndexes,
-                                        columnSizes
+                                        columnSizes,
+                                        supportsRandomAccess
                                 );
                             }
                             return new DataFrameRecordCursorFactory(
@@ -2960,7 +2971,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     f,
                                     false,
                                     columnIndexes,
-                                    columnSizes
+                                    columnSizes,
+                                    supportsRandomAccess
                             );
                         }
 
@@ -3070,7 +3082,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         null,
                         framingSupported,
                         columnIndexes,
-                        columnSizes
+                        columnSizes,
+                        supportsRandomAccess
                 );
             }
 
@@ -3099,7 +3112,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         null,
                         framingSupported,
                         columnIndexes,
-                        columnSizes
+                        columnSizes,
+                        supportsRandomAccess
                 );
             }
 
@@ -3203,17 +3217,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return toLimitFunction(executionContext, model.getLimitHi(), null);
     }
 
-    @NotNull
-    private Function getLoFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return toLimitFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
-    }
-
     @Nullable
     private Function getLimitLoFunctionOnly(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model.getLimitAdviceLo() != null && model.getLimitAdviceHi() == null) {
             return toLimitFunction(executionContext, model.getLimitAdviceLo(), LongConstant.ZERO);
         }
         return null;
+    }
+
+    @NotNull
+    private Function getLoFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        return toLimitFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
     }
 
     private int getTimestampIndex(QueryModel model, RecordCursorFactory factory) throws SqlException {

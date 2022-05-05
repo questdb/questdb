@@ -404,7 +404,7 @@ public class LogFactoryTest {
 
     @Test
     public void testRollingFileWriterByYear() throws Exception {
-        testRollOnDate("mylog-${date:yyyy-MM}.log", 12 * 30 * 24 * 60000L, "month", "mylog-201");
+        testRollOnDate("mylog-${date:yyyy-MM}.log", 12 * 30 * 24 * 60000L, "year", "mylog-201");
     }
 
     @Test
