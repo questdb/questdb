@@ -177,7 +177,7 @@ public class PageAddressCacheRecord implements Record {
 
     @Override
     public long getUpdateRowId() {
-        return getRowId();
+        return pageAddressCache.toTableRowID(frameIndex, rowIndex);
     }
 
     @Override
