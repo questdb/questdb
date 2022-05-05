@@ -1121,13 +1121,11 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
-    @Ignore
     public void testAllTypesSelectExtended() throws Exception {
         testAllTypesSelect(false);
     }
 
     @Test
-    @Ignore
     public void testAllTypesSelectSimple() throws Exception {
         testAllTypesSelect(true);
     }
