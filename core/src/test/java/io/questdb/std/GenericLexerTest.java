@@ -273,7 +273,7 @@ public class GenericLexerTest {
 
         while (it.hasNext()) {
             CharSequence e = it.next();
-            ts.unparse();
+            ts.unparseLast();
             CharSequence a = it.next();
             TestUtils.assertEquals(e, a);
         }
@@ -367,9 +367,64 @@ public class GenericLexerTest {
         CharSequence cs = ts.next();
         ts.immutablePairOf(GenericLexer.immutableOf(cs), cs);
         Assert.assertEquals("orange", ts.getContent());
-        Assert.assertNull(ts.getUnparsed());
+        Assert.assertFalse(ts.hasUnparsed());
         Assert.assertEquals(6, ts.getPosition());
         Assert.assertEquals(6, ts.getTokenHi());
+    }
+
+    @Test
+    public void testStashUnStash() {
+        GenericLexer lexer = new GenericLexer(64);
+        lexer.of("orange blue yellow green");
+        TestUtils.assertEquals("orange", lexer.next());
+
+        CharSequence blue = GenericLexer.immutableOf(SqlUtil.fetchNext(lexer));
+        int blueLast = lexer.lastTokenPosition();
+        int bluePos = lexer.getPosition();
+
+        TestUtils.assertEquals("blue", blue);
+        Assert.assertEquals(7, blueLast);
+        Assert.assertEquals(12, bluePos);
+
+        CharSequence yellow = SqlUtil.fetchNext(lexer);
+        int yellowLast = lexer.lastTokenPosition();
+        int yellowPos = lexer.getPosition();
+
+        TestUtils.assertEquals("yellow", yellow);
+        Assert.assertEquals(12, yellowLast);
+        Assert.assertEquals(19, yellowPos);
+
+        lexer.unparse(blue, blueLast, bluePos);
+        lexer.unparseLast();
+
+        lexer.stash();
+
+        CharSequence green = SqlUtil.fetchNext(lexer);
+        TestUtils.assertEquals("green", green);
+
+        Assert.assertNull(SqlUtil.fetchNext(lexer));
+
+        lexer.unstash();
+
+        blue = SqlUtil.fetchNext(lexer);
+        blueLast = lexer.lastTokenPosition();
+        bluePos = lexer.getPosition();
+
+        TestUtils.assertEquals("blue", blue);
+        Assert.assertEquals(7, blueLast);
+        Assert.assertEquals(12, bluePos);
+
+        yellow = SqlUtil.fetchNext(lexer);
+        yellowLast = lexer.lastTokenPosition();
+        yellowPos = lexer.getPosition();
+
+        TestUtils.assertEquals("yellow", yellow);
+        Assert.assertEquals(12, yellowLast);
+        Assert.assertEquals(19, yellowPos);
+
+
+        green = SqlUtil.fetchNext(lexer);
+        TestUtils.assertEquals("green", green);
     }
 
     @Test(expected = UnsupportedOperationException.class)
