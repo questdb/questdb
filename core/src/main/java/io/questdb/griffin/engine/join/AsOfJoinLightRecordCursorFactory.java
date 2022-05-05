@@ -103,6 +103,11 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         return false;
     }
 
+    @Override
+    public boolean hasDescendingOrder() {
+        return masterFactory.hasDescendingOrder();
+    }
+
     private class AsOfLightJoinRecordCursor implements NoRandomAccessRecordCursor {
         private final OuterJoinRecord record;
         private final Map joinKeyMap;
