@@ -108,7 +108,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private static final String WRITER_LOCK_REASON = "pgConnection";
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
-
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
@@ -771,7 +770,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 case ColumnType.INT:
                     appendIntCol(record, i);
                     break;
-                case ColumnType.NULL:
                 case ColumnType.STRING:
                 case BINARY_TYPE_STRING:
                     appendStrColumn(record, i);
@@ -851,6 +849,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     break;
                 case ColumnType.GEOLONG:
                     putGeoHashStringLongValue(record, i, activeSelectColumnTypes.getQuick(2 * i + 1));
+                    break;
+                case ColumnType.NULL:
+                    responseAsciiSink.setNullValue();
                     break;
                 default:
                     assert false;
@@ -1072,8 +1073,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         recvBufferReadOffset = 0;
     }
 
-    private boolean compileQuery(@Transient SqlCompiler compiler)
-            throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private boolean compileQuery(@Transient SqlCompiler compiler) throws SqlException {
         if (queryText != null && queryText.length() > 0) {
 
             // try insert, peek because this is our private cache
@@ -1101,6 +1101,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
+                LOG.info().$("query cache used [fd=").$(fd).I$();
                 // cache hit, define bind variables
                 bindVariableService.clear();
                 typesAndSelect.defineBindVariables(bindVariableService);
@@ -1119,7 +1120,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void configureContextFromNamedStatement(CharSequence statementName, @Nullable @Transient SqlCompiler compiler)
-            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+            throws BadProtocolException, SqlException {
 
         this.sendParameterDescription = statementName != null;
 
@@ -1549,8 +1550,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void parseQueryText(long lo, long hi, @Transient SqlCompiler compiler)
-            throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    private void parseQueryText(long lo, long hi, @Transient SqlCompiler compiler) throws BadProtocolException, SqlException {
         CharacterStoreEntry e = characterStore.newEntry();
         if (Chars.utf8Decode(lo, hi, e)) {
             queryText = characterStore.toImmutable();
@@ -1765,7 +1765,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void processBind(long lo, long msgLimit, @Transient SqlCompiler compiler)
-            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+            throws BadProtocolException, SqlException {
 
         short parameterFormatCount;
         short parameterValueCount;
@@ -1996,7 +1996,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void processDescribe(long lo, long msgLimit, @Transient SqlCompiler compiler)
-            throws SqlException, BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
+            throws SqlException, BadProtocolException {
 
         boolean isPortal = Unsafe.getUnsafe().getByte(lo) == 'P';
         long hi = getStringLength(lo + 1, msgLimit, "bad prepared statement name length");
@@ -2163,8 +2163,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void processParse(long address, long lo, long msgLimit, @Transient SqlCompiler compiler)
-            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void processParse(long address, long lo, long msgLimit, @Transient SqlCompiler compiler) throws BadProtocolException, SqlException {
         // 'Parse'
         //message length
         long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
@@ -2451,7 +2450,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sendAndReset();
     }
 
-    private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+    private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException {
         if (currentCursor == null) {
             boolean recompileStale = true;
             do {
@@ -2478,7 +2477,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void setupVariableSettersFromWrapper(
             @Transient NamedStatementWrapper wrapper,
             @Nullable @Transient SqlCompiler compiler
-    ) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws SqlException {
         queryText = wrapper.queryText;
         LOG.debug().$("wrapper query [q=`").$(wrapper.queryText).$("`]").$();
         this.activeBindVariableTypes = wrapper.bindVariableTypes;

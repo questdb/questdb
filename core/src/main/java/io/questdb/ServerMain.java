@@ -87,8 +87,12 @@ public class ServerMain {
 
         LogFactory.configureFromSystemProperties(LogFactory.INSTANCE, null, rootDirectory);
         final Log log = LogFactory.getLog("server-main");
-        // TODO [adam]: log.advisoryW().$("Log path: ").$(log.).$(); -- log config path.
 
+        log.advisoryW().$("QuestDB server ")
+                .$(buildInformation.getQuestDbVersion())
+                .$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis()))
+                .$(", all rights reserved.")
+                .$();
         extractSite(buildInformation, rootDirectory, log);
         final Properties properties = new Properties();
         final String configurationFileName = "/server.conf";

@@ -48,6 +48,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     private final IntList columnSizes;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     protected BwdTableReaderPageFrameCursor bwdPageFrameCursor;
+    private final boolean supportsRandomAccess;
 
     public DataFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -59,7 +60,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             @Nullable Function filter,
             boolean framingSupported,
             @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizes
+            @NotNull IntList columnSizes,
+            boolean supportsRandomAccess
     ) {
         super(metadata, dataFrameCursorFactory);
 
@@ -71,6 +73,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         this.columnSizes = columnSizes;
         this.pageFrameMinRows = configuration.getSqlPageFrameMinRows();
         this.pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
+        this.supportsRandomAccess = supportsRandomAccess;
     }
 
     @Override
@@ -98,7 +101,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return true;
+        return supportsRandomAccess;
     }
 
     @Override

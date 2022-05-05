@@ -172,6 +172,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.explain = Chars.equalsNc("true", request.getUrlParam("explain"));
     }
 
+    public LogRecord debug() {
+        return LOG.debug().$('[').$(getFd()).$("] ");
+    }
+
     public LogRecord error() {
         return LOG.error().$('[').$(getFd()).$("] ");
     }
@@ -183,6 +187,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public OperationFuture getOperationFuture() {
         return operationFuture;
+    }
+
+    public void setContinueExecution(QueryFuture execution) {
+        continueExecution = execution;
+    }
+
+    public SCSequence getEventSubSequence() {
+        return eventSubSequence;
+    }
+
+    public long getExecutionTime() {
+        return nanosecondClock.getTicks() - this.executeStartNanos;
     }
 
     public HttpConnectionContext getHttpConnectionContext() {
@@ -201,10 +217,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return rnd;
     }
 
-    public SCSequence getEventSubSequence() {
-        return eventSubSequence;
-    }
-
     public void setQueryType(short type) {
         queryType = type;
     }
@@ -220,10 +232,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void setRnd(Rnd rnd) {
         this.rnd = rnd;
-    }
-
-    public LogRecord debug() {
-        return LOG.debug().$('[').$(getFd()).$("] ");
     }
 
     public LogRecord info() {
@@ -266,10 +274,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.executeStartNanos = nanosecondClock.getTicks();
     }
 
-    public long getExecutionTime() {
-        return nanosecondClock.getTicks() - this.executeStartNanos;
-    }
-
     static void prepareExceptionJson(HttpChunkedResponseSocket socket, int position, CharSequence message, CharSequence query) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.put('{').
                 putQuoted("query").put(':').encodeUtf8AndQuote(query == null ? "" : query).put(',').
@@ -285,11 +289,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         } else {
             r.encodeUtf8AndQuote(str);
         }
-    }
-
-    private void putBinValue(HttpChunkedResponseSocket socket) {
-        socket.put('[');
-        socket.put(']');
     }
 
     private static void putBooleanValue(HttpChunkedResponseSocket socket, Record rec, int col) {
@@ -433,6 +432,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return false;
     }
 
+    private void addColumnTypeAndName(RecordMetadata metadata, int i) {
+        int columnType = metadata.getColumnType(i);
+        int flags = GeoHashes.getBitFlags(columnType);
+        this.columnTypesAndFlags.add(columnType);
+        this.columnTypesAndFlags.add(flags);
+        this.columnNames.add(metadata.getColumnName(i));
+    }
+
     private void doFirstRecordLoop(
             HttpChunkedResponseSocket socket,
             int columnCount
@@ -466,7 +473,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             socket.put('{').
                     putQuoted("name").put(':').encodeUtf8AndQuote(columnNames.getQuick(columnIndex)).
                     put(',').
-                    putQuoted("type").put(':').putQuoted(ColumnType.nameOf(columnType));
+                    putQuoted("type").put(':').putQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType));
             socket.put('}');
         }
     }
@@ -568,6 +575,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 case ColumnType.RECORD:
                     putRecValue(socket);
+                    break;
+                case ColumnType.NULL:
+                    socket.put("null");
                     break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
@@ -698,19 +708,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return true;
     }
 
-    private void addColumnTypeAndName(RecordMetadata metadata, int i) {
-        int columnType = metadata.getColumnType(i);
-
-        if (ColumnType.isNull(columnType)) {
-            columnType = ColumnType.STRING;
-        }
-
-        int flags = GeoHashes.getBitFlags(columnType);
-        this.columnTypesAndFlags.add(columnType);
-        this.columnTypesAndFlags.add(flags);
-        this.columnNames.add(metadata.getColumnName(i));
-    }
-
     private void onNoMoreData() {
         long nanos = nanosecondClock.getTicks();
         if (countRows) {
@@ -797,6 +794,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnIndex = 0;
         record = cursor.getRecord();
         return true;
+    }
+
+    private void putBinValue(HttpChunkedResponseSocket socket) {
+        socket.put('[');
+        socket.put(']');
     }
 
     private void putDoubleValue(HttpChunkedResponseSocket socket, Record rec, int col) {

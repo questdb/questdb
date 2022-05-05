@@ -3478,34 +3478,6 @@ nodejs code:
         });
     }
 
-    //checks that function parser error doesn't persist and affect later queries issued through the same connection
-    @Test
-    public void testParseErrorDoesNotCorruptConnection() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final PGWireServer ignored = createPGServer(2);
-                 final Connection connection = getConnection(false, false)) {
-
-                try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
-                        "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
-                        "where ts between '2022-03-20' " +
-                        "AND id <> '0x05ab6d9fabdabb00066a5db735d17a' " +
-                        "AND id <> '0x05aba84839b9c7000006765675e630' " +
-                        "AND id <> '0x05abc58d80ba1f000001ed05351873'")) {
-                    ps1.executeQuery();
-                    Assert.fail("PSQLException should be thrown");
-                } catch (PSQLException e) {
-                    assertContains(e.getMessage(), "ERROR: unexpected argument for function: between");
-                }
-
-                try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
-                    StringSink sink = new StringSink();
-                    ResultSet result = s.executeQuery();
-                    assertResultSet("a[INTEGER],b[INTEGER]\n2,2\n", sink, result);
-                }
-            }
-        });
-    }
-
     @Test
     public void testMultiplePreparedStatements() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -3647,6 +3619,26 @@ nodejs code:
     }
 
     @Test
+    public void testNullTypeSerialization() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, true)) {
+                    sink.clear();
+                    try (
+                            PreparedStatement ps = connection.prepareStatement("create table test as (select x from long_sequence(10))")
+                    ) {
+                        ps.execute();
+                    }
+                }
+                testNullTypeSerialization0(true, true);
+                testNullTypeSerialization0(true, false);
+                testNullTypeSerialization0(false, false);
+                testNullTypeSerialization0(false, true);
+            }
+        });
+    }
+
+    @Test
     public void testPHPSelectHex() throws Exception {
         //         PHP client script to reproduce
         //        $dbName = 'qdb';
@@ -3714,6 +3706,34 @@ nodejs code:
         assertHexScript(NetworkFacadeImpl.INSTANCE,
                 script,
                 getHexPgWireConfig());
+    }
+
+    //checks that function parser error doesn't persist and affect later queries issued through the same connection
+    @Test
+    public void testParseErrorDoesNotCorruptConnection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(2);
+                 final Connection connection = getConnection(false, false)) {
+
+                try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
+                        "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
+                        "where ts between '2022-03-20' " +
+                        "AND id <> '0x05ab6d9fabdabb00066a5db735d17a' " +
+                        "AND id <> '0x05aba84839b9c7000006765675e630' " +
+                        "AND id <> '0x05abc58d80ba1f000001ed05351873'")) {
+                    ps1.executeQuery();
+                    Assert.fail("PSQLException should be thrown");
+                } catch (PSQLException e) {
+                    assertContains(e.getMessage(), "ERROR: unexpected argument for function: between");
+                }
+
+                try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
+                    StringSink sink = new StringSink();
+                    ResultSet result = s.executeQuery();
+                    assertResultSet("a[INTEGER],b[INTEGER]\n2,2\n", sink, result);
+                }
+            }
+        });
     }
 
     @Test
@@ -4901,8 +4921,8 @@ nodejs code:
                 try (ResultSet rs = metaData.getSchemas()) {
                     assertResultSet(
                             "TABLE_SCHEM[VARCHAR],TABLE_CATALOG[VARCHAR]\n" +
-                                    "pg_catalog,pg_catalog\n" +
-                                    "public,public\n",
+                                    "pg_catalog,null\n" +
+                                    "public,null\n",
                             sink,
                             rs
                     );
@@ -4915,9 +4935,9 @@ nodejs code:
                 )) {
                     assertResultSet(
                             "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],TABLE_TYPE[VARCHAR],REMARKS[VARCHAR],TYPE_CAT[VARCHAR],TYPE_SCHEM[VARCHAR],TYPE_NAME[VARCHAR],SELF_REFERENCING_COL_NAME[VARCHAR],REF_GENERATION[VARCHAR]\n" +
-                                    "pg_catalog,pg_catalog,pg_class,SYSTEM TABLE,null,,,,,\n" +
-                                    "public,public,test,TABLE,null,,,,,\n" +
-                                    "public,public,test2,TABLE,null,,,,,\n",
+                                    "null,pg_catalog,pg_class,SYSTEM TABLE,null,,,,,\n" +
+                                    "null,public,test,TABLE,null,,,,,\n" +
+                                    "null,public,test2,TABLE,null,,,,,\n",
                             sink,
                             rs
                     );
@@ -4927,8 +4947,8 @@ nodejs code:
                 try (ResultSet rs = metaData.getColumns("qdb", null, "test", null)) {
                     assertResultSet(
                             "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],COLUMN_NAME[VARCHAR],DATA_TYPE[SMALLINT],TYPE_NAME[VARCHAR],COLUMN_SIZE[INTEGER],BUFFER_LENGTH[VARCHAR],DECIMAL_DIGITS[INTEGER],NUM_PREC_RADIX[INTEGER],NULLABLE[INTEGER],REMARKS[VARCHAR],COLUMN_DEF[VARCHAR],SQL_DATA_TYPE[INTEGER],SQL_DATETIME_SUB[INTEGER],CHAR_OCTET_LENGTH[VARCHAR],ORDINAL_POSITION[INTEGER],IS_NULLABLE[VARCHAR],SCOPE_CATALOG[VARCHAR],SCOPE_SCHEMA[VARCHAR],SCOPE_TABLE[VARCHAR],SOURCE_DATA_TYPE[SMALLINT],IS_AUTOINCREMENT[VARCHAR],IS_GENERATEDCOLUMN[VARCHAR]\n" +
-                                    "null,public,test,id,-5,int8,19,null,0,10,1,null,null,null,null,19,0,YES,null,null,null,0,NO,\n" +
-                                    "null,public,test,val,4,int4,10,null,0,10,1,null,null,null,null,10,1,YES,null,null,null,0,NO,\n",
+                                    "null,public,test,id,-5,int8,19,null,0,10,1,null,null,null,null,19,0,YES,null,null,null,0,NO,NO\n" +
+                                    "null,public,test,val,4,int4,10,null,0,10,1,null,null,null,null,10,1,YES,null,null,null,0,NO,NO\n",
                             sink,
                             rs
                     );
@@ -6460,10 +6480,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     private void queryTimestampsInRange(Connection connection) throws SQLException, IOException {
         try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")) {
             ResultSet rs = null;
@@ -6484,6 +6500,10 @@ create table tab as (
             rs.close();
         }
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     private void testAddColumnBusyWriter(boolean alterRequestReturnSuccess, SOCountDownLatch queryStartedCountDownLatch) throws SQLException, InterruptedException, BrokenBarrierException, SqlException {
         AtomicLong errors = new AtomicLong();
@@ -7827,6 +7847,54 @@ create table tab as (
                 TestUtils.assertEquals("00000", e.getSQLState());
             }
         });
+    }
+
+    private void testNullTypeSerialization0(boolean simple, boolean binary) throws Exception {
+        try (final Connection connection = getConnection(simple, binary)) {
+            sink.clear();
+            try (
+                    PreparedStatement ps = connection.prepareStatement("SELECT * FROM (\n" +
+                            "  SELECT \n" +
+                            "    n.nspname\n" +
+                            "    ,c.relname\n" +
+                            "    ,a.attname\n" +
+                            "    ,a.atttypid\n" +
+                            "    ,a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull\n" +
+                            "    ,a.atttypmod\n" +
+                            "    ,a.attlen\n" +
+                            "    ,t.typtypmod\n" +
+                            "    ,row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum\n" +
+                            "    , nullif(a.attidentity, '') as attidentity\n" +
+                            "    ,null as attgenerated\n" +
+                            "    ,pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc\n" +
+                            "    ,dsc.description\n" +
+                            "    ,t.typbasetype\n" +
+                            "    ,t.typtype  \n" +
+                            "  FROM pg_catalog.pg_namespace n\n" +
+                            "  JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid)\n" +
+                            "  JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid)\n" +
+                            "  JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid)\n" +
+                            "  LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum)\n" +
+                            "  LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)\n" +
+                            "  LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class')\n" +
+                            "  LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')\n" +
+                            "  WHERE \n" +
+                            "    c.relkind in ('r','p','v','f','m')\n" +
+                            "    and a.attnum > 0 \n" +
+                            "    AND NOT a.attisdropped\n" +
+                            "    AND c.relname LIKE E'test'\n" +
+                            "  ) c WHERE true\n" +
+                            "  ORDER BY nspname,c.relname,attnum;\n");
+                    ResultSet rs = ps.executeQuery()
+            ) {
+                assertResultSet(
+                        "nspname[VARCHAR],relname[VARCHAR],attname[VARCHAR],atttypid[INTEGER],attnotnull[BIT],atttypmod[INTEGER],attlen[SMALLINT],typtypmod[INTEGER],attnum[BIGINT],attidentity[VARCHAR],attgenerated[VARCHAR],adsrc[VARCHAR],description[VARCHAR],typbasetype[INTEGER],typtype[CHAR]\n" +
+                                "public,test,x,20,false,0,8,0,0,null,null,null,null,0,b\n",
+                        sink,
+                        rs
+                );
+            }
+        }
     }
 
     private static class DelayingNetworkFacade extends NetworkFacadeImpl {
