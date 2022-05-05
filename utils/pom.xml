@@ -28,7 +28,7 @@
 
   <groupId>org.example</groupId>
   <artifactId>utils</artifactId>
-  <version>6.2.2-SNAPSHOT</version>
+  <version>6.3</version>
 
   <name>Command line utils for QuestDB</name>
 
