@@ -990,7 +990,7 @@ public final class SqlParser {
             }
 
             if (tok.length() != 1 || tok.charAt(0) != ',') {
-                lexer.unparse();
+                lexer.unparseLast();
                 break;
             }
         }
