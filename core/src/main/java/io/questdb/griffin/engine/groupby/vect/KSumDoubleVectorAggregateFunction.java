@@ -38,7 +38,8 @@ import java.util.Arrays;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
-    private static final int SUM_PADDING = Misc.CACHE_LINE_SIZE / Double.BYTES;
+    // We're using two double values per worker, hence +1 element in the padding.
+    private static final int SUM_PADDING = (Misc.CACHE_LINE_SIZE / Double.BYTES) + 1;
     private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
 
     private final int columnIndex;
