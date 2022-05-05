@@ -29,7 +29,7 @@ import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
@@ -106,7 +106,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
 
     private void buildMapForOrderedSubQuery(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor baseCursor, Record baseRecord) {
         while (baseCursor.hasNext()) {
-            circuitBreaker.test();
+            circuitBreaker.statefulThrowExceptionIfTripped();
 
             final MapKey key = latestByMap.withKey();
             recordSink.copy(baseRecord, key);
@@ -117,7 +117,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
 
     private void buildMapForUnorderedSubQuery(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor baseCursor, Record baseRecord) {
         while (baseCursor.hasNext()) {
-            circuitBreaker.test();
+            circuitBreaker.statefulThrowExceptionIfTripped();
 
             final MapKey key = latestByMap.withKey();
             recordSink.copy(baseRecord, key);
@@ -195,7 +195,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
             if (!mapCursor.hasNext()) {
                 return false;
             }
-            circuitBreaker.test();
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final MapValue value = mapRecord.getValue();
             final long rowId = value.getLong(ROW_ID_VALUE_IDX);
             baseCursor.recordAt(baseRecord, rowId);

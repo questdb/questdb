@@ -24,18 +24,9 @@
 
 package io.questdb.griffin;
 
-public interface SqlExecutionCircuitBreaker {
-    SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
-        @Override
-        public void test() {
-        }
+import io.questdb.cairo.CairoEngine;
 
-        @Override
-        public void powerUp() {
-        }
-    };
-
-    void test();
-
-    void powerUp();
+@FunctionalInterface
+public interface CustomisableRunnable {
+    void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
 }

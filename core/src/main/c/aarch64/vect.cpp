@@ -44,10 +44,6 @@ JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_sumDoubleNeumaier(JNIEnv *env
     return sumDoubleNeumaier_Vanilla((double*) pDouble, count);
 }
 
-JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_avgDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
-    return avgDouble_Vanilla((double*) pDouble, count);
-}
-
 JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_minDouble(JNIEnv *env, jclass cl, jlong pDouble, jlong count) {
     return minDouble_Vanilla((double*) pDouble, count);
 }
@@ -62,10 +58,6 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_sumInt(JNIEnv *env, jclass cl, 
     return sumInt_Vanilla((int*) pInt, count);
 }
 
-JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_avgInt(JNIEnv *env, jclass cl, jlong pInt, jlong count) {
-    return avgInt_Vanilla((int*) pInt, count);
-}
-
 JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_minInt(JNIEnv *env, jclass cl, jlong pInt, jlong count) {
     return minInt_Vanilla((int*) pInt, count);
 }
@@ -78,10 +70,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_maxInt(JNIEnv *env, jclass cl, j
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_sumLong(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
     return sumLong_Vanilla((int64_t *) pLong, count);
-}
-
-JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_avgLong(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
-    return avgLong_Vanilla((int64_t *) pLong, count);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Vect_minLong(JNIEnv *env, jclass cl, jlong pLong, jlong count) {

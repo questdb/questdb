@@ -389,7 +389,7 @@ class SqlOptimiser {
      * <p>
      * a.x = 10
      * <p>
-     * this filter is not explicitly mentioned but it might help pre-filtering record sources
+     * this filter is not explicitly mentioned, but it might help pre-filtering record sources
      * before hashing.
      */
     private void addTransitiveFilters(QueryModel model) {
@@ -687,7 +687,7 @@ class SqlOptimiser {
         }
     }
 
-    private void copyColumnTypesFromMetadata(QueryModel model, TableReaderMetadata m){
+    private void copyColumnTypesFromMetadata(QueryModel model, TableReaderMetadata m) {
         // TODO: optimise by copying column indexes, types of the columns used in SET clause in the UPDATE only
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             model.addUpdateTableColumnMetadata(m.getColumnType(i), m.getColumnName(i));
@@ -695,7 +695,7 @@ class SqlOptimiser {
     }
 
     private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m, boolean cleanColumnNames) throws SqlException {
-        // column names are not allowed to have dot
+        // column names are not allowed to have a dot
 
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             CharSequence columnName = createColumnAlias(m.getColumnName(i), model, cleanColumnNames);
@@ -1396,7 +1396,7 @@ class SqlOptimiser {
             // join models can have "where" clause
             // although in context of SQL where is executed after joins, this model
             // always localises "where" to a single table and therefore "where" is
-            // is applied before join. Please see post-join-where for filters that
+            // applied before join. Please see post-join-where for filters that
             // executed in line with standard SQL behaviour.
 
             if (where != null) {
@@ -1766,11 +1766,11 @@ class SqlOptimiser {
                         addWhereNode(parent, node);
                     } else {
                         // now that we have identified sub-query we have to rewrite our where clause
-                        // to potentially replace all of column references with actual literals used inside
+                        // to potentially replace all column references with actual literals used inside
                         // sub-query, for example:
                         // (select a x, b from T) where x = 10
                         // we can't move "x" inside sub-query because it is not a field.
-                        // Instead we have to translate "x" to actual column expression, which is "a":
+                        // Instead, we have to translate "x" to actual column expression, which is "a":
                         // select a x, b from T where a = 10
 
                         // because we are rewriting SqlNode in-place we need to make sure that
@@ -2142,7 +2142,7 @@ class SqlOptimiser {
             // joinModels, e.g. joinModels.get(0) == model
             // only "model" model is allowed to have "where" clause,
             // so we can assume that "where" clauses of joinModel elements are all null (except for element 0).
-            // in case one of joinModels is subquery, its entire query model will be set as
+            // in case one of joinModels is suburb, its entire query model will be set as
             // nestedModel, e.g. "where" clause is still null there as well
 
             ExpressionNode where = model.getWhereClause();
@@ -2185,7 +2185,7 @@ class SqlOptimiser {
         int orderByMnemonic;
         int n = columns.size();
 
-        //limit x,y forces order materialization; we can't push order by past it and need to discover actual nested ordering 
+        //limit x,y forces order materialization; we can't push order by past it and need to discover actual nested ordering
         if (model.getLimitLo() != null) {
             topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
         }
@@ -2264,7 +2264,7 @@ class SqlOptimiser {
 
     private void processEmittedJoinClauses(QueryModel model) {
         // pick up join clauses emitted at initial analysis stage
-        // as we merge contexts at this level no more clauses is be emitted
+        // as we merge contexts at this level no more clauses is to be emitted
         for (int i = 0, k = emittedJoinClauses.size(); i < k; i++) {
             addJoinContext(model, emittedJoinClauses.getQuick(i));
         }
@@ -2316,24 +2316,24 @@ class SqlOptimiser {
     }
 
     /*
-        Pushes columns from top to bottom models .    
-    
+        Pushes columns from top to bottom models .
+
         Adding or removing columns to/from union, except, intersect should not happen!
         UNION/INTERSECT/EXCEPT-ed columns MUST be exactly as specified in the query, otherwise they might produce different result, e.g.
-         
+
         select a from (
             select 1 as a, 'b' as status
-            union 
+            union
             select 1 as a, 'c' as status
         )
-        
+
         Now if we push a top-to-bottom and remove b from union column list then we'll get a single '1' but we should get two !
         Same thing applies to INTERSECT & EXCEPT
-        The only thing that'd be safe to add SET models is a constant literal (but what's the point?) .  
+        The only thing that'd be safe to add SET models is a constant literal (but what's the point?) .
         Column/expression pushdown should (probably) ONLY happen for UNION with ALL!
-          
-        allowColumnsChange - determines whether changing columns of given model is acceptable. 
-        It is not for columns used in distinct, except, intersect, union (even transitively for the latter three!).    
+
+        allowColumnsChange - determines whether changing columns of given model is acceptable.
+        It is not for columns used in distinct, except, intersect, union (even transitively for the latter three!).
     */
     private void propagateTopDownColumns0(QueryModel model, boolean topLevel, @Nullable QueryModel papaModel, boolean allowColumnsChange) {
         //copy columns to 'protect' column list that shouldn't be modified
@@ -2447,7 +2447,7 @@ class SqlOptimiser {
 
         final QueryModel unionModel = model.getUnionModel();
         if (unionModel != null) {
-            //we've to use this value because union-ed models don't have a back-reference and might not know they participate in set operation 
+            //we've to use this value because union-ed models don't have a back-reference and might not know they participate in set operation
             propagateTopDownColumns(unionModel, allowColumnsChange);
         }
     }
@@ -2652,11 +2652,11 @@ class SqlOptimiser {
      */
     private QueryModel rewriteOrderBy(QueryModel model) throws SqlException {
         // find base model and check if there is "group-by" model in between
-        // when we are dealing with "group by" model some of the implicit "order by" columns have to be dropped,
+        // when we are dealing with "group by" model some implicit "order by" columns have to be dropped,
         // for example:
         // select a, sum(b) from T order by c
         //
-        // above is valid but sorting on "c" would be redundant. However in the following example
+        // above is valid but sorting on "c" would be redundant. However, in the following example
         //
         // select a, b from T order by c
         //
@@ -2665,7 +2665,7 @@ class SqlOptimiser {
         QueryModel base = model;
         QueryModel baseParent = model;
         QueryModel wrapper = null;
-        QueryModel limitModel = model;//bottom-most model which contains limit, order by can't be moved past it  
+        QueryModel limitModel = model;//bottom-most model which contains limit, order by can't be moved past it
         final int modelColumnCount = model.getBottomUpColumns().size();
         boolean groupByOrDistinct = false;
 
@@ -2722,7 +2722,7 @@ class SqlOptimiser {
                             }
 
                             // we must attempt to ascend order by column
-                            // when we have group by or distinct model, ascent is not possible
+                            // when we have group-by or distinct model, ascent is not possible
                             if (groupByOrDistinct) {
                                 throw SqlException.position(orderBy.position)
                                         .put("ORDER BY expressions must appear in select list. ")
@@ -2781,7 +2781,7 @@ class SqlOptimiser {
                         }
                     }
                 }
-                //order by can't be pushed through limit clause because it'll produce bad results 
+                //order by can't be pushed through limit clause because it'll produce bad results
                 if (base != baseParent && base != limitModel) {
                     limitModel.addOrderBy(orderBy, base.getOrderByDirection().getQuick(i));
                 }
@@ -2936,7 +2936,7 @@ class SqlOptimiser {
     }
 
     @NotNull
-    private QueryModel rewriteSelectClause0(QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    private QueryModel rewriteSelectClause0(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
         assert model.getNestedModel() != null;
 
         final QueryModel groupByModel = queryModelPool.next();
@@ -2965,7 +2965,7 @@ class SqlOptimiser {
         final QueryModel baseModel = model.getNestedModel();
         final boolean hasJoins = baseModel.getJoinModels().size() > 1;
 
-        // sample by clause should be promoted to all of the models as well as validated
+        // sample by clause should be promoted to all the models as well as validated
         final ExpressionNode sampleBy = baseModel.getSampleBy();
         if (sampleBy != null) {
             // move sample by to group by model
@@ -3072,7 +3072,7 @@ class SqlOptimiser {
                         // To make sure columns, referenced by the analytic model
                         // are rendered correctly we will emit them into a dedicated
                         // translation model for the analytic model.
-                        // When we able to determine which combination of models precedes the
+                        // When we are able to determine which combination of models precedes the
                         // analytic model, we can copy columns from analytic_translation model to
                         // either only to translation model or both translation model and the
                         // inner virtual models
@@ -3179,7 +3179,7 @@ class SqlOptimiser {
 
         // check if translating model is redundant, e.g.
         // that it neither chooses between tables nor renames columns
-        boolean translationIsRedundant = /*cursorModel.getBottomUpColumns().size() == 0 &&*/ (useInnerModel || useGroupByModel || useAnalyticModel);
+        boolean translationIsRedundant = useInnerModel || useGroupByModel || useAnalyticModel;
         if (translationIsRedundant) {
             for (int i = 0, n = translatingModel.getBottomUpColumns().size(); i < n; i++) {
                 QueryColumn column = translatingModel.getBottomUpColumns().getQuick(i);
@@ -3200,6 +3200,15 @@ class SqlOptimiser {
             root = translatingModel;
             limitSource = translatingModel;
             translatingModel.setNestedModel(baseModel);
+
+            // translating model has limits to ensure clean factory separation
+            // during code generation. However, in some cases limit could also
+            // be implemented by nested model. Nested model must not implement limit
+            // when parent model is order by or join
+            if (baseModel.getOrderBy().size() == 0 && baseModel.getJoinModels().size() < 2) {
+                baseModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
+            }
+
             translatingModel.moveLimitFrom(model);
             translatingModel.moveAliasFrom(model);
             translatingModel.setSelectTranslation(true);

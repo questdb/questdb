@@ -50,37 +50,14 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 class AbstractLineTcpReceiverTest extends AbstractCairoTest {
-    private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
-
     protected static final int WAIT_NO_WAIT = 0x0;
     protected static final int WAIT_ENGINE_TABLE_RELEASE = 0x1;
     protected static final int WAIT_ILP_TABLE_RELEASE = 0x2;
     protected static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
-
-    private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
-
+    private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
     protected final WorkerPool sharedWorkerPool = new WorkerPool(getWorkerPoolConfiguration(), metrics);
-    protected WorkerPoolConfiguration getWorkerPoolConfiguration() {
-        return new WorkerPoolConfiguration() {
-            private final int[] affinity = {-1};
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return affinity;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return true;
-            }
-        };
-    }
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
+    private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
         @Override
         public int getBindIPv4Address() {
@@ -101,8 +78,12 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected long commitIntervalDefault = 2000;
     protected boolean disconnectOnError = false;
     protected boolean symbolAsFieldSupported;
-
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
+        @Override
+        public boolean getDisconnectOnError() {
+            return disconnectOnError;
+        }
+
         @Override
         public IODispatcherConfiguration getDispatcherConfiguration() {
             return ioDispatcherConfiguration;
@@ -159,11 +140,6 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean getDisconnectOnError() {
-            return disconnectOnError;
-        }
-
-        @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
         }
@@ -174,9 +150,50 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         maxMeasurementSize = 256;
     }
 
-    @FunctionalInterface
-    public interface LineTcpServerAwareContext {
-        void run(LineTcpReceiver receiver) throws Exception;
+    protected void assertTable(CharSequence expected, CharSequence tableName) {
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+        }
+    }
+
+    protected Socket getSocket() {
+        Socket socket = tlSocket.get();
+        if (socket != null) {
+            return socket;
+        }
+
+        int ipv4address = Net.parseIPv4("127.0.0.1");
+        long sockaddr = Net.sockaddr(ipv4address, bindPort);
+        long fd = Net.socketTcp(true);
+        socket = new Socket(sockaddr, fd);
+
+        if (TestUtils.connect(fd, sockaddr) != 0) {
+            throw new RuntimeException("could not connect, errno=" + Os.errno());
+        }
+
+        tlSocket.set(socket);
+        return socket;
+    }
+
+    protected WorkerPoolConfiguration getWorkerPoolConfiguration() {
+        return new WorkerPoolConfiguration() {
+            private final int[] affinity = {-1};
+
+            @Override
+            public int[] getWorkerAffinity() {
+                return affinity;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return 1;
+            }
+
+            @Override
+            public boolean haltOnError() {
+                return true;
+            }
+        };
     }
 
     protected void runInContext(LineTcpServerAwareContext r) throws Exception {
@@ -189,7 +206,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             final Path path = new Path(4096);
             try (LineTcpReceiver receiver = LineTcpReceiver.create(lineConfiguration, sharedWorkerPool, LOG, engine, metrics)) {
                 sharedWorkerPool.assignCleaner(Path.CLEANER);
-                O3Utils.setupWorkerPool(sharedWorkerPool, engine.getMessageBus());
+                O3Utils.setupWorkerPool(sharedWorkerPool, engine.getMessageBus(), null);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 }
@@ -222,7 +239,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             case WAIT_ENGINE_TABLE_RELEASE:
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                     if (Chars.equals(tableName, name)) {
-                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, t) ) {
+                        if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(tableName, t)) {
                             releaseLatch.countDown();
                         }
                     }
@@ -254,34 +271,6 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     }
 
-    protected Socket getSocket() {
-        Socket socket = tlSocket.get();
-        if (socket != null) {
-            return socket;
-        }
-
-        int ipv4address = Net.parseIPv4("127.0.0.1");
-        long sockaddr = Net.sockaddr(ipv4address, bindPort);
-        long fd = Net.socketTcp(true);
-        socket = new Socket(sockaddr, fd);
-
-        if (TestUtils.connect(fd, sockaddr) != 0) {
-            throw new RuntimeException("could not connect, errno=" + Os.errno());
-        }
-
-        tlSocket.set(socket);
-        return socket;
-    }
-
-    protected void sendToSocket(String lineData) {
-        try (Socket socket = getSocket()) {
-            sendToSocket(socket, lineData);
-        } catch (Exception e) {
-            Assert.fail("Data sending failed [e=" + e + "]");
-            LOG.error().$(e).$();
-        }
-    }
-
     protected void sendToSocket(Socket socket, String lineData) {
         byte[] lineDataBytes = lineData.getBytes(StandardCharsets.UTF_8);
         long bufaddr = Unsafe.malloc(lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);
@@ -302,6 +291,20 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     }
 
+    protected void sendToSocket(String lineData) {
+        try (Socket socket = getSocket()) {
+            sendToSocket(socket, lineData);
+        } catch (Exception e) {
+            Assert.fail("Data sending failed [e=" + e + "]");
+            LOG.error().$(e).$();
+        }
+    }
+
+    @FunctionalInterface
+    public interface LineTcpServerAwareContext {
+        void run(LineTcpReceiver receiver) throws Exception;
+    }
+
     protected class Socket implements AutoCloseable {
         private final long sockaddr;
         private final long fd;
@@ -316,12 +319,6 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             tlSocket.set(null);
             Net.close(fd);
             Net.freeSockAddr(sockaddr);
-        }
-    }
-
-    protected void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
         }
     }
 }

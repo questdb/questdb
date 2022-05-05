@@ -25,18 +25,13 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.mp.*;
-import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 
 import java.io.Closeable;
 
 public interface MessageBus extends Closeable {
-    @Override
-    default void close() {
-        // We need to close only queues with native backing memory.
-        Misc.free(getTableWriterEventQueue());
-    }
 
     Sequence getColumnVersionPurgePubSeq();
 
@@ -87,6 +82,16 @@ public interface MessageBus extends Closeable {
     RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue();
 
     MCSequence getO3PurgeDiscoverySubSeq();
+
+    FanOut getPageFrameCollectFanOut(int shard);
+
+    MPSequence getPageFrameReducePubSeq(int shard);
+
+    RingQueue<PageFrameReduceTask> getPageFrameReduceQueue(int shard);
+
+    int getPageFrameReduceShardCount();
+
+    MCSequence getPageFrameReduceSubSeq(int shard);
 
     FanOut getTableWriterEventFanOut();
 

@@ -187,15 +187,6 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        base = executionContext.getBindVariableService().getFunction(variableIndex);
-        if (base == null) {
-            throw CairoException.instance(0).put("undefined bind variable: ").put(variableIndex);
-        }
-        base.init(symbolTableSource, executionContext);
-    }
-
-    @Override
     public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
         this.type = bindVariableService.define(variableIndex, type, position);
     }
@@ -203,6 +194,19 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     @Override
     public boolean isRuntimeConstant() {
         return true;
+    }
+
+    public int getVariableIndex() {
+        return variableIndex;
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        base = executionContext.getBindVariableService().getFunction(variableIndex);
+        if (base == null) {
+            throw CairoException.instance(0).put("undefined bind variable: ").put(variableIndex);
+        }
+        base.init(symbolTableSource, executionContext);
     }
 
     private Function getBase() {

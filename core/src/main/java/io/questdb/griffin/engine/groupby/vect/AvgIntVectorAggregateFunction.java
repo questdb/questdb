@@ -28,23 +28,27 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
+import java.io.Closeable;
 import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.atomic.LongAdder;
 
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
-public class AvgIntVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+public class AvgIntVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction, Closeable {
 
     private final DoubleAdder sum = new DoubleAdder();
     private final LongAdder count = new LongAdder();
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final int workerCount;
     private int valueOffset;
+    private long counts;
 
     public AvgIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
@@ -55,15 +59,21 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
             distinctFunc = Rosti::keyedIntDistinct;
             keyValueFunc = Rosti::keyedIntSumInt;
         }
+
+        counts = Unsafe.malloc(workerCount * 8L, MemoryTag.NATIVE_DEFAULT);
+        this.workerCount = workerCount;
     }
 
     @Override
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
-            final double value = Vect.avgInt(address, addressSize / Integer.BYTES);
+            final double value = Vect.avgIntAcc(address, addressSize / Integer.BYTES, counts + workerId * 8L);
             if (value == value) {
-                sum.add(value);
-                this.count.increment();
+                final long count = Unsafe.getUnsafe().getLong(counts + workerId * 8L);
+                // we have to include "weight" of this avg value in the formula,
+                // which calculates final result
+                sum.add(value * count);
+                this.count.add(count);
             }
         }
     }
@@ -116,6 +126,15 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     public void clear() {
         sum.reset();
         count.reset();
+    }
+
+    @Override
+    public void close() {
+        if (counts != 0) {
+            Unsafe.free(counts, workerCount * 8L, MemoryTag.NATIVE_DEFAULT);
+            counts = 0;
+        }
+        super.close();
     }
 
     @Override

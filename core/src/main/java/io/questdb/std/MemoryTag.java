@@ -49,7 +49,8 @@ public final class MemoryTag {
     public static final int NATIVE_LONG_LIST = 21;
     public static final int NATIVE_JIT = 22;
     public static final int MMAP_UPDATE = 23;
-    public static final int SIZE = MMAP_UPDATE + 1;
+    public static final int NATIVE_OFFLOAD = 24;
+    public static final int SIZE = NATIVE_OFFLOAD + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -80,6 +81,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_JIT_LONG_LIST, "NATIVE_JIT_LONG_LIST");
         tagNameMap.extendAndSet(NATIVE_LONG_LIST, "NATIVE_LONG_LIST");
         tagNameMap.extendAndSet(NATIVE_JIT, "NATIVE_JIT");
+        tagNameMap.extendAndSet(NATIVE_OFFLOAD, "NATIVE_OFFLOAD");
         tagNameMap.extendAndSet(MMAP_UPDATE, "MMAP_UPDATE");
     }
 }

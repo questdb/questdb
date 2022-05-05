@@ -24,7 +24,12 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Chars;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class LimitTest extends AbstractGriffinTest {
@@ -516,8 +521,101 @@ public class LimitTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLimitMinusOne() throws Exception {
-        compiler.compile("create table t1 (ts Timestamp, id symbol)", sqlExecutionContext);
+    public void testLimitMinusOneJitEnabled() throws Exception {
+        testLimitMinusOne();
+    }
+
+    @Test
+    public void testLimitMinusOneJitDisabled() throws Exception {
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        testLimitMinusOne();
+    }
+
+    @Test
+    public void testInvalidNegativeLimitJitEnabled() throws Exception {
+        testInvalidNegativeLimit();
+    }
+
+    @Test
+    public void testInvalidNegativeLimitJitDisabled() throws Exception {
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        testInvalidNegativeLimit();
+    }
+
+    @Test
+    public void testNegativeLimitMultiplePageFramesNonPartitioned() throws Exception {
+        // Here we verify that the implicit timestamp descending order is preserved
+        // by negative limit clause even if it spans multiple page frames.
+
+        pageFrameMaxRows = 64;
+        final int N = pageFrameMaxRows * 5;
+
+        compiler.compile("create table y as (" +
+                "select" +
+                " cast(x as int) i," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                " from long_sequence(" + N + ")" +
+                ") timestamp(timestamp)", sqlExecutionContext);
+
+        String query = "select * from y where i % 64 = 1 limit -1";
+        String expected = "i\ttimestamp\n" +
+                "257\t2018-01-01T08:34:00.000000Z\n";
+        assertQuery(expected, query, "timestamp", true, true);
+
+        query = "select * from y where i % 64 = 1 limit -2";
+        expected = "i\ttimestamp\n" +
+                "193\t2018-01-01T06:26:00.000000Z\n" +
+                "257\t2018-01-01T08:34:00.000000Z\n";
+        assertQuery(expected, query, "timestamp", true, true);
+
+        query = "select * from y where i % 64 < 3 limit -5";
+        expected = "i\ttimestamp\n" +
+                "194\t2018-01-01T06:28:00.000000Z\n" +
+                "256\t2018-01-01T08:32:00.000000Z\n" +
+                "257\t2018-01-01T08:34:00.000000Z\n" +
+                "258\t2018-01-01T08:36:00.000000Z\n" +
+                "320\t2018-01-01T10:40:00.000000Z\n";
+        assertQuery(expected, query, "timestamp", true, true);
+    }
+
+    @Test
+    public void testNegativeLimitMultiplePageFramesPartitioned() throws Exception {
+        // Here we verify that the implicit timestamp descending order is preserved
+        // by negative limit clause even if it spans multiple page frames.
+
+        pageFrameMaxRows = 64;
+        final int N = pageFrameMaxRows * 5;
+
+        compiler.compile("create table y as (" +
+                "select" +
+                " cast(x as int) i," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                " from long_sequence(" + N + ")" +
+                ") timestamp(timestamp) partition by hour", sqlExecutionContext);
+
+        String query = "select * from y where i % 64 = 1 limit -1";
+        String expected = "i\ttimestamp\n" +
+                "257\t2018-01-01T08:34:00.000000Z\n";
+        assertQuery(expected, query, "timestamp", true, true);
+
+        query = "select * from y where i % 64 = 1 limit -2";
+        expected = "i\ttimestamp\n" +
+                "193\t2018-01-01T06:26:00.000000Z\n" +
+                "257\t2018-01-01T08:34:00.000000Z\n";
+        assertQuery(expected, query, "timestamp", true, true);
+
+        query = "select * from y where i % 64 < 3 limit -5";
+        expected = "i\ttimestamp\n" +
+                "194\t2018-01-01T06:28:00.000000Z\n" +
+                "256\t2018-01-01T08:32:00.000000Z\n" +
+                "257\t2018-01-01T08:34:00.000000Z\n" +
+                "258\t2018-01-01T08:36:00.000000Z\n" +
+                "320\t2018-01-01T10:40:00.000000Z\n";
+        assertQuery(expected, query, "timestamp", true, true);
+    }
+
+    private void testLimitMinusOne() throws Exception {
+        compiler.compile("create table t1 (ts timestamp, id symbol)", sqlExecutionContext);
 
         String inserts = "insert into t1 values (0L, 'abc')\n" +
                 "insert into t1 values (2L, 'a1')\n" +
@@ -525,12 +623,36 @@ public class LimitTest extends AbstractGriffinTest {
                 "insert into t1 values (4L, 'abc')\n" +
                 "insert into t1 values (5L, 'a2')";
 
-        for(String sql: inserts.split("\\r?\\n")) {
+        for (String sql: inserts.split("\\r?\\n")) {
             executeInsert(sql);
         }
 
         assertQueryAndCache("ts\tid\n" +
                 "1970-01-01T00:00:00.000004Z\tabc\n", "select * from t1 where id = 'abc' limit -1", null, true, true);
+    }
+
+    private void testInvalidNegativeLimit() throws Exception {
+        int maxLimit = configuration.getSqlMaxNegativeLimit();
+
+        compiler.compile("create table y as (" +
+                "select" +
+                " cast(x as int) i," +
+                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                " from long_sequence(100)" +
+                ") timestamp(timestamp)", sqlExecutionContext);
+
+        String expectedMessage = "absolute LIMIT value is too large, maximum allowed value: " + maxLimit;
+        int expectedPosition = 34;
+
+        String query = "select * from y where i > 0 limit -" + (maxLimit + 1);
+        try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                Assert.fail();
+            }
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+            Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
+        }
     }
 
     private void testLimit(String expected1, String expected2, String query) throws Exception {

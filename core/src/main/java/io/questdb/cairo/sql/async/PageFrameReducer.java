@@ -22,22 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo.sql.async;
 
-import io.questdb.network.NetworkFacade;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.cairo.sql.PageAddressCacheRecord;
 
-public interface SqlExecutionCircuitBreakerConfiguration {
-    int getBufferSize();
-
-    int getCircuitBreakerThrottle();
-
-    NetworkFacade getNetworkFacade();
-
-    boolean isEnabled();
-
-    MicrosecondClock getClock();
-
-    // maximum SQL execution time in micros
-    long getMaxTime();
+@FunctionalInterface
+public interface PageFrameReducer {
+    void reduce(PageAddressCacheRecord record, PageFrameReduceTask task);
 }

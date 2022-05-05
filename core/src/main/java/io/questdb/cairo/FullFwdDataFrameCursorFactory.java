@@ -29,14 +29,24 @@ import io.questdb.griffin.SqlExecutionContext;
 
 public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
     private final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
+    private FullBwdDataFrameCursor bwdCursor;
 
     public FullFwdDataFrameCursorFactory(CairoEngine engine, String tableName, int tableId, long tableVersion) {
         super(engine, tableName, tableId, tableVersion);
     }
 
     @Override
-    public DataFrameCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of(getReader(executionContext.getCairoSecurityContext()));
+    public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) {
+        if (order == ORDER_ASC || order == ORDER_ANY) {
+            return cursor.of(getReader(executionContext.getCairoSecurityContext()));
+        }
+
+        // Create backward scanning cursor when needed. Factory requesting backward cursor must
+        // still return records in ascending timestamp order.
+        if (bwdCursor == null) {
+            bwdCursor = new FullBwdDataFrameCursor();
+        }
+        return bwdCursor.of(getReader(executionContext.getCairoSecurityContext()));
     }
 
     @Override

@@ -87,7 +87,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
         if (restrictedByValues) {
             if (symbolKeys.size() > 0) {
                 // Find only restricted set of symbol keys
-                rowIds.extend(symbolKeys.size());
+                rowIds.setCapacity(symbolKeys.size());
                 if (filter != null) {
                     filter.init(this, executionContext);
                     filter.toTop();
@@ -104,7 +104,7 @@ class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
                 distinctSymbols++;
             }
 
-            rowIds.extend(distinctSymbols);
+            rowIds.setCapacity(distinctSymbols);
             if (distinctSymbols > 0) {
                 if (filter != null) {
                     filter.init(this, executionContext);

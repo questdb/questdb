@@ -29,6 +29,7 @@ import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
 
+//abstract multi producer or consumer sequence 
 abstract class AbstractMSequence extends AbstractSSequence {
     private final int[] flags;
     private final int mask;

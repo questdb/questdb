@@ -25,8 +25,10 @@
 package io.questdb.cairo;
 
 import io.questdb.*;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -43,8 +45,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final CharSequence snapshotRoot;
 
     private final TextConfiguration textConfiguration;
-
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
+    private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
 
     private final BuildInformation buildInformation = new BuildInformationHolder();
 
@@ -62,6 +64,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean enableDevelopmentUpdates() {
+        return false;
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return true;
     }
@@ -69,11 +76,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getAnalyticColumnPoolCapacity() {
         return 64;
-    }
-
-    @Override
-    public long getDataAppendPageSize() {
-        return getFilesFacade().getMapPageSize();
     }
 
     @Override
@@ -194,6 +196,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getCreateTableModelPoolCapacity() {
         return 32;
+    }
+
+    @Override
+    public long getDataAppendPageSize() {
+        return getFilesFacade().getMapPageSize();
     }
 
     @Override
@@ -332,6 +339,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMiscAppendPageSize() {
+        return getFilesFacade().getPageSize();
+    }
+
+    @Override
     public int getMkDirMode() {
         return 509;
     }
@@ -372,6 +384,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPageFrameReduceQueueCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getPageFrameReduceShardCount() {
+        return 4;
+    }
+
+    @Override
+    public int getPageFrameReduceTaskPoolCapacity() {
+        return 4;
+    }
+
+    @Override
     public int getParallelIndexThreshold() {
         return 100000;
     }
@@ -399,11 +426,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
-    }
-
-    @Override
-    public long getMiscAppendPageSize() {
-        return getFilesFacade().getPageSize();
     }
 
     @Override
@@ -456,15 +478,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         // 1024 seems like a good fit, but tests need
         // smaller capacity so that resize is tested correctly
         return 64;
-    }
-
-    @Override
-    public long getWriterFileOpenOpts() {
-        // In some places we rely on the fact that data written via conventional IO
-        // is immediately visible to mapped memory for the same area of file. While this is the
-        // case on Linux it is absolutely not the case on Windows. We must not enable anything other
-        // than MMAP on Windows.
-        return Os.type != Os.WINDOWS ? O_ASYNC : O_NONE;
     }
 
     @Override
@@ -528,6 +541,41 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlJitBindVarsMemoryMaxPages() {
+        return 8;
+    }
+
+    @Override
+    public int getSqlJitBindVarsMemoryPageSize() {
+        return 4096;
+    }
+
+    @Override
+    public int getSqlJitIRMemoryMaxPages() {
+        return 8;
+    }
+
+    @Override
+    public int getSqlJitIRMemoryPageSize() {
+        return 8192;
+    }
+
+    @Override
+    public int getSqlJitMode() {
+        return SqlJitMode.JIT_MODE_ENABLED;
+    }
+
+    @Override
+    public int getSqlJitPageAddressCacheThreshold() {
+        return Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public int getSqlJitRowsThreshold() {
+        return Numbers.SIZE_1MB;
+    }
+
+    @Override
     public int getSqlJoinContextPoolCapacity() {
         return 64;
     }
@@ -578,6 +626,21 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlMaxNegativeLimit() {
+        return 10_000;
+    }
+
+    @Override
+    public int getSqlPageFrameMinRows() {
+        return 1_000;
+    }
+
+    @Override
+    public int getSqlPageFrameMaxRows() {
+        return 1_000_000;
+    }
+
+    @Override
     public int getSqlSortKeyMaxPages() {
         return 128;
     }
@@ -605,51 +668,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlSortValuePageSize() {
         return Numbers.SIZE_1MB * 16;
-    }
-
-    @Override
-    public int getSqlPageFrameMaxSize() {
-        return 8 * Numbers.SIZE_1MB;
-    }
-
-    @Override
-    public int getSqlJitMode() {
-        return SqlJitMode.JIT_MODE_DISABLED;
-    }
-
-    @Override
-    public int getSqlJitIRMemoryPageSize() {
-        return 8192;
-    }
-
-    @Override
-    public int getSqlJitIRMemoryMaxPages() {
-        return 8;
-    }
-
-    @Override
-    public int getSqlJitBindVarsMemoryPageSize() {
-        return 4096;
-    }
-
-    @Override
-    public int getSqlJitBindVarsMemoryMaxPages() {
-        return 8;
-    }
-
-    @Override
-    public int getSqlJitRowsThreshold() {
-        return Numbers.SIZE_1MB;
-    }
-
-    @Override
-    public int getSqlJitPageAddressCacheThreshold() {
-        return Numbers.SIZE_1MB;
-    }
-
-    @Override
-    public boolean isSqlJitDebugEnabled() {
-        return false;
     }
 
     @Override
@@ -698,6 +716,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWriterFileOpenOpts() {
+        // In some places we rely on the fact that data written via conventional IO
+        // is immediately visible to mapped memory for the same area of file. While this is the
+        // case on Linux it is absolutely not the case on Windows. We must not enable anything other
+        // than MMAP on Windows.
+        return Os.type != Os.WINDOWS ? O_ASYNC : O_NONE;
+    }
+
+    @Override
     public long getWriterCommandQueueSlotSize() {
         return 1024;
     }
@@ -715,6 +742,26 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isSqlJitDebugEnabled() {
+        return false;
+    }
+
+    @Override
+    public int getPageFrameReduceRowIdListCapacity() {
+        return 32;
+    }
+
+    @Override
+    public int getPageFrameReduceColumnListCapacity() {
+        return 16;
+    }
+
+    @Override
+    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
+        return circuitBreakerConfiguration;
     }
 
     @Override
