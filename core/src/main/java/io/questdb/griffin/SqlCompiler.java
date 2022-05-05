@@ -1238,7 +1238,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         //ignoring `column`
         if (tok != null && !SqlKeywords.isColumnKeyword(tok)) {
-            lexer.unparse();
+            lexer.unparseLast();
         }
 
         AlterOperationBuilder addColumn = alterOperationBuilder.ofAddColumn(
@@ -1729,7 +1729,7 @@ public class SqlCompiler implements Closeable {
         // instance of compiler for safekeeping
 
         // lexer would have parsed first token to determine direction of execution flow
-        lexer.unparse();
+        lexer.unparseLast();
         codeGenerator.clear();
 
         ExecutionModel executionModel = compileExecutionModel(executionContext);
@@ -2096,7 +2096,7 @@ public class SqlCompiler implements Closeable {
             }
             hasIfExists = true;
         } else {
-            lexer.unparse(); // tok has table name
+            lexer.unparseLast(); // tok has table name
         }
         final int tableNamePosition = lexer.getPosition();
         CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
@@ -2179,7 +2179,7 @@ public class SqlCompiler implements Closeable {
             if (token == null) {
                 return -1;
             } else if (!isSemicolon(token)) {
-                lexer.unparse();
+                lexer.unparseLast();
                 return lexer.lastTokenPosition();
             }
         }
@@ -2189,7 +2189,7 @@ public class SqlCompiler implements Closeable {
 
     private int goToQueryEnd() {
         CharSequence token;
-        lexer.unparse();
+        lexer.unparseLast();
         while (lexer.hasNext()) {
             token = SqlUtil.fetchNext(lexer);
             if (token == null || isSemicolon(token)) {
