@@ -963,13 +963,22 @@ public class SqlCompiler implements Closeable {
                 return;
             }
 
-            batchCallback.preCompile(this);
-            clear();//we don't use normal compile here because we can't reset existing lexer
-            CompiledQuery current = compileInner(executionContext);
-            //We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
-            //some code in postCompile might need full text of current query
-            CharSequence currentQuery = query.subSequence(position, goToQueryEnd());
-            batchCallback.postCompile(this, current, currentQuery);
+            boolean recompileStale = true;
+            do {
+                try {
+                    batchCallback.preCompile(this);
+                    clear();//we don't use normal compile here because we can't reset existing lexer
+                    CompiledQuery current = compileInner(executionContext);
+                    //We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
+                    //some code in postCompile might need full text of current query
+                    CharSequence currentQuery = query.subSequence(position, goToQueryEnd());
+                    batchCallback.postCompile(this, current, currentQuery);
+                    recompileStale = false;
+                } catch (ReaderOutOfDateException e) {
+                    LOG.info().$(e.getFlyweightMessage()).$();
+                    // will recompile
+                }
+            } while (recompileStale);
         }
     }
 

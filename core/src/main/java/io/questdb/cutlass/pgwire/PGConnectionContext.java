@@ -1348,13 +1348,8 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         // when we have writer, execution is synchronous
         final int index = pendingWriters.keyIndex(op.getTableName());
         if (index < 0) {
-            try {
-                op.withContext(sqlExecutionContext);
-                pendingWriters.valueAt(index).getUpdateOperator().executeUpdate(sqlExecutionContext, op);
-            } catch (ReaderOutOfDateException e) {
-                // todo: investigate and handle
-                e.printStackTrace();
-            }
+            op.withContext(sqlExecutionContext);
+            pendingWriters.valueAt(index).getUpdateOperator().executeUpdate(sqlExecutionContext, op);
         } else {
             if (statementTimeoutMs > 0) {
                 circuitBreaker.setMaxTime(statementTimeoutMs);
@@ -2222,7 +2217,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         syncActions.add(SYNC_PARSE);
     }
 
-    //process one or more queries (batch/script) . "Simple Query" in PostgreSQL docs.  
+    //process one or more queries (batch/script) . "Simple Query" in PostgreSQL docs.
     private void processQuery(long lo, long limit, @Transient SqlCompiler compiler)
             throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
         prepareForNewQuery();

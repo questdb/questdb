@@ -320,16 +320,25 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void compileQuery(JsonQueryProcessorState state) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        final long nanos = nanosecondClock.getTicks();
-        final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
-        sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_HTTP_JSON);
-        state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
-        state.setQueryType(cc.getType());
-        queryExecutors.getQuick(cc.getType()).execute(
-                state,
-                cc,
-                configuration.getKeepAliveHeader()
-        );
+        boolean recompileStale = true;
+        do {
+            try {
+                final long nanos = nanosecondClock.getTicks();
+                final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+                sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_HTTP_JSON);
+                state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
+                state.setQueryType(cc.getType());
+                queryExecutors.getQuick(cc.getType()).execute(
+                        state,
+                        cc,
+                        configuration.getKeepAliveHeader()
+                );
+                recompileStale = false;
+            } catch (ReaderOutOfDateException e) {
+                LOG.info().$(e.getFlyweightMessage()).$();
+                // will recompile
+            }
+        } while (recompileStale);
     }
 
     static void sendException(
@@ -446,7 +455,16 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private void retryQueryExecution(JsonQueryProcessorState state, OperationFuture fut) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
-        if (fut.await(0) != OperationFuture.QUERY_COMPLETE) {
+        final int waitResult;
+        try {
+            waitResult = fut.await(0);
+        } catch (ReaderOutOfDateException e) {
+            state.freeAsyncOperation();
+            compileQuery(state);
+            return;
+        }
+
+        if (waitResult != OperationFuture.QUERY_COMPLETE) {
             long maxWait = state.getStatementTimeoutNs() > 0 ? state.getStatementTimeoutNs() : asyncWriterFullTimeoutNs;
             if (state.getExecutionTime() < maxWait) {
                 // Schedule a retry

@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -57,9 +56,6 @@ public class UpdateOperationSender implements OperationSender<UpdateOperation> {
             }
             updateFuture.of(operation, sqlExecutionContext, eventSubSeq, operation.getTableNamePosition());
             return updateFuture;
-        } catch (ReaderOutOfDateException e) {
-            assert false : "This must never happen for UPDATE, tableName=" + operation.getTableName();
-            return doneFuture;
         }
     }
 }
