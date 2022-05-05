@@ -66,7 +66,6 @@ public class IntStackTest {
             Assert.assertEquals("at " + count, expected[count--], stack.pollLast());
         }
 
-        // The following assertions fail while they shouldn't.
         Assert.assertEquals(-1, stack.pollLast());
         Assert.assertFalse(stack.notEmpty());
     }
