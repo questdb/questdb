@@ -188,7 +188,7 @@ public final class SqlParser {
         if (n != null) {
             return n;
         }
-        throw SqlException.$(lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition(), "Expression expected");
+        throw SqlException.$(lexer.hasUnparsed() ? lexer.lastTokenPosition() : lexer.getPosition(), "Expression expected");
     }
 
     private int expectInt(GenericLexer lexer) throws SqlException {
@@ -255,7 +255,7 @@ public final class SqlParser {
         // This is complex expression of sample by period. It must follow time unit interval
         ExpressionNode periodUnit = expectLiteral(lexer);
         if (periodUnit == null || periodUnit.type != ExpressionNode.LITERAL || !isValidSampleByPeriodLetter(periodUnit.token)) {
-            int lexerPosition = lexer.getUnparsed() == null ? lexer.getPosition() : lexer.lastTokenPosition();
+            int lexerPosition = lexer.hasUnparsed() ? lexer.lastTokenPosition() : lexer.getPosition();
             throw SqlException.$(periodUnit != null ? periodUnit.position : lexerPosition, "one letter sample by period unit expected");
         }
         model.setSampleBy(n, periodUnit);
@@ -480,7 +480,7 @@ public final class SqlParser {
         tok = tok(lexer, "'(' or 'as'");
 
         if (Chars.equals(tok, '(')) {
-            lexer.unparse();
+            lexer.unparseLast();
             parseCreateTableColumns(lexer, model);
         } else if (isAsKeyword(tok)) {
             parseCreateTableAsSelect(lexer, model, executionContext);
@@ -612,7 +612,7 @@ public final class SqlParser {
                 cached = true;
             } else {
                 cached = configuration.getDefaultSymbolCacheFlag();
-                lexer.unparse();
+                lexer.unparseLast();
             }
 
             columnCastModel.setSymbolCacheFlag(cached);
@@ -668,7 +668,7 @@ public final class SqlParser {
                     cached = true;
                 } else {
                     cached = configuration.getDefaultSymbolCacheFlag();
-                    lexer.unparse();
+                    lexer.unparseLast();
                 }
                 model.cached(cached);
                 if (cached && symbolCapacity != -1) {
@@ -718,7 +718,7 @@ public final class SqlParser {
             model.setIndexFlags(columnIndex, true, Numbers.ceilPow2(indexValueBlockSize));
         } else {
             model.setIndexFlags(columnIndex, true, configuration.getIndexValueBlockSize());
-            lexer.unparse();
+            lexer.unparseLast();
         }
         expectTok(lexer, ')');
     }
@@ -774,7 +774,7 @@ public final class SqlParser {
 
             CharSequence tok = optTok(lexer);
             if (tok == null || Chars.equals(tok, ';') || setOperations.excludes(tok)) {
-                lexer.unparse();
+                lexer.unparseLast();
                 return model;
             }
 
@@ -784,7 +784,7 @@ public final class SqlParser {
                     prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION_ALL);
                 } else {
                     prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION);
-                    lexer.unparse();
+                    lexer.unparseLast();
                 }
             }
 
@@ -841,11 +841,11 @@ public final class SqlParser {
                 nestedModel.setTableName(func);
                 model.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
                 model.setNestedModel(nestedModel);
-                lexer.unparse();
+                lexer.unparseLast();
                 return model;
             }
         } else {
-            lexer.unparse();
+            lexer.unparseLast();
             model.addBottomUpColumn(SqlUtil.nextColumn(queryColumnPool, expressionNodePool, "*", "*"));
             model.setArtificialStar(true);
         }
@@ -976,10 +976,10 @@ public final class SqlParser {
                     }
                     proposedNested = null;
                 } else {
-                    lexer.unparse();
+                    lexer.unparseLast();
                 }
             } else {
-                lexer.unparse();
+                lexer.unparseLast();
             }
 
             if (proposedNested != null) {
@@ -988,7 +988,7 @@ public final class SqlParser {
                 tok = setModelAliasAndTimestamp(lexer, model);
             }
         } else {
-            lexer.unparse();
+            lexer.unparseLast();
             parseSelectFrom(lexer, model, masterModel.getWithClauses());
             tok = setModelAliasAndTimestamp(lexer, model);
 
@@ -1107,7 +1107,7 @@ public final class SqlParser {
             expectBy(lexer);
             do {
                 tokIncludingLocalBrace(lexer, "literal");
-                lexer.unparse();
+                lexer.unparseLast();
                 ExpressionNode n = expr(lexer, model);
                 if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
                     throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
@@ -1125,7 +1125,7 @@ public final class SqlParser {
             expectBy(lexer);
             do {
                 tokIncludingLocalBrace(lexer, "literal");
-                lexer.unparse();
+                lexer.unparseLast();
 
                 ExpressionNode n = expr(lexer, model);
                 if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT)) {
@@ -1164,11 +1164,11 @@ public final class SqlParser {
             if (tok != null && Chars.equals(tok, ',')) {
                 hi = expr(lexer, model);
             } else {
-                lexer.unparse();
+                lexer.unparseLast();
             }
             model.setLimit(lo, hi);
         } else {
-            lexer.unparse();
+            lexer.unparseLast();
         }
     }
 
@@ -1225,7 +1225,7 @@ public final class SqlParser {
 
         if (isSelectKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
-            lexer.unparse();
+            lexer.unparseLast();
             final QueryModel queryModel = parseDml(lexer, null);
             model.setQueryModel(queryModel);
             return model;
@@ -1284,7 +1284,7 @@ public final class SqlParser {
         if (Chars.equals(tok, '(')) {
             joinModel.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer, parent));
         } else {
-            lexer.unparse();
+            lexer.unparseLast();
             parseSelectFrom(lexer, joinModel, parent);
         }
 
@@ -1299,7 +1299,7 @@ public final class SqlParser {
             case QueryModel.JOIN_LT:
             case QueryModel.JOIN_SPLICE:
                 if (tok == null || !isOnKeyword(tok)) {
-                    lexer.unparse();
+                    lexer.unparseLast();
                     break;
                 }
                 // intentional fall through
@@ -1338,7 +1338,7 @@ public final class SqlParser {
                 }
                 break;
             default:
-                lexer.unparse();
+                lexer.unparseLast();
                 break;
         }
 
@@ -1372,7 +1372,7 @@ public final class SqlParser {
         model.setLatestByType(QueryModel.LATEST_BY_DEPRECATED);
 
         if (tok != null) {
-            lexer.unparse();
+            lexer.unparseLast();
         }
     }
 
@@ -1395,7 +1395,7 @@ public final class SqlParser {
         model.setLatestByType(QueryModel.LATEST_BY_NEW);
 
         if (tok != null) {
-            lexer.unparse();
+            lexer.unparseLast();
         }
     }
 
@@ -1418,7 +1418,7 @@ public final class SqlParser {
     }
 
     private ExecutionModel parseSelect(GenericLexer lexer) throws SqlException {
-        lexer.unparse();
+        lexer.unparseLast();
         final QueryModel model = parseDml(lexer, null);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
@@ -1434,7 +1434,7 @@ public final class SqlParser {
         if (isDistinctKeyword(tok)) {
             model.setDistinct(true);
         } else {
-            lexer.unparse();
+            lexer.unparseLast();
         }
         while (true) {
 
@@ -1451,7 +1451,7 @@ public final class SqlParser {
                     throw SqlException.$(lexer.getPosition(), "reserved name");
                 }
 
-                lexer.unparse();
+                lexer.unparseLast();
                 expr = expr(lexer, model);
 
                 if (expr == null) {
@@ -1536,17 +1536,17 @@ public final class SqlParser {
             model.addBottomUpColumn(col);
 
             if (tok == null || Chars.equals(tok, ';')) {
-                lexer.unparse();
+                lexer.unparseLast();
                 break;
             }
 
             if (isFromKeyword(tok)) {
-                lexer.unparse();
+                lexer.unparseLast();
                 break;
             }
 
             if (setOperations.contains(tok)) {
-                lexer.unparse();
+                lexer.unparseLast();
                 break;
             }
 
@@ -1601,7 +1601,7 @@ public final class SqlParser {
     }
 
     private ExecutionModel parseUpdate(GenericLexer lexer) throws SqlException {
-        lexer.unparse();
+        lexer.unparseLast();
         final QueryModel model = parseDmlUpdate(lexer);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
@@ -1659,7 +1659,7 @@ public final class SqlParser {
             }
 
             if (tok.length() != 1 || tok.charAt(0) != ',') {
-                lexer.unparse();
+                lexer.unparseLast();
                 break;
             }
         }
@@ -1671,7 +1671,7 @@ public final class SqlParser {
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (!isUpdateKeyword(tok)) {
             // SELECT
-            lexer.unparse();
+            lexer.unparseLast();
             return parseDml(lexer, null);
         } else {
             // UPDATE
@@ -1685,13 +1685,12 @@ public final class SqlParser {
             return m;
         }
 
-        final int pos = lexer.getPosition();
-        final CharSequence unparsed = lexer.getUnparsed();
-        lexer.goToPosition(wcm.getPosition(), null);
+        lexer.stash();
+        lexer.goToPosition(wcm.getPosition());
         // this will not throw exception because this is second pass over the same sub-query
         // we wouldn't be here is syntax was wrong
         m = parseAsSubQueryAndExpectClosingBrace(lexer, withClauses);
-        lexer.goToPosition(pos, unparsed);
+        lexer.unstash();
         return m;
     }
 
@@ -1712,7 +1711,7 @@ public final class SqlParser {
 
             CharSequence tok = optTok(lexer);
             if (tok == null || !Chars.equals(tok, ',')) {
-                lexer.unparse();
+                lexer.unparseLast();
                 break;
             }
         } while (true);
