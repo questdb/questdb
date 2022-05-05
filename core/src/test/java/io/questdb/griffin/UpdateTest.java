@@ -38,6 +38,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.function.Consumer;
 
 public class UpdateTest extends AbstractGriffinTest {
     private final SCSequence eventSubSequence = new SCSequence();
@@ -238,6 +239,38 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateAsyncMode() throws Exception {
+        testUpdateAsyncMode(tableWriter -> {}, null,
+                "ts\tx\n" +
+                        "1970-01-01T00:00:00.000000Z\t1\n" +
+                        "1970-01-01T00:00:01.000000Z\t123\n" +
+                        "1970-01-01T00:00:02.000000Z\t123\n" +
+                        "1970-01-01T00:00:03.000000Z\t4\n" +
+                        "1970-01-01T00:00:04.000000Z\t5\n");
+    }
+
+    @Test
+    public void testUpdateAsyncModeAddColumnInMiddle() throws Exception {
+        testUpdateAsyncMode(tableWriter -> tableWriter.addColumn("newCol", ColumnType.INT), "cached query plan cannot be used because table schema has changed [table='up']",
+                "ts\tx\tnewCol\n" +
+                        "1970-01-01T00:00:00.000000Z\t1\tNaN\n" +
+                        "1970-01-01T00:00:01.000000Z\t2\tNaN\n" +
+                        "1970-01-01T00:00:02.000000Z\t3\tNaN\n" +
+                        "1970-01-01T00:00:03.000000Z\t4\tNaN\n" +
+                        "1970-01-01T00:00:04.000000Z\t5\tNaN\n");
+    }
+
+    @Test
+    public void testUpdateAsyncModeRemoveColumnInMiddle() throws Exception {
+        testUpdateAsyncMode(tableWriter -> tableWriter.removeColumn("x"), "cached query plan cannot be used because table schema has changed [table='up']",
+                "ts\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:01.000000Z\n" +
+                        "1970-01-01T00:00:02.000000Z\n" +
+                        "1970-01-01T00:00:03.000000Z\n" +
+                        "1970-01-01T00:00:04.000000Z\n");
+    }
+
+    private void testUpdateAsyncMode(Consumer<TableWriter> writerConsumer, String errorMsg, String expectedData) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(
                     "create table up as" +
@@ -254,6 +287,7 @@ public class UpdateTest extends AbstractGriffinTest {
                     TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "up", "test");
                     barrier.await(); // table is locked
                     barrier.await(); // update is on writer async cmd queue
+                    writerConsumer.accept(tableWriter);
                     tableWriter.tick();
                     tableWriter.close();
                 } catch (Exception e) {
@@ -272,19 +306,24 @@ public class UpdateTest extends AbstractGriffinTest {
                 Assert.assertEquals(OperationFuture.QUERY_NO_RESPONSE, fut.getStatus());
                 Assert.assertEquals(0, fut.getAffectedRowsCount());
                 barrier.await(); // update is on writer async cmd queue
-                fut.await(10 * Timestamps.SECOND_MICROS); // 10 seconds timeout
-                Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
-                Assert.assertEquals(2, fut.getAffectedRowsCount());
 
+                if (errorMsg == null) {
+                    fut.await(10 * Timestamps.SECOND_MICROS); // 10 seconds timeout
+                    Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
+                    Assert.assertEquals(2, fut.getAffectedRowsCount());
+                } else {
+                    try {
+                        fut.await(10 * Timestamps.SECOND_MICROS); // 10 seconds timeout
+                        Assert.fail("Expected exception missing");
+                    } catch (ReaderOutOfDateException | SqlException e) {
+                        Assert.assertEquals(errorMsg, e.getMessage());
+                        Assert.assertEquals(0, fut.getAffectedRowsCount());
+                    }
+                }
             }
             th.join();
 
-            assertSql("up", "ts\tx\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\n" +
-                    "1970-01-01T00:00:01.000000Z\t123\n" +
-                    "1970-01-01T00:00:02.000000Z\t123\n" +
-                    "1970-01-01T00:00:03.000000Z\t4\n" +
-                    "1970-01-01T00:00:04.000000Z\t5\n");
+            assertSql("up", expectedData);
         });
     }
 

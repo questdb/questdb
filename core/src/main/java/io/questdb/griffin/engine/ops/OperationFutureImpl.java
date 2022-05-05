@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -43,8 +44,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TableWriterTask;
 
-import static io.questdb.tasks.TableWriterTask.TSK_BEGIN;
-import static io.questdb.tasks.TableWriterTask.TSK_COMPLETE;
+import static io.questdb.tasks.TableWriterTask.*;
+import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 
 class OperationFutureImpl implements OperationFuture {
     private static final Log LOG = LogFactory.getLog(OperationFutureImpl.class);
@@ -52,7 +53,8 @@ class OperationFutureImpl implements OperationFuture {
     private SCSequence eventSubSeq;
     private int status;
     private long affectedRowsCount;
-    private long cmdCorrelationId;
+    private long correlationId;
+    private String tableName;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private int tableNamePositionInSql;
 
@@ -67,7 +69,7 @@ class OperationFutureImpl implements OperationFuture {
             await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
         }
         if (status != QUERY_COMPLETE) {
-            throw TimeoutSqlException.timeout("Timeout expired on waiting for the async command execution result [cmdCorrelationId=").put(cmdCorrelationId).put(']');
+            throw TimeoutSqlException.timeout("Timeout expired on waiting for the async command execution result [instance=").put(correlationId).put(']');
         }
     }
 
@@ -96,7 +98,8 @@ class OperationFutureImpl implements OperationFuture {
             engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
             eventSubSeq.clear();
             eventSubSeq = null;
-            cmdCorrelationId = -1;
+            correlationId = -1;
+            tableName = null;
         }
     }
 
@@ -120,9 +123,9 @@ class OperationFutureImpl implements OperationFuture {
 
         try {
             // Publish new command and get published command correlation id
-            CharSequence cmdName = asyncWriterCommand.getCommandName();
-            CharSequence tableName = asyncWriterCommand.getTableName();
-            final long correlationId = engine.getCommandCorrelationId();
+            final CharSequence cmdName = asyncWriterCommand.getCommandName();
+            tableName = asyncWriterCommand.getTableName();
+            correlationId = engine.getCommandCorrelationId();
             asyncWriterCommand.setCommandCorrelationId(correlationId);
 
             try (TableWriter writer = engine.getWriterOrPublishCommand(
@@ -150,8 +153,7 @@ class OperationFutureImpl implements OperationFuture {
                 }
             }
 
-            cmdCorrelationId = correlationId;
-            queryFutureUpdateListener.reportStart(asyncWriterCommand.getTableName(), cmdCorrelationId);
+            queryFutureUpdateListener.reportStart(asyncWriterCommand.getTableName(), correlationId);
         } catch (Throwable ex) {
             close();
             throw ex;
@@ -160,7 +162,7 @@ class OperationFutureImpl implements OperationFuture {
 
     private int awaitWriterEvent(long writerAsyncCommandBusyWaitTimeout) throws SqlException {
         assert eventSubSeq != null : "No sequence to wait on";
-        assert cmdCorrelationId > -1 : "No command id to wait for";
+        assert correlationId > -1 : "No command id to wait for";
 
         final MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
         final long start = clock.getTicks();
@@ -181,27 +183,32 @@ class OperationFutureImpl implements OperationFuture {
             try {
                 TableWriterTask event = tableWriterEventQueue.get(seq);
                 int type = event.getType();
-                if (event.getInstance() != cmdCorrelationId || (type != TSK_BEGIN && type != TSK_COMPLETE)) {
+                if (event.getInstance() != correlationId || (type != TSK_BEGIN && type != TSK_COMPLETE)) {
                     LOG.debug()
                             .$("writer command response received and ignored [instance=").$(event.getInstance())
                             .$(", type=").$(type)
-                            .$(", expectedInstance=").$(cmdCorrelationId)
+                            .$(", expectedInstance=").$(correlationId)
                             .I$();
                     Os.pause();
                 } else if (type == TSK_COMPLETE) {
-                    // If writer failed to execute the async command it will send back string error in the event data
-                    LOG.info().$("writer command response received [instance=").$(cmdCorrelationId).I$();
-                    int strLen = Unsafe.getUnsafe().getInt(event.getData());
-                    if (strLen > -1) {
-                        throw SqlException.$(tableNamePositionInSql, event.getData() + Integer.BYTES, event.getData() + Integer.BYTES + 2L * strLen);
+                    LOG.info().$("writer command response received [instance=").$(correlationId).I$();
+                    final int errorCode = Unsafe.getUnsafe().getInt(event.getData());
+                    switch (errorCode) {
+                        case OK:
+                            affectedRowsCount = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);
+                            queryFutureUpdateListener.reportProgress(correlationId, QUERY_COMPLETE);
+                            return QUERY_COMPLETE;
+                        case READER_OUT_OF_DATE:
+                            throw ReaderOutOfDateException.of(tableName);
+                        default:
+                            final int strLen = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);
+                            final long strLo = event.getData() + 2L * Integer.BYTES;
+                            throw SqlException.$(tableNamePositionInSql, strLo, strLo + 2L * strLen);
                     }
-                    affectedRowsCount = Unsafe.getUnsafe().getInt(event.getData() + Integer.BYTES);
-                    queryFutureUpdateListener.reportProgress(cmdCorrelationId, QUERY_COMPLETE);
-                    return QUERY_COMPLETE;
                 } else {
                     status = QUERY_STARTED;
-                    queryFutureUpdateListener.reportProgress(cmdCorrelationId, QUERY_STARTED);
-                    LOG.info().$("writer command QUERY_STARTED response received [instance=").$(cmdCorrelationId).I$();
+                    queryFutureUpdateListener.reportProgress(correlationId, QUERY_STARTED);
+                    LOG.info().$("writer command QUERY_STARTED response received [instance=").$(correlationId).I$();
                 }
             } finally {
                 eventSubSeq.done(seq);

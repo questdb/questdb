@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryFCRImpl;
@@ -61,6 +62,7 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.StatusCode.*;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.tasks.TableWriterTask.*;
+import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 
 public class TableWriter implements Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
@@ -4002,10 +4004,11 @@ public class TableWriter implements Closeable {
         final long correlationId = cmd.getInstance();
         final long tableId = cmd.getTableId();
 
-        CharSequence error = null;
+        int errorCode = 0;
+        CharSequence errorMsg = null;
         long affectedRowsCount = 0;
         try {
-            publishTableWriterEvent(cmdType, tableId, correlationId, null, 0L, TSK_BEGIN);
+            publishTableWriterEvent(cmdType, tableId, correlationId, AsyncWriterCommand.Error.OK, null, 0L, TSK_BEGIN);
             LOG.info()
                     .$("received async cmd [type=").$(cmdType)
                     .$(", tableName=").$(tableName)
@@ -4015,6 +4018,15 @@ public class TableWriter implements Closeable {
                     .I$();
             asyncWriterCommand = asyncWriterCommand.deserialize(cmd);
             affectedRowsCount = asyncWriterCommand.apply(this, contextAllowsAnyStructureChanges);
+        } catch (ReaderOutOfDateException ex) {
+            LOG.info()
+                    .$("cannot complete async cmd, reader is out of date [type=").$(cmdType)
+                    .$(", tableName=").$(tableName)
+                    .$(", tableId=").$(tableId)
+                    .$(", correlationId=").$(correlationId)
+                    .I$();
+            errorCode = READER_OUT_OF_DATE;
+            errorMsg = ex.getMessage();
         } catch (AlterTableContextException ex) {
             LOG.info()
                     .$("cannot complete async cmd, table structure change is not allowed [type=").$(cmdType)
@@ -4022,19 +4034,22 @@ public class TableWriter implements Closeable {
                     .$(", tableId=").$(tableId)
                     .$(", correlationId=").$(correlationId)
                     .I$();
-            error = "async cmd cannot change table structure while writer is busy";
+            errorCode = STRUCTURE_CHANGE_NOT_ALLOWED;
+            errorMsg = "async cmd cannot change table structure while writer is busy";
         } catch (SqlException | CairoException ex) {
-            error = ex.getFlyweightMessage();
+            errorCode = SQL_OR_CAIRO_ERROR;
+            errorMsg = ex.getFlyweightMessage();
         } catch (Throwable ex) {
             LOG.error().$("error on processing async cmd [type=").$(cmdType)
                     .$(", tableName=").$(tableName)
                     .$(", ex=").$(ex)
                     .I$();
-            error = ex.getMessage();
+            errorCode = UNEXPECTED_ERROR;
+            errorMsg = ex.getMessage();
         } finally {
             sequence.done(cursor);
         }
-        publishTableWriterEvent(cmdType, tableId, correlationId, error, affectedRowsCount, TSK_COMPLETE);
+        publishTableWriterEvent(cmdType, tableId, correlationId, errorCode, errorMsg, affectedRowsCount, TSK_COMPLETE);
     }
 
     private void processCommandQueue(boolean contextAllowsAnyStructureChanges) {
@@ -4068,16 +4083,16 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void publishTableWriterEvent(int cmdType, long tableId, long correlationId, CharSequence error, long affectedRowsCount, int eventType) {
+    private void publishTableWriterEvent(int cmdType, long tableId, long correlationId, int errorCode, CharSequence errorMsg, long affectedRowsCount, int eventType) {
         final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
         if (pubCursor > -1) {
             try {
                 final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
                 event.of(eventType, tableId, tableName);
-                if (error != null) {
-                    event.putStr(error);
+                event.putInt(errorCode);
+                if (errorCode != AsyncWriterCommand.Error.OK) {
+                    event.putStr(errorMsg);
                 } else {
-                    event.putInt(-1);
                     event.putLong(affectedRowsCount);
                 }
                 event.setInstance(correlationId);
@@ -4092,8 +4107,8 @@ public class TableWriter implements Closeable {
                         .$(",tableName=").$(tableName)
                         .$(",tableId=").$(tableId)
                         .$(",correlationId=").$(correlationId);
-                if (error != null) {
-                    lg.$(",error=").$(error);
+                if (errorCode != AsyncWriterCommand.Error.OK) {
+                    lg.$(",errorCode=").$(errorCode).$(",errorMsg=").$(errorMsg);
                 }
                 lg.I$();
             }
