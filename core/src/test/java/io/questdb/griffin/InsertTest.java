@@ -26,8 +26,8 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.TestBinarySequence;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.BinarySequence;
@@ -670,20 +670,20 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertWithWrongNominatedColumn() throws Exception {
+    public void testInsertWithWrongDesignatedColumn() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
             try {
                 compiler.compile("insert into tab select * from (select  timestamp_sequence(0, x) ts, x ac from long_sequence(10)) timestamp(ts)", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "nominated column of existing table");
+                TestUtils.assertContains(e.getFlyweightMessage(), "designated timestamp of existing table");
             }
         });
     }
 
     @Test
-    public void testInsertWithoutNominatedTimestamp() throws Exception {
+    public void testInsertWithoutDesignatedTimestamp() throws Exception {
         final String expected = "seq\tts\n" +
                 "1\t1970-01-01T00:00:00.000000Z\n" +
                 "2\t1970-01-01T00:00:00.000001Z\n" +
@@ -710,7 +710,7 @@ public class InsertTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertWithoutNominatedTimestampAndTypeDoesNotMatch() throws Exception {
+    public void testInsertWithoutDesignatedTimestampAndTypeDoesNotMatch() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tab(seq long, ts timestamp) timestamp(ts);", sqlExecutionContext);
             try {
@@ -913,6 +913,49 @@ public class InsertTest extends AbstractGriffinTest {
                     "2010-01-04T10:00:00.000000Z\t1\n" +
                     "2073-05-21T13:35:00.000000Z\tNaN\n";
             assertReader(expected, "t");
+        });
+    }
+
+    @Test
+    public void testInsertAsSelectTimestampNoOrder() throws Exception {
+        testInsertAsSelectWithOrderBy("");
+    }
+
+    @Test
+    public void testInsertAsSelectTimestampAscOrder() throws Exception {
+        testInsertAsSelectWithOrderBy("order by ts asc");
+    }
+
+    @Test
+    public void testInsertAsSelectTimestampDescOrder() throws Exception {
+        testInsertAsSelectWithOrderBy("order by ts desc");
+    }
+
+    private void testInsertAsSelectWithOrderBy(String orderByClause) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table src (ts timestamp, v long) timestamp(ts) partition by day;", sqlExecutionContext);
+            executeInsert("insert into src values (0, 0);");
+            executeInsert("insert into src values (10000, 1);");
+            executeInsert("insert into src values (20000, 2);");
+            executeInsert("insert into src values (30000, 3);");
+            executeInsert("insert into src values (40000, 4);");
+
+            compiler.compile("create table dest (ts timestamp, v long) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            compiler.compile("insert into dest select * from src where v % 2 = 0 " + orderByClause + ";", sqlExecutionContext);
+
+            String expected = "ts\tv\n" +
+                    "1970-01-01T00:00:00.000000Z\t0\n" +
+                    "1970-01-01T00:00:00.020000Z\t2\n" +
+                    "1970-01-01T00:00:00.040000Z\t4\n";
+
+            assertQuery(
+                    expected,
+                    "dest",
+                    "ts",
+                    true,
+                    true
+            );
         });
     }
     
