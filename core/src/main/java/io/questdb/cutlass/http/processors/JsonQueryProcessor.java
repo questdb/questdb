@@ -430,7 +430,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         OperationFuture fut = null;
         boolean isAsyncWait = false;
         try {
-            fut = cq.getSender().execute(op, sqlExecutionContext, state.getEventSubSequence());
+            fut = cq.getDispatcher().execute(op, sqlExecutionContext, state.getEventSubSequence());
             int waitResult = fut.await(getAsyncWriterStartTimeout(state));
             if (waitResult != OperationFuture.QUERY_COMPLETE) {
                 isAsyncWait = true;
@@ -461,14 +461,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (ReaderOutOfDateException e) {
             state.freeAsyncOperation();
             compileQuery(state);
-            return;
+            return; // TODO: suspicious, throw expected. Is this tested?
         }
 
         if (waitResult != OperationFuture.QUERY_COMPLETE) {
             long maxWait = state.getStatementTimeoutNs() > 0 ? state.getStatementTimeoutNs() : asyncWriterFullTimeoutNs;
             if (state.getExecutionTime() < maxWait) {
                 // Schedule a retry
-                throw EntryUnavailableException.instance("retry query");
+                state.info().$("waiting for update query [instance=").$(fut.getInstanceId()).I$();
+                throw EntryUnavailableException.instance("wait for update query");
             } else {
                 state.freeAsyncOperation();
                 throw TimeoutSqlException.timeout("Query timeout. Please add HTTP header 'Statement-Timeout' with timeout in ms");

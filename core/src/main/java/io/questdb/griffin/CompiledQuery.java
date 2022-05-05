@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.OperationSender;
+import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.QuietClosable;
@@ -83,7 +83,7 @@ public interface CompiledQuery {
      */
     OperationFuture execute(SCSequence eventSubSeq) throws SqlException;
 
-    <T extends QuietClosable> OperationSender<T> getSender();
+    <T extends QuietClosable> OperationDispatcher<T> getDispatcher();
 
     <T extends QuietClosable> T getOperation();
 

@@ -307,22 +307,20 @@ public class DispatcherWriterQueueTest {
                 )
                 .withAlterTableStartWaitTimeout(30_000_000);
 
-        runUpdateOnBusyTable((writer, rdr) -> {
-                    TestUtils.assertReader(
-                            "s\tx\tts\n" +
-                                    "b\t10\t1970-01-01T00:00:00.000001Z\n" +
-                                    "c\t2\t1970-01-01T00:00:00.000002Z\n" +
-                                    "a\t1\t1970-01-01T00:00:00.000003Z\n" +
-                                    "b\t10\t1970-01-01T00:00:00.000004Z\n" +
-                                    "c\t5\t1970-01-01T00:00:00.000005Z\n" +
-                                    "a\t1\t1970-01-01T00:00:00.000006Z\n" +
-                                    "b\t10\t1970-01-01T00:00:00.000007Z\n" +
-                                    "c\t8\t1970-01-01T00:00:00.000008Z\n" +
-                                    "a\t1\t1970-01-01T00:00:00.000009Z\n",
-                            rdr,
-                            new StringSink()
-                    );
-                },
+        runUpdateOnBusyTable((writer, rdr) -> TestUtils.assertReader(
+                        "s\tx\tts\n" +
+                                "b\t10\t1970-01-01T00:00:00.000001Z\n" +
+                                "c\t2\t1970-01-01T00:00:00.000002Z\n" +
+                                "a\t1\t1970-01-01T00:00:00.000003Z\n" +
+                                "b\t10\t1970-01-01T00:00:00.000004Z\n" +
+                                "c\t5\t1970-01-01T00:00:00.000005Z\n" +
+                                "a\t1\t1970-01-01T00:00:00.000006Z\n" +
+                                "b\t10\t1970-01-01T00:00:00.000007Z\n" +
+                                "c\t8\t1970-01-01T00:00:00.000008Z\n" +
+                                "a\t1\t1970-01-01T00:00:00.000009Z\n",
+                        rdr,
+                        new StringSink()
+                ),
                 0,
                 queryTestBuilder,
                 null,
@@ -352,6 +350,50 @@ public class DispatcherWriterQueueTest {
                 1,
                 3,
                 URLEncoder.encode("update x set x=1 from tables() where s = 'a'", StandardCharsets.UTF_8)
+        );
+    }
+
+    @Test
+    public void testUpdateConnectionDropOnColumnRewrite() throws Exception {
+        SOCountDownLatch disconnectLatch = new SOCountDownLatch(1);
+
+        HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withAlterTableStartWaitTimeout(30_000_000)
+                .withFilesFacade(new FilesFacadeImpl() {
+                    @Override
+                    public long openRW(LPSZ name, long opts) {
+                        if (Chars.endsWith(name, "x.d.1")) {
+                            disconnectLatch.countDown();
+                        }
+                        return super.openRW(name, opts);
+                    }
+                });
+
+        runUpdateOnBusyTable((wrt, rdr) -> TestUtils.assertReader(
+                        "s\tx\tts\n" +
+                                "b\t1\t1970-01-01T00:00:00.000001Z\n" +
+                                "c\t2\t1970-01-01T00:00:00.000002Z\n" +
+                                "a\t3\t1970-01-01T00:00:00.000003Z\n" +
+                                "b\t4\t1970-01-01T00:00:00.000004Z\n" +
+                                "c\t5\t1970-01-01T00:00:00.000005Z\n" +
+                                "a\t6\t1970-01-01T00:00:00.000006Z\n" +
+                                "b\t7\t1970-01-01T00:00:00.000007Z\n" +
+                                "c\t8\t1970-01-01T00:00:00.000008Z\n" +
+                                "a\t9\t1970-01-01T00:00:00.000009Z\n",
+                        rdr,
+                        new StringSink()
+                ),
+                0,
+                queryTestBuilder,
+                disconnectLatch,
+                1000,
+                0,
+                URLEncoder.encode("update x set x=1 from tables()", StandardCharsets.UTF_8)
         );
     }
 

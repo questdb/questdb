@@ -31,16 +31,17 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.WeakAutoClosableObjectPool;
 import org.jetbrains.annotations.Nullable;
 
-public class UpdateOperationSender implements OperationSender<UpdateOperation> {
+public class UpdateOperationDispatcher implements OperationDispatcher<UpdateOperation> {
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final CairoEngine engine;
-    private final OperationFutureImpl updateFuture;
+    private final WeakAutoClosableObjectPool<OperationFutureImpl> futurePool;
 
-    public UpdateOperationSender(CairoEngine engine) {
+    public UpdateOperationDispatcher(CairoEngine engine) {
         this.engine = engine;
-        this.updateFuture = new OperationFutureImpl(engine);
+        futurePool = new WeakAutoClosableObjectPool<>(pool -> new OperationFutureImpl(engine, pool), 2);
     }
 
     public OperationFuture execute(UpdateOperation operation, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
@@ -54,6 +55,7 @@ public class UpdateOperationSender implements OperationSender<UpdateOperation> {
             if (eventSubSeq == null) {
                 throw busyException;
             }
+            OperationFutureImpl updateFuture = futurePool.pop();
             updateFuture.of(operation, sqlExecutionContext, eventSubSeq, operation.getTableNamePosition());
             return updateFuture;
         }

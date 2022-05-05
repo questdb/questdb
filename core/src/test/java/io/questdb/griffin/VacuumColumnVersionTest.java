@@ -393,7 +393,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
         final CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
         try (QuietClosable op = cq.getOperation()) {
-            try (OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, null)) {
+            try (OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, null)) {
                 fut.await();
             }
         }

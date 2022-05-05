@@ -100,6 +100,11 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public boolean checkIfTripped() {
+        return checkIfTripped(powerUpTimestampUs, fd);
+    }
+
+    @Override
     public boolean checkIfTripped(long executionStartTimeUs, long fd) {
         if (microsecondClock.getTicks() - maxTime > executionStartTimeUs) {
             return true;

@@ -108,6 +108,11 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
+            public boolean checkIfTripped() {
+                return false;
+            }
+
+            @Override
             public boolean checkIfTripped(long executionStartTimeUs, long fd) {
                 return false;
             }

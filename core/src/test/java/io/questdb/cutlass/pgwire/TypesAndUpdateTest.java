@@ -22,15 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.ops;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.mp.SCSequence;
-import io.questdb.std.QuietClosable;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.WeakAutoClosableObjectPool;
+import org.junit.Test;
 
-public interface OperationSender<T extends QuietClosable> {
-    OperationFuture execute(T operation, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException;
+public class TypesAndUpdateTest {
+    @Test
+    public void testReturnToPoolCausesStackOverflow() {
+        WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool =
+                new WeakAutoClosableObjectPool<>(TypesAndSelect::new, 1);
+        TypesAndSelect i1 = typesAndSelectPool.pop();
+        TypesAndSelect i2 = typesAndSelectPool.pop();
+        TypesAndSelect i3 = typesAndSelectPool.pop();
+
+        i1.close();
+        i2.close();
+        i3.close();
+    }
 }

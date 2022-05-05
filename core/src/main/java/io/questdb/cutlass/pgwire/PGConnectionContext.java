@@ -1356,7 +1356,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             }
 
             // execute against writer from the engine, or async
-            try (OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, tempSequence)) {
+            try (OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, tempSequence)) {
                 if (statementTimeoutMs > 0) {
                     if (fut.await(statementTimeoutMs * 1000L) != QUERY_COMPLETE) {
                         // Timeout
@@ -1978,7 +1978,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
                 try (QuietClosable op = cq.getOperation()) {
-                    try (OperationFuture fut = cq.getSender().execute(op, sqlExecutionContext, tempSequence)) {
+                    try (OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, tempSequence)) {
                         fut.await();
                     }
                 }

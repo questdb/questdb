@@ -157,7 +157,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
 
                             try (
                                     QuietClosable op = cc.getOperation();
-                                    OperationFuture fut = cc.getSender().execute(op, sqlExecutionContext, eventSubSequence.get())) {
+                                    OperationFuture fut = cc.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence.get())) {
                                 fut.await(10 * Timestamps.SECOND_MICROS);
                             }
                             current.incrementAndGet();

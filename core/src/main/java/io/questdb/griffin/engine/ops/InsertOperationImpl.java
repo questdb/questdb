@@ -143,6 +143,11 @@ public class InsertOperationImpl implements InsertOperation {
         }
 
         @Override
+        public long getInstanceId() {
+            return -3L;
+        }
+
+        @Override
         public int getStatus() {
             return 0;
         }

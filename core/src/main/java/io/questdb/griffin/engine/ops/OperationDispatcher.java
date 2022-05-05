@@ -25,40 +25,12 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.SCSequence;
+import io.questdb.std.QuietClosable;
+import org.jetbrains.annotations.Nullable;
 
-public class DoneOperationFuture implements OperationFuture {
-    private long affectedRowsCount;
-
-    @Override
-    public void await() {
-    }
-
-    @Override
-    public int await(long timeout) {
-        return QUERY_COMPLETE;
-    }
-
-    @Override
-    public long getInstanceId() {
-        return -2L;
-    }
-
-    @Override
-    public int getStatus() {
-        return QUERY_COMPLETE;
-    }
-
-    @Override
-    public long getAffectedRowsCount() {
-        return affectedRowsCount;
-    }
-
-    @Override
-    public void close() {
-    }
-
-    public OperationFuture of(long affectedRowsCount) {
-        this.affectedRowsCount = affectedRowsCount;
-        return this;
-    }
+public interface OperationDispatcher<T extends QuietClosable> {
+    OperationFuture execute(T operation, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException;
 }

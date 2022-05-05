@@ -106,6 +106,12 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
         circuitBreaker.statefulThrowExceptionIfTripped();
     }
 
+    public void forceTestTimeout() {
+        if (requesterTimeout || circuitBreaker.checkIfTripped()) {
+            throw CairoException.instance(0).put("requester timed out or disconnected, update aborted").setInterruption(true);
+        }
+    }
+
     public RecordCursorFactory getFactory() {
         return factory;
     }

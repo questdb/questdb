@@ -42,15 +42,15 @@ public class CompiledQueryImpl implements CompiledQuery {
     private short type;
     private SqlExecutionContext sqlExecutionContext;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
-    private final OperationSender<UpdateOperation> updateOperationSender;
-    private final OperationSender<AlterOperation> alterOperationSender;
+    private final OperationDispatcher<UpdateOperation> updateOperationDispatcher;
+    private final OperationDispatcher<AlterOperation> alterOperationDispatcher;
 
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        updateOperationSender = new UpdateOperationSender(engine);
-        alterOperationSender = new AlterOperationSender(engine);
+        updateOperationDispatcher = new UpdateOperationDispatcher(engine);
+        alterOperationDispatcher = new AlterOperationDispatcher(engine);
     }
 
     @Override
@@ -97,7 +97,7 @@ public class CompiledQueryImpl implements CompiledQuery {
             case UPDATE:
                 throw SqlException.$(0, "UPDATE execution is not supported via careless invocation. UpdateOperation is allocating.");
             case ALTER:
-                return alterOperationSender.execute(alterOperation, sqlExecutionContext, eventSubSeq);
+                return alterOperationDispatcher.execute(alterOperation, sqlExecutionContext, eventSubSeq);
             default:
                 return doneFuture.of(0);
         }
@@ -105,12 +105,12 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     @SuppressWarnings("unchecked")
     @Override
-    public <T extends QuietClosable> OperationSender<T> getSender() {
+    public <T extends QuietClosable> OperationDispatcher<T> getDispatcher() {
         switch (type) {
             case ALTER:
-                return (OperationSender<T>) alterOperationSender;
+                return (OperationDispatcher<T>) alterOperationDispatcher;
             case UPDATE:
-                return (OperationSender<T>) updateOperationSender;
+                return (OperationDispatcher<T>) updateOperationDispatcher;
             default:
                 return null;
         }

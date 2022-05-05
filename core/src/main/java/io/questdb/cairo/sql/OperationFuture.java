@@ -51,6 +51,8 @@ public interface OperationFuture extends Closeable {
      */
     int await(long timeout) throws SqlException;
 
+    long getInstanceId();
+
     /***
      * True if operation completed, false otherwise
      * @return

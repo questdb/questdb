@@ -67,7 +67,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     creepyAlterOperation.of((short) 1000, "product", writer.getMetadata().getId(), 1000);
                     cc.ofAlter(creepyAlterOperation);
                     operation = cc.getOperation();
-                    fut = cc.getSender().execute(operation, sqlExecutionContext, commandReplySequence);
+                    fut = cc.getDispatcher().execute(operation, sqlExecutionContext, commandReplySequence);
                 }
                 fut.await();
                 Assert.fail();

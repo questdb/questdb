@@ -128,7 +128,8 @@ public class UpdateOperator implements Closeable {
             int partitionIndex = -1;
             long rowsUpdated = 0;
 
-            op.testTimeout();
+            // Update may be queued and requester already disconnected, force check someone still waits for it
+            op.forceTestTimeout();
             // Row by row updates for now
             // This should happen parallel per file (partition and column)
             try (RecordCursor recordCursor = factory.getCursor(sqlExecutionContext)) {
@@ -225,7 +226,7 @@ public class UpdateOperator implements Closeable {
 
             if (partitionIndex > -1) {
                 rebuildIndexes(tableName, writerMetadata, tableWriter);
-                op.testTimeout();
+                op.forceTestTimeout();
                 tableWriter.commit();
                 tableWriter.openLastPartition();
                 purgeOldColumnVersions(tableWriter, updateColumnIndexes, ff);
