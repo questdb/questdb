@@ -189,10 +189,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return operationFuture;
     }
 
-    public void setContinueExecution(QueryFuture execution) {
-        continueExecution = execution;
-    }
-
     public SCSequence getEventSubSequence() {
         return eventSubSequence;
     }
