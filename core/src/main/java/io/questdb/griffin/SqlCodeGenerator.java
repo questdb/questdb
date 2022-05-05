@@ -754,8 +754,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
-        if (useJit) {
+        final boolean enableParallelFilter = configuration.isSqlParallelFilterEnabled();
+        final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
+        if (enableParallelFilter && useJit) {
             final boolean optimize = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
             if (optimize) {
                 try {
@@ -799,7 +800,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        if (factory.supportPageFrameCursor()) {
+        if (enableParallelFilter && factory.supportPageFrameCursor()) {
             final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
             final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
             return new AsyncFilteredRecordCursorFactory(
@@ -1017,7 +1018,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // check if there are post-filters
                 ExpressionNode filter = slaveModel.getPostJoinWhereClause();
                 if (filter != null) {
-                    if (master.supportPageFrameCursor()) {
+                    if (configuration.isSqlParallelFilterEnabled() && master.supportPageFrameCursor()) {
                         master = new AsyncFilteredRecordCursorFactory(
                                 configuration,
                                 executionContext.getMessageBus(),
