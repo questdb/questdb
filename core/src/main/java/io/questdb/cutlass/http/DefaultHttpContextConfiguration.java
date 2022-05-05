@@ -83,7 +83,7 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
 
     @Override
     public int getRequestHeaderBufferSize() {
-        return 1024;
+        return 4096;
     }
 
     @Override

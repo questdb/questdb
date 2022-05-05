@@ -72,7 +72,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAsofJoinDynamicTimestamp() throws Exception {
+    public void testAsOfJoinDynamicTimestamp() throws Exception {
         compiler.compile(
                 "create table positions2 as (" +
                         "select x, cast(x * 1000000L as TIMESTAMP) time from long_sequence(10)" +
@@ -102,7 +102,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAsofJoinForSelectWithTimestamps() throws Exception {
+    public void testAsOfJoinForSelectWithTimestamps() throws Exception {
         final String expected = "tag\thi\tlo\tts\tts1\n" +
                 "AA\t315515118\t315515118\t1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
                 "BB\t-727724771\t-727724771\t1970-01-03T00:06:00.000000Z\t1970-01-03T00:06:00.000000Z\n" +
@@ -137,7 +137,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAsofJoinForSelectWithoutTimestamp() throws Exception {
+    public void testAsOfJoinForSelectWithoutTimestamp() throws Exception {
         final String expected = "tag\thi\tlo\n" +
                 "AA\t315515118\t315515118\n" +
                 "BB\t-727724771\t-727724771\n" +
@@ -172,7 +172,7 @@ public class AsOfJoinTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAsofJoinForSelectWithoutTimestampAndWithWhereStatementV2() throws Exception {
+    public void testAsOfJoinForSelectWithoutTimestampAndWithWhereStatementV2() throws Exception {
         final String expected = "tag\thi\tlo\n";
         assertQuery(
                 "tag\thi\tlo\n",

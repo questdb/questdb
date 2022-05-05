@@ -198,6 +198,78 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testAtAsColumnAlias() throws Exception {
+        assertQuery("select-choose l at from (select [l] from testat timestamp (ts))",
+                "select l at from testat",
+                modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsTableAliasStar() throws Exception {
+        assertQuery("select-choose l, ts from (select [l, ts] from testat at timestamp (ts)) at",
+                "select at.* from testat at",
+                modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsTableAlias() throws Exception {
+        assertQuery("select-choose l, ts from (select [l, ts] from testat at timestamp (ts)) at",
+                "select at.l, at.ts from testat at",
+                modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsTableAliasSingleColumn() throws Exception {
+        assertQuery("select-choose l from (select [l] from testat at timestamp (ts)) at",
+                "select at.l from testat as at",
+                modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsTableAliasInJoin() throws Exception {
+        assertQuery("select-choose at.l l, at.ts ts, at2.l l1, at2.ts ts1 from (select [l, ts] from testat at timestamp (ts) join select [l, ts] from testat at2 timestamp (ts) on at2.l = at.l) at",
+                "select * from testat at join testat at2 on at.l = at2.l",
+                modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsWithAlias() throws Exception {
+        assertQuery("select-choose l, ts from (select-choose [l, ts] l, ts from (select [l, ts] from testat timestamp (ts))) at",
+                "with at as (select * from testat )  selecT * from at",
+                modelOf("testat").col("l", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsColumnName() throws Exception {
+        assertQuery("select-choose at from (select [at] from testat timestamp (ts))",
+                "select at from testat",
+                modelOf("testat").col("at", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsTableName() throws Exception {
+        assertQuery("select-choose at from (select [at] from at timestamp (ts))",
+                "select at.at from at",
+                modelOf("at").col("at", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testAtAsTableNameAndExpr() throws Exception {
+        assertQuery("select-virtual at1 + at column from (select-choose [at, at at1] at, at at1 from (select [at] from at timestamp (ts)))",
+                "select (at.at + at) from at",
+                modelOf("at").col("at", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
     public void testColumnAliasDoubleQuoted() throws Exception {
         assertQuery("select-choose x aaaasssss from (select [x] from x where x > 1)",
                 "select x \"aaaasssss\" from x where x > 1",
@@ -5453,10 +5525,46 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByTimestampAscOrder() throws Exception {
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) sample by 2m",
+                "select x,sum(y) from (tab order by ts asc) sample by 2m",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testSampleByTimestampDescOrder() throws Exception {
+        assertSyntaxError("select x,sum(y) from (tab order by ts desc) sample by 2m",
+                7,
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
+    public void testSampleByTimestampDescOrderVirtualColumn() throws Exception {
+        assertSyntaxError("select sum(x) from (select x+1 as x, ts from (tab order by ts desc)) sample by 2m",
+                7,
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+    }
+
+    @Test
     public void testSampleByUndefinedTimestamp() throws Exception {
         assertSyntaxError("select x,sum(y) from tab sample by 2m",
                 7,
-                "base query does not provide dedicated TIMESTAMP column",
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -5467,7 +5575,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByUndefinedTimestampWithDistinct() throws Exception {
         assertSyntaxError("select x,sum(y) from (select distinct x, y from tab) sample by 2m",
                 7,
-                "base query does not provide dedicated TIMESTAMP column",
+                "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -5475,10 +5583,40 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByTimestampAscOrderWithJoin() throws Exception {
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select-choose [tab.x x, y] tab.x x, y from (select [x, y] from (select-choose [x, y, ts] x, y, ts from (select [x, y, ts] from tab timestamp (ts)) order by ts) tab join select [x] from tab2 on tab2.x = tab.x) tab) tab sample by 2m",
+                "select tab.x,sum(y) from (tab order by ts asc) tab join tab2 on (x) sample by 2m",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts"),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testSampleByTimestampDescOrderWithJoin() throws Exception {
+        assertSyntaxError("select tab.x,sum(y) from (tab order by ts desc) tab join tab2 on (x) sample by 2m",
+                0,
+                "ASC order over TIMESTAMP column is required but not provided",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts"),
+                modelOf("tab2")
+                        .col("x", ColumnType.INT)
+                        .col("z", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
     public void testSampleByUndefinedTimestampWithJoin() throws Exception {
         assertSyntaxError("select tab.x,sum(y) from tab join tab2 on (x) sample by 2m",
                 0,
-                "TIMESTAMP column is required but not provided",
+                "ASC order over TIMESTAMP column is required but not provided",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT),

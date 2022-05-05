@@ -47,10 +47,8 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
-import org.junit.rules.Timeout;
 
 import java.io.IOException;
-import java.util.concurrent.TimeUnit;
 
 public class AbstractCairoTest {
 
@@ -86,6 +84,7 @@ public class AbstractCairoTest {
     protected static int rndFunctionMemoryMaxPages = -1;
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
+    protected static Boolean enableParallelFilter = null;
     protected static int queryCacheEventQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
@@ -97,12 +96,6 @@ public class AbstractCairoTest {
     private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
-
-    @Rule
-    public Timeout timeout = Timeout.builder()
-            .withTimeout(300000, TimeUnit.MILLISECONDS)
-            .withLookingForStuckThread(true)
-            .build();
 
     @BeforeClass
     public static void setUpStatic() {
@@ -286,6 +279,11 @@ public class AbstractCairoTest {
             public int getPageFrameReduceQueueCapacity() {
                 return pageFrameReduceQueueCapacity < 0 ? super.getPageFrameReduceQueueCapacity() : pageFrameReduceQueueCapacity;
             }
+
+            @Override
+            public boolean isSqlParallelFilterEnabled() {
+                return enableParallelFilter != null ? enableParallelFilter : super.isSqlParallelFilterEnabled();
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -331,6 +329,7 @@ public class AbstractCairoTest {
         spinLockTimeoutUs = -1;
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
+        enableParallelFilter = null;
         hideTelemetryTable = false;
         writerCommandQueueCapacity = 4;
         queryCacheEventQueueCapacity = -1;

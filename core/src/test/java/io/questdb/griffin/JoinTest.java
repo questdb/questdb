@@ -1104,6 +1104,40 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsOfJoinLeftTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x asof join y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(93, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "left"));
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinRightTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join (y order by timestamp desc) y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(65, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinNoSelect() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "x asof join y on y.sym2 = x.sym";
@@ -3537,6 +3571,40 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSpliceJoinLeftTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x splice join y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(93, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "left"));
+            }
+        });
+    }
+
+    @Test
+    public void testSpliceJoinRightTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join (y order by timestamp desc) y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(65, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
+            }
+        });
+    }
+
+    @Test
     public void testSpliceJoinNoStrings() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym";
@@ -3763,6 +3831,74 @@ public class JoinTest extends AbstractGriffinTest {
     @Test
     public void testTypeMismatchFF() throws Exception {
         testFullFat(this::testTypeMismatch);
+    }
+
+    @Test
+    public void testLtJoinNoLeftTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(65, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "left"));
+            }
+        });
+    }
+
+    @Test
+    public void testLtJoinNoRightTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(65, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
+            }
+        });
+    }
+
+    @Test
+    public void testLtJoinLeftTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x lt join y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(93, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "left"));
+            }
+        });
+    }
+
+    @Test
+    public void testLtJoinRightTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join (y order by timestamp desc) y on y.sym2 = x.sym";
+            compiler.compile("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)", sqlExecutionContext);
+            compiler.compile("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)", sqlExecutionContext);
+
+            try {
+                compiler.compile(query, sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(65, e.getPosition());
+                Assert.assertTrue(Chars.contains(e.getFlyweightMessage(), "right"));
+            }
+        });
     }
 
     private void testFullFat(TestMethod method) throws Exception {

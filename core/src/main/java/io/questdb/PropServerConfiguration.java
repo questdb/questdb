@@ -248,6 +248,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceColumnListCapacity;
     private final int cairoPageFrameReduceTaskPoolCapacity;
     private final long writerFileOpenOpts;
+    private final boolean sqlParallelFilterEnabled;
     private final int cairoPageFrameReduceShardCount;
     private int lineUdpDefaultPartitionBy;
     private int httpMinNetConnectionLimit;
@@ -696,6 +697,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64));
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
+            this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, true);
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 4);
             this.cairoPageFrameReduceTaskPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY, 4);
 
@@ -2049,6 +2051,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPageFrameReduceQueueCapacity() {
             return cairoPageFrameReduceQueueCapacity;
+        }
+
+        @Override
+        public boolean isSqlParallelFilterEnabled() {
+            return sqlParallelFilterEnabled;
         }
 
         @Override

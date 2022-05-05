@@ -121,10 +121,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final IntList recordFunctionPositions = new IntList();
     private final IntList groupByFunctionPositions = new IntList();
     private final LongList prefixes = new LongList();
-    private boolean enableJitNullChecks = true;
-    private boolean fullFatJoins = false;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final WeakAutoClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
+    private boolean enableJitNullChecks = true;
+    private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
             CairoEngine engine,
@@ -217,7 +217,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (node.type != ExpressionNode.LITERAL) {
                 ExpressionNode columnAst = column.getAst();
                 CharSequence token = columnAst.token;
-                if (!SqlKeywords.isFirstFunction(token) && !SqlKeywords.isLastFunction(token)) {
+                if (!SqlKeywords.isFirstKeyword(token) && !SqlKeywords.isLastFunction(token)) {
                     return false;
                 }
 
@@ -754,8 +754,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
-        if (useJit) {
+        final boolean enableParallelFilter = configuration.isSqlParallelFilterEnabled();
+        final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
+        if (enableParallelFilter && useJit) {
             final boolean optimize = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
             if (optimize) {
                 try {
@@ -799,7 +800,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
 
-        if (factory.supportPageFrameCursor()) {
+        if (enableParallelFilter && factory.supportPageFrameCursor()) {
             final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
             final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
             return new AsyncFilteredRecordCursorFactory(
@@ -921,6 +922,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     );
                                 }
                                 masterAlias = null;
+                                validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 break;
                             case JOIN_LT:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
@@ -966,6 +968,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     );
                                 }
                                 masterAlias = null;
+                                validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 break;
                             case JOIN_SPLICE:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
@@ -990,6 +993,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             ),
                                             masterMetadata.getColumnCount()
                                     );
+                                    validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 } else {
                                     assert false;
                                 }
@@ -1017,7 +1021,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // check if there are post-filters
                 ExpressionNode filter = slaveModel.getPostJoinWhereClause();
                 if (filter != null) {
-                    if (master.supportPageFrameCursor()) {
+                    if (configuration.isSqlParallelFilterEnabled() && master.supportPageFrameCursor()) {
                         master = new AsyncFilteredRecordCursorFactory(
                                 configuration,
                                 executionContext.getMessageBus(),
@@ -1064,6 +1068,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         }
 
+        // We require timestamp with any order.
         final int timestampIndex = getTimestampIndex(model, factory);
         if (timestampIndex == -1) {
             Misc.free(factory);
@@ -1213,7 +1218,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 null,
                                 false,
                                 columnIndexes,
-                                columnSizes
+                                columnSizes,
+                                true
                         );
                     }
 
@@ -1554,11 +1560,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
-            // we require timestamp
+            // We require timestamp with asc order.
             final int timestampIndex = getTimestampIndex(model, factory);
-            if (timestampIndex == -1) {
+            if (timestampIndex == -1 || factory.hasDescendingOrder()) {
                 Misc.free(factory);
-                throw SqlException.$(model.getModelPosition(), "base query does not provide dedicated TIMESTAMP column");
+                throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over dedicated TIMESTAMP column");
             }
 
             final RecordMetadata metadata = factory.getMetadata();
@@ -2114,10 +2120,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         }
 
+        // We require timestamp with asc order.
         final int timestampIndex = getTimestampIndex(model, factory);
-        if (timestampIndex == -1 && executionContext.isTimestampRequired()) {
+        if (executionContext.isTimestampRequired() && (timestampIndex == -1 || factory.hasDescendingOrder())) {
             Misc.free(factory);
-            throw SqlException.$(model.getModelPosition(), "TIMESTAMP column is required but not provided");
+            throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
         }
 
         final IntList columnCrossIndex = new IntList(selectColumnCount);
@@ -2663,9 +2670,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
 
+        final GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) model.getTableName().token;
+        final boolean supportsRandomAccess;
+        if (Chars.startsWith(tab, NO_ROWID_MARKER)) {
+            tab.setLo(tab.getLo() + NO_ROWID_MARKER.length());
+            supportsRandomAccess = false;
+        } else {
+            supportsRandomAccess = true;
+        }
+
         try (TableReader reader = engine.getReader(
                 executionContext.getCairoSecurityContext(),
-                model.getTableName().token,
+                tab,
                 model.getTableId(),
                 model.getTableVersion())
         ) {
@@ -2683,7 +2699,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int readerTimestampIndex;
             readerTimestampIndex = getTimestampIndex(model, readerMeta);
 
-            // Latest by on a table requires provided timestamp column to be the designated timestamp.
+            // Latest by on a table requires the provided timestamp column to be the designated timestamp.
             if (latestBy.size() > 0 && readerTimestampIndex != readerMeta.getTimestampIndex()) {
                 throw SqlException.$(model.getTimestamp().position, "latest by over a table requires designated TIMESTAMP");
             }
@@ -2942,7 +2958,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         dfcFactory,
                                         orderByKeyColumn,
                                         columnIndexes,
-                                        columnSizes
+                                        columnSizes,
+                                        supportsRandomAccess
                                 );
                             }
                             return new DataFrameRecordCursorFactory(
@@ -2954,7 +2971,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     f,
                                     false,
                                     columnIndexes,
-                                    columnSizes
+                                    columnSizes,
+                                    supportsRandomAccess
                             );
                         }
 
@@ -3064,7 +3082,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         null,
                         framingSupported,
                         columnIndexes,
-                        columnSizes
+                        columnSizes,
+                        supportsRandomAccess
                 );
             }
 
@@ -3093,7 +3112,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         null,
                         framingSupported,
                         columnIndexes,
-                        columnSizes
+                        columnSizes,
+                        supportsRandomAccess
                 );
             }
 
@@ -3197,17 +3217,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return toLimitFunction(executionContext, model.getLimitHi(), null);
     }
 
-    @NotNull
-    private Function getLoFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return toLimitFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
-    }
-
     @Nullable
     private Function getLimitLoFunctionOnly(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model.getLimitAdviceLo() != null && model.getLimitAdviceHi() == null) {
             return toLimitFunction(executionContext, model.getLimitAdviceLo(), LongConstant.ZERO);
         }
         return null;
+    }
+
+    @NotNull
+    private Function getLoFunction(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        return toLimitFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
     }
 
     private int getTimestampIndex(QueryModel model, RecordCursorFactory factory) throws SqlException {
@@ -3422,6 +3442,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (slaveMetadata.getTimestampIndex() == -1) {
             throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
+        }
+    }
+
+    private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {
+        if (masterFactory.hasDescendingOrder()) {
+            throw SqlException.$(position, "left side of time series join has DESC timestamp order");
+        }
+
+        if (slaveFactory.hasDescendingOrder()) {
+            throw SqlException.$(position, "right side of time series join has DESC timestamp order");
         }
     }
 
