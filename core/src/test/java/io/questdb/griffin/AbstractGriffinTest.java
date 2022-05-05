@@ -920,7 +920,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     @NotNull
     protected static CompiledQuery compile(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         CompiledQuery cc = compiler.compile(query, executionContext);
-        try (QueryFuture future = cc.execute(null)) {
+        try (OperationFuture future = cc.execute(null)) {
             future.await();
         }
         return cc;

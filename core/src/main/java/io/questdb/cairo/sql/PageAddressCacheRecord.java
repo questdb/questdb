@@ -177,10 +177,7 @@ public class PageAddressCacheRecord implements Record {
 
     @Override
     public long getUpdateRowId() {
-        if (cursor != null) {
-            return cursor.getUpdateRowId(rowIndex);
-        }
-        return -1L;
+        return getRowId();
     }
 
     @Override
