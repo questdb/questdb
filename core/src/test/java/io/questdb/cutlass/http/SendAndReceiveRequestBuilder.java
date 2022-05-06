@@ -99,6 +99,13 @@ public class SendAndReceiveRequestBuilder {
         execute(request + requestHeaders(), ResponseHeaders + response);
     }
 
+    public void executeWithStandardRequestHeaders(
+            String request,
+            CharSequence response
+    ) throws InterruptedException {
+        execute(request + requestHeaders(), response);
+    }
+
     public void execute(
             String request,
             CharSequence response

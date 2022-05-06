@@ -238,6 +238,9 @@ public class UpdateOperator implements Closeable {
                     .I$();
 
             return rowsUpdated;
+        } catch (ReaderOutOfDateException e) {
+            tableWriter.rollbackColumnVersions();
+            throw e;
         } catch (Throwable th) {
             LOG.error().$("UPDATE failed: ").$(th).$();
             tableWriter.rollbackColumnVersions();
