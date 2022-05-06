@@ -32,6 +32,7 @@ import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
@@ -458,33 +459,7 @@ public class DispatcherWriterQueueTest {
     }
 
     @Test
-    public void testUpdateTimeout() throws Exception {
-        HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
-                )
-                .withAlterTableStartWaitTimeout(30_000_000);
-
-        runUpdateOnBusyTable((writer, rdr) -> {
-                    // Test no resources leak, update can go through or not, it is not deterministic
-                },
-                writer -> {},
-                1,
-                queryTestBuilder,
-                null,
-                null,
-                1,
-                3,
-                URLEncoder.encode("update x set x=1 from tables() where s = 'a'", StandardCharsets.UTF_8)
-        );
-    }
-
-    @Test
-    public void testUpdateConnectionDropOnColumnRewrite() throws Exception {
-        SOCountDownLatch disconnectLatch = new SOCountDownLatch(1);
-
+    public void testRestUpdateTimeout() throws Exception {
         HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
                 .withTempFolder(temp)
                 .withWorkerCount(1)
@@ -496,34 +471,24 @@ public class DispatcherWriterQueueTest {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "x.d.1")) {
-                            disconnectLatch.countDown();
+                            Os.sleep(50);
                         }
                         return super.openRW(name, opts);
                     }
                 });
 
-        runUpdateOnBusyTable((wrt, rdr) -> TestUtils.assertReader(
-                        "s\tx\tts\n" +
-                                "b\t1\t1970-01-01T00:00:00.000001Z\n" +
-                                "c\t2\t1970-01-01T00:00:00.000002Z\n" +
-                                "a\t3\t1970-01-01T00:00:00.000003Z\n" +
-                                "b\t4\t1970-01-01T00:00:00.000004Z\n" +
-                                "c\t5\t1970-01-01T00:00:00.000005Z\n" +
-                                "a\t6\t1970-01-01T00:00:00.000006Z\n" +
-                                "b\t7\t1970-01-01T00:00:00.000007Z\n" +
-                                "c\t8\t1970-01-01T00:00:00.000008Z\n" +
-                                "a\t9\t1970-01-01T00:00:00.000009Z\n",
-                        rdr,
-                        new StringSink()
-                ),
-                writer -> {},
-                0,
+        runUpdateOnBusyTable((writer, rdr) -> {
+                    // Test no resources leak, update can go through or not, it is not deterministic
+                },
+                writer -> {
+                },
+                1,
                 queryTestBuilder,
-                disconnectLatch,
                 null,
-                1000,
-                0,
-                URLEncoder.encode("update x set x=1 from tables()", StandardCharsets.UTF_8)
+                null,
+                1,
+                3,
+                URLEncoder.encode("update x set x=1 from tables() where s = 'a'", StandardCharsets.UTF_8)
         );
     }
 
@@ -598,7 +563,7 @@ public class DispatcherWriterQueueTest {
                 }
                 Assert.assertEquals(errorsExpected, errors.get());
                 Assert.assertEquals(0, finished.getCount());
-                engine.releaseAllReaders();
+                engine.releaseInactive();
                 try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                     alterVerifyAction.run(writer, rdr);
                 }
@@ -609,6 +574,57 @@ public class DispatcherWriterQueueTest {
                 compiler.close();
             }
         });
+    }
+
+    @Test
+    public void testUpdateConnectionDropOnColumnRewrite() throws Exception {
+        SOCountDownLatch disconnectLatch = new SOCountDownLatch(1);
+
+        HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withAlterTableStartWaitTimeout(30_000_000)
+                .withFilesFacade(new FilesFacadeImpl() {
+                    @Override
+                    public long openRW(LPSZ name, long opts) {
+                        if (Chars.endsWith(name, "x.d.1")) {
+                            disconnectLatch.countDown();
+                        }
+                        return super.openRW(name, opts);
+                    }
+                });
+
+        runUpdateOnBusyTable((wrt, rdr) -> TestUtils.assertReader(
+                        "s\tx\tts\n" +
+                                "b\t1\t1970-01-01T00:00:00.000001Z\n" +
+                                "c\t2\t1970-01-01T00:00:00.000002Z\n" +
+                                "a\t3\t1970-01-01T00:00:00.000003Z\n" +
+                                "b\t4\t1970-01-01T00:00:00.000004Z\n" +
+                                "c\t5\t1970-01-01T00:00:00.000005Z\n" +
+                                "a\t6\t1970-01-01T00:00:00.000006Z\n" +
+                                "b\t7\t1970-01-01T00:00:00.000007Z\n" +
+                                "c\t8\t1970-01-01T00:00:00.000008Z\n" +
+                                "a\t9\t1970-01-01T00:00:00.000009Z\n",
+                        rdr,
+                        new StringSink()
+                ),
+                writer -> {
+                },
+                0,
+                queryTestBuilder,
+                disconnectLatch,
+                null,
+                1000,
+                0,
+                URLEncoder.encode("update x set x=1 from tables()", StandardCharsets.UTF_8)
+        );
+    }
+
+    static {
+        LogFactory.configureSync();
     }
 
     private void runUpdateOnBusyTable(

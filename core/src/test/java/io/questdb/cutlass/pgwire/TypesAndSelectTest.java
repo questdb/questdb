@@ -27,7 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.std.WeakAutoClosableObjectPool;
 import org.junit.Test;
 
-public class TypesAndUpdateTest {
+public class TypesAndSelectTest {
     @Test
     public void testReturnToPoolCausesStackOverflow() {
         WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool =

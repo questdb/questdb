@@ -34,6 +34,7 @@ import java.io.Closeable;
 abstract class AbstractTypeContainer<T extends Closeable> implements Closeable {
     private final IntList types = new IntList();
     private final WeakAutoClosableObjectPool<T> parentPool;
+    private boolean closing;
 
     public AbstractTypeContainer(WeakAutoClosableObjectPool<T> parentPool) {
         this.parentPool = parentPool;
@@ -42,8 +43,12 @@ abstract class AbstractTypeContainer<T extends Closeable> implements Closeable {
     @SuppressWarnings("unchecked")
     @Override
     public void close() {
-        types.clear();
-        this.parentPool.push((T) this);
+        if (!closing) {
+            closing = true;
+            types.clear();
+            this.parentPool.push((T) this);
+            closing = false;
+        }
     }
 
     public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
