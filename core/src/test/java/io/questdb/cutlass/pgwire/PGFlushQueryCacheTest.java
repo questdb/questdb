@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.mp.MPSequence;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -79,7 +80,14 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                 final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
                 pubSeq.waitForNext();
 
-                long memAfterFlush = Unsafe.getMemUsed();
+                // Sequence set to done before actual flush performed. Wait a bit to make sure there
+                // is time for the flush to execute.
+                long memAfterFlush = memAfterJoin;
+                for (int i = 0; i < 100 && memAfterFlush >= memAfterJoin; i++) {
+                    Os.sleep(5);
+                    memAfterFlush = Unsafe.getMemUsed();
+                }
+
                 Assert.assertTrue(
                         "flush_query_cache() should release native memory: " + memInitial + ", " + memAfterJoin + ", " + memAfterFlush,
                         memAfterFlush < memAfterJoin
