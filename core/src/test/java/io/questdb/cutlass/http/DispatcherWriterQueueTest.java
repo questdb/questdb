@@ -196,8 +196,8 @@ public class DispatcherWriterQueueTest {
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
                 )
-                .withAlterTableStartWaitTimeout(250_000)
-                .withAlterTableMaxWaitTimeout(250_000)
+                .withAlterTableStartWaitTimeout(500_000)
+                .withAlterTableMaxWaitTimeout(10_000)
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
