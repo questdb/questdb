@@ -109,6 +109,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
         writerAsyncCommandBusyWaitTimeout = 20_000_000L; // On in CI Windows updates are particularly slow
         writerAsyncCommandMaxTimeout = 30_000_000L;
+        spinLockTimeoutUs = 20_000_000L;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
@@ -201,6 +202,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                         barrier.await();
                         while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
                             assertSql("up", expectedValues, validators, readerCompiler);
+                            Os.sleep(1);
                         }
                         readerCompiler.close();
                     } catch (Throwable th) {
