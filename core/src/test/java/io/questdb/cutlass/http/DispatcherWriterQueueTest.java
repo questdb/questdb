@@ -627,10 +627,6 @@ public class DispatcherWriterQueueTest {
                 URLEncoder.encode("update x set ts=123", utf8Encoding));
     }
 
-    static {
-        LogFactory.configureSync();
-    }
-
     private void runUpdateOnBusyTable(
             AlterVerifyAction alterVerifyAction,
             OnTickAction onTick,
