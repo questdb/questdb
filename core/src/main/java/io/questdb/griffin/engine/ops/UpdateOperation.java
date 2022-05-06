@@ -98,18 +98,18 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
         this.executingAsync = true;
     }
 
+    public void forceTestTimeout() {
+        if (requesterTimeout || circuitBreaker.checkIfTripped()) {
+            throw CairoException.instance(0).put("timeout, query aborted [fd=").put(circuitBreaker != null ? circuitBreaker.getFd() : -1L).put(']').setInterruption(true);
+        }
+    }
+
     public void testTimeout() {
         if (requesterTimeout) {
-            throw CairoException.instance(0).put("requester timed out, update aborted").setInterruption(true);
+            throw CairoException.instance(0).put("timeout, query aborted [fd=").put(circuitBreaker != null ? circuitBreaker.getFd() : -1L).put(']').setInterruption(true);
         }
 
         circuitBreaker.statefulThrowExceptionIfTripped();
-    }
-
-    public void forceTestTimeout() {
-        if (requesterTimeout || circuitBreaker.checkIfTripped()) {
-            throw CairoException.instance(0).put("requester timed out or disconnected, update aborted").setInterruption(true);
-        }
     }
 
     public RecordCursorFactory getFactory() {
