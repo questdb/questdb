@@ -393,20 +393,9 @@ public class DispatcherWriterQueueTest {
                     }
                 });
 
-        runUpdateOnBusyTable((wrt, rdr) -> TestUtils.assertReader(
-                        "s\tx\tts\n" +
-                                "b\t1\t1970-01-01T00:00:00.000001Z\n" +
-                                "c\t2\t1970-01-01T00:00:00.000002Z\n" +
-                                "a\t3\t1970-01-01T00:00:00.000003Z\n" +
-                                "b\t4\t1970-01-01T00:00:00.000004Z\n" +
-                                "c\t5\t1970-01-01T00:00:00.000005Z\n" +
-                                "a\t6\t1970-01-01T00:00:00.000006Z\n" +
-                                "b\t7\t1970-01-01T00:00:00.000007Z\n" +
-                                "c\t8\t1970-01-01T00:00:00.000008Z\n" +
-                                "a\t9\t1970-01-01T00:00:00.000009Z\n",
-                        rdr,
-                        new StringSink()
-                ),
+        runUpdateOnBusyTable((wrt, rdr) -> {
+                    // Test no resources leak, update can go through or not, it is not deterministic
+                },
                 writer -> {
                 },
                 0,
