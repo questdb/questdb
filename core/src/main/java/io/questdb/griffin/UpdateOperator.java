@@ -136,17 +136,21 @@ public class UpdateOperator implements Closeable {
                 Record masterRecord = recordCursor.getRecord();
 
                 long prevRow = 0;
-                // We're assuming, but not enforcing the fact that
-                // factory produces rows in incrementing order.
-                // todo: enforce
                 long minRow = -1L;
-                long lastRowId = Long.MAX_VALUE;
+                long lastRowId = Long.MIN_VALUE;
                 while (recordCursor.hasNext()) {
                     long rowId = masterRecord.getUpdateRowId();
 
                     // Some joins expand results set and returns same row multiple times
                     if (rowId == lastRowId) {
                         continue;
+                    }
+                    if (rowId < lastRowId) {
+                        // We're assuming, but not enforcing the fact that
+                        // factory produces rows in incrementing order.
+                        throw CairoException.instance(0).put(
+                                "Update statement generated invalid plan. " +
+                                        "Rows are not returned in order.");
                     }
                     lastRowId = rowId;
 

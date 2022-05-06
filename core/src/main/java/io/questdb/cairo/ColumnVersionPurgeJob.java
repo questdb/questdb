@@ -62,7 +62,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
     private final Sequence inSubSequence;
     private final MicrosecondClock clock;
     private final PriorityQueue<ColumnVersionPurgeTaskRun> houseKeepingRunQueue;
-    private final ObjectPool<ColumnVersionPurgeTaskRun> taskPool;
+    private final WeakObjectPool<ColumnVersionPurgeTaskRun> taskPool;
     private final long maxWaitCapMicro;
     private final long startWaitMicro;
     private final double exponentialWaitMultiplier;
@@ -78,8 +78,8 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
         this.inQueue = engine.getMessageBus().getColumnVersionPurgeQueue();
         this.inSubSequence = engine.getMessageBus().getColumnVersionPurgeSubSeq();
         this.tableName = configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
-        this.taskPool = new ObjectPool<>(ColumnVersionPurgeTaskRun::new, 128);
-        this.houseKeepingRunQueue = new PriorityQueue<>(256, ColumnVersionPurgeJob::compareHouseKeepingTasks);
+        this.taskPool = new WeakObjectPool<>(ColumnVersionPurgeTaskRun::new, configuration.getColumnVersionTaskPoolCapacity());
+        this.houseKeepingRunQueue = new PriorityQueue<>(configuration.getColumnVersionPurgeQueueCapacity(), ColumnVersionPurgeJob::compareHouseKeepingTasks);
         this.maxWaitCapMicro = configuration.getColumnVersionPurgeMaxTimeoutMicros();
         this.startWaitMicro = configuration.getColumnVersionPurgeStartWaitTimeoutMicros();
         this.exponentialWaitMultiplier = configuration.getColumnVersionPurgeWaitExponent();
@@ -140,14 +140,16 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
         boolean useful = false;
         final long now = clock.getTicks() + 1;
         while (houseKeepingRunQueue.size() > 0) {
-            ColumnVersionPurgeTaskRun next = houseKeepingRunQueue.peek();
-            if (next.nextRunTimestamp < now) {
+            ColumnVersionPurgeTaskRun nextTask = houseKeepingRunQueue.peek();
+            if (nextTask.nextRunTimestamp < now) {
                 houseKeepingRunQueue.poll();
                 useful = true;
-                if (!cleanupExecution.tryCleanup(next)) {
+                if (!cleanupExecution.tryCleanup(nextTask)) {
                     // Re-queue
-                    calculateNextTimestamp(next, now);
-                    houseKeepingRunQueue.add(next);
+                    calculateNextTimestamp(nextTask, now);
+                    houseKeepingRunQueue.add(nextTask);
+                } else {
+                    taskPool.push(nextTask);
                 }
             } else {
                 // All reruns are in the future.
@@ -187,7 +189,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
             }
 
             ColumnVersionPurgeTask queueTask = inQueue.get(cursor);
-            ColumnVersionPurgeTaskRun purgeTaskRun = taskPool.next();
+            ColumnVersionPurgeTaskRun purgeTaskRun = taskPool.pop();
             purgeTaskRun.copyFrom(queueTask, startWaitMicro, microTime + startWaitMicro);
             purgeTaskRun.timestamp = microTime++;
             inSubSequence.done(cursor);
@@ -222,7 +224,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
                             if (taskRun != null) {
                                 houseKeepingRunQueue.add(taskRun);
                             }
-                            taskRun = taskPool.next();
+                            taskRun = taskPool.pop();
                             lastTs = ts;
                             String tableName = Chars.toString(rec.getSym(TABLE_NAME_COLUMN));
                             String columnName = Chars.toString(rec.getSym(COLUMN_NAME_COLUMN));

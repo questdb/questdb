@@ -88,6 +88,7 @@ public class AbstractCairoTest {
     protected static int queryCacheEventQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
+    protected static int columnVersionTaskPoolCapacity = -1;
 
     @Rule
     public TestName testName = new TestName();
@@ -297,6 +298,11 @@ public class AbstractCairoTest {
             public boolean isSqlParallelFilterEnabled() {
                 return enableParallelFilter != null ? enableParallelFilter : super.isSqlParallelFilterEnabled();
             }
+
+            @Override
+            public int getColumnVersionTaskPoolCapacity() {
+                return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnVersionTaskPoolCapacity();
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -350,6 +356,7 @@ public class AbstractCairoTest {
         pageFrameReduceQueueCapacity = -1;
         columnVersionPurgeWaitExponent = -1;
         columnVersionPurgeQueueCapacity = -1;
+        columnVersionTaskPoolCapacity = -1;
     }
 
     protected static void configureForBackups() throws IOException {

@@ -27,6 +27,8 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -41,18 +43,23 @@ public class O3Utils {
 
     public static void setupWorkerPool(
             WorkerPool workerPool,
-            MessageBus messageBus,
-            @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration
-    ) {
+            CairoEngine cairoEngine,
+            @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration,
+            @Nullable FunctionFactoryCache functionFactoryCache
+    ) throws SqlException {
+        final MessageBus messageBus = cairoEngine.getMessageBus();
         final int workerCount = workerPool.getWorkerCount();
         final O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount());
+        final ColumnVersionPurgeJob columnVersionPurgeJob = new ColumnVersionPurgeJob(cairoEngine, functionFactoryCache);
 
         workerPool.assign(purgeDiscoveryJob);
+        workerPool.assign(columnVersionPurgeJob);
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
         workerPool.freeOnHalt(purgeDiscoveryJob);
+        workerPool.freeOnHalt(columnVersionPurgeJob);
 
         final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
         final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();

@@ -119,8 +119,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
         try {
             return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn);
         } catch (CairoException ex) {
-            // Scoreboard can be over allocated, don't stall writing because of that.
-            // Schedule async purge and continue
+            // Scoreboard can be over allocated, don't stall cleanup because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column version purge will be retried [table=")
                     .$(task.getTableName())
                     .$(", txn=").$(updateTxn)

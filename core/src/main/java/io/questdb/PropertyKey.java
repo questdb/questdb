@@ -347,6 +347,7 @@ public enum PropertyKey {
     PG_UPDATE_CACHE_ROW_COUNT("pg.update.cache.row.count"),
     PG_UPDATE_POOL_CAPACITY("pg.update.pool.capacity"),
     CAIRO_SQL_COLUMN_VERSION_CLEAN_QUEUE_CAPACITY("cairo.sql.column.version.clean.queue.capacity"),
+    CAIRO_SQL_COLUMN_VERSION_TASK_POOL_CAPACITY("cairo.sql.column.version.task.pool.capacity"),
     CAIRO_SQL_COLUMN_VERSION_CLEAN_TIMEOUT("cairo.sql.column.version.clean.timeout"),
     CAIRO_SQL_COLUMN_VERSION_CLEAN_START_TIMEOUT("cairo.sql.column.version.clean.start.timeout"),
     CAIRO_SQL_COLUMN_VERSION_CLEAN_TIMEOUT_EXPONENT("cairo.sql.column.version.clean.timeout.exponent"),

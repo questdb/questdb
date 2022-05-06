@@ -124,6 +124,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getColumnVersionTaskPoolCapacity() {
+        return getColumnVersionPurgeQueueCapacity();
+    }
+
+    @Override
     public int getColumnVersionCleanupLookBackDays() {
         return 7;
     }

@@ -4453,7 +4453,8 @@ public class IODispatcherTest {
 
                 O3Utils.setupWorkerPool(
                         workerPool,
-                        engine.getMessageBus(),
+                        engine,
+                        null,
                         null
                 );
 

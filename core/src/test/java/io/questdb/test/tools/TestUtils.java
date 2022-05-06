@@ -653,18 +653,18 @@ public final class TestUtils {
             try {
                 if (pool != null) {
                     pool.assignCleaner(Path.CLEANER);
-                    O3Utils.setupWorkerPool(pool, engine.getMessageBus(), null);
+                    O3Utils.setupWorkerPool(pool, engine, null, null);
                     pool.start(LOG);
                 }
 
                 runnable.run(engine, compiler, sqlExecutionContext);
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
             } finally {
                 if (pool != null) {
                     pool.halt();
                 }
             }
+            Assert.assertEquals(0, engine.getBusyWriterCount());
+            Assert.assertEquals(0, engine.getBusyReaderCount());
         }
     }
 

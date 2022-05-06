@@ -394,6 +394,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean isStringAsTagSupported;
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
+    private final int columnVersionTaskPoolCapacity;
 
     public PropServerConfiguration(
             String root,
@@ -708,6 +709,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * 1024 * 1024);
             this.columnVersionPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_QUEUE_CAPACITY, 1024);
+            this.columnVersionTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_TASK_POOL_CAPACITY, 256);
             this.columnVersionPurgeMaxTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_TIMEOUT, 60_000_000L);
             this.columnVersionPurgeStartWaitTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_START_TIMEOUT, 10_000);
             this.columnVersionPurgeWaitExponent = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_TIMEOUT_EXPONENT, 10.0);
@@ -1836,6 +1838,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getColumnVersionPurgeQueueCapacity() {
             return columnVersionPurgeQueueCapacity;
+        }
+
+        @Override
+        public int getColumnVersionTaskPoolCapacity() {
+            return columnVersionTaskPoolCapacity;
         }
 
         @Override
