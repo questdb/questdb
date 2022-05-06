@@ -534,26 +534,44 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
 
         if (symbolIndexes != null) {
-            cursor.toTop();
-            final Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
+
+            // create new symbol tables and make sure they are not the same
+            // as the default ones
+
+            ObjList<SymbolTable> clonedSymbolTables = new ObjList<>();
+            try {
                 for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
                     int column = symbolIndexes.getQuick(i);
-                    SymbolTable symbolTable = cursor.getSymbolTable(column);
-                    if (symbolTable instanceof StaticSymbolTable) {
-                        CharSequence sym = Chars.toString(record.getSym(column));
-                        int value = record.getInt(column);
-                        if (((StaticSymbolTable) symbolTable).containsNullValue() && value == ((StaticSymbolTable) symbolTable).getSymbolCount()) {
-                            Assert.assertEquals(Integer.MIN_VALUE, ((StaticSymbolTable) symbolTable).keyOf(sym));
+                    SymbolTable tabo = cursor.getSymbolTable(column);
+                    SymbolTable tab = cursor.newSymbolTable(column);
+                    Assert.assertNotNull(tab);
+                    Assert.assertNotSame(tab, cursor.getSymbolTable(column));
+                    clonedSymbolTables.add(tab);
+                }
+
+                cursor.toTop();
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
+                        int column = symbolIndexes.getQuick(i);
+                        SymbolTable symbolTable = cursor.getSymbolTable(column);
+                        if (symbolTable instanceof StaticSymbolTable) {
+                            CharSequence sym = Chars.toString(record.getSym(column));
+                            int value = record.getInt(column);
+                            if (((StaticSymbolTable) symbolTable).containsNullValue() && value == ((StaticSymbolTable) symbolTable).getSymbolCount()) {
+                                Assert.assertEquals(Integer.MIN_VALUE, ((StaticSymbolTable) symbolTable).keyOf(sym));
+                            } else {
+                                Assert.assertEquals(value, ((StaticSymbolTable) symbolTable).keyOf(sym));
+                            }
+                            TestUtils.assertEquals(sym, symbolTable.valueOf(value));
                         } else {
-                            Assert.assertEquals(value, ((StaticSymbolTable) symbolTable).keyOf(sym));
+                            final int value = record.getInt(column);
+                            TestUtils.assertEquals(record.getSym(column), symbolTable.valueOf(value));
                         }
-                        TestUtils.assertEquals(sym, symbolTable.valueOf(value));
-                    } else {
-                        final int value = record.getInt(column);
-                        TestUtils.assertEquals(record.getSym(column), symbolTable.valueOf(value));
                     }
                 }
+            } finally {
+                Misc.freeObjList(clonedSymbolTables);
             }
         }
     }

@@ -52,6 +52,10 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
         throw new UnsupportedOperationException();
     }
 
+    default SymbolTable newSymbolTable(int columnIndex) {
+        throw new UnsupportedOperationException();
+    }
+
     /**
      * @return true if more records may be accessed, otherwise false
      */

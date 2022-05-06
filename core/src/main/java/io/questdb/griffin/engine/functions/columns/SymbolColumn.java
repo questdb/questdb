@@ -34,6 +34,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     private final int columnIndex;
     private final boolean symbolTableStatic;
     private SymbolTable symbolTable;
+    private SymbolTableSource symbolTableSource;
 
     public SymbolColumn(int columnIndex, boolean symbolTableStatic) {
         this.columnIndex = columnIndex;
@@ -47,19 +48,26 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        return rec.getSym(columnIndex);
+        // avoid symbol map lookup on each access
+        return symbolTable.valueOf(getInt(rec));
     }
 
     @Override
     public CharSequence getSymbolB(Record rec) {
-        return rec.getSymB(columnIndex);
+        return symbolTable.valueBOf(getInt(rec));
     }
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        this.symbolTableSource = symbolTableSource;
         this.symbolTable = symbolTableSource.getSymbolTable(columnIndex);
         // static symbol table must be non-null
         assert !symbolTableStatic || symbolTable != null;
+    }
+
+    @Override
+    public @Nullable StaticSymbolTable newStaticSymbolTable() {
+        return symbolTableStatic ? (StaticSymbolTable) symbolTableSource.newSymbolTable(columnIndex) : null;
     }
 
     @Override

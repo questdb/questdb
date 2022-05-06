@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.Vm;
@@ -284,7 +284,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
+    public SymbolMapReader newSymbolTable(int columnIndex) {
+        return newSymbolMapReader(findSymbolColumnIndex(columnIndex), columnIndex);
+    }
+
+    @Override
+    public StaticSymbolTable getSymbolTable(int columnIndex) {
         return getSymbolMapReader(columnIndex);
     }
 
@@ -852,11 +857,38 @@ public class TableReader implements Closeable, SymbolTableSource {
         symbolMapReaders.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
             if (ColumnType.isSymbol(metadata.getColumnType(i))) {
-                long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(metadata.getWriterIndex(i));
-                SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(configuration, path, metadata.getColumnName(i), columnNameTxn, txFile.getSymbolValueCount(symbolColumnIndex++));
-                symbolMapReaders.extendAndSet(i, symbolMapReader);
+                // symbol map index array is sparse
+                symbolMapReaders.extendAndSet(i, newSymbolMapReader(symbolColumnIndex++, i));
             }
         }
+    }
+
+    @NotNull
+    // this method is not thread safe
+    private SymbolMapReaderImpl newSymbolMapReader(int symbolColumnIndex, int columnIndex) {
+        // symbol column index is the index of symbol column in dense array of symbol columns, e.g.
+        // if table has only one symbol columns, the symbolColumnIndex is 0 regardless of column position
+        // in the metadata.
+        return new SymbolMapReaderImpl(
+                configuration,
+                path,
+                metadata.getColumnName(columnIndex),
+                columnVersionReader.getDefaultColumnNameTxn(metadata.getWriterIndex(columnIndex)),
+                txFile.getSymbolValueCount(symbolColumnIndex)
+        );
+    }
+
+    // computes index of symbol column in a dense list
+    private int findSymbolColumnIndex(int columnIndex) {
+        for (int i = 0, index = 0; i < columnCount; i++) {
+            if (symbolMapReaders.getQuick(i) != null) {
+                if (i == columnIndex) {
+                    return index;
+                }
+                index++;
+            }
+        }
+        throw CairoException.instance(0).put("column is not a symbol [columnIndex=").put(columnIndex).put(']');
     }
 
     private Path pathGenPartitioned(int partitionIndex) {

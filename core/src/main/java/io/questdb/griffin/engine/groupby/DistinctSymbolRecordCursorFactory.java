@@ -103,6 +103,11 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return reader.newSymbolTable(columnIndex);
+        }
+
+        @Override
         public boolean hasNext() {
             if (recordA.getAndIncrementRecordIndex() < numberOfSymbols) {
                 return true;

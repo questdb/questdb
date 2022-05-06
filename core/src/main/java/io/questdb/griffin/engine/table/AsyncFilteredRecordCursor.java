@@ -89,6 +89,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return frameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
+    }
+
+    @Override
     public boolean hasNext() {
         // we have rows in the current frame we still need to dispatch
         if (frameRowIndex < frameRowCount) {

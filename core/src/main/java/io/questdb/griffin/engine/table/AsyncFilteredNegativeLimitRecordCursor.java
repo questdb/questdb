@@ -96,6 +96,11 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     }
 
     @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return frameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
+    }
+
+    @Override
     public boolean hasNext() {
         if (rowIndex < rows.getCapacity()) {
             long rowId = rows.get(rowIndex);
