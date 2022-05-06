@@ -26,20 +26,35 @@ package io.questdb.std;
 
 import org.jetbrains.annotations.NotNull;
 
-public class WeakObjectPool<T extends Mutable> extends WeakObjectPoolBase<T> {
+import java.io.Closeable;
+
+public class WeakClosableObjectPool<T extends Closeable> extends WeakObjectPoolBase<T> implements Closeable {
     private final ObjectFactory<T> factory;
 
-    public WeakObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
+    public WeakClosableObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
         super(initSize);
         this.factory = factory;
         fill();
     }
 
     @Override
-    void clear(T obj) {
-        obj.clear();
+    public boolean push(T obj) {
+        return super.push(obj);
     }
 
+    @Override
+    public void close() {
+        while (cache.size() > 0) {
+            Misc.free(cache.pop());
+        }
+    }
+
+    @Override
+    void close(T obj) {
+        Misc.free(obj);
+    }
+
+    @Override
     T newInstance() {
         return factory.newInstance();
     }

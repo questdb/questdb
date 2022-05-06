@@ -32,13 +32,13 @@ import java.util.List;
 
 import static org.junit.Assert.*;
 
-public class WeakObjectPoolTest {
-    private final int initSize = 10;
+public class WeakMutableObjectPoolTest {
+    private static final int initSize = 10;
 
     @Test
     public void testClose() {
         final List<MutablePoolElement> tmp = new ArrayList<>();
-        final WeakObjectPool<MutablePoolElement> pool = new WeakObjectPool<>(() -> {
+        final WeakMutableObjectPool<MutablePoolElement> pool = new WeakMutableObjectPool<>(() -> {
             MutablePoolElement element = new MutablePoolElement();
             tmp.add(element);
             return element;
@@ -61,47 +61,53 @@ public class WeakObjectPoolTest {
 
     @Test
     public void testMaxSize() {
-        final WeakObjectPool<MutablePoolElement> pool = new WeakObjectPool<>(MutablePoolElement::new, initSize);
-        assertEquals(initSize, pool.cache.size());
+        try (
+                WeakMutableObjectPool<MutablePoolElement> pool = new WeakMutableObjectPool<>(MutablePoolElement::new, initSize)
+        ) {
+            assertEquals(initSize, pool.cache.size());
 
-        for (int i = 0; i < initSize; i++) {
-            MutablePoolElement element = new MutablePoolElement();
-            pool.push(element);
-            assertTrue(element.cleared);
-            assertFalse(element.closed);
-            assertEquals(initSize + 1 + i, pool.cache.size());
-        }
+            for (int i = 0; i < initSize; i++) {
+                MutablePoolElement element = new MutablePoolElement();
+                pool.push(element);
+                assertTrue(element.cleared);
+                assertFalse(element.closed);
+                assertEquals(initSize + 1 + i, pool.cache.size());
+            }
 
-        for (int i = 0; i < 100; i++) {
-            MutablePoolElement element = new MutablePoolElement();
-            pool.push(element);
-            assertFalse(element.cleared);
-            assertTrue(element.closed);
-            assertEquals(2 * initSize, pool.cache.size());
+            for (int i = 0; i < 100; i++) {
+                MutablePoolElement element = new MutablePoolElement();
+                pool.push(element);
+                assertFalse(element.cleared);
+                assertTrue(element.closed);
+                assertEquals(2 * initSize, pool.cache.size());
+            }
         }
     }
 
     @Test
     public void testPopPush() {
-        final WeakObjectPool<MutablePoolElement> pool = new WeakObjectPool<>(MutablePoolElement::new, initSize);
-        assertEquals(initSize, pool.cache.size());
+        try (
+                WeakMutableObjectPool<MutablePoolElement> pool = new WeakMutableObjectPool<>(MutablePoolElement::new, initSize)
+        ) {
+            assertEquals(initSize, pool.cache.size());
 
-        final List<MutablePoolElement> tmp = new ArrayList<>();
-        for (int i = 0; i < initSize; i++) {
-            MutablePoolElement element = pool.pop();
-            assertFalse(element.cleared);
-            assertFalse(element.closed);
-            tmp.add(element);
-        }
-        assertEquals(0, pool.cache.size());
+            final List<MutablePoolElement> tmp = new ArrayList<>();
+            for (int i = 0; i < initSize; i++) {
+                MutablePoolElement element = pool.pop();
+                assertFalse(element.cleared);
+                assertFalse(element.closed);
+                tmp.add(element);
+            }
+            assertEquals(0, pool.cache.size());
 
-        for (int i = 0; i < initSize; i++) {
-            MutablePoolElement element = tmp.get(i);
-            pool.push(element);
-            assertTrue(element.cleared);
-            assertFalse(element.closed);
+            for (int i = 0; i < initSize; i++) {
+                MutablePoolElement element = tmp.get(i);
+                pool.push(element);
+                assertTrue(element.cleared);
+                assertFalse(element.closed);
+            }
+            assertEquals(initSize, pool.cache.size());
         }
-        assertEquals(initSize, pool.cache.size());
     }
 
     private static class MutablePoolElement implements Mutable, Closeable {
