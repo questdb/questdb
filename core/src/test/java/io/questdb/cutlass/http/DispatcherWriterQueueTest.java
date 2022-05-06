@@ -53,7 +53,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class DispatcherWriterQueueTest {
-    // Do not make final, IntelliJ code cleanup auto replaces it with StandardCharsets.UTF_8 which breakes Java 8 build
     private static final String utf8Encoding = "UTF-8";
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
