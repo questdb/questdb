@@ -447,7 +447,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 op.close();
             }
         }
-
     }
 
     private long getAsyncWriterStartTimeout(JsonQueryProcessorState state) {
@@ -461,7 +460,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (ReaderOutOfDateException e) {
             state.freeAsyncOperation();
             compileQuery(state);
-            return; // TODO: suspicious, throw expected. Is this tested?
+            throw EntryUnavailableException.instance("retry after recompile");
         }
 
         if (waitResult != OperationFuture.QUERY_COMPLETE) {

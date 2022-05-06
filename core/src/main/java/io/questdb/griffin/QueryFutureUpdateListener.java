@@ -25,17 +25,13 @@
 package io.questdb.griffin;
 
 public interface QueryFutureUpdateListener {
-    QueryFutureUpdateListener EMPTY = new QueryFutureUpdateListener() {
-        @Override
-        public void reportProgress(long commandId, int status) {
-        }
-
-        @Override
-        public void reportStart(CharSequence tableName, long commandId) {
-        }
-    };
+    QueryFutureUpdateListener EMPTY = (commandId, status) -> {};
 
     void reportProgress(long commandId, int status);
 
-    void reportStart(CharSequence tableName, long commandId);
+    default void reportStart(CharSequence tableName, long commandId) {
+    }
+
+    default void reportBusyWaitExpired(CharSequence tableName, long commandId) {
+    }
 }

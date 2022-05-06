@@ -6404,10 +6404,6 @@ create table tab as (
                                     queryStartedCount.countDown();
                                 }
                             }
-
-                            @Override
-                            public void reportStart(CharSequence tableName, long commandId) {
-                            }
                         };
                     }
                 };

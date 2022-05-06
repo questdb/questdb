@@ -189,6 +189,7 @@ class OperationFutureImpl implements OperationFuture {
             if (seq < 0) {
                 // Queue is empty, check if the execution blocked for too long
                 if (clock.getTicks() - start > writerAsyncCommandBusyWaitTimeout) {
+                    queryFutureUpdateListener.reportBusyWaitExpired(tableName, correlationId);
                     return status;
                 }
                 Os.pause();
