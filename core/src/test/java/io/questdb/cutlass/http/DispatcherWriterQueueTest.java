@@ -484,7 +484,7 @@ public class DispatcherWriterQueueTest {
                         "\r\n",
                 -1L,
                 0,
-                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8));
+                URLEncoder.encode("update x set ts=123", utf8Encoding));
     }
 
     private void runAlterOnBusyTable(
