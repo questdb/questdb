@@ -30,6 +30,7 @@ import io.questdb.cairo.*;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -336,6 +337,10 @@ public class AbstractO3Test {
 
     protected static void executeVanilla(CustomisableRunnable code) throws Exception {
         executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root)));
+    }
+
+    protected static void executeVanillaWithMetrics(CustomisableRunnable code) throws Exception {
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), Metrics.enabled()));
     }
 
     static void assertO3DataConsistency(

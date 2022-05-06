@@ -43,7 +43,9 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -1906,7 +1908,7 @@ public class TableWriter implements Closeable {
      * @param commitLag  if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
      */
     private void commit(int commitMode, long commitLag) {
-
+        System.err.printf("TableWriter::commit (A)\n");
         checkDistressed();
 
         if (o3InError) {
@@ -1920,10 +1922,18 @@ public class TableWriter implements Closeable {
 
         if (inTransaction()) {
 
-            if (hasO3() && o3Commit(commitLag)) {
-                // Bookmark masterRef to track how many rows is in uncommitted state
-                this.committedMasterRef = masterRef;
-                return;
+            // metrics: Number of rows physically written to disk.
+            // In case of o3, this is usually the row count of affected partitions.
+            long physicallyWrittenRows = 0;
+
+            final boolean o3 = hasO3();
+            if (o3) {
+                physicallyWrittenRows = o3Commit(commitLag);
+                if (physicallyWrittenRows == 0) {
+                    // Bookmark masterRef to track how many rows is in uncommitted state
+                    this.committedMasterRef = masterRef;
+                    return;
+                }
             }
 
             if (commitMode != CommitMode.NOSYNC) {
@@ -1932,6 +1942,10 @@ public class TableWriter implements Closeable {
 
             final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
             final long rowsAdded = txWriter.getRowCount() - committedRowCount;
+
+            if (!o3) {
+                physicallyWrittenRows = rowsAdded;
+            }
 
             updateIndexes();
             columnVersionWriter.commit();
@@ -1944,6 +1958,8 @@ public class TableWriter implements Closeable {
 
             metrics.tableWriter().incrementCommits();
             metrics.tableWriter().addCommittedRows(rowsAdded);
+            metrics.tableWriter().addPhysicallyWrittenRows(physicallyWrittenRows);
+            System.err.printf("TableWriter::commit (Z) rowsAdded: %d, physicallyWrittenRows: %d\n", rowsAdded, physicallyWrittenRows);
         }
     }
 
@@ -2497,9 +2513,10 @@ public class TableWriter implements Closeable {
      * @param lag interval in microseconds that determines the length of O3 segment that is not going to be
      *            committed to disk. The interval starts at max timestamp of O3 segment and ends <i>lag</i>
      *            microseconds before this timestamp.
-     * @return <i>true</i> when commit has is a NOOP, e.g. no data has been committed to disk. <i>false</i> otherwise.
+     * @return Number of physically written rows. 0 when commit is a NOOP.
      */
-    private boolean o3Commit(long lag) {
+    private long o3Commit(long lag) {
+        System.err.printf("TableWriter::o3Commit (A)\n");
         o3RowCount = getO3RowCount0();
         o3PartitionRemoveCandidates.clear();
         o3ErrorCount.set(0);
@@ -2513,6 +2530,7 @@ public class TableWriter implements Closeable {
         // we will check new partitionTimestampHi value against the limit to see if the writer
         // will have to switch partition internally
         long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
+        long physicallyWrittenRows = 0L;  // metrics: Rows physically written as part of append or copy-on-write ops.
         try {
             o3RowCount += o3MoveUncommitted(timestampIndex);
             final long transientRowCount = txWriter.transientRowCount;
@@ -2603,7 +2621,7 @@ public class TableWriter implements Closeable {
             }
 
             if (srcOooMax == 0) {
-                return true;
+                return 0;
             }
 
             // we could have moved the "srcOooMax" and hence we re-read the max timestamp
@@ -2635,6 +2653,8 @@ public class TableWriter implements Closeable {
                 long prevTransientRowCount = transientRowCount;
 
                 resizeColumnTopSink(o3TimestampMin, o3TimestampMax);
+
+                // One loop iteration per partition
                 while (srcOoo < srcOooMax) {
                     try {
                         final long srcOooLo = srcOoo;
@@ -2674,7 +2694,45 @@ public class TableWriter implements Closeable {
                         }
 
                         final boolean append = last && (srcDataMax == 0 || o3Timestamp >= maxTimestamp);
-                        final long partitionSize = srcDataMax + srcOooHi - srcOooLo + 1;
+                        final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
+                        final long partitionSize = srcDataMax + srcOooBatchRowSize;
+                        physicallyWrittenRows += append ? srcOooBatchRowSize : partitionSize;  // TODO [adam]: Off by one error? srcDataMax can be 0.
+
+                        java.util.function.LongFunction ts2s = (long ts) -> {
+                            StringSink sink = new StringSink();
+                            TimestampFormatUtils.appendDateTimeUSec(sink, ts);
+                            return sink.toString();
+                        };
+
+                        System.err.printf("TableWriter::o3Commit :: (B) " +
+                            "srcOooLo=%d" +
+                            ", srcOooHi=%d" +
+                            ", srcOooMax=%d" +
+                            ", o3TimestampMin=%s" +
+                            ", o3Timestamp=%s" +
+                            ", o3TimestampMax=%s" +
+                            ", partitionTimestamp=%s" +
+                            ", partitionIndex=%d" +
+                            ", srcDataMax=%d" +
+                            ", maxTimestamp=%s" +
+                            ", last=%b" +
+                            ", srcOooBatchRowSize=%d" +
+                            ", partitionSize=%d" +
+                            ", append=%b\n",
+                            srcOooLo,
+                            srcOooHi,
+                            srcOooMax,
+                            ts2s.apply(o3TimestampMin),
+                            ts2s.apply(o3Timestamp),
+                            ts2s.apply(o3TimestampMax),
+                            ts2s.apply(partitionTimestamp),
+                            partitionIndex,
+                            srcDataMax,
+                            ts2s.apply(maxTimestamp),
+                            last,
+                            srcOooBatchRowSize,
+                            partitionSize,
+                            append);
 
                         LOG.debug().
                                 $("o3 partition task [table=").$(tableName)
@@ -2911,7 +2969,9 @@ public class TableWriter implements Closeable {
 
         metrics.tableWriter().incrementO3Commits();
 
-        return false;
+        System.err.printf("TableWriter::o3Commit (Z)\n");
+
+        return physicallyWrittenRows;
     }
 
     private void o3CommitPartitionAsync(

@@ -47,12 +47,16 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TestName;
 
+import static org.junit.Assert.assertEquals;
+
 import java.net.URISyntaxException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3Test extends AbstractO3Test {
     private static final Log LOG = LogFactory.getLog(O3Test.class);
+    private static final long MICROS_IN_HOUR = 3600000000L;
+    private static final long MILLENNIUM = 946684800000000L;  // 2020-01-01T00:00:00
 
     private final StringBuilder tstData = new StringBuilder();
     @Rule
@@ -921,6 +925,89 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testWriterOpensUnmappedPage() throws Exception {
         executeWithPool(0, O3Test::testWriterOpensUnmappedPage);
+    }
+
+    private static long hoursAfterMillenniumTimestamp(long hours) {
+        return MILLENNIUM + (hours * MICROS_IN_HOUR);
+    }
+
+    /**
+     * Set up a daily-partitioned table with hourly entries.
+     * A new partition every 24 `rowCount` rows.
+     */
+    private static void setupBasicTable(
+        CairoEngine engine,
+        SqlCompiler compiler,
+        SqlExecutionContext sqlExecutionContext,
+        long rowCount
+    ) throws SqlException {
+        final String createTableSql = String.format(
+                "create table x as (" +
+                "    select" +
+                "        cast(x as int) i," +
+                "        to_timestamp('2000-01', 'yyyy-MM') + (x * %d) ts" +
+                "    from" +
+                "        long_sequence(%d)" +
+                ") timestamp(ts) partition by DAY",
+                MICROS_IN_HOUR,
+                rowCount);
+        compiler.compile(createTableSql, sqlExecutionContext);
+
+        Metrics metrics = engine.getMetrics();
+        assertEquals(rowCount, metrics.tableWriter().committedRows());
+        assertEquals(rowCount, metrics.tableWriter().physicallyWrittenRows());
+    }
+
+    @Test
+    public void testMetricsAppendOneRow() throws Exception {
+        executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
+            final long initRowCount = 12;
+
+            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+
+            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+                    TableWriter.Row r = null;
+
+                    r = w.newRow(hoursAfterMillenniumTimestamp(13));
+                    r.putInt(0, 13);
+                    r.append();
+                    w.commit();
+            }
+
+            // printSqlResult(compiler, sqlExecutionContext, "x");
+            // System.err.printf("x: %s\n", sink.toString());
+
+            Metrics metrics = engine.getMetrics();
+            assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
+            assertEquals(initRowCount + 1, metrics.tableWriter().physicallyWrittenRows());
+        });
+    }
+
+    @Test
+    public void TestMetricsInsertOneRowBefore() throws Exception {
+        executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
+            final long initRowCount = 12;
+
+            setupBasicTable(engine, compiler, sqlExecutionContext, 12);
+
+            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+                    TableWriter.Row r = null;
+
+                    r = w.newRow(hoursAfterMillenniumTimestamp(-1));
+                    r.putInt(0, -1);
+                    r.append();
+                    w.commit();
+            }
+
+            printSqlResult(compiler, sqlExecutionContext, "x");
+            System.err.printf("x: %s\n", sink.toString());
+
+            Metrics metrics = engine.getMetrics();
+            assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
+
+            // There was a single partition which had to be re-written, along with the additional record.
+            assertEquals(initRowCount * 2 + 1, metrics.tableWriter().physicallyWrittenRows());
+        });
     }
 
     private static void testWriterOpensCorrectTxnPartitionOnRestart0(
