@@ -221,6 +221,73 @@ public class DispatcherWriterQueueTest {
     }
 
     @Test
+    public void testUpdateContinuesAfterStartTimeoutExpiredAndFailsAfterReaderOutOfDateException() throws Exception {
+        SOCountDownLatch updateScheduled = new SOCountDownLatch(1);
+        SOCountDownLatch updateAckReceived = new SOCountDownLatch(1);
+
+        HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
+                )
+                .withQueryFutureUpdateListener(waitUntilCommandStarted(updateAckReceived, updateScheduled))
+                .withAlterTableStartWaitTimeout(30_000_000)
+                .withAlterTableMaxWaitTimeout(50_000_000)
+                .withFilesFacade(new FilesFacadeImpl() {
+                    @Override
+                    public long openRW(LPSZ name, long opts) {
+                        if (Chars.endsWith(name, "default/ts.d.2") || Chars.endsWith(name, "default\\ts.d.2")) {
+                            updateAckReceived.await();
+                        }
+                        return super.openRW(name, opts);
+                    }
+                });
+
+        runUpdateOnBusyTable((writer, reader) -> {
+                    try {
+                        reader.getMetadata().getColumnIndex("ts");
+                        Assert.fail("InvalidColumnException is expected");
+                    } catch (InvalidColumnException e) {
+                        //ignored
+                    } catch (Throwable th) {
+                        Assert.fail("InvalidColumnException is expected instead");
+                    }
+                },
+                new OnTickAction() {
+                    private boolean first = true;
+                    @Override
+                    public void run(TableWriter writer) {
+                        if (first) {
+                            updateScheduled.await();
+                            // removing a new column before calling writer.tick() will result in ReaderOutOfDateException
+                            // thrown from UpdateOperator as this changes table structure
+                            // recompile will fail because the column UPDATE refers to is removed
+                            writer.removeColumn("ts");
+                            first = false;
+                        }
+                    }
+                },
+                0,
+                queryTestBuilder,
+                null,
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "4a\r\n" +
+                        "{\"query\":\"update x set ts=123\",\"error\":\"Invalid column: ts\",\"position\":13}\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                -1L,
+                0,
+                URLEncoder.encode("update x set ts=123", "UTF-8"));
+    }
+
+    @Test
     public void testUpdateContinuesAfterStartTimeoutExpiredAndSucceedsAfterReaderOutOfDateException() throws Exception {
         SOCountDownLatch updateScheduled = new SOCountDownLatch(1);
         SOCountDownLatch updateAckReceived = new SOCountDownLatch(1);
@@ -272,74 +339,7 @@ public class DispatcherWriterQueueTest {
                 null,
                 120_000_000_000L,
                 9,
-                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8.toString()));
-    }
-
-    @Test
-    public void testUpdateContinuesAfterStartTimeoutExpiredAndFailsAfterReaderOutOfDateException() throws Exception {
-        SOCountDownLatch updateScheduled = new SOCountDownLatch(1);
-        SOCountDownLatch updateAckReceived = new SOCountDownLatch(1);
-
-        HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(
-                        new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
-                )
-                .withQueryFutureUpdateListener(waitUntilCommandStarted(updateAckReceived, updateScheduled))
-                .withAlterTableStartWaitTimeout(30_000_000)
-                .withAlterTableMaxWaitTimeout(50_000_000)
-                .withFilesFacade(new FilesFacadeImpl() {
-                    @Override
-                    public long openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "default/ts.d.2") || Chars.endsWith(name, "default\\ts.d.2")) {
-                            updateAckReceived.await();
-                        }
-                        return super.openRW(name, opts);
-                    }
-                });
-
-        runUpdateOnBusyTable((writer, reader) -> {
-                    try {
-                        reader.getMetadata().getColumnIndex("ts");
-                        Assert.fail("InvalidColumnException is expected");
-                    } catch(InvalidColumnException e) {
-                        //ignored
-                    } catch(Throwable th) {
-                        Assert.fail("InvalidColumnException is expected instead");
-                    }
-                },
-                new OnTickAction() {
-                    private boolean first = true;
-                    @Override
-                    public void run(TableWriter writer) {
-                        if (first) {
-                            updateScheduled.await();
-                            // removing a new column before calling writer.tick() will result in ReaderOutOfDateException
-                            // thrown from UpdateOperator as this changes table structure
-                            // recompile will fail because the column UPDATE refers to is removed
-                            writer.removeColumn("ts");
-                            first = false;
-                        }
-                    }
-                },
-                0,
-                queryTestBuilder,
-                null,
-                "HTTP/1.1 400 Bad request\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "4a\r\n" +
-                        "{\"query\":\"update x set ts=123\",\"error\":\"Invalid column: ts\",\"position\":13}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
-                -1L,
-                0,
-                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8.toString()));
+                URLEncoder.encode("update x set ts=123", "UTF-8"));
     }
 
     @Test
