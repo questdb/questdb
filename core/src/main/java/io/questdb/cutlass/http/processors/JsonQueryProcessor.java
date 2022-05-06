@@ -459,7 +459,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             waitResult = fut.await(0);
         } catch (ReaderOutOfDateException e) {
             state.freeAsyncOperation();
-            compileQuery(state);
             throw EntryUnavailableException.instance("retry after recompile");
         }
 
