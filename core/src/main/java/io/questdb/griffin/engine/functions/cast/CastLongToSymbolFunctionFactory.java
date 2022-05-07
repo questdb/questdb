@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class CastLongToSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -139,6 +140,12 @@ public class CastLongToSymbolFunctionFactory implements FunctionFactory {
             symbols.clear();
             symbols.add(null);
             next = 1;
+        }
+
+        @Override
+        public @Nullable SymbolTable newInstance() {
+            // arg is primitive, we do not need to copy it
+            return new Func(arg);
         }
     }
 }

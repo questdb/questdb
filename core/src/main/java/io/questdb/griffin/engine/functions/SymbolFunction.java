@@ -166,7 +166,7 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Nullable
-    public StaticSymbolTable newStaticSymbolTable() {
+    public SymbolTable newInstance() {
         return null;
     }
 

@@ -36,6 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class CastCharToSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -91,6 +92,11 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
             final String str = Chars.toString(sink);
             symbols.add(Chars.toString(sink));
             return str;
+        }
+
+        @Override
+        public @Nullable SymbolTable newInstance() {
+            return new Func(arg);
         }
     }
 }

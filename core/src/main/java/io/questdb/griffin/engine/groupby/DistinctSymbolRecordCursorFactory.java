@@ -38,7 +38,6 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
     private final CairoEngine engine;
     private final GenericRecordMetadata metadata;
     private final String tableName;
-    private final int columnIndex;
     private final long tableVersion;
     private final int tableId;
 
@@ -52,10 +51,9 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         this.engine = engine;
         this.metadata = metadata;
         this.tableName = tableName;
-        this.columnIndex = columnIndex;
         this.tableVersion = tableVersion;
         this.tableId = tableId;
-        this.cursor = new DistinctSymbolRecordCursor();
+        this.cursor = new DistinctSymbolRecordCursor(columnIndex);
     }
 
     @Override
@@ -66,7 +64,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableId, tableVersion);
-        cursor.of(reader, columnIndex);
+        cursor.of(reader);
         return cursor;
     }
 
@@ -86,6 +84,11 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         private TableReader reader;
         private int numberOfSymbols;
         private SymbolMapReader symbolMapReader;
+        private final int columnIndex;
+
+        public DistinctSymbolRecordCursor(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
 
         @Override
         public void close() {
@@ -99,12 +102,14 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
+            // this is single column cursor
             return symbolMapReader;
         }
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return reader.newSymbolTable(columnIndex);
+            // this is single column cursor
+            return reader.newSymbolTable(this.columnIndex);
         }
 
         @Override
@@ -135,7 +140,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
             recordA.reset();
         }
 
-        public void of(TableReader reader, int columnIndex) {
+        public void of(TableReader reader) {
             this.reader = reader;
             this.symbolMapReader = reader.getSymbolMapReader(columnIndex);
             this.numberOfSymbols = symbolMapReader.getSymbolCount() + (symbolMapReader.containsNullValue() ? 1 : 0);

@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -106,6 +107,11 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return (SymbolTable) groupByFunctions.getQuick(columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return ((SymbolFunction)groupByFunctions.getQuick(columnIndex)).newInstance();
         }
 
         @Override

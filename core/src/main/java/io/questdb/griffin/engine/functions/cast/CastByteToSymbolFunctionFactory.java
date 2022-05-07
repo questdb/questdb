@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
@@ -34,6 +35,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 public class CastByteToSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -66,6 +68,11 @@ public class CastByteToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getSymbol(Record rec) {
             return getSymbol0(arg.getByte(rec));
+        }
+
+        @Override
+        public @Nullable SymbolTable newInstance() {
+            return new Func(arg);
         }
     }
 }

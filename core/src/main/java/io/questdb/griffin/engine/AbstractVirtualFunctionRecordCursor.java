@@ -94,7 +94,7 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return ((SymbolFunction)functions.getQuick(columnIndex)).newStaticSymbolTable();
+        return ((SymbolFunction)functions.getQuick(columnIndex)).newInstance();
     }
 
     @Override

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
 public class MapSymbolColumn extends SymbolFunction {
@@ -37,11 +38,21 @@ public class MapSymbolColumn extends SymbolFunction {
     private final int cursorColumnIndex;
     private final boolean symbolTableStatic;
     private SymbolTable symbolTable;
+    private boolean ownSymbolTable;
+    private SymbolTableSource symbolTableSource;
 
     public MapSymbolColumn(int mapColumnIndex, int cursorColumnIndex, boolean symbolTableStatic) {
         this.mapColumnIndex = mapColumnIndex;
         this.cursorColumnIndex = cursorColumnIndex;
         this.symbolTableStatic = symbolTableStatic;
+    }
+
+    @Override
+    public void close() {
+        if (ownSymbolTable) {
+            this.symbolTable = Misc.free(symbolTable);
+            this.ownSymbolTable = false;
+        }
     }
 
     @Override
@@ -60,10 +71,29 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
+    public @Nullable StaticSymbolTable getStaticSymbolTable() {
+        return symbolTable instanceof StaticSymbolTable ? (StaticSymbolTable) symbolTable : null;
+    }
+
+    @Override
+    public @Nullable SymbolTable newInstance() {
+        return symbolTableSource.newSymbolTable(cursorColumnIndex);
+    }
+
+    @Override
+    public boolean isSymbolTableStatic() {
+        return symbolTableStatic;
+    }
+
+    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        this.symbolTable = symbolTableSource.getSymbolTable(cursorColumnIndex);
-        assert this.symbolTable != this;
-        assert this.symbolTable != null;
+        if (symbolTable == null) {
+            this.symbolTableSource = symbolTableSource;
+            this.symbolTable = symbolTableSource.getSymbolTable(cursorColumnIndex);
+            this.ownSymbolTable = false;
+            assert this.symbolTable != this;
+            assert this.symbolTable != null;
+        }
     }
 
     @Override
@@ -74,15 +104,5 @@ public class MapSymbolColumn extends SymbolFunction {
     @Override
     public CharSequence valueBOf(int symbolKey) {
         return symbolTable.valueBOf(symbolKey);
-    }
-
-    @Override
-    public @Nullable StaticSymbolTable getStaticSymbolTable() {
-        return symbolTable instanceof StaticSymbolTable ? (StaticSymbolTable) symbolTable : null;
-    }
-
-    @Override
-    public boolean isSymbolTableStatic() {
-        return symbolTableStatic;
     }
 }

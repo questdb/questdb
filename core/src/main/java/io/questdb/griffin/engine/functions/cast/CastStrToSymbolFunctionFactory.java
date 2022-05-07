@@ -40,6 +40,7 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 public class CastStrToSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -132,6 +133,11 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             symbols.clear();
             symbols.add(null);
             next = 1;
+        }
+
+        @Override
+        public @Nullable SymbolTable newInstance() {
+            return new Func(arg);
         }
     }
 }
