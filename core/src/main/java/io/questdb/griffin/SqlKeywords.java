@@ -523,6 +523,21 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 't';
     }
 
+    // only for Python drivers, which use 'float' keyword to represent double in Java
+    // for example, 'NaN'::float   'Infinity'::float
+    public static boolean isFloatKeyword(CharSequence tok) {
+        if (tok.length() != 5) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'f'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i)) == 't';
+    }
+
     public static boolean isFromKeyword(CharSequence tok) {
         if (tok.length() != 4) {
             return false;
