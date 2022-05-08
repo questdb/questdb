@@ -202,6 +202,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.ogRowsRemaining = rowsRemaining;
         this.rowsRemaining = rowsRemaining;
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+        if (recordB != null) {
+            recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+        }
         // when frameCount is 0 our collect sequence is not subscribed
         // we should not be attempting to fetch queue using it
         if (frameLimit > -1) {
