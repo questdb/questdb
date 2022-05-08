@@ -27,7 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -41,8 +42,8 @@ import static io.questdb.cairo.TableUtils.offsetFileName;
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private final BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader();
-    private final MemoryMR charMem = Vm.getMRInstance();
-    private final MemoryMR offsetMem = Vm.getMRInstance();
+    private final MemoryCMR charMem = Vm.getCMRInstance();
+    private final MemoryCMR offsetMem = Vm.getCMRInstance();
     private final ObjList<String> cache = new ObjList<>();
     private int maxHash;
     private boolean cached;
@@ -204,6 +205,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return null;
     }
 
+    public SymbolTable newTransientSymbolTable() {
+        return new TransientSymbolTable(charMem, offsetMem, symbolCount);
+    }
+
     private CharSequence cachedValue(int key) {
         String symbol = cache.getQuiet(key);
         return symbol != null ? symbol : fetchAndCache(key);
@@ -223,5 +228,43 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     private CharSequence uncachedValue2(int key) {
         return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+    }
+
+    public static class TransientSymbolTable implements SymbolTable {
+        private final MemoryCMR charMem;
+        private final MemoryCMR offsetMem;
+        private final int symbolCount;
+        private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
+        private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
+
+        public TransientSymbolTable(MemoryCMR charMem, MemoryCMR offsetMem, int symbolCount) {
+            this.charMem = charMem;
+            this.offsetMem = offsetMem;
+            this.symbolCount = symbolCount;
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            if (key > -1 && key < symbolCount) {
+                return uncachedValue(key);
+            }
+            return null;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            if (key > -1 && key < symbolCount) {
+                return uncachedValue2(key);
+            }
+            return null;
+        }
+
+        private CharSequence uncachedValue(int key) {
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csview);
+        }
+
+        private CharSequence uncachedValue2(int key) {
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csview2);
+        }
     }
 }

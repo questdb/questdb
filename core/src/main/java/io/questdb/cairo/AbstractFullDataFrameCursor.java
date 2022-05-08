@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
 
 public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
@@ -46,7 +46,7 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
     }
 
     @Override
-    public StaticSymbolTable newSymbolTable(int columnIndex) {
+    public SymbolTable newSymbolTable(int columnIndex) {
         return reader.newSymbolTable(columnIndex);
     }
 

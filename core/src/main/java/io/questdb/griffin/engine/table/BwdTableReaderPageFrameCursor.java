@@ -123,7 +123,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public StaticSymbolTable newSymbolTable(int columnIndex) {
+    public SymbolTable newSymbolTable(int columnIndex) {
         return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 

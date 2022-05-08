@@ -42,6 +42,7 @@ public class PageAddressCacheRecord implements Record {
 
     private PageFrameCursor cursor; // Makes it possible to determine real row id, not one relative to page.
     private SymbolTableSource symbolTableSource;
+    private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private PageAddressCache pageAddressCache;
     private int frameIndex;
     private long rowIndex;
@@ -234,14 +235,14 @@ public class PageAddressCacheRecord implements Record {
         if (address != 0) {
             key = Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
         }
-        return symbolTableSource.getSymbolTable(columnIndex).valueOf(key);
+        return getSymbolTable(columnIndex).valueOf(key);
     }
 
     @Override
     public CharSequence getSymB(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         final int key = Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
-        return symbolTableSource.getSymbolTable(columnIndex).valueBOf(key);
+        return getSymbolTable(columnIndex).valueBOf(key);
     }
 
     @Override
@@ -290,6 +291,8 @@ public class PageAddressCacheRecord implements Record {
         this.pageAddressCache = pageAddressCache;
         this.frameIndex = 0;
         this.rowIndex = 0;
+        // TODO check if we need to close() any SymbolTable impl that we use.
+        this.symbolTableCache.clear();
     }
 
     public void setFrameIndex(int frameIndex) {
@@ -361,5 +364,14 @@ public class PageAddressCacheRecord implements Record {
                     .put(']');
         }
         return null;
+    }
+
+    private SymbolTable getSymbolTable(int columnIndex) {
+        SymbolTable symbolTable = symbolTableCache.getQuiet(columnIndex);
+        if (symbolTable == null) {
+            symbolTable = symbolTableSource.newSymbolTable(columnIndex);
+            symbolTableCache.extendAndSet(columnIndex, symbolTable);
+        }
+        return symbolTable;
     }
 }

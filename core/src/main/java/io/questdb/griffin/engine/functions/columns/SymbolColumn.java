@@ -24,11 +24,10 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
 public class SymbolColumn extends SymbolFunction implements ScalarFunction {
@@ -36,12 +35,10 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     private final boolean symbolTableStatic;
     private SymbolTable symbolTable;
     private SymbolTableSource symbolTableSource;
-    private boolean ownSymbolTable;
 
     public SymbolColumn(int columnIndex, boolean symbolTableStatic) {
         this.columnIndex = columnIndex;
         this.symbolTableStatic = symbolTableStatic;
-        ownSymbolTable = false;
     }
 
     @Override
@@ -51,24 +48,20 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        // avoid symbol map lookup on each access
-        return symbolTable.valueOf(getInt(rec));
+        return rec.getSym(columnIndex);
     }
 
     @Override
     public CharSequence getSymbolB(Record rec) {
-        return symbolTable.valueBOf(getInt(rec));
+        return rec.getSymB(columnIndex);
     }
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         this.symbolTableSource = symbolTableSource;
-        if (symbolTable == null) {
-            this.symbolTable = symbolTableSource.getSymbolTable(columnIndex);
-            this.ownSymbolTable = false;
-            // static symbol table must be non-null
-            assert !symbolTableStatic || symbolTable != null;
-        }
+        this.symbolTable = symbolTableSource.getSymbolTable(columnIndex);
+        // static symbol table must be non-null
+        assert !symbolTableStatic || symbolTable != null;
     }
     
     @Override
@@ -94,13 +87,5 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     @Override
     public CharSequence valueBOf(int symbolKey) {
         return symbolTable.valueBOf(symbolKey);
-    }
-
-    @Override
-    public void close() {
-        if (ownSymbolTable) {
-            symbolTable = Misc.free(symbolTable);
-            ownSymbolTable = false;
-        }
     }
 }
