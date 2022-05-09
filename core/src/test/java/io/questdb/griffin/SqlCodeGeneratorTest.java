@@ -849,6 +849,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "93.4460485739401\tPEHN\t1970-01-02T03:46:40.000000Z\n" +
                 "88.2822836669774\t\t1970-01-17T04:53:20.000000Z\n";
 
+        // TODO we shouldn't execute such queries in parallel.
         assertQuery(expected,
                 "select * from x where cast(b as symbol) in (select rnd_str('PEHN', 'HYRX', null) a from long_sequence(10)) and test_match()",
                 "create table x as " +
