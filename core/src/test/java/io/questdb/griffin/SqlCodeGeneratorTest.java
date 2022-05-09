@@ -323,7 +323,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // also good numbers, extra top calls are due to symbol column API check
         // tables without symbol columns will skip this check
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -812,7 +812,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "k");
 
         // these values are assured to be correct for the scenario
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -870,7 +870,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 expected +
                         "33.74610457937482\tHYRX\t1971-01-01T00:00:00.000000Z\n");
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -989,7 +989,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         "), index(b) timestamp(k)",
                 "k");
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1013,8 +1013,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // also good numbers, extra top calls are due to symbol column API check
         // tables without symbol columns will skip this check
-        // todo: uncomment
-//        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1098,7 +1097,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 expected +
                         "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n");
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1204,7 +1203,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // these value are also ok because ddl2 is present, there is another round of check for that
         // this ensures that "init" on filter is invoked
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1402,7 +1401,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n" +
                         "44.80468966861358\t\t\n");
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1482,7 +1481,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "75.88175403454873\tHYRX\n" +
                         "57.78947915182423\tHYRX\n");
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1567,7 +1566,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\n" +
                         "75.88175403454873\tABC\n" +
                         "57.78947915182423\tABC\n");
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -3607,7 +3606,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n");
 
         // this is good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -3683,7 +3682,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n");
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -3771,7 +3770,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true
         );
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -3839,7 +3838,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
 
         // this is good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -3893,7 +3892,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n");
 
         // this is good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -3971,7 +3970,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n");
         // good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4038,7 +4037,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
 
         // good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4104,7 +4103,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
 
         // good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4565,7 +4564,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
 
         // good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4640,7 +4639,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true
         );
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4680,7 +4679,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true
         );
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4753,7 +4752,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true
         );
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test

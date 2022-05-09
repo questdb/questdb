@@ -42,8 +42,10 @@ public class TestMatchFunctionFactory implements FunctionFactory {
     private static final AtomicInteger topCounter = new AtomicInteger();
     private static final AtomicInteger closeCount = new AtomicInteger();
 
-    public static boolean assertAPI() {
-        return openCounter.get() > 0 && topCounter.get() > 0 && closeCount.get() == 1;
+    public static boolean assertAPI(SqlExecutionContext executionContext) {
+        return openCounter.get() > 0 && openCounter.get() >= closeCount.get() && topCounter.get() > 0
+                // consider both single-threaded and parallel filter cases
+                && (closeCount.get() == 1 || closeCount.get() == executionContext.getWorkerCount() + 1);
     }
 
     public static boolean isClosed() {
