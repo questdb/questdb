@@ -73,7 +73,7 @@ public interface CairoConfiguration {
 
     int getColumnVersionTaskPoolCapacity();
 
-    int getColumnVersionCleanupLookBackDays();
+    int getColumnVersionPurgeLookBackDays();
 
     double getColumnVersionPurgeWaitExponent();
 
