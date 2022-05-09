@@ -2692,7 +2692,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         Rnd rnd = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos());
         int batches = 0;
-        int batchCount = 1000;
+        int batchCount = 75;
         while (batches < batchCount) {
             try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
                 for (int i = 0; i < batchCount; i++) {

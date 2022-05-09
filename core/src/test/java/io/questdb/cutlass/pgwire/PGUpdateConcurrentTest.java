@@ -72,7 +72,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
     @Test
     public void testConcurrencyMultipleWriterMultipleReaderSinglePartitioned() throws Exception {
-        testConcurrency(4, 20, 8, PartitionMode.SINGLE);
+        testConcurrency(4, 10, 8, PartitionMode.SINGLE);
     }
 
     @Test
