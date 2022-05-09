@@ -557,79 +557,82 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         clonedSymbolTables.add(tab);
                         originalSymbolTables.add(cursor.getSymbolTable(columnIndex));
                     }
+
+                    // take snapshot of symbol tables
+                    // multiple passes over the same cursor, if not very efficient, we
+                    // can swap loops around
+                    int sumOfMax = 0;
+                    for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
+                        cursor.toTop();
+                        final Record rec = cursor.getRecord();
+                        final int column = symbolIndexes.getQuick(i);
+                        int max = -1;
+                        while (cursor.hasNext()) {
+                            max = Math.max(max, rec.getInt(column));
+                        }
+                        String[] values = new String[max + 1];
+                        final SymbolTable symbolTable = cursor.getSymbolTable(column);
+                        for (int k = 0; k <= max; k++) {
+                            values[k] = Chars.toString(symbolTable.valueOf(k));
+                        }
+                        symbolTableKeySnapshot[i] = max;
+                        symbolTableValueSnapshot[i] = values;
+                        sumOfMax += max;
+                    }
+
+                    // Now start two threads, one will be using normal symbol table
+                    // another will be using a clone. Threads will randomly check that
+                    // symbol table is able to convert keys to values without problems
+
+                    int numberOfIterations = sumOfMax * 2;
+                    int symbolColumnCount = symbolIndexes.size();
+                    int workerCount = 2;
+                    CyclicBarrier barrier = new CyclicBarrier(workerCount);
+                    SOCountDownLatch doneLatch = new SOCountDownLatch(workerCount);
+                    AtomicInteger errorCount = new AtomicInteger(0);
+
+                    // thread that is hitting clones
+                    new Thread(() -> {
+                        try {
+                            TestUtils.await(barrier);
+                            assertSymbolColumnThreadSafety(
+                                    numberOfIterations,
+                                    symbolColumnCount,
+                                    clonedSymbolTables,
+                                    symbolTableKeySnapshot,
+                                    symbolTableValueSnapshot
+                            );
+                        } catch (Throwable e) {
+                            errorCount.incrementAndGet();
+                            e.printStackTrace();
+                        } finally {
+                            doneLatch.countDown();
+                        }
+                    }).start();
+
+                    // thread that is hitting the original symbol tables
+                    new Thread(() -> {
+                        try {
+                            TestUtils.await(barrier);
+                            assertSymbolColumnThreadSafety(
+                                    numberOfIterations,
+                                    symbolColumnCount,
+                                    clonedSymbolTables,
+                                    symbolTableKeySnapshot,
+                                    symbolTableValueSnapshot
+                            );
+                        } catch (Throwable e) {
+                            errorCount.incrementAndGet();
+                            e.printStackTrace();
+                        } finally {
+                            doneLatch.countDown();
+                        }
+                    }).start();
+
+                    doneLatch.await();
+
+                    Assert.assertEquals(0, errorCount.get());
                 }
-
-                // take snapshot of symbol tables
-                // multiple passes over the same cursor, if not very efficient, we
-                // can swap loops around
-                int sumOfMax = 0;
-                for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
-                    cursor.toTop();
-                    final Record rec = cursor.getRecord();
-                    final int column = symbolIndexes.getQuick(i);
-                    int max = -1;
-                    while (cursor.hasNext()) {
-                        max = Math.max(max, rec.getInt(column));
-                    }
-                    String[] values = new String[max + 1];
-                    final SymbolTable symbolTable = cursor.getSymbolTable(column);
-                    for (int k = 0; k <= max; k++) {
-                        values[k] = Chars.toString(symbolTable.valueOf(k));
-                    }
-                    symbolTableKeySnapshot[i] = max;
-                    symbolTableValueSnapshot[i] = values;
-                    sumOfMax += max;
-                }
-
-                // Now start two threads, one will be using normal symbol table
-                // another will be using a clone. Threads will randomly check that
-                // symbol table is able to convert keys to values without problems
-
-                int numberOfIterations = sumOfMax * 2;
-                int symbolColumnCount = symbolIndexes.size();
-                int workerCount = 2;
-                CyclicBarrier barrier = new CyclicBarrier(workerCount);
-                SOCountDownLatch doneLatch = new SOCountDownLatch(workerCount);
-                AtomicInteger errorCount = new AtomicInteger(0);
-
-                // thread that is hitting clones
-                new Thread(() -> {
-                    try {
-                        TestUtils.await(barrier);
-                        assertSymbolColumnThreadSafety(
-                                numberOfIterations,
-                                symbolColumnCount,
-                                clonedSymbolTables,
-                                symbolTableKeySnapshot,
-                                symbolTableValueSnapshot
-                        );
-                    } catch (Throwable e) {
-                        errorCount.incrementAndGet();
-                        e.printStackTrace();
-                    } finally {
-                        doneLatch.countDown();
-                    }
-                }).start();
-
-                // thread that is hitting the original symbol tables
-                new Thread(() -> {
-                    try {
-                        TestUtils.await(barrier);
-                        assertSymbolColumnThreadSafety(
-                                numberOfIterations,
-                                symbolColumnCount,
-                                clonedSymbolTables,
-                                symbolTableKeySnapshot,
-                                symbolTableValueSnapshot
-                        );
-                    } finally {
-                        doneLatch.countDown();
-                    }
-                }).start();
-
-                Assert.assertEquals(0, errorCount.get());
-
-                doneLatch.await();
 
                 cursor.toTop();
                 final Record record = cursor.getRecord();
@@ -671,7 +674,12 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             SymbolTable symbolTable = symbolTables.getQuick(symbolColIndex);
             int max = symbolTableKeySnapshot[symbolColIndex] + 1;
             int key = rnd.nextInt(max);
-            TestUtils.assertEquals(symbolTableValueSnapshot[symbolColIndex][key], symbolTable.valueOf(key));
+            if (Chars.equals(symbolTableValueSnapshot[symbolColIndex][key], symbolTable.valueOf(key))) {
+
+            } else {
+                System.out.println("ok");
+                TestUtils.assertEquals(symbolTableValueSnapshot[symbolColIndex][key], symbolTable.valueOf(key));
+            }
         }
     }
 
