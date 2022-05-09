@@ -365,6 +365,11 @@ public class DispatcherWriterQueueTest {
     }
 
     @Test
+    public void testUpdateContinuesAfterAfterReaderOutOfDateExceptionWithRetry() throws Exception {
+        testUpdateSucceedsAfterReaderOutOfDateException(2, 1L);
+    }
+
+    @Test
     public void testUpdateFailsAfterReaderOutOfDateException() throws Exception {
         testUpdateFailsAfterReaderOutOfDateException(1, 30_000_000L);
     }
