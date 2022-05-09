@@ -52,7 +52,6 @@ public class MapSymbolColumn extends SymbolFunction {
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        // TODO check if we have a problem here.
         return symbolTable.valueOf(getInt(rec));
     }
 
