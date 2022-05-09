@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
@@ -1952,7 +1952,7 @@ public class SqlCompiler implements Closeable {
                     }
 
                     try {
-                        FileSplitter sorter = new FileSplitter(engine);
+                        FileSplitter sorter = new FileSplitter(executionContext);
                         DateFormat dateFormat = engine.getConfiguration().getTextConfiguration().getInputFormatConfiguration().getTimestampFormatFactory().get(model.getTimestampFormat());
                         sorter.split(name, fd, PartitionBy.DAY, (byte) ',', model.getTimestampColumn(), dateFormat, true);
                     } finally {

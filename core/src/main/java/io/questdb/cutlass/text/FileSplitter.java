@@ -24,14 +24,22 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.*;
+import io.questdb.MessageBus;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.vm.MemoryPMARImpl;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -56,6 +64,14 @@ import java.io.Closeable;
 public class FileSplitter implements Closeable, Mutable {
 
     private static final Log LOG = LogFactory.getLog(FileSplitter.class);
+    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    private final LongList stats = new LongList();
+
+    private RingQueue<TextImportTask> queue;
+    private Sequence pubSeq;
+    private Sequence subSeq;
+    private int workerCount;
+
     //TODO: rework
     private final DateLocale defaultDateLocale;
 
@@ -131,7 +147,14 @@ public class FileSplitter implements Closeable, Mutable {
     private long fieldLo;
     private long fieldHi;
 
-    public FileSplitter(CairoEngine engine) {
+    public FileSplitter(SqlExecutionContext sqlExecutionContext) {
+        MessageBus bus = sqlExecutionContext.getMessageBus();
+        this.workerCount = sqlExecutionContext.getWorkerCount();
+        this.queue = bus.getTextImportQueue();
+        this.pubSeq = bus.getTextImportPubSeq();
+        this.subSeq = bus.getTextImportSubSeq();
+
+        CairoEngine engine = sqlExecutionContext.getCairoEngine();
         final TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
         this.defaultDateLocale = textConfiguration.getDefaultDateLocale();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
@@ -518,5 +541,48 @@ public class FileSplitter implements Closeable, Mutable {
         target.putLong(timestamp);
         target.putLong(lineStartOffset);
         //target.putLong(lineEndOffset);
+    }
+
+    protected void process() {
+        int fileSize = 100;
+        final long chunkSize = (fileSize + workerCount - 1) / workerCount;
+        final int taskCount = (int) ((fileSize + chunkSize - 1) / chunkSize);
+
+        //todo: splitting part
+        int queuedCount = 0;
+        doneLatch.reset();
+
+        stats.setPos(taskCount * 4); // quotesEven, quotesOdd, newlineOffsetEven, newlineOffsetOdd
+        stats.zero(0);
+
+        for (int i = 0; i < taskCount; ++i) {
+            final long chunkLo = i * chunkSize;
+            final long chunkHi = Long.min(chunkLo + chunkSize, fileSize);
+
+            final long seq = pubSeq.next();
+            if (seq < 0) {
+                // process locally
+            } else {
+                queue.get(seq).of(4 * i, chunkLo, chunkHi, stats, doneLatch);
+                pubSeq.done(seq);
+                queuedCount++;
+            }
+        }
+
+        // process our own queue
+        // this should fix deadlock with 1 worker configuration
+        while (doneLatch.getCount() > -queuedCount) {
+            long seq = subSeq.next();
+            if (seq > -1) {
+                queue.get(seq).run();
+                subSeq.done(seq);
+            }
+        }
+
+        doneLatch.await(queuedCount);
+
+        queuedCount = 0;
+        doneLatch.reset();
+        //todo: parsing part
     }
 }

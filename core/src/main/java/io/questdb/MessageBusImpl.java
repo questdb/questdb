@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cutlass.text.TextImportTask;
 import io.questdb.mp.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.tasks.*;
@@ -69,6 +70,10 @@ public class MessageBusImpl implements MessageBus {
 
     private final MPSequence queryCacheEventPubSeq;
     private final FanOut queryCacheEventSubSeq;
+
+    private final RingQueue<TextImportTask> textImportQueue;
+    private final MPSequence textImportPubSeq;
+    private final MCSequence textImportSubSeq;
 
     private final CairoConfiguration configuration;
 
@@ -127,6 +132,11 @@ public class MessageBusImpl implements MessageBus {
         this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
         this.queryCacheEventSubSeq = new FanOut();
         this.queryCacheEventPubSeq.then(this.queryCacheEventSubSeq).then(this.queryCacheEventPubSeq);
+
+        this.textImportQueue = new RingQueue<>(TextImportTask::new, configuration.getLatestByQueueCapacity()); //todo: add dedicated cfg option
+        this.textImportPubSeq = new MPSequence(textImportQueue.getCycle());
+        this.textImportSubSeq = new MCSequence(textImportQueue.getCycle());
+        textImportPubSeq.then(textImportSubSeq).then(textImportPubSeq);
     }
 
     @Override
@@ -278,4 +288,20 @@ public class MessageBusImpl implements MessageBus {
     public FanOut getQueryCacheEventFanOut() {
         return queryCacheEventSubSeq;
     }
+
+    @Override
+    public Sequence getTextImportPubSeq() {
+        return textImportPubSeq;
+    }
+
+    @Override
+    public RingQueue<TextImportTask> getTextImportQueue() {
+        return textImportQueue;
+    }
+
+    @Override
+    public Sequence getTextImportSubSeq() {
+        return textImportSubSeq;
+    }
+
 }
