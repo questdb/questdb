@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
 public class MapSymbolColumn extends SymbolFunction {
@@ -38,11 +39,13 @@ public class MapSymbolColumn extends SymbolFunction {
     private final boolean symbolTableStatic;
     private SymbolTable symbolTable;
     private SymbolTableSource symbolTableSource;
+    private final boolean cloneSymbolTable;
 
-    public MapSymbolColumn(int mapColumnIndex, int cursorColumnIndex, boolean symbolTableStatic) {
+    public MapSymbolColumn(int mapColumnIndex, int cursorColumnIndex, boolean symbolTableStatic, boolean cloneSymbolTable) {
         this.mapColumnIndex = mapColumnIndex;
         this.cursorColumnIndex = cursorColumnIndex;
         this.symbolTableStatic = symbolTableStatic;
+        this.cloneSymbolTable = cloneSymbolTable;
     }
 
     @Override
@@ -79,7 +82,11 @@ public class MapSymbolColumn extends SymbolFunction {
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         if (symbolTable == null) {
             this.symbolTableSource = symbolTableSource;
-            this.symbolTable = symbolTableSource.getSymbolTable(cursorColumnIndex);
+            if (cloneSymbolTable) {
+                this.symbolTable = symbolTableSource.newSymbolTable(cursorColumnIndex);
+            } else {
+                this.symbolTable = symbolTableSource.getSymbolTable(cursorColumnIndex);
+            }
             assert this.symbolTable != this;
             assert this.symbolTable != null;
         }
@@ -93,5 +100,12 @@ public class MapSymbolColumn extends SymbolFunction {
     @Override
     public CharSequence valueBOf(int symbolKey) {
         return symbolTable.valueBOf(symbolKey);
+    }
+
+    @Override
+    public void close() {
+        if (cloneSymbolTable) {
+            symbolTable = Misc.free(symbolTable);
+        }
     }
 }

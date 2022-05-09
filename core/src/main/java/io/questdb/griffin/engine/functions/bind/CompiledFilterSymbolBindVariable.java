@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.Misc;
 
 /**
  * String bind variable function wrapper used in SQL JIT. Also used to handle deferred
@@ -40,17 +41,25 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     private final Function symbolFunction;
     private final int columnIndex;
     private StaticSymbolTable symbolTable;
+    private final boolean cloneSymbolTable;
 
-    public CompiledFilterSymbolBindVariable(Function symbolFunction, int columnIndex) {
+    public CompiledFilterSymbolBindVariable(Function symbolFunction, int columnIndex, boolean cloneSymbolTable) {
         assert symbolFunction.getType() == ColumnType.STRING || symbolFunction.getType() == ColumnType.SYMBOL;
         this.symbolFunction = symbolFunction;
         this.columnIndex = columnIndex;
+        this.cloneSymbolTable = cloneSymbolTable;
     }
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        this.symbolTable = (StaticSymbolTable) symbolTableSource.getSymbolTable(columnIndex);
-        this.symbolFunction.init(symbolTableSource, executionContext);
+        if (symbolTable == null) {
+            if (cloneSymbolTable) {
+                this.symbolTable = (StaticSymbolTable) symbolTableSource.newSymbolTable(columnIndex);
+            } else {
+                this.symbolTable = (StaticSymbolTable) symbolTableSource.getSymbolTable(columnIndex);
+            }
+            this.symbolFunction.init(symbolTableSource, executionContext);
+        }
     }
 
     @Override
@@ -87,5 +96,12 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     @Override
     public boolean isRuntimeConstant() {
         return true;
+    }
+
+    @Override
+    public void close() {
+        if (cloneSymbolTable) {
+            symbolTable = Misc.free(symbolTable);
+        }
     }
 }

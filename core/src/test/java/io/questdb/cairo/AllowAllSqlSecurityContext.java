@@ -26,9 +26,9 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.std.Rnd;
@@ -129,6 +129,16 @@ public final class AllowAllSqlSecurityContext {
 
         @Override
         public void setJitMode(int jitMode) {
+        }
+
+        @Override
+        public void setCloneSymbolTables(boolean clone) {
+
+        }
+
+        @Override
+        public boolean isCloneSymbolTables() {
+            return false;
         }
     };
 }

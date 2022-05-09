@@ -756,14 +756,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         final boolean enableParallelFilter = configuration.isSqlParallelFilterEnabled();
         if (enableParallelFilter && factory.supportPageFrameCursor()) {
-            ObjList<Function> perWorkerFilters = null;
-            if (!f.supportsConcurrentExecution()) {
-                perWorkerFilters = new ObjList<>();
-                for (int i = 0, c = executionContext.getWorkerCount(); i < c; i++) {
-                    final Function perWorkerFilter = compileFilter(filter, factory.getMetadata(), executionContext);
-                    perWorkerFilters.extendAndSet(i , perWorkerFilter);
-                }
-            }
+            ObjList<Function> perWorkerFilters = xxx(factory.getMetadata(), executionContext, filter, f);
 
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
             if (useJit) {
@@ -826,6 +819,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         }
         return new FilteredRecordCursorFactory(factory, f);
+    }
+
+    private ObjList<Function> xxx(
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            ExpressionNode filter,
+            Function filterFunction
+    ) throws SqlException {
+        if (!filterFunction.supportsConcurrentExecution()) {
+            ObjList<Function> perWorkerFilters = new ObjList<>();
+            final boolean current = executionContext.isCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                for (int i = 0, c = executionContext.getWorkerCount(); i < c; i++) {
+                    final Function perWorkerFilter = compileFilter(filter, metadata, executionContext);
+                    perWorkerFilters.extendAndSet(i, perWorkerFilter);
+                }
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+            return perWorkerFilters;
+        }
+        return null;
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
@@ -1035,16 +1051,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (filter != null) {
                     if (configuration.isSqlParallelFilterEnabled() && master.supportPageFrameCursor()) {
                         final Function f = functionParser.parseFunction(filter, master.getMetadata(), executionContext);
-
-                        ObjList<Function> perWorkerFilters = null;
-                        if (!f.supportsConcurrentExecution()) {
-                            perWorkerFilters = new ObjList<>();
-                            for (int j = 0, c = executionContext.getWorkerCount(); j < c; j++) {
-                                final Function perWorkerFilter = functionParser.parseFunction(filter, master.getMetadata(), executionContext);
-                                perWorkerFilters.extendAndSet(j , perWorkerFilter);
-                            }
-                        }
-
+                        ObjList<Function> perWorkerFilters = xxx(master.getMetadata(), executionContext, filter, f);
                         master = new AsyncFilteredRecordCursorFactory(
                                 configuration,
                                 executionContext.getMessageBus(),
@@ -1665,7 +1672,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         keyTypes,
                         valueTypes.getColumnCount(),
                         false,
-                        timestampIndex
+                        timestampIndex,
+                        executionContext
                 );
 
 
@@ -2483,7 +2491,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         keyTypes,
                         valueTypes.getColumnCount(),
                         true,
-                        timestampIndex
+                        timestampIndex,
+                        executionContext
                 );
             } catch (Throwable e) {
                 Misc.freeObjList(recordFunctions);
@@ -2620,7 +2629,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             && virtualMetadata.getTimestampIndex() == -1
             ) {
                 final Function timestampFunction = FunctionParser.createColumn(
-                        0, timestampColumn, metadata
+                        0,
+                        timestampColumn,
+                        metadata,
+                        executionContext
                 );
                 functions.add(timestampFunction);
 

@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
 public class SymbolColumn extends SymbolFunction implements ScalarFunction {
@@ -35,10 +36,12 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     private final boolean symbolTableStatic;
     private SymbolTable symbolTable;
     private SymbolTableSource symbolTableSource;
+    private final boolean cloneSymbolTable;
 
-    public SymbolColumn(int columnIndex, boolean symbolTableStatic) {
+    public SymbolColumn(int columnIndex, boolean symbolTableStatic, boolean cloneSymbolTable) {
         this.columnIndex = columnIndex;
         this.symbolTableStatic = symbolTableStatic;
+        this.cloneSymbolTable = cloneSymbolTable;
     }
 
     @Override
@@ -48,20 +51,26 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        return rec.getSym(columnIndex);
+        return symbolTable.valueOf(rec.getInt(columnIndex));
     }
 
     @Override
     public CharSequence getSymbolB(Record rec) {
-        return rec.getSymB(columnIndex);
+        return symbolTable.valueBOf(rec.getInt(columnIndex));
     }
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        this.symbolTableSource = symbolTableSource;
-        this.symbolTable = symbolTableSource.getSymbolTable(columnIndex);
-        // static symbol table must be non-null
-        assert !symbolTableStatic || symbolTable != null;
+        if (symbolTable == null) {
+            this.symbolTableSource = symbolTableSource;
+            if (cloneSymbolTable) {
+                this.symbolTable = symbolTableSource.newSymbolTable(columnIndex);
+            } else {
+                this.symbolTable = symbolTableSource.getSymbolTable(columnIndex);
+            }
+            // static symbol table must be non-null
+            assert !symbolTableStatic || symbolTable != null;
+        }
     }
     
     @Override
@@ -87,5 +96,12 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     @Override
     public CharSequence valueBOf(int symbolKey) {
         return symbolTable.valueBOf(symbolKey);
+    }
+
+    @Override
+    public void close() {
+        if (cloneSymbolTable) {
+            symbolTable = Misc.free(symbolTable);
+        }
     }
 }

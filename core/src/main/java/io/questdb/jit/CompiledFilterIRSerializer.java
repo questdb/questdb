@@ -377,7 +377,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(ColumnType.nameOf(columnType));
         }
 
-        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(varFunction, predicateContext.symbolColumnIndex));
+        bindVarFunctions.add(
+                new CompiledFilterSymbolBindVariable(
+                        varFunction,
+                        predicateContext.symbolColumnIndex,
+                        executionContext.isCloneSymbolTables()
+                )
+        );
         int index = bindVarFunctions.size() - 1;
 
         putOperand(offset, VAR, typeCode, index);
@@ -576,7 +582,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         // Unknown symbol constant case. Create a fake bind variable function to handle it.
         final SymbolConstant function = SymbolConstant.newInstance(symbol);
-        bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
+        bindVarFunctions.add(
+                new CompiledFilterSymbolBindVariable(
+                        function,
+                        predicateContext.symbolColumnIndex,
+                        executionContext.isCloneSymbolTables()
+                )
+        );
         int index = bindVarFunctions.size() - 1;
 
         int typeCode = bindVariableTypeCode(ColumnType.STRING);

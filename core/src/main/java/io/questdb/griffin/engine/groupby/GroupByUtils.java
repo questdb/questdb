@@ -97,7 +97,8 @@ public class GroupByUtils {
             ArrayColumnTypes keyTypes,
             int keyColumnIndex,
             boolean timestampUnimportant,
-            int timestampIndex
+            int timestampIndex,
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
 
         recordFunctionPositions.clear();
@@ -165,7 +166,12 @@ public class GroupByUtils {
                             fun = StrColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.SYMBOL:
-                            fun = new MapSymbolColumn(keyColumnIndex - 1, index, metadata.isSymbolTableStatic(index));
+                            fun = new MapSymbolColumn(
+                                    keyColumnIndex - 1,
+                                    index,
+                                    metadata.isSymbolTableStatic(index),
+                                    sqlExecutionContext.isCloneSymbolTables()
+                            );
                             break;
                         case ColumnType.DATE:
                             fun = DateColumn.newInstance(keyColumnIndex - 1);

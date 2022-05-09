@@ -1165,8 +1165,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             // Reload txn
             readTxnSlow(deadline);
             // Reload _meta if structure version updated, reload _cv if column version updated
-        } while (!reloadColumnVersion(txFile.getColumnVersion(), deadline) // Reload column versions, column version used in metadata reload column shuffle
-                || !reloadMetadata(txFile.getStructureVersion(), deadline, reshuffle) // Start again if _meta with matching structure version cannot be loaded
+        } while (
+            // Reload column versions, column version used in metadata reload column shuffle
+                !reloadColumnVersion(txFile.getColumnVersion(), deadline)
+                        // Start again if _meta with matching structure version cannot be loaded
+                        || !reloadMetadata(txFile.getStructureVersion(), deadline, reshuffle)
         );
     }
 

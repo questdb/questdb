@@ -502,6 +502,16 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     public void setJitMode(int jitMode) {
                         sqlExecutionContext.setJitMode(jitMode);
                     }
+
+                    @Override
+                    public void setCloneSymbolTables(boolean clone) {
+                        sqlExecutionContext.setCloneSymbolTables(clone);
+                    }
+
+                    @Override
+                    public boolean isCloneSymbolTables() {
+                        return sqlExecutionContext.isCloneSymbolTables();
+                    }
                 });
             } catch (Throwable e) {
                 e.printStackTrace();
