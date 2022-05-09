@@ -542,7 +542,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             // create new symbol tables and make sure they are not the same
             // as the default ones
 
-            int columnCount = metadata.getColumnCount();
             ObjList<SymbolTable> clonedSymbolTables = new ObjList<>();
             ObjList<SymbolTable> originalSymbolTables = new ObjList<>();
             int[] symbolTableKeySnapshot = new int[symbolIndexes.size()];
@@ -617,7 +616,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                             assertSymbolColumnThreadSafety(
                                     numberOfIterations,
                                     symbolColumnCount,
-                                    clonedSymbolTables,
+                                    originalSymbolTables,
                                     symbolTableKeySnapshot,
                                     symbolTableValueSnapshot
                             );
@@ -674,12 +673,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             SymbolTable symbolTable = symbolTables.getQuick(symbolColIndex);
             int max = symbolTableKeySnapshot[symbolColIndex] + 1;
             int key = rnd.nextInt(max);
-            if (Chars.equals(symbolTableValueSnapshot[symbolColIndex][key], symbolTable.valueOf(key))) {
-
-            } else {
-                System.out.println("ok");
-                TestUtils.assertEquals(symbolTableValueSnapshot[symbolColIndex][key], symbolTable.valueOf(key));
-            }
+            TestUtils.assertEquals(symbolTableValueSnapshot[symbolColIndex][key], symbolTable.valueOf(key));
         }
     }
 
