@@ -38,7 +38,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.tasks.ColumnVersionPurgeTask;
 
 import java.io.Closeable;
@@ -56,7 +55,6 @@ public class UpdateOperator implements Closeable {
     private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
     private final long dataAppendPageSize;
     private final long fileOpenOpts;
-    private final StringSink charSink = new StringSink();
     private final LongList cleanupColumnVersions = new LongList();
     private final LongList cleanupColumnVersionsAsync = new LongList();
     private final MessageBus messageBus;
@@ -243,11 +241,11 @@ public class UpdateOperator implements Closeable {
 
             return rowsUpdated;
         } catch (ReaderOutOfDateException e) {
-            tableWriter.rollbackColumnVersions();
+            tableWriter.rollbackUpdate();
             throw e;
         } catch (Throwable th) {
             LOG.error().$("UPDATE failed: ").$(th).$();
-            tableWriter.rollbackColumnVersions();
+            tableWriter.rollbackUpdate();
             throw th;
         } finally {
             op.closeWriter();
@@ -394,14 +392,17 @@ public class UpdateOperator implements Closeable {
                     dstFixMem.putLong(masterRecord.getGeoLong(i));
                     break;
                 case ColumnType.SYMBOL:
-                    dstFixMem.putInt(tableWriter.getSymbolIndex(updateColumnIndexes.get(i), masterRecord.getSym(i)));
+                    // Use special method to write new symbol values
+                    // which does not update _txn file transient symbol counts
+                    // so that if update fails and rolled back ILP will not use "dirty" symbol indexes
+                    // pre-looked up during update run to insert rows
+                    dstFixMem.putInt(
+                            tableWriter.getSymbolIndexNoTransientCountUpdate(updateColumnIndexes.get(i), masterRecord.getSym(i))
+                    );
                     break;
                 case ColumnType.STRING:
-
-                    // todo: was ist das ?
-                    charSink.clear();
-                    masterRecord.getStr(i, charSink);
-                    dstFixMem.putLong(dstVarMem.putStr(charSink));
+                    CharSequence str = masterRecord.getStr(i);
+                    dstFixMem.putLong(dstVarMem.putStr(str));
                     break;
                 case ColumnType.BINARY:
                     BinarySequence binValue = masterRecord.getBin(i);
