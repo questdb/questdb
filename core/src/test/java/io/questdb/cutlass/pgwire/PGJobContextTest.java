@@ -24,10 +24,8 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -43,6 +41,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
@@ -6021,6 +6020,127 @@ create table tab as (
     }
 
     @Test
+    public void testUpdateAsync() throws Exception {
+        testUpdateAsync(null, writer -> {},
+                "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
+                "1,2.0,2020-06-01 00:00:02.0\n" +
+                "9,2.6,2020-06-01 00:00:06.0\n" +
+                "9,3.0,2020-06-01 00:00:12.0\n");
+    }
+
+    @Test
+    public void testUpdateAsyncWithReaderOutOfDateException() throws Exception {
+        SOCountDownLatch queryScheduledCount = new SOCountDownLatch(1);
+        testUpdateAsync(queryScheduledCount, new OnTickAction() {
+            private boolean first = true;
+
+            @Override
+            public void run(TableWriter writer) {
+                if (first) {
+                    queryScheduledCount.await();
+                    // adding a new column before calling writer.tick() will result in ReaderOutOfDateException
+                    // thrown from UpdateOperator as this changes table structure
+                    // recompile should be successful so the UPDATE completes
+                    writer.addColumn("newCol", ColumnType.INT);
+                    first = false;
+                }
+            }
+        },
+        "a[BIGINT],b[DOUBLE],ts[TIMESTAMP],newCol[INTEGER]\n" +
+        "1,2.0,2020-06-01 00:00:02.0,null\n" +
+        "9,2.6,2020-06-01 00:00:06.0,null\n" +
+        "9,3.0,2020-06-01 00:00:12.0,null\n");
+    }
+
+    private void testUpdateAsync(SOCountDownLatch queryScheduledCount, OnTickAction onTick, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(queryScheduledCount);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
+                statement.execute();
+
+                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                insert1.execute();
+
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock")) {
+                    SOCountDownLatch finished = new SOCountDownLatch(1);
+                    new Thread(() -> {
+                        try {
+                            final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
+                            int numOfRowsUpdated1 = update1.executeUpdate();
+                            assertEquals(2, numOfRowsUpdated1);
+                        } catch (Throwable e) {
+                            Assert.fail(e.getMessage());
+                            e.printStackTrace();
+                        } finally {
+                            finished.countDown();
+                        }
+                    }).start();
+
+                    MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                    long startTimeMicro = microsecondClock.getTicks();
+                    // Wait 1 min max for completion
+                    while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0) {
+                        onTick.run(writer);
+                        writer.tick(true);
+                        finished.await(500_000);
+                    }
+                }
+
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    private PGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
+        final int[] affinity = new int[2];
+        Arrays.fill(affinity, -1);
+        int workerCount = 2;
+
+        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+            @Override
+            public Rnd getRandom() {
+                return new Rnd();
+            }
+
+            @Override
+            public int[] getWorkerAffinity() {
+                return affinity;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+        };
+
+        WorkerPool pool = new WorkerPool(conf, metrics);
+        pool.assign(engine.getEngineMaintenanceJob());
+
+        final PGWireServer pgWireServer = PGWireServer.create(
+                conf,
+                pool,
+                LOG,
+                engine,
+                compiler.getFunctionFactoryCache(),
+                snapshotAgent,
+                metrics,
+                createPGConnectionContextFactory(conf, workerCount, null, queryScheduledCount)
+        );
+
+        pool.start(LOG);
+        return pgWireServer;
+    }
+
+    @Test
     public void testUpdate() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -6390,7 +6510,8 @@ create table tab as (
         });
     }
 
-    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(PGWireConfiguration conf, int workerCount, SOCountDownLatch queryStartedCount) {
+    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(PGWireConfiguration conf, int workerCount,
+                                                                                     SOCountDownLatch queryStartedCount, SOCountDownLatch queryScheduledCount) {
         return new PGWireServer.PGConnectionContextFactory(engine, conf, workerCount) {
             @Override
             protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount) {
@@ -6400,8 +6521,14 @@ create table tab as (
                         return new QueryFutureUpdateListener() {
                             @Override
                             public void reportProgress(long commandId, int status) {
-                                if (status == OperationFuture.QUERY_STARTED) {
+                                if (status == OperationFuture.QUERY_STARTED && queryStartedCount != null) {
                                     queryStartedCount.countDown();
+                                }
+                            }
+                            @Override
+                            public void reportStart(CharSequence tableName, long commandId) {
+                                if (queryScheduledCount != null) {
+                                    queryScheduledCount.countDown();
                                 }
                             }
                         };
@@ -6535,7 +6662,7 @@ create table tab as (
                         compiler.getFunctionFactoryCache(),
                         snapshotAgent,
                         metrics,
-                        createPGConnectionContextFactory(conf, workerCount, queryStartedCountDownLatch)
+                        createPGConnectionContextFactory(conf, workerCount, queryStartedCountDownLatch, null)
                 )
         ) {
             pool.start(LOG);
@@ -7913,5 +8040,10 @@ create table tab as (
             delayedAttemptsCounter.set(1000);
             delaying.set(true);
         }
+    }
+
+    @FunctionalInterface
+    interface OnTickAction {
+        void run(TableWriter writer);
     }
 }

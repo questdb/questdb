@@ -977,6 +977,7 @@ public class SqlCompiler implements Closeable {
                 } catch (ReaderOutOfDateException e) {
                     LOG.info().$(e.getFlyweightMessage()).$();
                     // will recompile
+                    lexer.restart();
                 }
             } while (recompileStale);
         }
