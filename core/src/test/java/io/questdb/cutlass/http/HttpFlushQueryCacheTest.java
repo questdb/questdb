@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.mp.MPSequence;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -38,6 +37,8 @@ import org.junit.rules.TemporaryFolder;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+
+import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class HttpFlushQueryCacheTest {
 
@@ -93,18 +94,15 @@ public class HttpFlushQueryCacheTest {
             final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
             pubSeq.waitForNext();
 
-            // Sequence set to done before actual flush performed. Wait a bit to make sure there
-            // is time for the flush to execute.
-            long memAfterFlush = memAfterJoin;
-            for (int i = 0; i < 100 && memAfterFlush >= memAfterJoin; i++) {
-                Os.sleep(5);
-                memAfterFlush = Unsafe.getMemUsed();
-            }
-
-            Assert.assertTrue(
-                    "flush_query_cache() should release native memory: " + memInitial + ", " + memAfterJoin + ", " + memAfterFlush,
-                    memAfterFlush < memAfterJoin
-            );
+            // Sequence set to done before actual flush performed. We might have to try it a few times,
+            // before memory usage drop is measured.
+            assertEventually(() -> {
+                long memAfterFlush = Unsafe.getMemUsed();
+                Assert.assertTrue(
+                        "flush_query_cache() should release native memory: " + memInitial + ", " + memAfterJoin + ", " + memAfterFlush,
+                        memAfterFlush < memAfterJoin
+                );
+            });
         });
     }
 
