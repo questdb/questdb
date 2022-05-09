@@ -57,7 +57,7 @@ public class SendAndReceiveRequestBuilder {
                     "\r\n";
 
     private static final Log LOG = LogFactory.getLog(SendAndReceiveRequestBuilder.class);
-    private final int maxWaitTimeoutMs = 30000;
+    private final int maxWaitTimeoutMs = 120000;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
     private boolean printOnly;
