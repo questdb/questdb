@@ -205,8 +205,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return null;
     }
 
-    public SymbolTable newTransientSymbolTable() {
-        return new TransientSymbolTable(charMem, offsetMem, symbolCount);
+    public SymbolTable newSymbolTableView() {
+        return new SymbolTableView(charMem, offsetMem, symbolCount);
     }
 
     private CharSequence cachedValue(int key) {
@@ -230,14 +230,14 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
-    public static class TransientSymbolTable implements SymbolTable {
+    public static class SymbolTableView implements SymbolTable {
         private final MemoryCMR charMem;
         private final MemoryCMR offsetMem;
         private final int symbolCount;
         private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
         private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
 
-        public TransientSymbolTable(MemoryCMR charMem, MemoryCMR offsetMem, int symbolCount) {
+        public SymbolTableView(MemoryCMR charMem, MemoryCMR offsetMem, int symbolCount) {
             this.charMem = charMem;
             this.offsetMem = offsetMem;
             this.symbolCount = symbolCount;

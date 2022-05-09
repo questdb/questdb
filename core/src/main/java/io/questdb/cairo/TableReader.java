@@ -293,7 +293,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     public SymbolTable newSymbolTable(int columnIndex) {
         SymbolMapReader symbolMapReader = getSymbolMapReader(columnIndex);
         if (symbolMapReader instanceof SymbolMapReaderImpl) {
-            return ((SymbolMapReaderImpl) symbolMapReader).newTransientSymbolTable();
+            return ((SymbolMapReaderImpl) symbolMapReader).newSymbolTableView();
         }
         return symbolMapReader;
     }
