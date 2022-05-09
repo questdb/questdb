@@ -156,7 +156,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     public void testUpdateWithQueryTimeout() throws Exception {
         assertMemoryLeak(() -> {
             writerAsyncCommandBusyWaitTimeout = 20_000_000L; // On in CI Windows updates are particularly slow
-            writerAsyncCommandMaxTimeout = 30_000_000L;
+            writerAsyncCommandMaxTimeout = 90_000_000L;
             try (PGWireServer ignore1 = createPGServer(1)) {
                 try (final Connection connection = getConnection(false, true)) {
                     PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
