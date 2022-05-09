@@ -132,4 +132,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     default boolean hasDescendingOrder() {
         return false;
     }
+
+    default boolean fragmentedSymbolTables() {
+        return false;
+    }
 }

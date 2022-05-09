@@ -883,19 +883,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         );
     }
 
-    // computes index of symbol column in a dense list
-    private int findSymbolColumnIndex(int columnIndex) {
-        for (int i = 0, index = 0; i < columnCount; i++) {
-            if (symbolMapReaders.getQuick(i) != null) {
-                if (i == columnIndex) {
-                    return index;
-                }
-                index++;
-            }
-        }
-        throw CairoException.instance(0).put("column is not a symbol [columnIndex=").put(columnIndex).put(']');
-    }
-
     private Path pathGenPartitioned(int partitionIndex) {
         formatPartitionDirName(partitionIndex, path.slash());
         return path;

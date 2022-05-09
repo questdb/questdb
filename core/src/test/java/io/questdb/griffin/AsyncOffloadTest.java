@@ -332,7 +332,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                             factory.getMetadata(),
                             sink,
                             printer,
-                            rows
+                            rows,
+                            factory.fragmentedSymbolTables()
                     )
             ) {
                 return true;
