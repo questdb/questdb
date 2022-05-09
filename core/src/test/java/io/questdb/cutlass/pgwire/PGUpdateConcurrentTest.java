@@ -273,7 +273,7 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
         writerAsyncCommandBusyWaitTimeout = 20_000_000L; // On in CI Windows updates are particularly slow
-        writerAsyncCommandMaxTimeout = 30_000_000L;
+        writerAsyncCommandMaxTimeout = 90_000_000L;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
