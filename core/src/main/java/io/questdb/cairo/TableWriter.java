@@ -835,8 +835,8 @@ public class TableWriter implements Closeable {
         return txWriter.getStructureVersion();
     }
 
-    public int getSymbolIndex(int columnIndex, CharSequence symValue) {
-        return symbolMapWriters.getQuick(columnIndex).put(symValue);
+    public int getSymbolIndexNoTransientCountUpdate(int columnIndex, CharSequence symValue) {
+        return symbolMapWriters.getQuick(columnIndex).put(symValue, SymbolValueCountCollector.NOP);
     }
 
     public String getTableName() {
@@ -1320,7 +1320,7 @@ public class TableWriter implements Closeable {
                 this.txWriter.unsafeLoadAll();
                 rollbackIndexes();
                 rollbackSymbolTables();
-                rollbackColumnVersions();
+                columnVersionWriter.readUnsafe();
                 purgeUnusedPartitions();
                 configureAppendPosition();
                 o3InError = false;
@@ -1336,7 +1336,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    public void rollbackColumnVersions() {
+    public void rollbackUpdate() {
         columnVersionWriter.readUnsafe();
     }
 

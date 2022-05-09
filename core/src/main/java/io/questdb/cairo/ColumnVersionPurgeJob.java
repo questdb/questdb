@@ -83,7 +83,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
         this.maxWaitCapMicro = configuration.getColumnVersionPurgeMaxTimeoutMicros();
         this.startWaitMicro = configuration.getColumnVersionPurgeStartWaitTimeoutMicros();
         this.exponentialWaitMultiplier = configuration.getColumnVersionPurgeWaitExponent();
-        this.lookbackCleanupDays = configuration.getColumnVersionCleanupLookBackDays();
+        this.lookbackCleanupDays = configuration.getColumnVersionPurgeLookBackDays();
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);

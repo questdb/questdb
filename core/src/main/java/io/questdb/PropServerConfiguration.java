@@ -344,7 +344,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean pgUpdateCacheEnabled;
     private int pgUpdateCacheBlockCount;
     private int pgUpdateCacheRowCount;
-    private int pgUpdatePoolCapacity;
     private int pgNamedStatementCacheCapacity;
     private int pgNamesStatementPoolCapacity;
     private int pgPendingWritersCacheCapacity;
@@ -648,7 +647,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgUpdateCacheEnabled = getBoolean(properties, env, PropertyKey.PG_UPDATE_CACHE_ENABLED, true);
                 this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 8);
                 this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 8);
-                this.pgUpdatePoolCapacity = getInt(properties, env, PropertyKey.PG_UPDATE_POOL_CAPACITY, 64);
                 this.pgNamedStatementCacheCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_CACHE_CAPACITY, 32);
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
@@ -708,12 +706,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * 1024 * 1024);
-            this.columnVersionPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_QUEUE_CAPACITY, 1024);
+            this.columnVersionPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_QUEUE_CAPACITY, 1024);
             this.columnVersionTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_TASK_POOL_CAPACITY, 256);
-            this.columnVersionPurgeMaxTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_TIMEOUT, 60_000_000L);
-            this.columnVersionPurgeStartWaitTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_START_TIMEOUT, 10_000);
-            this.columnVersionPurgeWaitExponent = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_TIMEOUT_EXPONENT, 10.0);
-            this.columnVersionCleanupLookBackDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_CLEAN_LOOK_BACK_DAYS, 7);
+            this.columnVersionPurgeMaxTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_TIMEOUT, 60_000_000L);
+            this.columnVersionPurgeStartWaitTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_START_TIMEOUT, 10_000);
+            this.columnVersionPurgeWaitExponent = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_TIMEOUT_EXPONENT, 10.0);
+            this.columnVersionCleanupLookBackDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_LOOK_BACK_DAYS, 31);
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
 
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64));
@@ -1846,7 +1844,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getColumnVersionCleanupLookBackDays() {
+        public int getColumnVersionPurgeLookBackDays() {
             return columnVersionCleanupLookBackDays;
         }
 
@@ -3115,11 +3113,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getUpdateCacheRowCount() {
             return pgUpdateCacheRowCount;
-        }
-
-        @Override
-        public int getUpdatePoolCapacity() {
-            return pgUpdatePoolCapacity;
         }
 
         @Override

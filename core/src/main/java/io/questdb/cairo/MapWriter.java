@@ -69,6 +69,8 @@ public interface MapWriter extends SymbolCountProvider {
 
     int put(CharSequence symbol);
 
+    int put(CharSequence symbol, SymbolValueCountCollector valueCountCollector);
+
     void rollback(int symbolCount);
 
     void setSymbolIndexInTxWriter(int symbolIndexInTxWriter);

@@ -37,6 +37,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -50,6 +51,40 @@ public class UpdateTest extends AbstractGriffinTest {
     @Test
     public void testInsertAfterFailedUpdate() throws Exception {
         testInsertAfterFailed(false);
+    }
+
+    @Test
+    public void testSymbolIndexCopyOnWrite() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)" +
+                    "), index(symCol) timestamp(ts)", sqlExecutionContext);
+
+            CompiledQuery cq = compiler.compile("up where symCol = 'WCP'", sqlExecutionContext);
+            try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
+                try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
+
+                    executeUpdate("update up set symCol = null");
+                    // Index is updated
+                    assertSql("up where symCol = null",
+                            "symCol\tts\tx\n" +
+                                    "\t1970-01-01T00:00:00.000000Z\t1\n" +
+                                    "\t1970-01-01T00:00:01.000000Z\t2\n" +
+                                    "\t1970-01-01T00:00:02.000000Z\t3\n" +
+                                    "\t1970-01-01T00:00:03.000000Z\t4\n" +
+                                    "\t1970-01-01T00:00:04.000000Z\t5\n"
+                    );
+
+                    // Old index is still working
+                    assertCursor("symCol\tts\tx\n" +
+                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n", cursor, cursorFactory.getMetadata(), true);
+                }
+            }
+        });
     }
 
     @Test
@@ -132,6 +167,58 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-01T00:00:02.000000Z\t3\t3\t3\n" +
                     "1970-01-01T00:00:03.000000Z\t4\t4\t4\n" +
                     "1970-01-01T00:00:04.000000Z\t5\t5\t5\n");
+        });
+    }
+
+    @Test
+    public void testSymbolsRolledBackOnFailedUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public long openRW(LPSZ name, long opts) {
+                    if (Chars.endsWith(name, "s1.d.1") && Chars.contains(name, "1970-01-03")) {
+                        return -1;
+                    }
+                    return Files.openRW(name, opts);
+                }
+            };
+            compiler.compile(
+                    "create table up as" +
+                            " (select timestamp_sequence(0, 24*60*60*1000000L) ts," +
+                            " cast(x as int) v," +
+                            " cast('a' as SYMBOL) s1, " +
+                            " cast('b' as SYMBOL) s2 " +
+                            " from long_sequence(5))" +
+                            " ,index(s1) timestamp(ts) partition by DAY", sqlExecutionContext);
+
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "up", "test")) {
+                try {
+                    CompiledQuery cq = compiler.compile("UPDATE up SET s1 = '11', s2 = '22'", sqlExecutionContext);
+                    Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
+                    try (
+                            UpdateOperation op = cq.getUpdateOperation();
+                            OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
+                    ) {
+                        writer.tick();
+                        fut.await();
+                    }
+                    Assert.fail();
+                } catch (SqlException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write");
+                }
+
+                try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
+                    Assert.assertEquals(1, reader.getSymbolMapReader(2).getSymbolCount());
+                    Assert.assertEquals(1, reader.getSymbolMapReader(3).getSymbolCount());
+                }
+
+                try (TxReader txReader = new TxReader(ff)) {
+                    txReader.ofRO(Path.getThreadLocal(configuration.getRoot()).concat("up"), PartitionBy.DAY);
+                    txReader.unsafeLoadAll();
+                    Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(0));
+                    Assert.assertEquals(1, txReader.unsafeReadSymbolTransientCount(1));
+                }
+            }
         });
     }
 
