@@ -30,6 +30,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
@@ -40,6 +41,9 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
+
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     private static final LongList rows = new LongList();
@@ -538,19 +542,94 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             // create new symbol tables and make sure they are not the same
             // as the default ones
 
+            int columnCount = metadata.getColumnCount();
             ObjList<SymbolTable> clonedSymbolTables = new ObjList<>();
+            ObjList<SymbolTable> originalSymbolTables = new ObjList<>();
+            int[] symbolTableKeySnapshot = new int[symbolIndexes.size()];
+            String[][] symbolTableValueSnapshot = new String[symbolIndexes.size()][];
             try {
                 cursor.toTop();
                 if (cursor.hasNext()) {
                     for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
-                        int column = symbolIndexes.getQuick(i);
-                        SymbolTable tabo = cursor.getSymbolTable(column);
-                        SymbolTable tab = cursor.newSymbolTable(column);
+                        final int columnIndex = symbolIndexes.getQuick(i);
+                        SymbolTable tab = cursor.newSymbolTable(columnIndex);
                         Assert.assertNotNull(tab);
-//                        Assert.assertNotSame(tab, cursor.getSymbolTable(column));
                         clonedSymbolTables.add(tab);
+                        originalSymbolTables.add(cursor.getSymbolTable(columnIndex));
                     }
                 }
+
+                // take snapshot of symbol tables
+                // multiple passes over the same cursor, if not very efficient, we
+                // can swap loops around
+                int sumOfMax = 0;
+                for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
+                    cursor.toTop();
+                    final Record rec = cursor.getRecord();
+                    final int column = symbolIndexes.getQuick(i);
+                    int max = -1;
+                    while (cursor.hasNext()) {
+                        max = Math.max(max, rec.getInt(column));
+                    }
+                    String[] values = new String[max + 1];
+                    final SymbolTable symbolTable = cursor.getSymbolTable(column);
+                    for (int k = 0; k <= max; k++) {
+                        values[k] = Chars.toString(symbolTable.valueOf(k));
+                    }
+                    symbolTableKeySnapshot[i] = max;
+                    symbolTableValueSnapshot[i] = values;
+                    sumOfMax += max;
+                }
+
+                // Now start two threads, one will be using normal symbol table
+                // another will be using a clone. Threads will randomly check that
+                // symbol table is able to convert keys to values without problems
+
+                int numberOfIterations = sumOfMax * 2;
+                int symbolColumnCount = symbolIndexes.size();
+                int workerCount = 2;
+                CyclicBarrier barrier = new CyclicBarrier(workerCount);
+                SOCountDownLatch doneLatch = new SOCountDownLatch(workerCount);
+                AtomicInteger errorCount = new AtomicInteger(0);
+
+                // thread that is hitting clones
+                new Thread(() -> {
+                    try {
+                        TestUtils.await(barrier);
+                        assertSymbolColumnThreadSafety(
+                                numberOfIterations,
+                                symbolColumnCount,
+                                clonedSymbolTables,
+                                symbolTableKeySnapshot,
+                                symbolTableValueSnapshot
+                        );
+                    } catch (Throwable e) {
+                        errorCount.incrementAndGet();
+                        e.printStackTrace();
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                }).start();
+
+                // thread that is hitting the original symbol tables
+                new Thread(() -> {
+                    try {
+                        TestUtils.await(barrier);
+                        assertSymbolColumnThreadSafety(
+                                numberOfIterations,
+                                symbolColumnCount,
+                                clonedSymbolTables,
+                                symbolTableKeySnapshot,
+                                symbolTableValueSnapshot
+                        );
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                }).start();
+
+                Assert.assertEquals(0, errorCount.get());
+
+                doneLatch.await();
 
                 cursor.toTop();
                 final Record record = cursor.getRecord();
@@ -576,6 +655,23 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             } finally {
                 Misc.freeObjList(clonedSymbolTables);
             }
+        }
+    }
+
+    private static void assertSymbolColumnThreadSafety(
+            int numberOfIterations,
+            int symbolColumnCount,
+            ObjList<SymbolTable> symbolTables,
+            int[] symbolTableKeySnapshot,
+            String[][] symbolTableValueSnapshot
+    ) {
+        final Rnd rnd = new Rnd(Os.currentTimeMicros(), System.currentTimeMillis());
+        for (int i = 0; i < numberOfIterations; i++) {
+            int symbolColIndex = rnd.nextInt(symbolColumnCount);
+            SymbolTable symbolTable = symbolTables.getQuick(symbolColIndex);
+            int max = symbolTableKeySnapshot[symbolColIndex] + 1;
+            int key = rnd.nextInt(max);
+            TestUtils.assertEquals(symbolTableValueSnapshot[symbolColIndex][key], symbolTable.valueOf(key));
         }
     }
 
