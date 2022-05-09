@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -44,7 +45,9 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final int workerCount;
     private int valueOffset;
+    private long counts;
 
     public AvgDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
@@ -55,16 +58,20 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
             distinctFunc = Rosti::keyedIntDistinct;
             keyValueFunc = Rosti::keyedIntSumDouble;
         }
-
+        counts = Unsafe.malloc(workerCount * 8L, MemoryTag.NATIVE_DEFAULT);
+        this.workerCount = workerCount;
     }
 
     @Override
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
-            double value = Vect.avgDouble(address, addressSize / Double.BYTES);
+            double value = Vect.avgDoubleAcc(address, addressSize / Double.BYTES, counts + workerId * 8L);
             if (value == value) {
-                sum.add(value);
-                this.count.increment();
+                final long count = Unsafe.getUnsafe().getLong(counts + workerId * 8L);
+                // we have to include "weight" of this avg value in the formula,
+                // which calculates final result
+                sum.add(value * count);
+                this.count.add(count);
             }
         }
     }
@@ -115,6 +122,15 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     public void clear() {
         sum.reset();
         count.reset();
+    }
+
+    @Override
+    public void close() {
+        if (counts != 0) {
+            Unsafe.free(counts, workerCount * 8L, MemoryTag.NATIVE_DEFAULT);
+            counts = 0;
+        }
+        super.close();
     }
 
     @Override

@@ -69,6 +69,22 @@ public class IntStack implements Mutable {
         return result;
     }
 
+    public int pollLast() {
+        final int[] es = elements;
+        final int t;
+        final int e = es[t = dec(tail)];
+        tail = t;
+        es[t] = noEntryValue;
+        return e;
+    }
+
+    private int dec(int i) {
+        if (head != tail && --i < 0) {
+            i = mask;
+        }
+        return i;
+    }
+
     public void push(int e) {
         elements[head = (head - 1) & mask] = e;
         if (head == tail) {

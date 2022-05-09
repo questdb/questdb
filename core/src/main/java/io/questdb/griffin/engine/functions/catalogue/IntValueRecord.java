@@ -25,47 +25,16 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 
-class StringValueRecordCursor implements RecordCursor {
-    private final Record record;
-    private int remaining = 1;
+class IntValueRecord implements Record {
+    private final int value;
 
-    public StringValueRecordCursor(Record record) {
-        this.record = record;
+    public IntValueRecord(int value) {
+        this.value = value;
     }
 
     @Override
-    public void close() {
-    }
-
-    @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return remaining-- > 0;
-    }
-
-    @Override
-    public Record getRecordB() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void toTop() {
-        remaining = 1;
-    }
-
-    @Override
-    public long size() {
-        return 1;
+    public int getInt(int col) {
+        return value;
     }
 }

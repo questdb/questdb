@@ -22,11 +22,50 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 
-@FunctionalInterface
-interface O3Runnable {
-    void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
+class SingleValueRecordCursor implements RecordCursor {
+    private final Record record;
+    private int remaining = 1;
+
+    public SingleValueRecordCursor(Record record) {
+        this.record = record;
+    }
+
+    @Override
+    public void close() {
+    }
+
+    @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
+    public boolean hasNext() {
+        return remaining-- > 0;
+    }
+
+    @Override
+    public Record getRecordB() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void toTop() {
+        remaining = 1;
+    }
+
+    @Override
+    public long size() {
+        return 1;
+    }
 }

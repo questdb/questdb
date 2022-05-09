@@ -123,6 +123,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         return false;
     }
 
+    @Override
+    public boolean hasDescendingOrder() {
+        return masterFactory.hasDescendingOrder();
+    }
+
     private class SpliceJoinLightRecordCursor implements NoRandomAccessRecordCursor {
         private final JoinRecord record;
         private final Map joinKeyMap;

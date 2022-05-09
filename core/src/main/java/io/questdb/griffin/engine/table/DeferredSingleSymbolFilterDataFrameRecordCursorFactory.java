@@ -25,24 +25,19 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends DataFrameRecordCursorFactory {
     private final int symbolColumnIndex;
     private final SingleSymbolFilter symbolFilter;
-    private final IntList columnIndexes;
-    private final IntList columnSizes;
     private final Function symbolFunc;
     private int symbolKey;
     private boolean convertedToFrame;
-    private TableReaderPageFrameCursor pageFrameCursor;
 
     public DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -53,7 +48,8 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
             DataFrameCursorFactory dataFrameCursorFactory,
             boolean followsOrderByAdvice,
             @NotNull IntList columnIndexes,
-            @Nullable IntList columnSizes
+            @NotNull IntList columnSizes,
+            boolean supportsRandomAccess
     ) {
         super(
                 configuration,
@@ -64,12 +60,12 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
                 null,
                 false,
                 columnIndexes,
-                columnSizes);
+                columnSizes,
+                supportsRandomAccess
+        );
         this.symbolFunc = symbolFunc;
         this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
-        this.columnIndexes = columnIndexes;
         this.symbolColumnIndex = columnIndexes.indexOf(tableSymColIndex, 0, columnIndexes.size());
-        this.columnSizes = columnSizes;
 
         this.symbolFilter = new SingleSymbolFilter() {
             @Override
@@ -106,22 +102,18 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
     }
 
     @Override
-    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         assert this.convertedToFrame;
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext);
-        if (pageFrameCursor == null) {
-            pageFrameCursor = new TableReaderPageFrameCursor(columnIndexes, columnSizes, pageFrameMaxSize);
-        }
-
-        pageFrameCursor.of(dataFrameCursor);
+        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
+        initFwdPageFrameCursor(executionContext, dataFrameCursor);
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             final CharSequence symbol = symbolFunc.getStr(null);
-            final SymbolMapReader symbolMapReader = pageFrameCursor.getSymbolMapReader(symbolColumnIndex);
+            final StaticSymbolTable symbolMapReader = fwdPageFrameCursor.getSymbolTable(symbolColumnIndex);
             this.symbolKey = symbolMapReader.keyOf(symbol);
             if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                 this.symbolKey = TableUtils.toIndexKey(symbolKey);
             }
         }
-        return pageFrameCursor;
+        return fwdPageFrameCursor;
     }
 }

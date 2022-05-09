@@ -50,7 +50,7 @@ public class GeoHashNativeTest {
         int keyCount = 20;
 
         DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST);
-        rows.extend(keyCount);
+        rows.setCapacity(keyCount);
 
         GeoHashNative.iota(rows.getAddress(), rows.getCapacity(), 0);
 

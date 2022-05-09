@@ -24,8 +24,10 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.Sequence;
 import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 
@@ -59,9 +61,13 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     }
 
     /**
-     * True if record cusor factory followed order by advice and doesn't require sorting .
+     * True if record cursor factory followed order by advice and doesn't require sorting .
      */
     default boolean followedOrderByAdvice() {
+        return false;
+    }
+
+    default boolean followedLimitAdvice() {
         return false;
     }
 
@@ -76,7 +82,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
      * @return instance of cursor
      * @throws SqlException when cursor cannot be produced due a deferred SQL syntax error
      */
-    RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException;
+    default RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Metadata of the SQL result. It includes column names, indexes and types.
@@ -85,7 +93,11 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
      */
     RecordMetadata getMetadata();
 
-    default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+    default PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        return null;
+    }
+
+    default PageFrameSequence<?> execute(SqlExecutionContext executionContext, Sequence collectSubSeq, int order) throws SqlException {
         return null;
     }
 

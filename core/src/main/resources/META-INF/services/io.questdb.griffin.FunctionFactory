@@ -37,6 +37,7 @@ io.questdb.griffin.engine.functions.bool.NotFunctionFactory
 
 # [] operators
 io.questdb.griffin.engine.functions.array.StrArrayDereferenceFunctionFactory
+io.questdb.griffin.engine.functions.array.IntArrayDereferenceHackFunctionFactory
 
 # '='
 io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory
@@ -54,6 +55,7 @@ io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqBooleanFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqBooleanCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqBinaryFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqGeoHashGeoHashFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqGeoHashStrFunctionFactory
@@ -377,6 +379,7 @@ io.questdb.griffin.engine.functions.cast.CastCharToLong256FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToIntFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToDoubleFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastCharToBooleanFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastStrToBooleanFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToFloatFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToLong256FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastStrToLongFunctionFactory
@@ -507,6 +510,7 @@ io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory
 
 # PostgreSQL catalogue functions
 io.questdb.griffin.engine.functions.catalogue.AttrDefCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedAttrDefCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.AttributeCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedClassCatalogueFunctionFactory
@@ -528,6 +532,7 @@ io.questdb.griffin.engine.functions.catalogue.ClassResolveFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSIExprFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PgGetSIExprFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSITExprFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.ProcCatalogueFunctionFactory

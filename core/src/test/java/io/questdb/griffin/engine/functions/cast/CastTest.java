@@ -4500,6 +4500,31 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStrToBoolean() throws Exception {
+        assertQuery(
+                "boolean\n" +
+                        "false\n" +
+                        "false\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "false\n" +
+                        "true\n" +
+                        "false\n" +
+                        "false\n",
+                "select boolean from tab",
+                "create table tab as (" +
+                        "select cast(rnd_str('28', 'TRuE', '', null, 'false', 'true') as boolean) boolean from long_sequence(10)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testStrToByte() throws Exception {
         assertQuery(
                 "a\n",
@@ -4610,9 +4635,9 @@ public class CastTest extends AbstractGriffinTest {
                 "a\n" +
                         "1234.556\n" +
                         "NaN\n" +
-                        "988.2230000000001\n" +
+                        "988.223\n" +
                         "NaN\n" +
-                        "988.2230000000001\n" +
+                        "988.223\n" +
                         "NaN\n" +
                         "NaN\n" +
                         "NaN\n" +
@@ -4622,7 +4647,7 @@ public class CastTest extends AbstractGriffinTest {
                         "1234.556\n" +
                         "NaN\n" +
                         "NaN\n" +
-                        "988.2230000000001\n",
+                        "988.223\n",
                 true,
                 true,
                 true
@@ -4944,9 +4969,9 @@ public class CastTest extends AbstractGriffinTest {
                 "a\n" +
                         "1234.556\n" +
                         "NaN\n" +
-                        "988.2230000000001\n" +
+                        "988.223\n" +
                         "NaN\n" +
-                        "988.2230000000001\n" +
+                        "988.223\n" +
                         "NaN\n" +
                         "NaN\n" +
                         "NaN\n" +
@@ -4956,7 +4981,7 @@ public class CastTest extends AbstractGriffinTest {
                         "1234.556\n" +
                         "NaN\n" +
                         "NaN\n" +
-                        "988.2230000000001\n",
+                        "988.223\n",
                 true,
                 true,
                 true

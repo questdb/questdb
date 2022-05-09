@@ -27,6 +27,7 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.http.*;
@@ -91,7 +92,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
         this.doubleScale = configuration.getDoubleScale();
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
+        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration());
         this.metrics = engine.getMetrics();
     }
 

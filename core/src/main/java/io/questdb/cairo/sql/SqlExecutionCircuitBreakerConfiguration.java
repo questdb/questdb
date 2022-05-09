@@ -22,20 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo.sql;
 
-public interface SqlExecutionCircuitBreaker {
-    SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
-        @Override
-        public void test() {
-        }
+import io.questdb.network.NetworkFacade;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
-        @Override
-        public void powerUp() {
-        }
-    };
+public interface SqlExecutionCircuitBreakerConfiguration {
+    int getBufferSize();
 
-    void test();
+    int getCircuitBreakerThrottle();
 
-    void powerUp();
+    NetworkFacade getNetworkFacade();
+
+    boolean isEnabled();
+
+    MicrosecondClock getClock();
+
+    // maximum SQL execution time in micros
+    long getMaxTime();
 }

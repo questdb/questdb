@@ -35,6 +35,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -57,24 +58,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRecordJoinExpansion() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x(a int)", sqlExecutionContext);
-            TestUtils.assertSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select pg_catalog.pg_class() x, (pg_catalog.pg_class()).relnamespace from long_sequence(2)",
-                    sink,
-                    "x1\tcolumn\n" +
-                            "\t11\n" +
-                            "\t2200\n" +
-                            "\t11\n" +
-                            "\t2200\n"
-            );
-        });
-    }
-
-    @Test
     public void testAvgDoubleColumn() throws Exception {
         final String expected = "a\tk\n";
 
@@ -93,10 +76,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(50.03730496259993, r.avgDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -118,10 +97,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(50.03730496259993, r.avgDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -143,10 +118,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(49.99614105606191, r.avgDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -168,83 +139,11 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(0, r.avgDouble(0), 0.00001);
-        }
     }
 
     @Test
     public void testBindVariableInIndexedLookup() throws Exception {
         testBindVariableInIndexedLookup(true);
-    }
-
-    @Test
-    public void testBindVariableInNonIndexedLookup() throws Exception {
-        testBindVariableInIndexedLookup(false);
-    }
-
-    private void testBindVariableInIndexedLookup(boolean indexed) throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (" +
-                            "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
-                            "time TIMESTAMP, " +
-                            "slot SYMBOL, " +
-                            "port SYMBOL, " +
-                            "downStream DOUBLE, " +
-                            "upStream DOUBLE" +
-                            ") timestamp(time) partition by DAY",
-                    sqlExecutionContext);
-            compiler.compile("create table src as (" +
-                            "    select rnd_symbol(15000, 4,4,0) sym, " +
-                            "           timestamp_sequence(0, 100000) ts, " +
-                            "           rnd_double() val " +
-                            "    from long_sequence(500)" +
-                            ")",
-                    sqlExecutionContext);
-            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src",
-                    sqlExecutionContext);
-            // =
-            try (
-                    RecordCursorFactory lookupFactory = compiler.compile(
-                            "select * from alcatel_traffic_tmp where deviceName in $1",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setStr(0, "FKBW");
-                sink.clear();
-                try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
-                    TestUtils.assertEquals(
-                            "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
-                                    "FKBW\t1970-01-01T00:00:02.300000Z\tFKBW\t\t0.04998168904446332\t0.04998168904446332\n",
-                            sink
-                    );
-                }
-            }
-            // !=
-            try (
-                    RecordCursorFactory lookupFactory = compiler.compile(
-                            "select * from alcatel_traffic_tmp where deviceName != $1 and time < '1970-01-01T00:00:00.300000Z'",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setStr(0, "FKBW");
-                sink.clear();
-                try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
-                    TestUtils.assertEquals(
-                            "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
-                                    "OQCN\t1970-01-01T00:00:00.000000Z\tOQCN\t\t0.004671510951376301\t0.004671510951376301\n" +
-                                    "MIWT\t1970-01-01T00:00:00.100000Z\tMIWT\t\t0.8736195736185558\t0.8736195736185558\n" +
-                                    "QUUG\t1970-01-01T00:00:00.200000Z\tQUUG\t\t0.6124307350390543\t0.6124307350390543\n",
-                            sink
-                    );
-                }
-            }
-        });
     }
 
     @Test
@@ -257,70 +156,9 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         testBindVariableInLookupList(false);
     }
 
-    private void testBindVariableInLookupList(boolean indexed) throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (" +
-                            "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
-                            "time TIMESTAMP, " +
-                            "slot SYMBOL, " +
-                            "port SYMBOL, " +
-                            "downStream DOUBLE, " +
-                            "upStream DOUBLE" +
-                            ") timestamp(time) partition by DAY",
-                    sqlExecutionContext);
-            compiler.compile("create table src as (" +
-                            "    select rnd_symbol(15000, 4,4,0) sym, " +
-                            "           timestamp_sequence(0, 100000) ts, " +
-                            "           rnd_double() val " +
-                            "    from long_sequence(500)" +
-                            ")",
-                    sqlExecutionContext);
-            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src",
-                    sqlExecutionContext);
-            // in
-            try (
-                    RecordCursorFactory lookupFactory = compiler.compile(
-                            "select * from alcatel_traffic_tmp where deviceName in ($1,$2)",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setStr(0, "FKBW");
-                bindVariableService.setStr(1, "SHRI");
-                sink.clear();
-                try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
-                    TestUtils.assertEquals(
-                            "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
-                                    "FKBW\t1970-01-01T00:00:02.300000Z\tFKBW\t\t0.04998168904446332\t0.04998168904446332\n" +
-                                    "SHRI\t1970-01-01T00:00:02.900000Z\tSHRI\t\t0.007781200348629724\t0.007781200348629724\n",
-                            sink
-                    );
-                }
-            }
-            // not in
-            try (
-                    RecordCursorFactory lookupFactory = compiler.compile(
-                            "select * from alcatel_traffic_tmp where deviceName not in ($1,$2) and time < '1970-01-01T00:00:00.300000Z'",
-                            sqlExecutionContext
-                    ).getRecordCursorFactory()
-            ) {
-                bindVariableService.clear();
-                bindVariableService.setStr(0, "FKBW");
-                bindVariableService.setStr(1, "SHRI");
-                sink.clear();
-                try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
-                    TestUtils.assertEquals(
-                            "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
-                                    "OQCN\t1970-01-01T00:00:00.000000Z\tOQCN\t\t0.004671510951376301\t0.004671510951376301\n" +
-                                    "MIWT\t1970-01-01T00:00:00.100000Z\tMIWT\t\t0.8736195736185558\t0.8736195736185558\n" +
-                                    "QUUG\t1970-01-01T00:00:00.200000Z\tQUUG\t\t0.6124307350390543\t0.6124307350390543\n",
-                            sink
-                    );
-                }
-            }
-        });
+    @Test
+    public void testBindVariableInNonIndexedLookup() throws Exception {
+        testBindVariableInIndexedLookup(false);
     }
 
     @Test
@@ -367,6 +205,20 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             true
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testStrippingRowId() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x (a int)", sqlExecutionContext);
+            RecordCursorFactory factory  = compiler.compile("select * from '*!*x'", sqlExecutionContext).getRecordCursorFactory();
+            Assert.assertNotNull(factory);
+            try {
+                Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
+            } finally {
+                Misc.free(factory);
             }
         });
     }
@@ -682,6 +534,48 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCursorForLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "81.0161274171258\tCC\t1970-01-21T20:00:00.000000Z\n" +
+                        "37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z\n",
+                "(x where b in ('BB','CC')) where a > 0 latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol('AA','BB','CC') b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCursorForLatestByOnSubQueryWithoutRandomAccessSupport() throws Exception {
+        assertQuery("b\tk\n" +
+                        "CC\t1970-01-21T20:00:00.000000Z\n" +
+                        "BB\t1970-01-22T23:46:40.000000Z\n",
+                "(select b, max(k) k from x where b in ('BB','CC') sample by 1T) latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol('AA','BB','CC') b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDistinctFunctionColumn() throws Exception {
         final String expected = "v\n" +
                 "8.0\n" +
@@ -846,6 +740,39 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFailsForLatestByOnSubQueryWithNoTimestampSpecified() throws Exception {
+        assertFailure(
+                "with tab as (x where b in ('BB')) tab latest by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol('AA','BB','CC') b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        ")",
+                "with tab as (x where b in ('BB')) tab ".length(),
+                "latest by query does not provide dedicated TIMESTAMP column"
+        );
+    }
+
+    @Test
+    public void testFailsForOrderByPositionWithColumnAliasesAndInvalidAggregateFuncCall() throws Exception {
+        // This query was leading to an NPE in the past.
+        assertFailure("select b col_1, count(a) col_cnt from x order by 2 desc",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                16,
+                "unexpected argument for function: count. expected args: (). actual args: (DOUBLE)");
+    }
+
+    @Test
     public void testFilterAPI() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index
@@ -944,6 +871,34 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 expected +
                         "33.74610457937482\tHYRX\t1971-01-01T00:00:00.000000Z\n");
         Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+    }
+
+    @Test
+    public void testFilterNotEqualsWithIndexedBindVariableSingleIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariableNotEquals("select * from x where b != $1", true);
+    }
+
+    @Test
+    public void testFilterNotEqualsWithIndexedBindVariableSingleNonIndexedSymbolNotEquals() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariableNotEquals("select * from x where b != $1", false);
+    }
+
+    @Test
+    public void testFilterNotEqualsWithNamedBindVariableSingleIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariableNotEquals("select * from x where b != :b", true);
+    }
+
+    @Test
+    public void testFilterNotEqualsWithNamedBindVariableSingleNonIndexedSymbolNotEquals() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariableNotEquals("select * from x where b != :b", false);
     }
 
     @Test
@@ -1598,145 +1553,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testFilterWithIndexedBindVariableSingleIndexedSymbol() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr(0, "HYRX");
-        testFilterWithSymbolBindVariable("select * from x where b = $1", true);
-    }
-
-    @Test
-    public void testFilterWithNamedBindVariableSingleIndexedSymbol() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("b", "HYRX");
-        testFilterWithSymbolBindVariable("select * from x where b = :b", true);
-    }
-
-    @Test
-    public void testFilterWithIndexedBindVariableIndexedSymbol() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr(0, "HYRX");
-        testFilterWithSymbolBindVariable("select * from x where b = $1 and a != 0", true);
-    }
-
-    @Test
-    public void testFilterWithNamedBindVariableIndexedSymbol() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("b", "HYRX");
-        testFilterWithSymbolBindVariable("select * from x where b = :b and a != 0", true);
-    }
-
-    @Test
-    public void testFilterWithIndexedBindVariableSingleNonIndexedSymbol() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr(0, "HYRX");
-        testFilterWithSymbolBindVariable("select * from x where b = $1", false);
-    }
-
-    @Test
-    public void testFilterWithNamedBindVariableSingleNonIndexedSymbol() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("b", "HYRX");
-        testFilterWithSymbolBindVariable("select * from x where b = :b", false);
-    }
-
-    @Test
-    public void testFilterWithIndexedBindVariableNonIndexedSymbol() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr(0, "HYRX");
-        testFilterWithSymbolBindVariable("select * from x where b = $1 and a != 0", false);
-    }
-
-    @Test
-    public void testFilterWithNamedBindVariableNonIndexedSymbol() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("b", "HYRX");
-        testFilterWithSymbolBindVariable("select * from x where b = :b and a != 0", false);
-    }
-
-    private void testFilterWithSymbolBindVariable(String query, boolean indexed) throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
-                    "(" +
-                    "select" +
-                    " rnd_double(0)*100 a," +
-                    " rnd_symbol(5,4,4,1) b," +
-                    " timestamp_sequence(0, 100000000000) k" +
-                    " from" +
-                    " long_sequence(20)" +
-                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
-
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(
-                        "a\tb\tk\n" +
-                                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
-                        factory,
-                        true,
-                        true,
-                        false
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testFilterNotEqualsWithIndexedBindVariableSingleIndexedSymbol() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr(0, "HYRX");
-        testFilterWithSymbolBindVariableNotEquals("select * from x where b != $1", true);
-    }
-
-    @Test
-    public void testFilterNotEqualsWithNamedBindVariableSingleIndexedSymbol() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("b", "HYRX");
-        testFilterWithSymbolBindVariableNotEquals("select * from x where b != :b", true);
-    }
-
-    @Test
-    public void testFilterNotEqualsWithIndexedBindVariableSingleNonIndexedSymbolNotEquals() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr(0, "HYRX");
-        testFilterWithSymbolBindVariableNotEquals("select * from x where b != $1", false);
-    }
-
-    @Test
-    public void testFilterNotEqualsWithNamedBindVariableSingleNonIndexedSymbolNotEquals() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("b", "HYRX");
-        testFilterWithSymbolBindVariableNotEquals("select * from x where b != :b", false);
-    }
-
-    private void testFilterWithSymbolBindVariableNotEquals(String query, boolean indexed) throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
-                    "(" +
-                    "select" +
-                    " rnd_double(0)*100 a," +
-                    " rnd_symbol(5,4,4,1) b," +
-                    " timestamp_sequence(0, 100000000000) k" +
-                    " from" +
-                    " long_sequence(5)" +
-                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
-
-            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(
-                        "a\tb\tk\n" +
-                                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
-                                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
-                                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n",
-                        factory,
-                        true,
-                        true,
-                        false
-                );
-            }
-        });
-    }
-
-    @Test
     public void testFilterSingleNonExistingSymbolAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
         assertQuery(null,
@@ -1893,6 +1709,62 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by DAY",
                 24,
                 "supported column types are STRING and SYMBOL, found: INT");
+    }
+
+    @Test
+    public void testFilterWithIndexedBindVariableIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = $1 and a != 0", true);
+    }
+
+    @Test
+    public void testFilterWithIndexedBindVariableNonIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = $1 and a != 0", false);
+    }
+
+    @Test
+    public void testFilterWithIndexedBindVariableSingleIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = $1", true);
+    }
+
+    @Test
+    public void testFilterWithIndexedBindVariableSingleNonIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = $1", false);
+    }
+
+    @Test
+    public void testFilterWithNamedBindVariableIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = :b and a != 0", true);
+    }
+
+    @Test
+    public void testFilterWithNamedBindVariableNonIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = :b and a != 0", false);
+    }
+
+    @Test
+    public void testFilterWithNamedBindVariableSingleIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = :b", true);
+    }
+
+    @Test
+    public void testFilterWithNamedBindVariableSingleNonIndexedSymbol() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testFilterWithSymbolBindVariable("select * from x where b = :b", false);
     }
 
     @Test
@@ -2347,6 +2219,48 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByAllIndexedExternalFilter() throws Exception {
+        final String expected = "a\tk\tb\n" +
+                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
+        assertQuery(expected,
+                "select * from (select a,k,b from x latest on k partition by b) where a > 40",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2," +
+                        " rnd_double(0)*100 a3," +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b" +
+                        " from long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " to_timestamp('2019', 'yyyy') t," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " 46.578761277152225," +
+                        " 'VTJW'" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tk\tb\n" +
+                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testLatestByAllIndexedFilter() throws Exception {
         final String expected = "a\tk\tb\n" +
                 "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
@@ -2387,48 +2301,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true,
                 true
-        );
-    }
-
-    @Test
-    public void testLatestByAllIndexedExternalFilter() throws Exception {
-        final String expected = "a\tk\tb\n" +
-                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
-                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery(expected,
-                "select * from (select a,k,b from x latest on k partition by b) where a > 40",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " timestamp_sequence(0, 100000000000) k," +
-                        " rnd_double(0)*100 a1," +
-                        " rnd_double(0)*100 a2," +
-                        " rnd_double(0)*100 a3," +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b" +
-                        " from long_sequence(20)" +
-                        "), index(b) timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        " select" +
-                        " to_timestamp('2019', 'yyyy') t," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " rnd_double(0)*100," +
-                        " 46.578761277152225," +
-                        " 'VTJW'" +
-                        " from long_sequence(1)" +
-                        ") timestamp (t)",
-                "a\tk\tb\n" +
-                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
-                true,
-                true,
-                false
         );
     }
 
@@ -3439,6 +3311,81 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLatestByDeprecated() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "28.45577791213847\tHNR\t1970-01-02T03:46:40.000000Z\n" +
+                        "88.99286912289664\tABC\t1970-01-05T15:06:40.000000Z\n",
+                "select * from x latest by b",
+                "create table x as " +
+                        "(" +
+                        "select " +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str('ABC','HNR') b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'HNR'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "88.99286912289664\tABC\t1970-01-05T15:06:40.000000Z\n" +
+                        "11.427984775756228\tHNR\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false,
+                true);
+    }
+
+    @Test
+    public void testLatestByDeprecatedFiltered() throws Exception {
+        assertQuery("a\tb\tk\n" +
+                        "65.08594025855301\tHNR\t1970-01-02T03:46:40.000000Z\n",
+                "select * from x latest by b where b = 'HNR'",
+                "create table x as " +
+                        "(" +
+                        "select " +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(2,4,4) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'HNR'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "34.56897991538844\tHNR\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false,
+                true);
+    }
+
+    @Test
+    public void testLatestByFailsOnNonDesignatedTimestamp() throws Exception {
+        assertFailure("tab latest on ts partition by id",
+                "create table tab(" +
+                        "    id symbol, " +
+                        "    name symbol, " +
+                        "    value double, " +
+                        "    ts timestamp" +
+                        ")",
+                14,
+                "latest by over a table requires designated TIMESTAMP");
+    }
+
+    @Test
     public void testLatestByFilteredBySymbolInAllIndexed() throws Exception {
         testLatestByFilteredBySymbolIn("create table x (\n" +
                 "  ts timestamp,\n" +
@@ -3536,16 +3483,47 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByFailsOnNonDesignatedTimestamp() throws Exception {
-        assertFailure("tab latest on ts partition by id",
-                "create table tab(" +
-                        "    id symbol, " +
-                        "    name symbol, " +
-                        "    value double, " +
-                        "    ts timestamp" +
-                        ")",
-                14,
-                "latest by over a table requires designated TIMESTAMP");
+    public void testLatestByIndexedKeyValueWithFilterAndIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = $1 and a != 0 latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValueWithFilterAndNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = :b latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValueWithIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = $1 latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValueWithNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = :b latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValuesWithIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        bindVariableService.setStr(1, "VTJW");
+        testLatestByKeyValuesWithBindVariable("select * from x where b in ($1,$2) latest on k partition by b", true);
+    }
+
+    @Test
+    public void testLatestByIndexedKeyValuesWithNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b1", "HYRX");
+        bindVariableService.setStr("b2", "VTJW");
+        testLatestByKeyValuesWithBindVariable("select * from x where b in (:b1,:b2) latest on k partition by b", true);
     }
 
     @Test
@@ -3943,149 +3921,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByIndexedKeyValueWithIndexedBindVariable() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr(0, "HYRX");
-        testLatestByKeyValueWithBindVariable("select * from x where b = $1 latest on k partition by b", true);
-    }
-
-    @Test
-    public void testLatestByIndexedKeyValueWithNamedBindVariable() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("b", "HYRX");
-        testLatestByKeyValueWithBindVariable("select * from x where b = :b latest on k partition by b", true);
-    }
-
-    @Test
-    public void testLatestByIndexedKeyValueWithFilterAndIndexedBindVariable() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr(0, "HYRX");
-        testLatestByKeyValueWithBindVariable("select * from x where b = $1 and a != 0 latest on k partition by b", true);
-    }
-
-    @Test
-    public void testLatestByIndexedKeyValueWithFilterAndNamedBindVariable() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("b", "HYRX");
-        testLatestByKeyValueWithBindVariable("select * from x where b = :b latest on k partition by b", true);
-    }
-
-    @Test
-    public void testLatestByNonIndexedKeyValueWithIndexedBindVariable() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr(0, "HYRX");
-        testLatestByKeyValueWithBindVariable("select * from x where b = $1 latest on k partition by b", false);
-    }
-
-    @Test
-    public void testLatestByNonIndexedKeyValueWithNamedBindVariable() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("b", "HYRX");
-        testLatestByKeyValueWithBindVariable("select * from x where b = :b latest on k partition by b", false);
-    }
-
-    @Test
-    public void testLatestByNonIndexedKeyValueWithFilterAndIndexedBindVariable() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr(0, "HYRX");
-        testLatestByKeyValueWithBindVariable("select * from x where b = $1 and a != 0 latest on k partition by b", false);
-    }
-
-    @Test
-    public void testLatestByNonIndexedKeyValueWithFilterAndNamedBindVariable() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("b", "HYRX");
-        testLatestByKeyValueWithBindVariable("select * from x where b = :b and a != 0 latest on k partition by b", false);
-    }
-
-    private void testLatestByKeyValueWithBindVariable(String query, boolean indexed) throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
-                    "(" +
-                    "select" +
-                    " rnd_double(0)*100 a," +
-                    " rnd_symbol(5,4,4,1) b," +
-                    " timestamp_sequence(0, 100000000000) k" +
-                    " from" +
-                    " long_sequence(50)" +
-                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
-
-            try (
-                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-            ) {
-                assertCursor(
-                        "a\tb\tk\n" +
-                                "89.98921791869131\tHYRX\t1970-02-18T14:40:00.000000Z\n",
-                        factory,
-                        true,
-                        true,
-                        false
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testLatestByIndexedKeyValuesWithIndexedBindVariable() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr(0, "HYRX");
-        bindVariableService.setStr(1, "VTJW");
-        testLatestByKeyValuesWithBindVariable("select * from x where b in ($1,$2) latest on k partition by b", true);
-    }
-
-    @Test
-    public void testLatestByIndexedKeyValuesWithNamedBindVariable() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("b1", "HYRX");
-        bindVariableService.setStr("b2", "VTJW");
-        testLatestByKeyValuesWithBindVariable("select * from x where b in (:b1,:b2) latest on k partition by b", true);
-    }
-
-    @Test
-    public void testLatestByNonIndexedKeyValuesWithIndexedBindVariable() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr(0, "HYRX");
-        bindVariableService.setStr(1, "VTJW");
-        testLatestByKeyValuesWithBindVariable("select * from x where b in ($1,$2) latest on k partition by b", false);
-    }
-
-    @Test
-    public void testLatestByNonIndexedKeyValuesWithNamedBindVariable() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("b1", "HYRX");
-        bindVariableService.setStr("b2", "VTJW");
-        testLatestByKeyValuesWithBindVariable("select * from x where b in (:b1,:b2) latest on k partition by b", false);
-    }
-
-    private void testLatestByKeyValuesWithBindVariable(String query, boolean indexed) throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table x as " +
-                    "(" +
-                    "select" +
-                    " rnd_double(0)*100 a," +
-                    " rnd_symbol(5,4,4,1) b," +
-                    " timestamp_sequence(0, 100000000000) k" +
-                    " from" +
-                    " long_sequence(50)" +
-                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
-
-            try (
-                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
-            ) {
-                assertCursor(
-                        "a\tb\tk\n" +
-                                "66.97969295620055\tVTJW\t1970-02-13T23:33:20.000000Z\n" +
-                                "89.98921791869131\tHYRX\t1970-02-18T14:40:00.000000Z\n",
-                        factory,
-                        true,
-                        true,
-                        true
-                );
-            }
-        });
-    }
-
-    @Test
     public void testLatestByMissingKeyValueIndexedColumnDereference() throws Exception {
         assertQuery(null,
                 "select b,k,a from x where b in ('XYZ') latest on k partition by b",
@@ -4261,7 +4096,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 "a\tb\tk\n" +
                         "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n" +
-                        "88.10000000000001\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                        "88.1\tXYZ\t1971-01-01T00:00:00.000000Z\n",
                 true,
                 true,
                 true
@@ -4406,6 +4241,177 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "), index(b) timestamp(k) partition by DAY",
                 41,
                 "Invalid column");
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValueWithFilterAndIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = $1 and a != 0 latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValueWithFilterAndNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = :b and a != 0 latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValueWithIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = $1 latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValueWithNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b", "HYRX");
+        testLatestByKeyValueWithBindVariable("select * from x where b = :b latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValuesWithIndexedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "HYRX");
+        bindVariableService.setStr(1, "VTJW");
+        testLatestByKeyValuesWithBindVariable("select * from x where b in ($1,$2) latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByNonIndexedKeyValuesWithNamedBindVariable() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("b1", "HYRX");
+        bindVariableService.setStr("b2", "VTJW");
+        testLatestByKeyValuesWithBindVariable("select * from x where b in (:b1,:b2) latest on k partition by b", false);
+    }
+
+    @Test
+    public void testLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(" +
+                    "    id symbol, " +
+                    "    name symbol, " +
+                    "    value long, " +
+                    "    ts timestamp, " +
+                    "    other_ts timestamp" +
+                    ") timestamp(ts) partition by day", sqlExecutionContext);
+
+            executeInsert("insert into tab values ('d1', 'c1', 111, 1, 3)");
+            executeInsert("insert into tab values ('d1', 'c1', 112, 2, 2)");
+            executeInsert("insert into tab values ('d1', 'c1', 113, 3, 1)");
+            executeInsert("insert into tab values ('d1', 'c2', 121, 2, 1)");
+            executeInsert("insert into tab values ('d1', 'c2', 122, 3, 2)");
+            executeInsert("insert into tab values ('d1', 'c2', 123, 4, 3)");
+            executeInsert("insert into tab values ('d2', 'c1', 211, 3, 3)");
+            executeInsert("insert into tab values ('d2', 'c1', 212, 4, 3)");
+            executeInsert("insert into tab values ('d2', 'c2', 221, 5, 4)");
+            executeInsert("insert into tab values ('d2', 'c2', 222, 6, 5)");
+
+            // latest by designated timestamp, no order by, select all columns
+            assertSql(
+                    "(tab where name in ('c1')) latest on ts partition by id",
+                    "id\tname\tvalue\tts\tother_ts\n" +
+                            "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\n" +
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n");
+
+            // latest by designated timestamp, ordered by another timestamp, select all columns
+            assertSql(
+                    "(tab where name in ('c1') order by other_ts) latest on ts partition by id",
+                    "id\tname\tvalue\tts\tother_ts\n" +
+                            "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\n" +
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n");
+
+            // latest by designated timestamp, select subset of columns
+            assertSql(
+                    "select value, ts from (tab where name in ('c1')) latest on ts partition by id",
+                    "value\tts\n" +
+                            "113\t1970-01-01T00:00:00.000003Z\n" +
+                            "212\t1970-01-01T00:00:00.000004Z\n");
+
+            // latest by designated timestamp, partition by multiple columns
+            assertSql(
+                    "(tab where name in ('c1','c2')) latest on ts partition by id, name",
+                    "id\tname\tvalue\tts\tother_ts\n" +
+                            "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\n" +
+                            "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n" +
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n" +
+                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000005Z\n");
+
+            // latest by non-designated timestamp, ordered
+            assertSql(
+                    "(tab where name in ('c1') order by other_ts) latest on other_ts partition by id",
+                    "id\tname\tvalue\tts\tother_ts\n" +
+                            "d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\n" +
+                            "d2\tc1\t211\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000003Z\n");
+
+            // latest by non-designated timestamp, no order
+            // note: other_ts is equal for both 211 and 212 records, so it's fine that
+            // the second returned row is different from the ordered by query
+            assertSql(
+                    "(tab where name in ('c1')) latest on other_ts partition by id",
+                    "id\tname\tvalue\tts\tother_ts\n" +
+                            "d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\n" +
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n");
+
+            // empty sub-query
+            assertSql(
+                    "(tab where name in ('c3')) latest on ts partition by id",
+                    "id\tname\tvalue\tts\tother_ts\n");
+        });
+    }
+
+    @Test
+    public void testLatestByOnSubQueryWithoutRandomAccessSupport() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table tab(" +
+                    "    id symbol, " +
+                    "    name symbol, " +
+                    "    value long, " +
+                    "    ts timestamp, " +
+                    "    other_ts timestamp" +
+                    ") timestamp(ts) partition by day", sqlExecutionContext);
+
+            executeInsert("insert into tab values ('d1', 'c1', 111, 1, 3)");
+            executeInsert("insert into tab values ('d1', 'c1', 112, 2, 2)");
+            executeInsert("insert into tab values ('d1', 'c1', 113, 3, 1)");
+            executeInsert("insert into tab values ('d1', 'c2', 121, 2, 1)");
+            executeInsert("insert into tab values ('d1', 'c2', 122, 3, 2)");
+            executeInsert("insert into tab values ('d1', 'c2', 123, 4, 3)");
+            executeInsert("insert into tab values ('d2', 'c1', 211, 3, 3)");
+            executeInsert("insert into tab values ('d2', 'c1', 212, 4, 3)");
+            executeInsert("insert into tab values ('d2', 'c2', 221, 5, 4)");
+            executeInsert("insert into tab values ('d2', 'c2', 222, 6, 5)");
+
+            // select all columns
+            assertSql(
+                    "(select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id",
+                    "id\tname\tvalue\tts\n" +
+                            "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\n" +
+                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n");
+
+            // partition by multiple columns
+            assertSql(
+                    "(select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id, name",
+                    "id\tname\tvalue\tts\n" +
+                            "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\n" +
+                            "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\n" +
+                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\n" +
+                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n");
+
+            // select subset of columns
+            assertSql(
+                    "select value, ts from (select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id",
+                    "value\tts\n" +
+                            "123\t1970-01-01T00:00:00.000004Z\n" +
+                            "222\t1970-01-01T00:00:00.000006Z\n");
+
+            // empty sub-query
+            assertSql(
+                    "(select id, name, max(value) value, max(ts) ts from tab where id in('c3') sample by 1T) latest on ts partition by id",
+                    "id\tname\tvalue\tts\n");
+        });
     }
 
     @Test
@@ -4885,191 +4891,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testLatestByOnSubQueryWithoutRandomAccessSupport() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
-                    "    id symbol, " +
-                    "    name symbol, " +
-                    "    value long, " +
-                    "    ts timestamp, " +
-                    "    other_ts timestamp" +
-                    ") timestamp(ts) partition by day", sqlExecutionContext);
-
-            executeInsert("insert into tab values ('d1', 'c1', 111, 1, 3)");
-            executeInsert("insert into tab values ('d1', 'c1', 112, 2, 2)");
-            executeInsert("insert into tab values ('d1', 'c1', 113, 3, 1)");
-            executeInsert("insert into tab values ('d1', 'c2', 121, 2, 1)");
-            executeInsert("insert into tab values ('d1', 'c2', 122, 3, 2)");
-            executeInsert("insert into tab values ('d1', 'c2', 123, 4, 3)");
-            executeInsert("insert into tab values ('d2', 'c1', 211, 3, 3)");
-            executeInsert("insert into tab values ('d2', 'c1', 212, 4, 3)");
-            executeInsert("insert into tab values ('d2', 'c2', 221, 5, 4)");
-            executeInsert("insert into tab values ('d2', 'c2', 222, 6, 5)");
-
-            // select all columns
-            assertSql(
-                    "(select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id",
-                    "id\tname\tvalue\tts\n" +
-                            "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\n" +
-                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n");
-
-            // partition by multiple columns
-            assertSql(
-                    "(select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id, name",
-                    "id\tname\tvalue\tts\n" +
-                            "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\n" +
-                            "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\n" +
-                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\n" +
-                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\n");
-
-            // select subset of columns
-            assertSql(
-                    "select value, ts from (select id, name, max(value) value, max(ts) ts from tab sample by 1T) latest on ts partition by id",
-                    "value\tts\n" +
-                            "123\t1970-01-01T00:00:00.000004Z\n" +
-                            "222\t1970-01-01T00:00:00.000006Z\n");
-
-            // empty sub-query
-            assertSql(
-                    "(select id, name, max(value) value, max(ts) ts from tab where id in('c3') sample by 1T) latest on ts partition by id",
-                    "id\tname\tvalue\tts\n");
-        });
-    }
-
-    @Test
-    public void testCursorForLatestByOnSubQueryWithoutRandomAccessSupport() throws Exception {
-        assertQuery("b\tk\n" +
-                        "CC\t1970-01-21T20:00:00.000000Z\n" +
-                        "BB\t1970-01-22T23:46:40.000000Z\n",
-                "(select b, max(k) k from x where b in ('BB','CC') sample by 1T) latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol('AA','BB','CC') b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table tab(" +
-                    "    id symbol, " +
-                    "    name symbol, " +
-                    "    value long, " +
-                    "    ts timestamp, " +
-                    "    other_ts timestamp" +
-                    ") timestamp(ts) partition by day", sqlExecutionContext);
-
-            executeInsert("insert into tab values ('d1', 'c1', 111, 1, 3)");
-            executeInsert("insert into tab values ('d1', 'c1', 112, 2, 2)");
-            executeInsert("insert into tab values ('d1', 'c1', 113, 3, 1)");
-            executeInsert("insert into tab values ('d1', 'c2', 121, 2, 1)");
-            executeInsert("insert into tab values ('d1', 'c2', 122, 3, 2)");
-            executeInsert("insert into tab values ('d1', 'c2', 123, 4, 3)");
-            executeInsert("insert into tab values ('d2', 'c1', 211, 3, 3)");
-            executeInsert("insert into tab values ('d2', 'c1', 212, 4, 3)");
-            executeInsert("insert into tab values ('d2', 'c2', 221, 5, 4)");
-            executeInsert("insert into tab values ('d2', 'c2', 222, 6, 5)");
-
-            // latest by designated timestamp, no order by, select all columns
-            assertSql(
-                    "(tab where name in ('c1')) latest on ts partition by id",
-                    "id\tname\tvalue\tts\tother_ts\n" +
-                            "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\n" +
-                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n");
-
-            // latest by designated timestamp, ordered by another timestamp, select all columns
-            assertSql(
-                    "(tab where name in ('c1') order by other_ts) latest on ts partition by id",
-                    "id\tname\tvalue\tts\tother_ts\n" +
-                            "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\n" +
-                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n");
-
-            // latest by designated timestamp, select subset of columns
-            assertSql(
-                    "select value, ts from (tab where name in ('c1')) latest on ts partition by id",
-                    "value\tts\n" +
-                            "113\t1970-01-01T00:00:00.000003Z\n" +
-                            "212\t1970-01-01T00:00:00.000004Z\n");
-
-            // latest by designated timestamp, partition by multiple columns
-            assertSql(
-                    "(tab where name in ('c1','c2')) latest on ts partition by id, name",
-                    "id\tname\tvalue\tts\tother_ts\n" +
-                            "d1\tc1\t113\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000001Z\n" +
-                            "d1\tc2\t123\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n" +
-                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n" +
-                            "d2\tc2\t222\t1970-01-01T00:00:00.000006Z\t1970-01-01T00:00:00.000005Z\n");
-
-            // latest by non-designated timestamp, ordered
-            assertSql(
-                    "(tab where name in ('c1') order by other_ts) latest on other_ts partition by id",
-                    "id\tname\tvalue\tts\tother_ts\n" +
-                            "d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\n" +
-                            "d2\tc1\t211\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000003Z\n");
-
-            // latest by non-designated timestamp, no order
-            // note: other_ts is equal for both 211 and 212 records, so it's fine that
-            // the second returned row is different from the ordered by query
-            assertSql(
-                    "(tab where name in ('c1')) latest on other_ts partition by id",
-                    "id\tname\tvalue\tts\tother_ts\n" +
-                            "d1\tc1\t111\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000003Z\n" +
-                            "d2\tc1\t212\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000003Z\n");
-
-            // empty sub-query
-            assertSql(
-                    "(tab where name in ('c3')) latest on ts partition by id",
-                    "id\tname\tvalue\tts\tother_ts\n");
-        });
-    }
-
-    @Test
-    public void testCursorForLatestByOnSubQueryWithRandomAccessSupport() throws Exception {
-        assertQuery("a\tb\tk\n" +
-                        "81.0161274171258\tCC\t1970-01-21T20:00:00.000000Z\n" +
-                        "37.62501709498378\tBB\t1970-01-22T23:46:40.000000Z\n",
-                "(x where b in ('BB','CC')) where a > 0 latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol('AA','BB','CC') b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testFailsForLatestByOnSubQueryWithNoTimestampSpecified() throws Exception {
-        assertFailure(
-                "with tab as (x where b in ('BB')) tab latest by b",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_symbol('AA','BB','CC') b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from long_sequence(20)" +
-                        ")",
-                "with tab as (x where b in ('BB')) tab ".length(),
-                "latest by query does not provide dedicated TIMESTAMP column"
-        );
-    }
-
-    @Test
     public void testLatestByUnsupportedColumnTypes() throws Exception {
         // unsupported: [BYTE, DATE, TIMESTAMP, FLOAT, DOUBLE, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY]
         CharSequence createTableDDL = "create table comprehensive as (" +
@@ -5118,68 +4939,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         assertQuery("a\tb\tk\n" +
                         "65.08594025855301\tHNR\t1970-01-02T03:46:40.000000Z\n",
                 "select * from x where b = 'HNR' latest on k partition by b",
-                "create table x as " +
-                        "(" +
-                        "select " +
-                        " rnd_double(0)*100 a," +
-                        " rnd_str(2,4,4) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'HNR'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "34.56897991538844\tHNR\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true,
-                false,
-                true);
-    }
-
-    @Test
-    public void testLatestByDeprecated() throws Exception {
-        assertQuery("a\tb\tk\n" +
-                        "28.45577791213847\tHNR\t1970-01-02T03:46:40.000000Z\n" +
-                        "88.99286912289664\tABC\t1970-01-05T15:06:40.000000Z\n",
-                "select * from x latest by b",
-                "create table x as " +
-                        "(" +
-                        "select " +
-                        " rnd_double(0)*100 a," +
-                        " rnd_str('ABC','HNR') b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(5)" +
-                        ") timestamp(k) partition by DAY",
-                "k",
-                "insert into x select * from (" +
-                        "select" +
-                        " rnd_double(0)*100," +
-                        " 'HNR'," +
-                        " to_timestamp('1971', 'yyyy') t" +
-                        " from long_sequence(1)" +
-                        ") timestamp(t)",
-                "a\tb\tk\n" +
-                        "88.99286912289664\tABC\t1970-01-05T15:06:40.000000Z\n" +
-                        "11.427984775756228\tHNR\t1971-01-01T00:00:00.000000Z\n",
-                true,
-                true,
-                false,
-                true);
-    }
-
-    @Test
-    public void testLatestByDeprecatedFiltered() throws Exception {
-        assertQuery("a\tb\tk\n" +
-                        "65.08594025855301\tHNR\t1970-01-02T03:46:40.000000Z\n",
-                "select * from x latest by b where b = 'HNR'",
                 "create table x as " +
                         "(" +
                         "select " +
@@ -5300,6 +5059,32 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLimitOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as (select x from long_sequence(10))", sqlExecutionContext);
+            try (RecordCursorFactory factory = compiler.compile("x limit -9223372036854775807-1, -1", sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor("x\n" +
+                                "1\n" +
+                                "2\n" +
+                                "3\n" +
+                                "4\n" +
+                                "5\n" +
+                                "6\n" +
+                                "7\n" +
+                                "8\n" +
+                                "9\n" +
+                                "10\n",
+                        factory,
+                        true,
+                        true,
+                        true
+
+                );
+            }
+        });
+    }
+
+    @Test
     public void testLongCursor() throws Exception {
         assertQuery("x\n" +
                         "1\n" +
@@ -5392,10 +5177,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(99.99975504094375, r.maxDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -5417,10 +5198,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(98.8401109488745, r.maxDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -5442,10 +5219,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(1.743072089888109E-4, r.minDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -5467,10 +5240,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(0.11075361080621349, r.minDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -6017,6 +5786,118 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testOrderByPositionalOnAggregateColumn() throws Exception {
+        final String expected = "a\tcount\n" +
+                "0\t3\n" +
+                "1\t3\n" +
+                "4\t3\n" +
+                "5\t1\n";
+
+        assertQuery(expected,
+                "select a, count(*) from x order by 2 desc, 1 asc",
+                "create table x as (" +
+                        "select" +
+                        " rnd_int(0,5,0) a," +
+                        " rnd_int() b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByPositionalOnAliasedAggregateColumn() throws Exception {
+        final String expected = "col_1\tcol_cnt\n" +
+                "0\t3\n" +
+                "1\t3\n" +
+                "4\t3\n" +
+                "5\t1\n";
+
+        assertQuery(expected,
+                "select a col_1, count(*) col_cnt from x order by 2 desc, 1 asc",
+                "create table x as (" +
+                        "select" +
+                        " rnd_int(0,5,0) a," +
+                        " rnd_int() b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByPositionalOnAliasedVirtualColumn() throws Exception {
+        final String expected = "col_1\tcol_2\tcol_sum\n" +
+                "1326447242\t592859671\t1919306913\n" +
+                "-1436881714\t-1575378703\t1282706879\n" +
+                "-1191262516\t-2041844972\t1061859808\n" +
+                "1868723706\t-847531048\t1021192658\n" +
+                "1548800833\t-727724771\t821076062\n" +
+                "-409854405\t339631474\t-70222931\n" +
+                "-1148479920\t315515118\t-832964802\n" +
+                "73575701\t-948263339\t-874687638\n" +
+                "1569490116\t1573662097\t-1151815083\n" +
+                "806715481\t1545253512\t-1942998303\n";
+
+        assertQuery(expected,
+                "select a col_1, b col_2, a+b col_sum from x order by 3 desc, 2, 1 desc",
+                "create table x as (" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByPositionalOnVirtualColumn() throws Exception {
+        final String expected = "a\tb\tcolumn\n" +
+                "1326447242\t592859671\t1919306913\n" +
+                "-1436881714\t-1575378703\t1282706879\n" +
+                "-1191262516\t-2041844972\t1061859808\n" +
+                "1868723706\t-847531048\t1021192658\n" +
+                "1548800833\t-727724771\t821076062\n" +
+                "-409854405\t339631474\t-70222931\n" +
+                "-1148479920\t315515118\t-832964802\n" +
+                "73575701\t-948263339\t-874687638\n" +
+                "1569490116\t1573662097\t-1151815083\n" +
+                "806715481\t1545253512\t-1942998303\n";
+
+        assertQuery(expected,
+                "select a, b, a+b from x order by 3 desc, 2, 1 desc",
+                "create table x as (" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_int() b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from" +
+                        " long_sequence(10)" +
+                        ") timestamp(k) partition by NONE",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testOrderByTimestamp() throws Exception {
         final String expected = "a\tb\tk\n" +
                 "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
@@ -6208,118 +6089,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByPositionalOnAliasedVirtualColumn() throws Exception {
-        final String expected = "col_1\tcol_2\tcol_sum\n" +
-                "1326447242\t592859671\t1919306913\n" +
-                "-1436881714\t-1575378703\t1282706879\n" +
-                "-1191262516\t-2041844972\t1061859808\n" +
-                "1868723706\t-847531048\t1021192658\n" +
-                "1548800833\t-727724771\t821076062\n" +
-                "-409854405\t339631474\t-70222931\n" +
-                "-1148479920\t315515118\t-832964802\n" +
-                "73575701\t-948263339\t-874687638\n" +
-                "1569490116\t1573662097\t-1151815083\n" +
-                "806715481\t1545253512\t-1942998303\n";
-
-        assertQuery(expected,
-                "select a col_1, b col_2, a+b col_sum from x order by 3 desc, 2, 1 desc",
-                "create table x as (" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " timestamp_sequence(0, 1000000000) k" +
-                        " from" +
-                        " long_sequence(10)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testOrderByPositionalOnVirtualColumn() throws Exception {
-        final String expected = "a\tb\tcolumn\n" +
-                "1326447242\t592859671\t1919306913\n" +
-                "-1436881714\t-1575378703\t1282706879\n" +
-                "-1191262516\t-2041844972\t1061859808\n" +
-                "1868723706\t-847531048\t1021192658\n" +
-                "1548800833\t-727724771\t821076062\n" +
-                "-409854405\t339631474\t-70222931\n" +
-                "-1148479920\t315515118\t-832964802\n" +
-                "73575701\t-948263339\t-874687638\n" +
-                "1569490116\t1573662097\t-1151815083\n" +
-                "806715481\t1545253512\t-1942998303\n";
-
-        assertQuery(expected,
-                "select a, b, a+b from x order by 3 desc, 2, 1 desc",
-                "create table x as (" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_int() b," +
-                        " timestamp_sequence(0, 1000000000) k" +
-                        " from" +
-                        " long_sequence(10)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testOrderByPositionalOnAliasedAggregateColumn() throws Exception {
-        final String expected = "col_1\tcol_cnt\n" +
-                "0\t3\n" +
-                "1\t3\n" +
-                "4\t3\n" +
-                "5\t1\n";
-
-        assertQuery(expected,
-                "select a col_1, count(*) col_cnt from x order by 2 desc, 1 asc",
-                "create table x as (" +
-                        "select" +
-                        " rnd_int(0,5,0) a," +
-                        " rnd_int() b," +
-                        " timestamp_sequence(0, 1000000000) k" +
-                        " from" +
-                        " long_sequence(10)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testOrderByPositionalOnAggregateColumn() throws Exception {
-        final String expected = "a\tcount\n" +
-                "0\t3\n" +
-                "1\t3\n" +
-                "4\t3\n" +
-                "5\t1\n";
-
-        assertQuery(expected,
-                "select a, count(*) from x order by 2 desc, 1 asc",
-                "create table x as (" +
-                        "select" +
-                        " rnd_int(0,5,0) a," +
-                        " rnd_int() b," +
-                        " timestamp_sequence(0, 1000000000) k" +
-                        " from" +
-                        " long_sequence(10)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                true,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testOrderByUnsupportedType() throws Exception {
         assertFailure(
                 "x order by a,m,n",
@@ -6344,23 +6113,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(k) partition by NONE",
                 13, "unsupported column type: BINARY"
         );
-    }
-
-    @Test
-    public void testFailsForOrderByPositionWithColumnAliasesAndInvalidAggregateFuncCall() throws Exception {
-        // This query was leading to an NPE in the past.
-        assertFailure("select b col_1, count(a) col_cnt from x order by 2 desc",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(0, 100000000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY",
-                16,
-                "unexpected argument for function: count. expected args: (). actual args: (DOUBLE)");
     }
 
     @Test
@@ -6720,6 +6472,24 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRecordJoinExpansion() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x(a int)", sqlExecutionContext);
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select pg_catalog.pg_class() x, (pg_catalog.pg_class()).relnamespace from long_sequence(2)",
+                    sink,
+                    "x1\tcolumn\n" +
+                            "\t11\n" +
+                            "\t2200\n" +
+                            "\t11\n" +
+                            "\t2200\n"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFillLinearEmptyCursor() throws Exception {
         assertQuery("b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(linear) order by k,b",
@@ -7038,12 +6808,12 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     //    "d2\tc1\t201.10000000000002\t2021-10-05T11:31:35.878000Z\n" +
     //    "d1\tc2\t102.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
     //    "d1\tc1\t101.10000000000001\t2021-10-05T11:31:35.878000Z\n" +
-    //    "d2\tc1\t201.20000000000002\t2021-10-05T12:31:35.878000Z\n" +
+    //    "d2\tc1\t201.2\t2021-10-05T12:31:35.878000Z\n" +
     //    "d1\tc2\t102.2\t2021-10-05T12:31:35.878000Z\n" +
     //    "d1\tc1\t101.2\t2021-10-05T12:31:35.878000Z\n" +
     //    "d2\tc1\t201.3\t2021-10-05T13:31:35.878000Z\n" +
     //    "d1\tc2\t102.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
-    //    "d1\tc1\t101.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+    //    "d1\tc1\t101.3\t2021-10-05T13:31:35.878000Z\n" +
     //    "d2\tc1\t201.4\t2021-10-05T14:31:35.878000Z\n" +
     //    "d1\tc2\t102.4\t2021-10-05T14:31:35.878000Z\n" +
     //    "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
@@ -7057,8 +6827,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     //    "d2\tc1\t201.10000000000002\t2021-10-05T11:31:35.878000Z\n" +
     //    "d1\tc1\t101.2\t2021-10-05T12:31:35.878000Z\n" +
     //    "d1\tc2\t102.2\t2021-10-05T12:31:35.878000Z\n" +
-    //    "d2\tc1\t201.20000000000002\t2021-10-05T12:31:35.878000Z\n" +
-    //    "d1\tc1\t101.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+    //    "d2\tc1\t201.2\t2021-10-05T12:31:35.878000Z\n" +
+    //    "d1\tc1\t101.3\t2021-10-05T13:31:35.878000Z\n" +
     //    "d1\tc2\t102.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
     //    "d2\tc1\t201.3\t2021-10-05T13:31:35.878000Z\n" +
     //    "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
@@ -7102,8 +6872,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                             "d2\tc1\t201.10000000000002\t2021-10-05T11:31:35.878000Z\n" +
                             "d1\tc1\t101.2\t2021-10-05T12:31:35.878000Z\n" +
                             "d1\tc2\t102.2\t2021-10-05T12:31:35.878000Z\n" +
-                            "d2\tc1\t201.20000000000002\t2021-10-05T12:31:35.878000Z\n" +
-                            "d1\tc1\t101.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
+                            "d2\tc1\t201.2\t2021-10-05T12:31:35.878000Z\n" +
+                            "d1\tc1\t101.3\t2021-10-05T13:31:35.878000Z\n" +
                             "d1\tc2\t102.30000000000001\t2021-10-05T13:31:35.878000Z\n" +
                             "d2\tc1\t201.3\t2021-10-05T13:31:35.878000Z\n" +
                             "d1\tc1\t101.4\t2021-10-05T14:31:35.878000Z\n" +
@@ -7157,10 +6927,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(6.004476595511992E7, r.sumDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -7182,10 +6948,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(6.004476595511992E7, r.sumDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -7195,10 +6957,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         executeInsertStatement(1.0);
         executeInsertStatement(2.0);
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(3, r.sumDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -7216,11 +6974,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         executeInsertStatement(1.0);
         executeInsertStatement(0.0);
         executeInsertStatement(0.0);
-
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(8, r.sumDouble(0), 0.0000001);
-        }
     }
 
     @Test
@@ -7242,11 +6995,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         executeInsertStatement(1.0);
         executeInsertStatement(1.0);
         executeInsertStatement(0.0);
-
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(12, r.sumDouble(0), 0.0000001);
-        }
     }
 
     @Test
@@ -7268,10 +7016,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(5.001433965140632E7, r.sumDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -7419,13 +7163,6 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true,
                 true
         );
-
-        try (TableReader r = new TableReader(configuration, "x")) {
-            Assert.assertEquals(6158.373651379578, r.sumDouble(0), 0.00001);
-            Assert.assertEquals(0.11075361080621349, r.minDouble(0), 0.00001);
-            Assert.assertEquals(99.1809311486223, r.maxDouble(0), 0.00001);
-            Assert.assertEquals(53.20159680986086, r.avgDouble(0), 0.00001);
-        }
     }
 
     @Test
@@ -7672,6 +7409,135 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 null);
     }
 
+    private void testBindVariableInIndexedLookup(boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (" +
+                            "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
+                            "time TIMESTAMP, " +
+                            "slot SYMBOL, " +
+                            "port SYMBOL, " +
+                            "downStream DOUBLE, " +
+                            "upStream DOUBLE" +
+                            ") timestamp(time) partition by DAY",
+                    sqlExecutionContext);
+            compiler.compile("create table src as (" +
+                            "    select rnd_symbol(15000, 4,4,0) sym, " +
+                            "           timestamp_sequence(0, 100000) ts, " +
+                            "           rnd_double() val " +
+                            "    from long_sequence(500)" +
+                            ")",
+                    sqlExecutionContext);
+            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src",
+                    sqlExecutionContext);
+            // =
+            try (
+                    RecordCursorFactory lookupFactory = compiler.compile(
+                            "select * from alcatel_traffic_tmp where deviceName in $1",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "FKBW");
+                sink.clear();
+                try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
+                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
+                    TestUtils.assertEquals(
+                            "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
+                                    "FKBW\t1970-01-01T00:00:02.300000Z\tFKBW\t\t0.04998168904446332\t0.04998168904446332\n",
+                            sink
+                    );
+                }
+            }
+            // !=
+            try (
+                    RecordCursorFactory lookupFactory = compiler.compile(
+                            "select * from alcatel_traffic_tmp where deviceName != $1 and time < '1970-01-01T00:00:00.300000Z'",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "FKBW");
+                sink.clear();
+                try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
+                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
+                    TestUtils.assertEquals(
+                            "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
+                                    "OQCN\t1970-01-01T00:00:00.000000Z\tOQCN\t\t0.004671510951376301\t0.004671510951376301\n" +
+                                    "MIWT\t1970-01-01T00:00:00.100000Z\tMIWT\t\t0.8736195736185558\t0.8736195736185558\n" +
+                                    "QUUG\t1970-01-01T00:00:00.200000Z\tQUUG\t\t0.6124307350390543\t0.6124307350390543\n",
+                            sink
+                    );
+                }
+            }
+        });
+    }
+
+    private void testBindVariableInLookupList(boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("CREATE TABLE 'alcatel_traffic_tmp' (" +
+                            "deviceName SYMBOL capacity 1000" + (indexed ? " index, " : " , ") +
+                            "time TIMESTAMP, " +
+                            "slot SYMBOL, " +
+                            "port SYMBOL, " +
+                            "downStream DOUBLE, " +
+                            "upStream DOUBLE" +
+                            ") timestamp(time) partition by DAY",
+                    sqlExecutionContext);
+            compiler.compile("create table src as (" +
+                            "    select rnd_symbol(15000, 4,4,0) sym, " +
+                            "           timestamp_sequence(0, 100000) ts, " +
+                            "           rnd_double() val " +
+                            "    from long_sequence(500)" +
+                            ")",
+                    sqlExecutionContext);
+            compiler.compile("insert into alcatel_traffic_tmp select sym, ts, sym, null, val, val from src",
+                    sqlExecutionContext);
+            // in
+            try (
+                    RecordCursorFactory lookupFactory = compiler.compile(
+                            "select * from alcatel_traffic_tmp where deviceName in ($1,$2)",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "FKBW");
+                bindVariableService.setStr(1, "SHRI");
+                sink.clear();
+                try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
+                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
+                    TestUtils.assertEquals(
+                            "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
+                                    "FKBW\t1970-01-01T00:00:02.300000Z\tFKBW\t\t0.04998168904446332\t0.04998168904446332\n" +
+                                    "SHRI\t1970-01-01T00:00:02.900000Z\tSHRI\t\t0.007781200348629724\t0.007781200348629724\n",
+                            sink
+                    );
+                }
+            }
+            // not in
+            try (
+                    RecordCursorFactory lookupFactory = compiler.compile(
+                            "select * from alcatel_traffic_tmp where deviceName not in ($1,$2) and time < '1970-01-01T00:00:00.300000Z'",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "FKBW");
+                bindVariableService.setStr(1, "SHRI");
+                sink.clear();
+                try (RecordCursor cursor = lookupFactory.getCursor(sqlExecutionContext)) {
+                    printer.print(cursor, lookupFactory.getMetadata(), true, sink);
+                    TestUtils.assertEquals(
+                            "deviceName\ttime\tslot\tport\tdownStream\tupStream\n" +
+                                    "OQCN\t1970-01-01T00:00:00.000000Z\tOQCN\t\t0.004671510951376301\t0.004671510951376301\n" +
+                                    "MIWT\t1970-01-01T00:00:00.100000Z\tMIWT\t\t0.8736195736185558\t0.8736195736185558\n" +
+                                    "QUUG\t1970-01-01T00:00:00.200000Z\tQUUG\t\t0.6124307350390543\t0.6124307350390543\n",
+                            sink
+                    );
+                }
+            }
+        });
+    }
+
     private void testBindVariableWithLike0(String keyword) throws Exception {
         assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultCairoConfiguration(root);
@@ -7732,6 +7598,61 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         });
     }
 
+    private void testFilterWithSymbolBindVariable(String query, boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(0, 100000000000) k" +
+                    " from" +
+                    " long_sequence(20)" +
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(
+                        "a\tb\tk\n" +
+                                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n",
+                        factory,
+                        true,
+                        true,
+                        false
+                );
+            }
+        });
+    }
+
+    private void testFilterWithSymbolBindVariableNotEquals(String query, boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(0, 100000000000) k" +
+                    " from" +
+                    " long_sequence(5)" +
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(
+                        "a\tb\tk\n" +
+                                "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                                "42.17768841969397\tVTJW\t1970-01-02T03:46:40.000000Z\n" +
+                                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                                "70.94360487171201\tPEHN\t1970-01-04T11:20:00.000000Z\n" +
+                                "87.99634725391621\t\t1970-01-05T15:06:40.000000Z\n",
+                        factory,
+                        true,
+                        true,
+                        false
+                );
+            }
+        });
+    }
+
     private void testLatestByFilteredBySymbolIn(String ddl) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(ddl, sqlExecutionContext);
@@ -7765,6 +7686,61 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     "metric\tsum\n" +
                             "cpu\t175\n"
             );
+        });
+    }
+
+    private void testLatestByKeyValueWithBindVariable(String query, boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(0, 100000000000) k" +
+                    " from" +
+                    " long_sequence(50)" +
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertCursor(
+                        "a\tb\tk\n" +
+                                "89.98921791869131\tHYRX\t1970-02-18T14:40:00.000000Z\n",
+                        factory,
+                        true,
+                        true,
+                        false
+                );
+            }
+        });
+    }
+
+    private void testLatestByKeyValuesWithBindVariable(String query, boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_double(0)*100 a," +
+                    " rnd_symbol(5,4,4,1) b," +
+                    " timestamp_sequence(0, 100000000000) k" +
+                    " from" +
+                    " long_sequence(50)" +
+                    ")" + (indexed ? ", index(b) " : " ") + "timestamp(k) partition by DAY", sqlExecutionContext);
+
+            try (
+                    RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                assertCursor(
+                        "a\tb\tk\n" +
+                                "66.97969295620055\tVTJW\t1970-02-13T23:33:20.000000Z\n" +
+                                "89.98921791869131\tHYRX\t1970-02-18T14:40:00.000000Z\n",
+                        factory,
+                        true,
+                        true,
+                        true
+                );
+            }
         });
     }
 

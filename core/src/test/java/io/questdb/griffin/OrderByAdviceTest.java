@@ -1186,5 +1186,4 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
             TestUtils.assertContains(e.getFlyweightMessage(), "ORDER BY expressions must appear in select list.");
         }
     }
-
 }

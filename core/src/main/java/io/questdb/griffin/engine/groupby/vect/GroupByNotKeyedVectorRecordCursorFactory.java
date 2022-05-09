@@ -42,6 +42,8 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
 import io.questdb.tasks.VectorAggregateTask;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+
 public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFactory {
 
     private static final Log LOG = LogFactory.getLog(GroupByNotKeyedVectorRecordCursorFactory.class);
@@ -69,10 +71,16 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
     }
 
     @Override
+    public void close() {
+        Misc.freeObjList(vafList);
+        Misc.free(base);
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final MessageBus bus = executionContext.getMessageBus();
 
-        final PageFrameCursor cursor = base.getPageFrameCursor(executionContext);
+        final PageFrameCursor cursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
         final int vafCount = vafList.size();
 
         // clear state of aggregate functions

@@ -31,11 +31,10 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionCircuitBreaker;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -58,6 +57,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
             @Transient @NotNull EntityColumnFilter columnFilter,
             @Transient @NotNull BytecodeAssembler asm
     ) {
+        assert base.recordCursorSupportsRandomAccess();
         final RecordMetadata metadata = base.getMetadata();
         // sink will be storing record columns to map key
         columnFilter.of(metadata.getColumnCount());
@@ -97,7 +97,12 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return base.recordCursorSupportsRandomAccess();
+        return true;
+    }
+
+    @Override
+    public boolean hasDescendingOrder() {
+        return base.hasDescendingOrder();
     }
 
     private static class DistinctTimeSeriesRecordCursor implements RecordCursor {
@@ -138,7 +143,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         public boolean hasNext() {
             if (state == COMPUTE_NEXT) {
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.test();
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     final long timestamp = record.getTimestamp(timestampIndex);
                     if (timestamp != prevTimestamp) {
                         prevTimestamp = timestamp;

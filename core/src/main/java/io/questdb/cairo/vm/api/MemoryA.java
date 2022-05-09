@@ -30,6 +30,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
+//appendable 
 public interface MemoryA extends Closeable {
 
     @Override
