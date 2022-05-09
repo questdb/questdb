@@ -551,9 +551,6 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 if (cursor.hasNext()) {
                     for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
                         final int columnIndex = symbolIndexes.getQuick(i);
-                        SymbolTable tab = cursor.newSymbolTable(columnIndex);
-                        Assert.assertNotNull(tab);
-                        clonedSymbolTables.add(tab);
                         originalSymbolTables.add(cursor.getSymbolTable(columnIndex));
                     }
 
@@ -577,6 +574,15 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                         symbolTableKeySnapshot[i] = max;
                         symbolTableValueSnapshot[i] = values;
                         sumOfMax += max;
+                    }
+
+                    // We grab clones after iterating through the symbol values due to
+                    // the cache warm up required by Cast*ToSymbolFunctionFactory functions.
+                    for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
+                        final int columnIndex = symbolIndexes.getQuick(i);
+                        SymbolTable tab = cursor.newSymbolTable(columnIndex);
+                        Assert.assertNotNull(tab);
+                        clonedSymbolTables.add(tab);
                     }
 
                     // Now start two threads, one will be using normal symbol table

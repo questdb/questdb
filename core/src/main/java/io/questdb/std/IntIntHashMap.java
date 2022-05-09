@@ -65,6 +65,16 @@ public class IntIntHashMap extends AbstractIntHashSet {
         }
     }
 
+    public void putAll(IntIntHashMap other) {
+        int[] otherKeys = other.keys;
+        int[] otherValues = other.values;
+        for (int i = 0; i < otherKeys.length; i++) {
+            if (otherKeys[i] != other.noEntryKeyValue) {
+                put(otherKeys[i], otherValues[i]);
+            }
+        }
+    }
+
     public int valueAt(int index) {
         return index < 0 ? values[-index - 1] : noEntryValue;
     }

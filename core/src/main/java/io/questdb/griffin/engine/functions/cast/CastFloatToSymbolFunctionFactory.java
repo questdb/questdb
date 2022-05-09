@@ -36,7 +36,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.Nullable;
 
 public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
     @Override
@@ -93,7 +92,7 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public @Nullable SymbolTable newInstance() {
+        protected AbstractToSymbolCastFunction newFunc() {
             return new Func(arg);
         }
     }

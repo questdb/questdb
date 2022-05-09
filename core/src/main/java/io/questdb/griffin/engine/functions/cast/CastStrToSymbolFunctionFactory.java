@@ -137,7 +137,12 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public @Nullable SymbolTable newInstance() {
-            return new Func(arg);
+            Func copy = new Func(arg);
+            copy.lookupMap.putAll(this.lookupMap);
+            copy.symbols.clear();
+            copy.symbols.addAll(this.symbols);
+            copy.next = this.next;
+            return copy;
         }
     }
 }

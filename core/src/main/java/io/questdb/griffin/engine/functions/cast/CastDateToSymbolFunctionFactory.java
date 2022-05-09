@@ -144,7 +144,12 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public @Nullable SymbolTable newInstance() {
-            return new Func(arg);
+            Func copy = new Func(arg);
+            copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
+            copy.symbols.clear();
+            copy.symbols.addAll(this.symbols);
+            copy.next = this.next;
+            return copy;
         }
     }
 }

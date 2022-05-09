@@ -148,7 +148,12 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public @Nullable SymbolTable newInstance() {
-            return new Func(arg, scale);
+            Func copy = new Func(arg, scale);
+            copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
+            copy.symbols.clear();
+            copy.symbols.addAll(this.symbols);
+            copy.next = this.next;
+            return copy;
         }
     }
 }

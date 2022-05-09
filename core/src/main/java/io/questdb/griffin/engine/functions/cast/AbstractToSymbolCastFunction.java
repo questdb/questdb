@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.cast;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -111,5 +112,17 @@ public abstract class AbstractToSymbolCastFunction extends SymbolFunction implem
     @Override
     public CharSequence valueBOf(int key) {
         return valueOf(key);
+    }
+
+    protected abstract AbstractToSymbolCastFunction newFunc();
+
+    @Override
+    public @Nullable SymbolTable newInstance() {
+        AbstractToSymbolCastFunction copy = newFunc();
+        copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
+        copy.symbols.clear();
+        copy.symbols.addAll(this.symbols);
+        copy.next = this.next;
+        return copy;
     }
 }

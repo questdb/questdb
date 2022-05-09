@@ -145,7 +145,12 @@ public class CastLongToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public @Nullable SymbolTable newInstance() {
             // arg is primitive, we do not need to copy it
-            return new Func(arg);
+            Func copy = new Func(arg);
+            copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
+            copy.symbols.clear();
+            copy.symbols.addAll(this.symbols);
+            copy.next = this.next;
+            return copy;
         }
     }
 }
