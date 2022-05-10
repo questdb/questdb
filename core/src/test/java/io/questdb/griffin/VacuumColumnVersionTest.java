@@ -259,7 +259,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (CairoException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(),
-                            "cairo.sql.column.version.clean.queue.capacity");
+                            "cairo.sql.column.version.purge.queue.capacity");
                     TestUtils.assertContains(ex.getFlyweightMessage(),
                             "failed to schedule column version purge, queue is full");
                 }
