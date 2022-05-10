@@ -211,15 +211,33 @@ public class Mig620 {
         setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         int partitionPathLen = path.length();
 
-        for (int i = 0; i < columnCount; i++) {
-            path.trimTo(partitionPathLen);
-            String columnName = columnNames.get(i);
-            dFile(path, columnName);
-            long columnTop = -1;
-            if (ff.exists(path)) {
-                columnTop = readColumnTop(ff, path.trimTo(partitionPathLen), columnName, partitionPathLen);
+        if (ff.exists(path.put(Files.SEPARATOR).$())) {
+            for (int i = 0; i < columnCount; i++) {
+                path.trimTo(partitionPathLen);
+                String columnName = columnNames.get(i);
+                dFile(path, columnName);
+                long columnTop = -1;
+                if (ff.exists(path)) {
+                    columnTop = readColumnTop(ff, path.trimTo(partitionPathLen), columnName, partitionPathLen);
+                }
+                tops.add(columnTop);
             }
-            tops.add(columnTop);
+        } else {
+            // Sometimes _txn file does not match the table directories, e.g. snapshot is inconsistent.
+            // Consider that file presence is same as previous partition.
+            // Except if previous partition column existed but column top was not 0, make it 0
+            if (tops.size() > columnCount) {
+                tops.add(tops, tops.size() - columnCount - 1, tops.size() - 1);
+                for (int i = tops.size() - columnCount, n = tops.size(); i < n; i++) {
+                    if (tops.getQuick(i) > 0) {
+                        tops.setQuick(i, 0);
+                    }
+                }
+            } else {
+                for (int i = 0; i < columnCount; i++) {
+                    tops.add(-1L);
+                }
+            }
         }
     }
 
