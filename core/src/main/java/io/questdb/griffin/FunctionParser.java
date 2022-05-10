@@ -113,7 +113,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.STRING:
                 return StrColumn.newInstance(index);
             case ColumnType.SYMBOL:
-                return new SymbolColumn(index, metadata.isSymbolTableStatic(index), sqlExecutionContext.isCloneSymbolTables());
+                return new SymbolColumn(index, metadata.isSymbolTableStatic(index));
             case ColumnType.BINARY:
                 return BinColumn.newInstance(index);
             case ColumnType.DATE:

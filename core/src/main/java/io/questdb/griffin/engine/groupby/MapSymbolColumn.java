@@ -39,13 +39,12 @@ public class MapSymbolColumn extends SymbolFunction {
     private final boolean symbolTableStatic;
     private SymbolTable symbolTable;
     private SymbolTableSource symbolTableSource;
-    private final boolean cloneSymbolTable;
+    private boolean ownSymbolTable;
 
-    public MapSymbolColumn(int mapColumnIndex, int cursorColumnIndex, boolean symbolTableStatic, boolean cloneSymbolTable) {
+    public MapSymbolColumn(int mapColumnIndex, int cursorColumnIndex, boolean symbolTableStatic) {
         this.mapColumnIndex = mapColumnIndex;
         this.cursorColumnIndex = cursorColumnIndex;
         this.symbolTableStatic = symbolTableStatic;
-        this.cloneSymbolTable = cloneSymbolTable;
     }
 
     @Override
@@ -80,16 +79,19 @@ public class MapSymbolColumn extends SymbolFunction {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        if (symbolTable == null) {
-            this.symbolTableSource = symbolTableSource;
-            if (cloneSymbolTable) {
-                this.symbolTable = symbolTableSource.newSymbolTable(cursorColumnIndex);
-            } else {
-                this.symbolTable = symbolTableSource.getSymbolTable(cursorColumnIndex);
+        this.symbolTableSource = symbolTableSource;
+        if (executionContext.isCloneSymbolTables()) {
+            if (symbolTable != null) {
+                assert ownSymbolTable;
+                symbolTable = Misc.free(symbolTable);
             }
-            assert this.symbolTable != this;
-            assert this.symbolTable != null;
+            symbolTable = symbolTableSource.newSymbolTable(cursorColumnIndex);
+            ownSymbolTable = true;
+        } else {
+            symbolTable = symbolTableSource.getSymbolTable(cursorColumnIndex);
         }
+        assert this.symbolTable != this;
+        assert this.symbolTable != null;
     }
 
     @Override
@@ -104,7 +106,7 @@ public class MapSymbolColumn extends SymbolFunction {
 
     @Override
     public void close() {
-        if (cloneSymbolTable) {
+        if (ownSymbolTable) {
             symbolTable = Misc.free(symbolTable);
         }
     }

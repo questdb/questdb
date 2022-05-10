@@ -133,6 +133,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
         return false;
     }
 
+    // TODO document this method
     default boolean fragmentedSymbolTables() {
         return false;
     }

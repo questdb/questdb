@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.Vm;
@@ -290,7 +289,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
+    public StaticSymbolTable newSymbolTable(int columnIndex) {
         SymbolMapReader symbolMapReader = getSymbolMapReader(columnIndex);
         if (symbolMapReader instanceof SymbolMapReaderImpl) {
             return ((SymbolMapReaderImpl) symbolMapReader).newSymbolTableView();

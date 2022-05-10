@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -205,8 +206,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return null;
     }
 
-    public SymbolTable newSymbolTableView() {
-        return new SymbolTableView(charMem, offsetMem, symbolCount);
+    public StaticSymbolTable newSymbolTableView() {
+        return new SymbolTableView();
     }
 
     private CharSequence cachedValue(int key) {
@@ -230,17 +231,34 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
-    public static class SymbolTableView implements SymbolTable {
-        private final MemoryCMR charMem;
-        private final MemoryCMR offsetMem;
-        private final int symbolCount;
+    private class SymbolTableView implements StaticSymbolTable {
         private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
         private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
 
-        public SymbolTableView(MemoryCMR charMem, MemoryCMR offsetMem, int symbolCount) {
-            this.charMem = charMem;
-            this.offsetMem = offsetMem;
-            this.symbolCount = symbolCount;
+        @Override
+        public boolean containsNullValue() {
+            return nullValue;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return symbolCount;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            if (value != null) {
+                int hash = Hash.boundedHash(value, maxHash);
+                final RowCursor cursor = indexReader.getCursor(false, hash, 0, maxOffset - Long.BYTES);
+                while (cursor.hasNext()) {
+                    final long offsetOffset = cursor.next();
+                    if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
+                        return SymbolMapWriter.offsetToKey(offsetOffset);
+                    }
+                }
+                return SymbolTable.VALUE_NOT_FOUND;
+            }
+            return SymbolTable.VALUE_IS_NULL;
         }
 
         @Override

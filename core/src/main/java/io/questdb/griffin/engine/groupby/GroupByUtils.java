@@ -166,12 +166,7 @@ public class GroupByUtils {
                             fun = StrColumn.newInstance(keyColumnIndex - 1);
                             break;
                         case ColumnType.SYMBOL:
-                            fun = new MapSymbolColumn(
-                                    keyColumnIndex - 1,
-                                    index,
-                                    metadata.isSymbolTableStatic(index),
-                                    sqlExecutionContext.isCloneSymbolTables()
-                            );
+                            fun = new MapSymbolColumn(keyColumnIndex - 1, index, metadata.isSymbolTableStatic(index));
                             break;
                         case ColumnType.DATE:
                             fun = DateColumn.newInstance(keyColumnIndex - 1);

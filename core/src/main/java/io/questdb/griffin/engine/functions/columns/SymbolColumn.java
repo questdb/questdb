@@ -36,12 +36,11 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     private final boolean symbolTableStatic;
     private SymbolTable symbolTable;
     private SymbolTableSource symbolTableSource;
-    private final boolean cloneSymbolTable;
+    private boolean ownSymbolTable;
 
-    public SymbolColumn(int columnIndex, boolean symbolTableStatic, boolean cloneSymbolTable) {
+    public SymbolColumn(int columnIndex, boolean symbolTableStatic) {
         this.columnIndex = columnIndex;
         this.symbolTableStatic = symbolTableStatic;
-        this.cloneSymbolTable = cloneSymbolTable;
     }
 
     @Override
@@ -61,16 +60,19 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        if (symbolTable == null) {
-            this.symbolTableSource = symbolTableSource;
-            if (cloneSymbolTable) {
-                this.symbolTable = symbolTableSource.newSymbolTable(columnIndex);
-            } else {
-                this.symbolTable = symbolTableSource.getSymbolTable(columnIndex);
+        this.symbolTableSource = symbolTableSource;
+        if (executionContext.isCloneSymbolTables()) {
+            if (symbolTable != null) {
+                assert ownSymbolTable;
+                symbolTable = Misc.free(symbolTable);
             }
-            // static symbol table must be non-null
-            assert !symbolTableStatic || symbolTable != null;
+            symbolTable = symbolTableSource.newSymbolTable(columnIndex);
+            ownSymbolTable = true;
+        } else {
+            symbolTable = symbolTableSource.getSymbolTable(columnIndex);
         }
+        // static symbol table must be non-null
+        assert !symbolTableStatic || symbolTable != null;
     }
     
     @Override
@@ -100,7 +102,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
 
     @Override
     public void close() {
-        if (cloneSymbolTable) {
+        if (ownSymbolTable) {
             symbolTable = Misc.free(symbolTable);
         }
     }

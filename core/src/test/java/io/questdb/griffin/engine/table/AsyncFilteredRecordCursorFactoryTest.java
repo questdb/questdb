@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -401,116 +401,10 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             pool.start(null);
 
             try {
-                runnable.run(engine, compiler, new SqlExecutionContext() {
-                    @Override
-                    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-                        return sqlExecutionContext.getQueryFutureUpdateListener();
-                    }
-
-                    @Override
-                    public BindVariableService getBindVariableService() {
-                        return sqlExecutionContext.getBindVariableService();
-                    }
-
-                    @Override
-                    public CairoSecurityContext getCairoSecurityContext() {
-                        return sqlExecutionContext.getCairoSecurityContext();
-                    }
-
-                    @Override
-                    public boolean isTimestampRequired() {
-                        return sqlExecutionContext.isTimestampRequired();
-                    }
-
-                    @Override
-                    public void popTimestampRequiredFlag() {
-                        sqlExecutionContext.popTimestampRequiredFlag();
-                    }
-
-                    @Override
-                    public void pushTimestampRequiredFlag(boolean flag) {
-                        sqlExecutionContext.pushTimestampRequiredFlag(flag);
-                    }
-
+                runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
                     @Override
                     public int getWorkerCount() {
                         return 4;
-                    }
-
-                    @Override
-                    public Rnd getRandom() {
-                        return sqlExecutionContext.getRandom();
-                    }
-
-                    @Override
-                    public void setRandom(Rnd rnd) {
-                        sqlExecutionContext.setRandom(rnd);
-                    }
-
-                    @Override
-                    public CairoEngine getCairoEngine() {
-                        return sqlExecutionContext.getCairoEngine();
-                    }
-
-                    @Override
-                    public long getRequestFd() {
-                        return sqlExecutionContext.getRequestFd();
-                    }
-
-                    @Override
-                    public SqlExecutionCircuitBreaker getCircuitBreaker() {
-                        return sqlExecutionContext.getCircuitBreaker();
-                    }
-
-                    @Override
-                    public void storeTelemetry(short event, short origin) {
-                        sqlExecutionContext.storeTelemetry(event, origin);
-                    }
-
-                    @Override
-                    public AnalyticContext getAnalyticContext() {
-                        return sqlExecutionContext.getAnalyticContext();
-                    }
-
-                    @Override
-                    public void configureAnalyticContext(
-                            @Nullable VirtualRecord partitionByRecord,
-                            @Nullable RecordSink partitionBySink,
-                            @Nullable ColumnTypes keyTypes,
-                            boolean isOrdered,
-                            boolean baseSupportsRandomAccess
-                    ) {
-                        sqlExecutionContext.configureAnalyticContext(partitionByRecord, partitionBySink, keyTypes, isOrdered, baseSupportsRandomAccess);
-                    }
-
-                    @Override
-                    public void initNow() {
-                        sqlExecutionContext.initNow();
-                    }
-
-                    @Override
-                    public long getNow() {
-                        return sqlExecutionContext.getNow();
-                    }
-
-                    @Override
-                    public int getJitMode() {
-                        return sqlExecutionContext.getJitMode();
-                    }
-
-                    @Override
-                    public void setJitMode(int jitMode) {
-                        sqlExecutionContext.setJitMode(jitMode);
-                    }
-
-                    @Override
-                    public void setCloneSymbolTables(boolean clone) {
-                        sqlExecutionContext.setCloneSymbolTables(clone);
-                    }
-
-                    @Override
-                    public boolean isCloneSymbolTables() {
-                        return sqlExecutionContext.isCloneSymbolTables();
                     }
                 });
             } catch (Throwable e) {
@@ -520,5 +414,113 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                 pool.halt();
             }
         });
+    }
+
+    private static abstract class DelegatingSqlExecutionContext implements SqlExecutionContext {
+        @Override
+        public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+            return sqlExecutionContext.getQueryFutureUpdateListener();
+        }
+
+        @Override
+        public BindVariableService getBindVariableService() {
+            return sqlExecutionContext.getBindVariableService();
+        }
+
+        @Override
+        public CairoSecurityContext getCairoSecurityContext() {
+            return sqlExecutionContext.getCairoSecurityContext();
+        }
+
+        @Override
+        public boolean isTimestampRequired() {
+            return sqlExecutionContext.isTimestampRequired();
+        }
+
+        @Override
+        public void popTimestampRequiredFlag() {
+            sqlExecutionContext.popTimestampRequiredFlag();
+        }
+
+        @Override
+        public void pushTimestampRequiredFlag(boolean flag) {
+            sqlExecutionContext.pushTimestampRequiredFlag(flag);
+        }
+
+        @Override
+        public Rnd getRandom() {
+            return sqlExecutionContext.getRandom();
+        }
+
+        @Override
+        public void setRandom(Rnd rnd) {
+            sqlExecutionContext.setRandom(rnd);
+        }
+
+        @Override
+        public CairoEngine getCairoEngine() {
+            return sqlExecutionContext.getCairoEngine();
+        }
+
+        @Override
+        public long getRequestFd() {
+            return sqlExecutionContext.getRequestFd();
+        }
+
+        @Override
+        public SqlExecutionCircuitBreaker getCircuitBreaker() {
+            return sqlExecutionContext.getCircuitBreaker();
+        }
+
+        @Override
+        public void storeTelemetry(short event, short origin) {
+            sqlExecutionContext.storeTelemetry(event, origin);
+        }
+
+        @Override
+        public AnalyticContext getAnalyticContext() {
+            return sqlExecutionContext.getAnalyticContext();
+        }
+
+        @Override
+        public void configureAnalyticContext(
+                @Nullable VirtualRecord partitionByRecord,
+                @Nullable RecordSink partitionBySink,
+                @Nullable ColumnTypes keyTypes,
+                boolean isOrdered,
+                boolean baseSupportsRandomAccess
+        ) {
+            sqlExecutionContext.configureAnalyticContext(partitionByRecord, partitionBySink, keyTypes, isOrdered, baseSupportsRandomAccess);
+        }
+
+        @Override
+        public void initNow() {
+            sqlExecutionContext.initNow();
+        }
+
+        @Override
+        public long getNow() {
+            return sqlExecutionContext.getNow();
+        }
+
+        @Override
+        public int getJitMode() {
+            return sqlExecutionContext.getJitMode();
+        }
+
+        @Override
+        public void setJitMode(int jitMode) {
+            sqlExecutionContext.setJitMode(jitMode);
+        }
+
+        @Override
+        public void setCloneSymbolTables(boolean clone) {
+            sqlExecutionContext.setCloneSymbolTables(clone);
+        }
+
+        @Override
+        public boolean isCloneSymbolTables() {
+            return sqlExecutionContext.isCloneSymbolTables();
+        }
     }
 }
