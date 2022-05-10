@@ -555,6 +555,46 @@ public class UpdateBasicTest extends AbstractGriffinTest {
                     25,
                     "Duplicate column 'x' in SET clause"
             );
+
+            executeUpdateFails(
+                    "UPDATE tabula SET x = 1, 'x' = 3",
+                    25,
+                    "Duplicate column 'x' in SET clause"
+            );
+
+            executeUpdateFails(
+                    "UPDATE tabula SET X = 1, 'x' = 3",
+                    25,
+                    "Duplicate column 'x' in SET clause"
+            );
+        });
+    }
+
+    @Test
+    public void testUpdateDuplicateColumnShouldFailNonAscii() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table tabula as (" +
+                            "   select " +
+                            "     timestamp_sequence(0, 1000000) ts," +
+                            "     cast(x as int) 'ラッキー'," +
+                            "     cast(x as int) y" +
+                            "   from long_sequence(5)" +
+                            ") timestamp(ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            executeUpdateFails(
+                    "UPDATE tabula SET 'ラッキー' = 1, 'ラッキー' = 3",
+                    30,
+                    "Duplicate column 'ラッキー' in SET clause"
+            );
+
+            executeUpdateFails(
+                    "UPDATE tabula SET ラッキー = 1, 'ラッキー' = 3",
+                    28,
+                    "Duplicate column 'ラッキー' in SET clause"
+            );
         });
     }
 

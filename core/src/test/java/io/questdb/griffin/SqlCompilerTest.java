@@ -3114,6 +3114,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertAsSelectDuplicateColumnNonAscii() throws Exception {
+        compiler.compile(
+                "CREATE TABLE tabula (" +
+                        "  ts TIMESTAMP, " +
+                        "  龜 INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+
+        engine.releaseAllWriters();
+
+        assertFailure(24, "Duplicate column '龜'",
+                "insert into tabula ( 龜, '龜', ts ) values ( 7, 10, 11 )");
+    }
+
+    @Test
     public void testInsertAsSelectConvertibleList2() throws Exception {
         testInsertAsSelect("a\tb\tn\n" +
                         "SBEOUOJSH\t-2144581835\t\n" +

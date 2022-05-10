@@ -726,11 +726,35 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateAsSelectDuplicateColumn() throws Exception {
+    public void testCreateAsSelectDuplicateColumn0() throws Exception {
         assertSyntaxError(
                 "create table tab as (select rnd_byte() b, rnd_boolean() b from long_sequence(1))",
                 56,
                 "Duplicate column 'b'",
+                modelOf("tab")
+                        .col("b", ColumnType.BYTE)
+                        .col("b", ColumnType.BOOLEAN)
+        );
+    }
+
+    @Test
+    public void testCreateAsSelectDuplicateColumn1() throws Exception {
+        assertSyntaxError(
+                "create table tab as (select rnd_byte() b, rnd_boolean() 'B' from long_sequence(1))",
+                56,
+                "Duplicate column 'b'",
+                modelOf("tab")
+                        .col("b", ColumnType.BYTE)
+                        .col("b", ColumnType.BOOLEAN)
+        );
+    }
+
+    @Test
+    public void testCreateAsSelectDuplicateColumnNonAscii() throws Exception {
+        assertSyntaxError(
+                "create table tab as (select rnd_byte() 'गाजर का हलवा', rnd_boolean() 'गाजर का हलवा' from long_sequence(1))",
+                69,
+                "Duplicate column 'गाजर का हलवा'",
                 modelOf("tab")
                         .col("b", ColumnType.BYTE)
                         .col("b", ColumnType.BOOLEAN)
