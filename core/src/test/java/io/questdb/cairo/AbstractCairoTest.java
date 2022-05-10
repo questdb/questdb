@@ -47,8 +47,10 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
+import org.junit.rules.Timeout;
 
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 public class AbstractCairoTest {
 
@@ -96,6 +98,12 @@ public class AbstractCairoTest {
     private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @BeforeClass
     public static void setUpStatic() {
