@@ -24,9 +24,7 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.vm.MemoryPMARImpl;
@@ -34,12 +32,8 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SOUnboundedCountDownLatch;
-import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -64,14 +58,6 @@ import java.io.Closeable;
 public class FileSplitter implements Closeable, Mutable {
 
     private static final Log LOG = LogFactory.getLog(FileSplitter.class);
-    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
-    private final LongList stats = new LongList();
-
-    private RingQueue<TextImportTask> queue;
-    private Sequence pubSeq;
-    private Sequence subSeq;
-    private int workerCount;
-
     //TODO: rework
     private final DateLocale defaultDateLocale;
 
@@ -83,12 +69,13 @@ public class FileSplitter implements Closeable, Mutable {
 
     private final int bufferLength;
 
-    private final FilesFacade ff;
-
     //work dir path
-    private final Path path;
-    private final int plen;
-    private final int dirMode;
+    private final Path path = new Path();
+    private CharSequence inputRoot;
+    private CharSequence inputWorkRoot;
+
+    private final FilesFacade ff;
+    private CharSequence inputFileName;
 
     //file offset of current start of buffered block
     private long offset;
@@ -102,8 +89,6 @@ public class FileSplitter implements Closeable, Mutable {
     //used to map timestamp to output file  
     private PartitionBy.PartitionFloorMethod partitionFloorMethod;
     private DateFormat partitionDirFormatMethod;
-
-    private CharSequence inputFileName;
 
     //A guess at how long could a timestamp string be, including long day, month name, etc.
     //since we're only interested in timestamp field/col there's no point buffering whole line 
@@ -146,21 +131,19 @@ public class FileSplitter implements Closeable, Mutable {
     //these two are pointers either into file read buffer or roll buffer   
     private long fieldLo;
     private long fieldHi;
+    private int index;
 
-    public FileSplitter(SqlExecutionContext sqlExecutionContext) {
-        MessageBus bus = sqlExecutionContext.getMessageBus();
-        this.workerCount = sqlExecutionContext.getWorkerCount();
-        this.queue = bus.getTextImportQueue();
-        this.pubSeq = bus.getTextImportPubSeq();
-        this.subSeq = bus.getTextImportSubSeq();
-
-        CairoEngine engine = sqlExecutionContext.getCairoEngine();
-        final TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
+    public FileSplitter(CairoConfiguration configuration) {
+        final TextConfiguration textConfiguration = configuration.getTextConfiguration();
         this.defaultDateLocale = textConfiguration.getDefaultDateLocale();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
-        this.ff = engine.getConfiguration().getFilesFacade();
-        this.bufferLength = engine.getConfiguration().getSqlCopyBufferSize();
+        this.ff = configuration.getFilesFacade();
+
+        this.inputRoot = configuration.getInputRoot();
+        this.inputWorkRoot = configuration.getInputWorkRoot();
+
+        this.bufferLength = configuration.getSqlCopyBufferSize();
 
         this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
         this.fieldRollBufLimit = MAX_TIMESTAMP_LENGTH;
@@ -169,15 +152,9 @@ public class FileSplitter implements Closeable, Mutable {
 
         this.timestampField = new DirectByteCharSequence();
 
-        this.path = new Path().of(engine.getConfiguration().getInputWorkRoot());
-        this.plen = path.length();
-        this.dirMode = engine.getConfiguration().getMkDirMode();
     }
 
-    //timestampIndex - zero-based index of timestamp column 
-    public void split(CharSequence inputFileName, long fd, int partitionBy, byte columnDelimiter, int timestampIndex, DateFormat format, boolean ignoreHeader)
-            throws TextException, SqlException {
-
+    public void of(CharSequence inputFileName, int index, int partitionBy, byte columnDelimiter, int timestampIndex, DateFormat format, boolean ignoreHeader) {
         this.inputFileName = inputFileName;
         this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
         this.partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
@@ -186,54 +163,48 @@ public class FileSplitter implements Closeable, Mutable {
         this.timestampIndex = timestampIndex;
         this.timestampAdapter = (TimestampAdapter) this.typeManager.nextTimestampAdapter(false, format, defaultDateLocale);
         this.header = ignoreHeader;
-
-        createWorkDir(inputFileName);
-        LOG.info().$("Started indexing file ").$(inputFileName).$();
-
-        long buffer = Unsafe.malloc(bufferLength, MemoryTag.NATIVE_DEFAULT);
-        try {
-            long fileLength = ff.length(fd);
-            long read = ff.read(fd, buffer, bufferLength, 0);
-
-            while (read > 0) {
-                parse(buffer, buffer + read);
-                offset += read;
-                read = (int) ff.read(fd, buffer, bufferLength, offset);
-            }
-
-            if (read < 0 || offset < fileLength) {
-                throw SqlException.$(/*model.getFileName().position*/1, "could not read file [errno=").put(ff.errno()).put(']');
-            } else {
-                parseLast();
-            }
-
-            LOG.info().$("Finished indexing file ").$(inputFileName).$();
-
-        } finally {
-            Unsafe.free(buffer, bufferLength, MemoryTag.NATIVE_DEFAULT);
-            clear();
-        }
+        this.index = index;
     }
 
-    //TODO: we'll' need to lock dir or acquire table lock to make sure there are no two parallel user-issued imports of the same file 
-    private void createWorkDir(CharSequence inputFileName) {
-        path.trimTo(plen).slash().concat(inputFileName).slash$().$();
+    public void onTimestampField() {
+        long timestamp;
+        try {
+            timestamp = timestampAdapter.getTimestamp(timestampField);
+        } catch (Exception e) {
+            LOG.error().$("can't parse timestamp on line ").$(lineCount).$(" column ").$(timestampIndex).$();
+            errorCount++;
+            return;
+        }
 
-        if (ff.exists(path)) {
-            int errno = ff.rmdir(path);
-            if (errno != 0) {
-                throw CairoException.instance(errno).put("Can't remove import work dir ").put(path).put(" errno=").put(errno);
+        long lineStartOffset;
+        if (useFieldRollBuf) {
+            lineStartOffset = rolledFieldLineOffset;
+        } else {
+            lineStartOffset = offset + lastLineStart;
+        }
+        //long lineEndOffset = offset + lastLineStart;
+
+        long floor = partitionFloorMethod.floor(timestamp);
+
+        MemoryMA target = outputFiles.get(floor);
+        if (target == null) {
+            path.of(inputWorkRoot).slash().concat(inputFileName).slash().put(index).slash$();
+            partitionDirFormatMethod.format(floor, null, null, path);
+            path.put("_idx").$();
+
+            if (ff.exists(path)) {
+                //TODO: change exception type?
+                throw CairoException.instance(-1).put("index file already exists [path=").put(path).put(']');
+            } else {
+                LOG.info().$("created import index file ").$(path).$();
             }
+
+            target = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+            outputFiles.put(floor, target);
         }
 
-        int errno = ff.mkdir(path, dirMode);
-        if (errno != 0) {
-            throw CairoException.instance(errno).put("Can't create import work dir ").put(path).put(" errno=").put(errno);
-        }
-
-        LOG.info().$("created import dir ").$(path).$();
-
-        path.trimTo(plen);
+        target.putLong(timestamp);
+        target.putLong(lineStartOffset);
     }
 
     @Override
@@ -499,90 +470,40 @@ public class FileSplitter implements Closeable, Mutable {
         this.lastLineStart = this.fieldLo - lo;
     }
 
-    public void onTimestampField() {
-        long timestamp;
+    //timestampIndex - zero-based index of timestamp column
+    public void split(long chunkOffset, long chunkLength) throws TextException, SqlException {
+
+        path.of(inputRoot).slash().concat(inputFileName).slash$().$();
+        assert ff.exists(path);
+        assert chunkLength > 0;
+        assert chunkOffset >= 0 && chunkOffset < chunkLength;
+
+        long fd = ff.openRO(path);
+        if (fd == -1) {
+            throw SqlException.$(0, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
+        }
+
+        long buffer = Unsafe.malloc(bufferLength, MemoryTag.NATIVE_DEFAULT);
+        this.offset = chunkOffset;
         try {
-            timestamp = timestampAdapter.getTimestamp(timestampField);
-        } catch (Exception e) {
-            LOG.error().$("can't parse timestamp on line ").$(lineCount).$(" column ").$(timestampIndex).$();
-            errorCount++;
-            return;
-        }
+            chunkLength = Math.min(ff.length(fd), chunkLength);
+            long read = ff.read(fd, buffer, bufferLength, offset);
 
-        long lineStartOffset;
-        if (useFieldRollBuf) {
-            lineStartOffset = rolledFieldLineOffset;
-        } else {
-            lineStartOffset = offset + lastLineStart;
-        }
-        //long lineEndOffset = offset + lastLineStart;
-
-        long floor = partitionFloorMethod.floor(timestamp);
-
-        MemoryMA target = outputFiles.get(floor);
-        if (target == null) {
-            path.trimTo(plen);
-            path.slash().concat(inputFileName).slash();
-            partitionDirFormatMethod.format(floor, null, null, path);
-            path.put("_idx").$();
-
-            if (ff.exists(path)) {
-                //TODO: change exception type?
-                throw CairoException.instance(-1).put("index file already exists [path=").put(path).put(']');
-            } else {
-                LOG.info().$("created import index file ").$(path).$();
+            while (read > 0) {
+                parse(buffer, buffer + read);
+                offset += read;
+                read = ff.read(fd, buffer, bufferLength, offset);
             }
 
-            target = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-            outputFiles.put(floor, target);
-            path.trimTo(plen);
+            if (read < 0 || offset < chunkLength) {
+                throw SqlException.$(0, "could not read file [errno=").put(ff.errno()).put(']');
+            } else {
+                parseLast();
+            }
+        } finally {
+            Unsafe.free(buffer, bufferLength, MemoryTag.NATIVE_DEFAULT);
+            clear();
         }
-
-        target.putLong(timestamp);
-        target.putLong(lineStartOffset);
-        //target.putLong(lineEndOffset);
     }
 
-    protected void process() {
-        int fileSize = 100;
-        final long chunkSize = (fileSize + workerCount - 1) / workerCount;
-        final int taskCount = (int) ((fileSize + chunkSize - 1) / chunkSize);
-
-        //todo: splitting part
-        int queuedCount = 0;
-        doneLatch.reset();
-
-        stats.setPos(taskCount * 4); // quotesEven, quotesOdd, newlineOffsetEven, newlineOffsetOdd
-        stats.zero(0);
-
-        for (int i = 0; i < taskCount; ++i) {
-            final long chunkLo = i * chunkSize;
-            final long chunkHi = Long.min(chunkLo + chunkSize, fileSize);
-
-            final long seq = pubSeq.next();
-            if (seq < 0) {
-                // process locally
-            } else {
-                queue.get(seq).of(4 * i, chunkLo, chunkHi, stats, doneLatch);
-                pubSeq.done(seq);
-                queuedCount++;
-            }
-        }
-
-        // process our own queue
-        // this should fix deadlock with 1 worker configuration
-        while (doneLatch.getCount() > -queuedCount) {
-            long seq = subSeq.next();
-            if (seq > -1) {
-                queue.get(seq).run();
-                subSeq.done(seq);
-            }
-        }
-
-        doneLatch.await(queuedCount);
-
-        queuedCount = 0;
-        doneLatch.reset();
-        //todo: parsing part
-    }
 }

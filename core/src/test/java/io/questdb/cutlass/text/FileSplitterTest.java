@@ -45,56 +45,23 @@ public class FileSplitterTest extends AbstractGriffinTest {
     @Test
     public void testSimpleCsv() throws Exception {
         assertMemoryLeak(() -> {
-
-            FilesFacade ff = engine.getConfiguration().getFilesFacade();
             //String inputDir = new File(".").getAbsolutePath();
             String inputDir = new File("E:/dev/tmp").getAbsolutePath();
 
             //try (Path path = new Path().of(inputDir).slash().concat("src/test/resources/csv/test-import.csv").$();
-            try (Path path = new Path().of(inputDir).slash().concat("trips300mil.csv").$();
-                 FileSplitter splitter = new FileSplitter(sqlExecutionContext)) {
-
-                DateFormat format = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
-
-                long fd = ff.openRO(path);
-                Assert.assertTrue(fd > -1);
-
-                try {
-                    //splitter.split("test-import-csv", fd, PartitionBy.MONTH, (byte) ',', 4, format, true);
-                    splitter.split("test-import-csv", fd, PartitionBy.MONTH, (byte) ',', 2, format, true);
-                } finally {
-                    ff.close(fd);
-                }
+            inputRoot = inputDir;
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                DateFormat dateFormat = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
+                indexer.of(PartitionBy.MONTH, (byte) ',', 2, dateFormat, true);
+//                indexer.process("test-import-csv");
+                indexer.process("trips300mil.csv");
             }
-
-            //Thread.sleep(180000);
         });
     }
 
     @Test
     public void testSimpleCsvWithPool() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            FilesFacade ff = engine.getConfiguration().getFilesFacade();
-            //String inputDir = new File(".").getAbsolutePath();
-            String inputDir = new File("E:/dev/tmp").getAbsolutePath();
-
-            //try (Path path = new Path().of(inputDir).slash().concat("src/test/resources/csv/test-import.csv").$();
-            try (Path path = new Path().of(inputDir).slash().concat("trips300mil.csv").$();
-                 FileSplitter splitter = new FileSplitter(sqlExecutionContext)) {
-
-                DateFormat format = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
-
-                long fd = ff.openRO(path);
-                Assert.assertTrue(fd > -1);
-
-                try {
-                    //splitter.split("test-import-csv", fd, PartitionBy.MONTH, (byte) ',', 4, format, true);
-                    splitter.split("test-import-csv", fd, PartitionBy.MONTH, (byte) ',', 2, format, true);
-                } finally {
-                    ff.close(fd);
-                }
-            }
-
             //Thread.sleep(180000);
         });
     }

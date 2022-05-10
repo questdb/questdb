@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.FileSplitter;
+import io.questdb.cutlass.text.FileIndexer;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
@@ -1937,11 +1937,6 @@ public class SqlCompiler implements Closeable {
             long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
                 final CharSequence name = GenericLexer.assertNoDots(GenericLexer.unquote(model.getFileName().token), model.getFileName().position);
-                path.of(configuration.getInputRoot()).concat(name).$();
-                long fd = ff.openRO(path);
-                if (fd == -1) {
-                    throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
-                }
 
                 if (model.isParalell()) {
                     if (model.getTimestampColumn() == -1) {
@@ -1951,18 +1946,20 @@ public class SqlCompiler implements Closeable {
                         model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");//TODO: throw error 
                     }
 
-                    try {
-                        FileSplitter sorter = new FileSplitter(executionContext);
-                        DateFormat dateFormat = engine.getConfiguration().getTextConfiguration().getInputFormatConfiguration().getTimestampFormatFactory().get(model.getTimestampFormat());
-                        sorter.split(name, fd, PartitionBy.DAY, (byte) ',', model.getTimestampColumn(), dateFormat, true);
-                    } finally {
-                        ff.close(fd);
-                    }
-
+                    FileIndexer indexer = new FileIndexer(executionContext);
+                    DateFormat dateFormat = engine.getConfiguration().getTextConfiguration().getInputFormatConfiguration().getTimestampFormatFactory().get(model.getTimestampFormat());
+                    indexer.of(PartitionBy.DAY, (byte) ',', model.getTimestampColumn(), dateFormat, true);
+                    indexer.process(name);
                     return;
                 }
 
+                path.of(configuration.getInputRoot()).concat(name).$();
+                long fd = ff.openRO(path);
                 try {
+                    if (fd == -1) {
+                        throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
+                    }
+
                     long fileLen = ff.length(fd);
                     long n = ff.read(fd, buf, len, 0);
                     if (n > 0) {
