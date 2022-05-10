@@ -102,6 +102,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public boolean hasDescendingOrder() {
+        return masterFactory.hasDescendingOrder();
+    }
+
+    @Override
     public boolean supportsUpdateRowId(CharSequence tableName) {
         return masterFactory.supportsUpdateRowId(tableName);
     }

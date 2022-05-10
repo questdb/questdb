@@ -269,7 +269,7 @@ public class OrderByWithFilterTest extends AbstractGriffinTest {
                         "1008\t2022-01-03T07:26:40.000000Z\t80\t800\n" +
                         "1010\t2022-01-02T01:00:00.000000Z\tNaN\t\n",
                 "select l + 1000 as l, ts, col1, col2 from trips where l > 7 order by ts desc limit 4",
-                null, null, true, false, true);
+                null, "ts###DESC", true, false, true);
 
         assertQuery("l\tts\tcol1\tcol2\n" +
                         "9\t2022-01-01T22:13:20.000000Z\tNaN\t\n" +

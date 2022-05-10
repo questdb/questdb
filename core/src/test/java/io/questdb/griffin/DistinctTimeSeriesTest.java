@@ -40,7 +40,7 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " rnd_symbol('msft','ibm','googl') sym," +
                             " round(rnd_double(0)*100, 3) amt," +
                             " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                             " rnd_boolean() b," +
@@ -92,7 +92,7 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " rnd_symbol('msft','ibm','googl') sym," +
                             " round(rnd_double(0)*100, 3) amt," +
                             " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                             " rnd_boolean() b," +
@@ -141,7 +141,7 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " rnd_symbol('msft','ibm','googl') sym," +
                         " timestamp_sequence(500000000000L,330000000L) ts" +
                         " from long_sequence(10)" +
                         ") timestamp (ts) partition by DAY",
@@ -150,5 +150,75 @@ public class DistinctTimeSeriesTest extends AbstractGriffinTest {
                 false,
                 false
         ));
+    }
+
+    @Test
+    public void testTimestampAscOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            String expected = "sym\tts\n" +
+                    "msft\t1970-01-06T18:53:20.000000Z\n" +
+                    "msft\t1970-01-06T18:58:50.000000Z\n" +
+                    "ibm\t1970-01-06T19:04:20.000000Z\n" +
+                    "googl\t1970-01-06T19:09:50.000000Z\n" +
+                    "googl\t1970-01-06T19:15:20.000000Z\n" +
+                    "googl\t1970-01-06T19:20:50.000000Z\n" +
+                    "googl\t1970-01-06T19:26:20.000000Z\n" +
+                    "ibm\t1970-01-06T19:31:50.000000Z\n" +
+                    "msft\t1970-01-06T19:37:20.000000Z\n" +
+                    "ibm\t1970-01-06T19:42:50.000000Z\n";
+            assertQuery(
+                    expected,
+                    "select distinct sym, ts from x",
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm','googl') sym," +
+                            " timestamp_sequence(500000000000L,330000000L) ts" +
+                            " from long_sequence(10)" +
+                            ") timestamp (ts) partition by DAY",
+                    "ts###ASC",
+                    // duplicate timestamp and symbol shouldn't change the result
+                    "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')",
+                    expected,
+                    true,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampDescOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            String expected = "sym\tts\n" +
+                    "ibm\t1970-01-06T19:42:50.000000Z\n" +
+                    "msft\t1970-01-06T19:37:20.000000Z\n" +
+                    "ibm\t1970-01-06T19:31:50.000000Z\n" +
+                    "googl\t1970-01-06T19:26:20.000000Z\n" +
+                    "googl\t1970-01-06T19:20:50.000000Z\n" +
+                    "googl\t1970-01-06T19:15:20.000000Z\n" +
+                    "googl\t1970-01-06T19:09:50.000000Z\n" +
+                    "ibm\t1970-01-06T19:04:20.000000Z\n" +
+                    "msft\t1970-01-06T18:58:50.000000Z\n" +
+                    "msft\t1970-01-06T18:53:20.000000Z\n";
+            assertQuery(
+                    expected,
+                    "select distinct sym, ts from (x order by ts desc)",
+                    "create table x as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm','googl') sym," +
+                            " timestamp_sequence(500000000000L,330000000L) ts" +
+                            " from long_sequence(10)" +
+                            ") timestamp (ts) partition by DAY",
+                    "ts###DESC",
+                    // duplicate timestamp and symbol shouldn't change the result
+                    "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')",
+                    expected,
+                    true,
+                    false,
+                    false
+            );
+        });
     }
 }

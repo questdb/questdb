@@ -86,4 +86,9 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     public boolean supportsUpdateRowId(CharSequence tableName) {
         return baseFactory.supportsUpdateRowId(tableName);
     }
+
+    @Override
+    public boolean hasDescendingOrder() {
+        return baseFactory.hasDescendingOrder();
+    }
 }

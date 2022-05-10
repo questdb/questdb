@@ -125,6 +125,16 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'h';
     }
 
+    public static boolean isAtKeyword(CharSequence tok) {
+        if (tok.length() != 2) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i) | 32) == 't';
+    }
+
     public static boolean isBatch(CharSequence tok) {
         if (tok.length() != 5) {
             return false;
@@ -136,19 +146,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 't'
                 && (tok.charAt(i++) | 32) == 'c'
                 && (tok.charAt(i) | 32) == 'h';
-    }
-
-    public static boolean isBegin(CharSequence tok) {
-        if (tok.length() != 5) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'b'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'g'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i) | 32) == 'n';
     }
 
     public static boolean isBetweenKeyword(CharSequence tok) {
@@ -511,19 +508,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'i'
                 && (tok.charAt(i++) | 32) == 'l'
                 && (tok.charAt(i) | 32) == 'l';
-    }
-
-    public static boolean isFirstFunction(CharSequence tok) {
-        if (tok.length() != 5) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'f'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 'r'
-                && (tok.charAt(i++) | 32) == 's'
-                && (tok.charAt(i) | 32) == 't';
     }
 
     public static boolean isFirstKeyword(CharSequence tok) {
@@ -1140,22 +1124,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i++) | 32) == 'm'
                 && (tok.charAt(i) | 32) == 'e';
-    }
-
-    public static boolean isRollback(CharSequence tok) {
-        if (tok.length() != 8) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'r'
-                && (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i++) | 32) == 'b'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i) | 32) == 'k';
     }
 
     public static boolean isSampleKeyword(CharSequence tok) {
