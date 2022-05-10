@@ -112,7 +112,8 @@ public class Mig620 {
                 ObjList<String> columnNames = readColumNames(metaMem);
                 int columnCount = columnNames.size();
                 LongList columnTops = readColumnTops(columnCount, partitionBy, partitionSizeOffset, partitionTableSize, txMemory, ff, path, pathLen, columnNames);
-                long sizeBytes = writeColumnVersion(columnTops, columnCount, columnNames, cvMemory);
+                path.trimTo(pathLen);
+                long sizeBytes = writeColumnVersion(path, columnTops, columnCount, columnNames, cvMemory);
                 cvMemory.putLong(CV_OFFSET_OFFSET_A_64, CV_HEADER_SIZE);
                 cvMemory.putLong(CV_OFFSET_SIZE_A_64, sizeBytes);
                 cvMemory.jumpTo(CV_HEADER_SIZE + sizeBytes);
@@ -120,7 +121,7 @@ public class Mig620 {
         }
     }
 
-    private static long writeColumnVersion(LongList columnTops, int columnCount, ObjList<String> columnNames, MemoryMARW cvMemory) {
+    private static long writeColumnVersion(Path tablePath, LongList columnTops, int columnCount, ObjList<String> columnNames, MemoryMARW cvMemory) {
         int topStep = columnCount + 1;
         LongList columnVersions = new LongList();
         LongList maxPartitionIndexWithNoColumnList = new LongList();
@@ -143,7 +144,7 @@ public class Mig620 {
 
             if (maxPartitionIndexWithNoColumn != -1) {
                 if (maxPartitionIndexWithNoColumn + topStep >= columnTops.size()) {
-                    throw CairoException.instance(0).put("Column ").put(columnNames.getQuick(columnIndex)).put(" not present in any partition");
+                    throw CairoException.instance(0).put("Table ").put(tablePath).put(" column '").put(columnNames.getQuick(columnIndex)).put("' is not present in the last partition.");
                 }
                 long columnAddedPartitionTs = columnTops.getQuick(maxPartitionIndexWithNoColumn + topStep);
                 columnVersions.add(CV_COL_TOP_DEFAULT_PARTITION_MIG, columnIndex, -1L, columnAddedPartitionTs);
