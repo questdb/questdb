@@ -156,7 +156,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Override
     public void close() {
-        jitIRMem.close();
+        Misc.free(jitIRMem);
         Misc.free(reduceTaskPool);
     }
 
