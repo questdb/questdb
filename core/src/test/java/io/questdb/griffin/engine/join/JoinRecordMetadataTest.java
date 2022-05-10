@@ -116,6 +116,5 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
         Assert.assertEquals(1, metadata.getColumnIndexQuiet("A.y"));
         Assert.assertEquals(-1, metadata.getColumnIndexQuiet("m"));
         Assert.assertEquals(2, metadata.getColumnIndexQuiet("Z"));
-
     }
 }

@@ -3130,6 +3130,40 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testJoinWithDuplicateColumns() throws Exception {
+        compiler.compile(
+                "CREATE TABLE t1 (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+        compiler.compile(
+                "CREATE TABLE t2 (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+        compiler.compile("INSERT INTO t1(ts, x) VALUES (1, 1)", sqlExecutionContext);
+        compiler.compile("INSERT INTO t2(ts, x) VALUES (1, 2)", sqlExecutionContext);
+        engine.releaseInactive();
+
+        // 1.- the parser finds column t2.ts with an explicit alias TS (case does not matter - it is equiv. to ts)
+        // 2.- then it finds column t1.ts with no explicit alias, so it attempts to give it what it finds after the dot,
+        //     but alas that alias is taken, so it fabricates alias ts1
+        // 3.- then it finds column t1.ts again, but this time with an explicit alias ts1, which is taken by the prev.
+        //     column and therefore is a duplicate, so the reported error is correct -> Duplicate column 'ts1'
+        assertFailure(35, "Duplicate column 'ts1'",
+                "select t2.ts as \"TS\", t1.ts, t1.ts as ts1   from t1 asof join (select * from t2) t2;");
+
+        // TODO: this is broken:
+//        assertFailure(48, "Duplicate column 'ts1'",
+//                "select t2.ts as \"TS\", t1.*,  t2.ts as \"ts1\" from t1 asof join (select * from t2) t2;");
+    }
+
+
+    @Test
     public void testInsertAsSelectConvertibleList2() throws Exception {
         testInsertAsSelect("a\tb\tn\n" +
                         "SBEOUOJSH\t-2144581835\t\n" +

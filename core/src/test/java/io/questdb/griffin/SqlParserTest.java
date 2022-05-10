@@ -5889,8 +5889,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSelectDuplicateAlias() throws Exception {
+    public void testSelectDuplicateAlias0() throws Exception {
         assertSyntaxError("select x x, x x from long_sequence(1)", 14, "Duplicate column 'x'");
+    }
+
+    @Test
+    public void testSelectDuplicateAlias1() throws Exception {
+        assertSyntaxError(
+                "select x x, y x from tabula",
+                14,
+                "Duplicate column 'x'",
+                modelOf("tabula")
+                        .col("x", ColumnType.LONG)
+                        .col("y", ColumnType.LONG)
+        );
     }
 
     @Test
