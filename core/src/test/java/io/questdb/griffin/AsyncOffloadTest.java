@@ -244,10 +244,14 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                             sqlExecutionContext
                     );
 
+                    SqlCompiler[] compilers = new SqlCompiler[threadCount];
                     RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
 
                     for (int i = 0; i < threadCount; i++) {
-                        factories[i] = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                        // Each factory should use a dedicated compiler instance, so that they don't
+                        // share the same reduce task local pool in the SqlCodeGenerator.
+                        compilers[i] = new SqlCompiler(engine);
+                        factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
                         Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factories[i].usesCompiledFilter());
                     }
 
@@ -272,6 +276,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     }
 
                     haltLatch.await();
+
+                    Misc.free(compilers);
                     Misc.free(factories);
 
                     Assert.assertEquals(0, errors.get());
