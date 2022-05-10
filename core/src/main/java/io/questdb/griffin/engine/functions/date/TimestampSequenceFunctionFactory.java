@@ -86,6 +86,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStateless() {
+            return false;
+        }
+
+        @Override
         public void toTop() {
             next = start;
         }
@@ -118,6 +123,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             final long result = next;
             next += longIncrement.getLong(rec);
             return result + start.getLong(rec);
+        }
+
+        @Override
+        public boolean isStateless() {
+            return false;
         }
 
         @Override

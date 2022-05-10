@@ -163,4 +163,9 @@ public abstract class ByteFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.BYTE;
     }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
 }

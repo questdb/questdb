@@ -46,4 +46,9 @@ public abstract class GeoByteFunction extends AbstractGeoHashFunction {
     public long getGeoLong(Record rec) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
 }

@@ -162,4 +162,9 @@ public abstract class ShortFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.SHORT;
     }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
 }

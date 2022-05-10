@@ -31,4 +31,9 @@ public interface ConstantFunction extends Function {
     default boolean isConstant() {
         return true;
     }
+
+    @Override
+    default boolean isStateless() {
+        return true;
+    }
 }

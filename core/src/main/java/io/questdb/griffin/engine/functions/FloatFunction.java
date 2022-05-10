@@ -164,4 +164,9 @@ public abstract class FloatFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.FLOAT;
     }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
 }

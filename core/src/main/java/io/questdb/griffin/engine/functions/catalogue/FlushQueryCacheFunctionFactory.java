@@ -79,5 +79,10 @@ public class FlushQueryCacheFunctionFactory implements FunctionFactory {
                 }
             }
         }
+
+        @Override
+        public boolean isStateless() {
+            return true;
+        }
     }
 }

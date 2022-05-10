@@ -77,14 +77,6 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
         }
     }
 
-    private static boolean isNotNull(Long256 value) {
-        return value != null &&
-                value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NaN ||
-                value.getLong1() != Numbers.LONG_NaN ||
-                value.getLong2() != Numbers.LONG_NaN ||
-                value.getLong3() != Numbers.LONG_NaN);
-    }
-
     @Override
     public void pushValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
@@ -93,13 +85,13 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
     }
 
     @Override
-    public void setLong(MapValue mapValue, long value) {
-        mapValue.putLong(valueIndex, value);
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
     }
 
     @Override
-    public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
+    public void setLong(MapValue mapValue, long value) {
+        mapValue.putLong(valueIndex, value);
     }
 
     @Override
@@ -118,7 +110,20 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
     }
 
     @Override
+    public boolean isStateless() {
+        return false;
+    }
+
+    @Override
     public void toTop() {
         setIndex = 0;
+    }
+
+    private static boolean isNotNull(Long256 value) {
+        return value != null &&
+                value != Long256Impl.NULL_LONG256 && (value.getLong0() != Numbers.LONG_NaN ||
+                value.getLong1() != Numbers.LONG_NaN ||
+                value.getLong2() != Numbers.LONG_NaN ||
+                value.getLong3() != Numbers.LONG_NaN);
     }
 }

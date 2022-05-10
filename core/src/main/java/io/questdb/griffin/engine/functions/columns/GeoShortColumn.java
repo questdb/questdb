@@ -41,11 +41,6 @@ public class GeoShortColumn extends GeoShortFunction {
         this.columnIndex = columnIndex;
     }
 
-    @Override
-    public short getGeoShort(Record rec) {
-        return rec.getGeoShort(columnIndex);
-    }
-
     public static GeoShortColumn newInstance(int columnIndex, int columnType) {
         assert ColumnType.getGeoHashBits(columnType) >= ColumnType.GEOSHORT_MIN_BITS &&
                 ColumnType.getGeoHashBits(columnType) <= ColumnType.GEOSHORT_MAX_BITS;
@@ -59,6 +54,21 @@ public class GeoShortColumn extends GeoShortFunction {
         return new GeoShortColumn(columnIndex, columnType);
     }
 
+    @Override
+    public short getGeoShort(Record rec) {
+        return rec.getGeoShort(columnIndex);
+    }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
+
+    @TestOnly
+    int getColumnIndex() {
+        return columnIndex;
+    }
+
     static {
         int bits = ColumnType.GEOSHORT_MAX_BITS - ColumnType.GEOSHORT_MIN_BITS + 1;
         COLUMNS = new GeoShortColumn[STATIC_COLUMN_COUNT * bits];
@@ -68,10 +78,5 @@ public class GeoShortColumn extends GeoShortFunction {
                 COLUMNS[col * bits + bit - ColumnType.GEOSHORT_MIN_BITS] = new GeoShortColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
             }
         }
-    }
-
-    @TestOnly
-    int getColumnIndex() {
-        return columnIndex;
     }
 }

@@ -41,11 +41,6 @@ public class GeoLongColumn extends GeoLongFunction {
         this.columnIndex = columnIndex;
     }
 
-    @Override
-    public long getGeoLong(Record rec) {
-        return rec.getGeoLong(columnIndex);
-    }
-
     public static GeoLongColumn newInstance(int columnIndex, int columnType) {
         assert ColumnType.getGeoHashBits(columnType) >= ColumnType.GEOLONG_MIN_BITS &&
                 ColumnType.getGeoHashBits(columnType) <= ColumnType.GEOLONG_MAX_BITS;
@@ -59,6 +54,16 @@ public class GeoLongColumn extends GeoLongFunction {
         return new GeoLongColumn(columnIndex, columnType);
     }
 
+    @Override
+    public long getGeoLong(Record rec) {
+        return rec.getGeoLong(columnIndex);
+    }
+
+    @TestOnly
+    int getColumnIndex() {
+        return columnIndex;
+    }
+
     static {
         int bits = ColumnType.GEOLONG_MAX_BITS - ColumnType.GEOLONG_MIN_BITS + 1;
         COLUMNS = new GeoLongColumn[STATIC_COLUMN_COUNT * bits];
@@ -68,10 +73,5 @@ public class GeoLongColumn extends GeoLongFunction {
                 COLUMNS[col * bits + bit - ColumnType.GEOLONG_MIN_BITS] = new GeoLongColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
             }
         }
-    }
-
-    @TestOnly
-    int getColumnIndex() {
-        return columnIndex;
     }
 }

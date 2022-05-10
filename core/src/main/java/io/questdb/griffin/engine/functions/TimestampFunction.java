@@ -167,4 +167,9 @@ public abstract class TimestampFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.TIMESTAMP;
     }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
 }

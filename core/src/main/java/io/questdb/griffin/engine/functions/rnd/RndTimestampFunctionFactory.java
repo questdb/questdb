@@ -87,6 +87,11 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStateless() {
+            return false;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
         }

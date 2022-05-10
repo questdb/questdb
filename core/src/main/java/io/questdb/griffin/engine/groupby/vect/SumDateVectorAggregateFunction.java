@@ -122,4 +122,9 @@ public class SumDateVectorAggregateFunction extends DateFunction implements Vect
         }
         return Numbers.LONG_NaN;
     }
+
+    @Override
+    public boolean isStateless() {
+        return false;
+    }
 }

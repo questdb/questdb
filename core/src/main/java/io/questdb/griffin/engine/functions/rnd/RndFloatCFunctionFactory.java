@@ -73,5 +73,10 @@ public class RndFloatCFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
         }
+
+        @Override
+        public boolean isStateless() {
+            return false;
+        }
     }
 }

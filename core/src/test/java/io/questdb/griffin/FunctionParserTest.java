@@ -628,6 +628,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             public boolean isConstant() {
                 return true;
             }
+
+            @Override
+            public boolean isStateless() {
+                return true;
+            }
         };
 
         functions.add(new FunctionFactory() {

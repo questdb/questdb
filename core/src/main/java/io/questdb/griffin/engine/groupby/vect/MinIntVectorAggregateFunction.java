@@ -120,4 +120,9 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
         final int value = accumulator.intValue();
         return value == Integer.MAX_VALUE ? Numbers.INT_NaN : value;
     }
+
+    @Override
+    public boolean isStateless() {
+        return false;
+    }
 }

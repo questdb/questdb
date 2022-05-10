@@ -146,4 +146,9 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
         }
         return Double.NaN;
     }
+
+    @Override
+    public boolean isStateless() {
+        return false;
+    }
 }

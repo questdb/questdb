@@ -64,6 +64,11 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default boolean isStateless() {
+        return getLeft().isStateless() && getCenter().isStateless() && getRight().isStateless();
+    }
+
+    @Override
     default void toTop() {
         getLeft().toTop();
         getCenter().toTop();

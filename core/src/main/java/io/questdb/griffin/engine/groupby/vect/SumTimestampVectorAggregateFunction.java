@@ -122,4 +122,9 @@ public class SumTimestampVectorAggregateFunction extends TimestampFunction imple
         }
         return Numbers.LONG_NaN;
     }
+
+    @Override
+    public boolean isStateless() {
+        return false;
+    }
 }

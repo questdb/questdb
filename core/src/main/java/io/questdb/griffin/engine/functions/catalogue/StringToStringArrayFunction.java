@@ -145,26 +145,6 @@ class StringToStringArrayFunction extends StrArrayFunction {
         }
     }
 
-    private int findArrayOpeningBracketIndex(int position, CharSequence type) throws SqlException {
-        int charIndex = 0;
-        for (int len = type.length(); charIndex < len; charIndex++) {
-            char ch = type.charAt(charIndex);
-            if (ch == '{') {
-                return charIndex;
-            }
-            if (!GenericLexer.WHITESPACE_CH.contains(ch)) {
-                break;
-            }
-        }
-        throw SqlException.$(position, "array must start with '{'");
-    }
-
-    private void commit(@NotNull CharSequence type, int stringStartIndex, int stringEndIndex, StringSink sink) {
-        sink.put(type, stringStartIndex, stringEndIndex + 1);
-        items.add(Chars.toString(sink));
-        sink.clear();
-    }
-
     @Override
     public int getArrayLength() {
         return items.size();
@@ -193,5 +173,30 @@ class StringToStringArrayFunction extends StrArrayFunction {
     @Override
     public boolean isConstant() {
         return true;
+    }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
+
+    private void commit(@NotNull CharSequence type, int stringStartIndex, int stringEndIndex, StringSink sink) {
+        sink.put(type, stringStartIndex, stringEndIndex + 1);
+        items.add(Chars.toString(sink));
+        sink.clear();
+    }
+
+    private int findArrayOpeningBracketIndex(int position, CharSequence type) throws SqlException {
+        int charIndex = 0;
+        for (int len = type.length(); charIndex < len; charIndex++) {
+            char ch = type.charAt(charIndex);
+            if (ch == '{') {
+                return charIndex;
+            }
+            if (!GenericLexer.WHITESPACE_CH.contains(ch)) {
+                break;
+            }
+        }
+        throw SqlException.$(position, "array must start with '{'");
     }
 }

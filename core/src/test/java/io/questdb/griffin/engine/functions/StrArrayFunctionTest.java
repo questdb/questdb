@@ -56,6 +56,11 @@ public class StrArrayFunctionTest {
         public int getStrLen(Record rec, int arrayIndex) {
             return getStr(rec, arrayIndex).length();
         }
+
+        @Override
+        public boolean isStateless() {
+            return true;
+        }
     };
 
     @Test(expected = UnsupportedOperationException.class)
@@ -96,6 +101,11 @@ public class StrArrayFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetByte() {
         function.getByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetChar() {
+        function.getChar(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -156,10 +166,5 @@ public class StrArrayFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetChar() {
-        function.getChar(null);
     }
 }
