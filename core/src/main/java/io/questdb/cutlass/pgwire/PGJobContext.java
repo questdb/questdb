@@ -90,5 +90,6 @@ public class PGJobContext implements Closeable {
 
     public void flushQueryCache() {
         typesAndSelectCache.clear();
+        typesAndUpdateCache.clear();
     }
 }

@@ -24,25 +24,16 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.mp.MPSequence;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.Statement;
 
 public class PGFlushQueryCacheTest extends BasePGTest {
-
-    @BeforeClass
-    public static void setUpStatic() {
-        queryCacheEventQueueCapacity = 1;
-        AbstractGriffinTest.setUpStatic();
-    }
-
     @Test
     public void testFlushQueryCache() throws Exception {
         assertMemoryLeak(() -> {
@@ -73,23 +64,57 @@ public class PGFlushQueryCacheTest extends BasePGTest {
 
                 statement.execute("SELECT flush_query_cache()");
 
-                // We need to wait until PG Wire workers process the message. To do so, we simply try to
-                // publish another query flush event. Since we set the queue size to 1, we're able to
-                // publish only when all consumers (PG Wire workers) have processed the previous event.
-                Assert.assertEquals(1, configuration.getQueryCacheEventQueueCapacity());
-                final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
-                pubSeq.waitForNext();
-
-                // Sequence set to done before actual flush performed.
-                // Give max 30 seconds for the flush to execute
-                long memAfterFlush = memAfterJoin;
-                for (int i = 0; i < 1000 && memAfterFlush >= memAfterJoin; i++) {
-                    Os.sleep(30);
-                    memAfterFlush = Unsafe.getMemUsed();
-                }
-
-                Assert.assertTrue("flush_query_cache() should release native memory", memAfterFlush < memAfterJoin);
+                checkQueryCacheFlushed(memAfterJoin);
             }
         });
+    }
+
+    @Test
+    public void testFlushUpdateCache() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    PGWireServer ignored = createPGServer(2);
+                    Connection connection = getConnection(false, true);
+                    Statement statement = connection.createStatement()
+            ) {
+                statement.executeUpdate("CREATE TABLE test\n" +
+                        "AS(\n" +
+                        "    SELECT\n" +
+                        "        x id,\n" +
+                        "        timestamp_sequence(0L, 100000L) ts\n" +
+                        "    FROM long_sequence(1000) x)\n" +
+                        "TIMESTAMP(ts)\n" +
+                        "PARTITION BY DAY");
+
+                long memInitial = Unsafe.getMemUsed();
+
+                String sql = "UPDATE test t1 set id = ? \n" +
+                        "FROM test t2 \n" +
+                        "WHERE t1.id = t2.id";
+
+                try (PreparedStatement updateSt = connection.prepareStatement(sql)) {
+                    updateSt.setLong(1, 1L);
+                    updateSt.execute();
+                }
+
+                long memAfterJoin = Unsafe.getMemUsed();
+                Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
+
+                statement.execute("SELECT flush_query_cache()");
+
+                checkQueryCacheFlushed(memAfterJoin);
+            }
+        });
+    }
+
+    private void checkQueryCacheFlushed(long memAfterJoin) {
+        // Give max 30 seconds for the flush to execute
+        long memAfterFlush = memAfterJoin;
+        for (int i = 0; i < 1000 && memAfterFlush >= memAfterJoin; i++) {
+            Os.sleep(30);
+            memAfterFlush = Unsafe.getMemUsed();
+        }
+
+        Assert.assertTrue("flush_query_cache() should release native memory", memAfterFlush < memAfterJoin);
     }
 }

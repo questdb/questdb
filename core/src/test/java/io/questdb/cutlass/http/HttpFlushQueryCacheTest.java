@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.mp.MPSequence;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -92,7 +93,14 @@ public class HttpFlushQueryCacheTest {
             final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
             pubSeq.waitForNext();
 
-            long memAfterFlush = Unsafe.getMemUsed();
+            // Sequence set to done before actual flush performed.
+            // Give max 30 seconds for the flush to execute
+            long memAfterFlush = memAfterJoin;
+            for (int i = 0; i < 1000 && memAfterFlush >= memAfterJoin; i++) {
+                Os.sleep(30);
+                memAfterFlush = Unsafe.getMemUsed();
+            }
+
             Assert.assertTrue("flush_query_cache() should release native memory", memAfterFlush < memAfterJoin);
         });
     }
