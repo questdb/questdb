@@ -681,8 +681,8 @@ public class DispatcherWriterQueueTest {
                                             .withStatementTimeout(statementTimeout)
                                             .executeWithStandardHeaders(
                                                     "GET /query?query=" + httpUpdateQuery + " HTTP/1.1\r\n",
-                                                    "0e\r\n" +
-                                                            "{\"updated\":" + updatedCount + "}\n" +
+                                                    "19\r\n" +
+                                                            "{\"ddl\":\"OK\",\"updated\":" + updatedCount + "}\n" +
                                                             "\r\n" +
                                                             "00\r\n" +
                                                             "\r\n"

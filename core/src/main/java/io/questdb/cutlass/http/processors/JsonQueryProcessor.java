@@ -196,7 +196,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
         header(socket, keepAliveHeader, 200);
-        socket.put('{').putQuoted("updated").put(':').put(updateRecords).put('}').put('\n');
+        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put(',').putQuoted("updated").put(':').put(updateRecords).put('}').put('\n');
         socket.sendChunk(true);
         readyForNextRequest(context);
     }
