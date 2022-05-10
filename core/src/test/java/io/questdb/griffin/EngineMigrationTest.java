@@ -403,10 +403,10 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         }
         if (withColTops) {
             assertColTops();
-            assertMissingPartitions();
         }
         if (withColTopO3) {
             assertColTopsO3();
+            assertMissingPartitions();
         }
     }
 
