@@ -93,6 +93,18 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNoLimitSymbolBindVariableFilter() throws Exception {
+        testNoLimitSymbolBindVariableFilter(SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
+    public void testNoLimitSymbolBindVariableFilterJit() throws Exception {
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        testNoLimitSymbolBindVariableFilter(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
     public void testPositiveLimit() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -278,6 +290,27 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     true,
                     sqlExecutionContext,
                     false
+            );
+        });
+    }
+
+    private void testNoLimitSymbolBindVariableFilter(int jitMode) throws Exception {
+        withPool((engine, compiler, sqlExecutionContext) -> {
+            sqlExecutionContext.setJitMode(jitMode);
+            compiler.compile("create table x as (select rnd_symbol('A','B','C') s, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "C");
+
+            assertQuery(
+                    compiler,
+                    "count\n" +
+                            "667997\n",
+                    "select count(*) from x where s ~ $1",
+                    null,
+                    false,
+                    sqlExecutionContext,
+                    true
             );
         });
     }
