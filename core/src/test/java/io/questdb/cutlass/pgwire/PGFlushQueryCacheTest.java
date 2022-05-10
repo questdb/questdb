@@ -80,10 +80,11 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                 final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
                 pubSeq.waitForNext();
 
-                // Sequence set to done before actual flush performed. Wait a bit to make sure there is time for the flush to execute
+                // Sequence set to done before actual flush performed.
+                // Give max 30 seconds for the flush to execute
                 long memAfterFlush = memAfterJoin;
-                for (int i = 0; i < 100 && memAfterFlush >= memAfterJoin; i++) {
-                    Os.sleep(5);
+                for (int i = 0; i < 1000 && memAfterFlush >= memAfterJoin; i++) {
+                    Os.sleep(30);
                     memAfterFlush = Unsafe.getMemUsed();
                 }
 

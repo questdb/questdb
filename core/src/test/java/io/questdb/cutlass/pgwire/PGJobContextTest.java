@@ -2903,7 +2903,6 @@ nodejs code:
 
     @Test
     public void testInvalidateWriterBetweenInserts() throws Exception {
-
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer ignored = createPGServer(2);
@@ -2967,9 +2966,12 @@ nodejs code:
                         "0,1\n" +
                         "1,2\n" +
                         "2,3\n";
-                Statement statement = connection.createStatement();
-                ResultSet rs = statement.executeQuery("select * from test_batch");
-                assertResultSet(expected, sink, rs);
+                try (
+                        Statement statement = connection.createStatement();
+                        ResultSet rs = statement.executeQuery("select * from test_batch")
+                ) {
+                    assertResultSet(expected, sink, rs);
+                }
             }
         });
     }
@@ -3975,12 +3977,13 @@ nodejs code:
                     final PGWireServer ignored = createPGServer(2);
                     final Connection connection = getConnection(false, false);
                     final Statement statement = connection.createStatement();
-                    final PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")
             ) {
                 statement.execute("create table tab(ts timestamp, value double)");
-                insert.setNull(1, Types.NULL);
-                insert.setNull(2, Types.NULL);
-                insert.executeUpdate();
+                try (PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")) {
+                    insert.setNull(1, Types.NULL);
+                    insert.setNull(2, Types.NULL);
+                    insert.executeUpdate();
+                }
                 try (ResultSet rs = statement.executeQuery("select null, ts, value from tab where value = null")) {
                     StringSink sink = new StringSink();
                     String expected = "null[VARCHAR],ts[TIMESTAMP],value[DOUBLE]\n" +
