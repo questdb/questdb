@@ -686,7 +686,13 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             // max could be -1 meaning we have nulls; max can also be 0, meaning only one symbol value
             // basing boundary on 2 we convert -1 tp 1 and 0 to 2
             int key = rnd.nextInt(max + 1) - 1;
-            TestUtils.assertEquals(symbolTableValueSnapshot[symbolColIndex][key+1], symbolTable.valueOf(key));
+            String expected = symbolTableValueSnapshot[symbolColIndex][key+1];
+            TestUtils.assertEquals(expected, symbolTable.valueOf(key));
+            // now test static symbol table
+            if (expected != null && symbolTable instanceof StaticSymbolTable) {
+                StaticSymbolTable staticSymbolTable = (StaticSymbolTable) symbolTable;
+                Assert.assertEquals(key, staticSymbolTable.keyOf(expected));
+            }
         }
     }
 
