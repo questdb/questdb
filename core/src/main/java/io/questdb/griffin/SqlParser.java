@@ -1209,8 +1209,10 @@ public final class SqlParser {
                     throw err(lexer, "missing column name");
                 }
 
-                if (!model.addColumn(GenericLexer.immutableOf(GenericLexer.unquote(tok)), lexer.lastTokenPosition())) {
-                    throw duplicateColumnException(lexer.lastTokenPosition(), tok);
+                sink.clear();
+                Chars.toLowerCase(GenericLexer.unquote(tok), sink);
+                if (!model.addColumn(sink, lexer.lastTokenPosition())) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "Duplicate column '").put(sink).put('\'');
                 }
 
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
