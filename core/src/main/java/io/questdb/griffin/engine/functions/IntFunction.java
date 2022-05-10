@@ -164,9 +164,4 @@ public abstract class IntFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.INT;
     }
-
-    @Override
-    public boolean isStateless() {
-        return true;
-    }
 }

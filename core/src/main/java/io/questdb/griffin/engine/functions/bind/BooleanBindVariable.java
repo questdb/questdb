@@ -46,4 +46,9 @@ public class BooleanBindVariable extends BooleanFunction implements ScalarFuncti
     public boolean isRuntimeConstant() {
         return true;
     }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
 }

@@ -59,6 +59,11 @@ public class GeoByteColumn extends GeoByteFunction {
         return rec.getGeoByte(columnIndex);
     }
 
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
+
     @TestOnly
     int getColumnIndex() {
         return columnIndex;

@@ -36,6 +36,11 @@ public class ShortFunctionTest {
         public short getShort(Record rec) {
             return 49;
         }
+
+        @Override
+        public boolean isStateless() {
+            return true;
+        }
     };
 
     @Test(expected = UnsupportedOperationException.class)

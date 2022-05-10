@@ -354,12 +354,22 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     public byte getGeoByte(Record rec) {
                         return (byte) hash1;
                     }
+
+                    @Override
+                    public boolean isStateless() {
+                        return true;
+                    }
                 };
             case ColumnType.GEOSHORT:
                 return new EasyGeoShortFunction(typep1, isConstant) {
                     @Override
                     public short getGeoShort(Record rec) {
                         return (short) hash1;
+                    }
+
+                    @Override
+                    public boolean isStateless() {
+                        return true;
                     }
                 };
             case ColumnType.GEOINT:
@@ -368,6 +378,11 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     public int getGeoInt(Record rec) {
                         return (int) hash1;
                     }
+
+                    @Override
+                    public boolean isStateless() {
+                        return true;
+                    }
                 };
 
             case ColumnType.GEOLONG:
@@ -375,6 +390,11 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     @Override
                     public long getGeoLong(Record rec) {
                         return hash1;
+                    }
+
+                    @Override
+                    public boolean isStateless() {
+                        return true;
                     }
                 };
         }

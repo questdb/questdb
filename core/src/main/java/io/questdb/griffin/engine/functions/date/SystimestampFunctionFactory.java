@@ -57,5 +57,10 @@ public class SystimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             return clock.getTicks();
         }
+
+        @Override
+        public boolean isStateless() {
+            return true;
+        }
     }
 }

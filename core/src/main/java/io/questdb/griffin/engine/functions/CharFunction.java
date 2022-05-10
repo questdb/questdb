@@ -186,9 +186,4 @@ public abstract class CharFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.CHAR;
     }
-
-    @Override
-    public boolean isStateless() {
-        return true;
-    }
 }

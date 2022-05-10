@@ -37,6 +37,11 @@ public class DateFunctionTest {
         public long getDate(Record rec) {
             return 163;
         }
+
+        @Override
+        public boolean isStateless() {
+            return true;
+        }
     };
 
     @Test(expected = UnsupportedOperationException.class)
@@ -110,6 +115,11 @@ public class DateFunctionTest {
             @Override
             public long getDate(Record rec) {
                 return Numbers.LONG_NaN;
+            }
+
+            @Override
+            public boolean isStateless() {
+                return true;
             }
         };
         Assert.assertEquals(Numbers.LONG_NaN, function.getTimestamp(null));

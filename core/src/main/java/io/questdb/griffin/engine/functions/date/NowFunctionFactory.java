@@ -65,6 +65,11 @@ public class NowFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isStateless() {
+            return true;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             executionContext.initNow();
             context = executionContext;

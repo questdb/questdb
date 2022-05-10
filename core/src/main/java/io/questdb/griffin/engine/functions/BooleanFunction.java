@@ -167,9 +167,4 @@ public abstract class BooleanFunction implements ScalarFunction {
     private String getStr0(Record rec) {
         return getBool(rec) ? "true" : "false";
     }
-
-    @Override
-    public boolean isStateless() {
-        return true;
-    }
 }

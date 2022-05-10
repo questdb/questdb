@@ -52,6 +52,11 @@ public class ByteColumn extends ByteFunction implements ScalarFunction {
         return rec.getByte(columnIndex);
     }
 
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
+
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
 

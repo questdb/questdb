@@ -51,6 +51,11 @@ public class TimestampColumn extends TimestampFunction implements ScalarFunction
         return rec.getTimestamp(columnIndex);
     }
 
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
+
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {

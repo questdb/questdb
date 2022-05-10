@@ -164,9 +164,4 @@ public abstract class LongFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.LONG;
     }
-
-    @Override
-    public boolean isStateless() {
-        return true;
-    }
 }

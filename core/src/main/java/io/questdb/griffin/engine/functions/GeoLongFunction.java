@@ -46,9 +46,4 @@ public abstract class GeoLongFunction extends AbstractGeoHashFunction {
     public int getGeoInt(Record rec) {
         throw new UnsupportedOperationException();
     }
-
-    @Override
-    public boolean isStateless() {
-        return true;
-    }
 }

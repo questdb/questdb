@@ -165,9 +165,4 @@ public abstract class DateFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.DATE;
     }
-
-    @Override
-    public boolean isStateless() {
-        return true;
-    }
 }

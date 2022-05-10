@@ -35,6 +35,11 @@ public class DoubleFunctionTest {
         public double getDouble(Record rec) {
             return 0;
         }
+
+        @Override
+        public boolean isStateless() {
+            return true;
+        }
     };
 
     @Test(expected = UnsupportedOperationException.class)

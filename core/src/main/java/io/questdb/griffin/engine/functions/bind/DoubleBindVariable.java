@@ -46,4 +46,9 @@ class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutab
     public boolean isRuntimeConstant() {
         return true;
     }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
 }

@@ -163,9 +163,4 @@ public abstract class DoubleFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.DOUBLE;
     }
-
-    @Override
-    public boolean isStateless() {
-        return true;
-    }
 }

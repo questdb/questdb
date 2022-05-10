@@ -47,4 +47,9 @@ class DateBindVariable extends DateFunction implements ScalarFunction, Mutable {
     public boolean isRuntimeConstant() {
         return true;
     }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
 }

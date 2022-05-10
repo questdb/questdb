@@ -46,4 +46,9 @@ class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable {
     public boolean isRuntimeConstant() {
         return true;
     }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
 }

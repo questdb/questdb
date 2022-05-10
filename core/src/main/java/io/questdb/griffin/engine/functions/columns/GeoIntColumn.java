@@ -59,6 +59,11 @@ public class GeoIntColumn extends GeoIntFunction {
         return rec.getGeoInt(columnIndex);
     }
 
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
+
     @TestOnly
     int getColumnIndex() {
         return columnIndex;

@@ -51,6 +51,11 @@ public class BooleanColumn extends BooleanFunction implements ScalarFunction {
         return rec.getBool(columnIndex);
     }
 
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
+
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {

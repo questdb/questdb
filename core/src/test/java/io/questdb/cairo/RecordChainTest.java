@@ -153,6 +153,11 @@ public class RecordChainTest extends AbstractCairoTest {
                 public int getInt(Record rec) {
                     return (int) cols[2];
                 }
+
+                @Override
+                public boolean isStateless() {
+                    return true;
+                }
             });
 
             final VirtualRecord rec = new VirtualRecord(funcs);
