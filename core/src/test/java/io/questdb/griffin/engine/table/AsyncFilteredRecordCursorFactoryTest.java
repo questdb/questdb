@@ -69,14 +69,14 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testNoLimit() throws Exception {
-        testNoLimit(true, SqlJitMode.JIT_MODE_DISABLED, io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class);
+        testNoLimit(true, SqlJitMode.JIT_MODE_DISABLED, AsyncFilteredRecordCursorFactory.class);
     }
 
     @Test
     public void testNoLimitJit() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
-        testNoLimit(true, SqlJitMode.JIT_MODE_ENABLED, io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.class);
+        testNoLimit(true, SqlJitMode.JIT_MODE_ENABLED, AsyncJitFilteredRecordCursorFactory.class);
     }
 
     @Test
@@ -84,24 +84,24 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
         // JIT should be ignored since it's only supported for parallel filters.
-        testNoLimit(false, SqlJitMode.JIT_MODE_ENABLED, io.questdb.griffin.engine.table.FilteredRecordCursorFactory.class);
+        testNoLimit(false, SqlJitMode.JIT_MODE_ENABLED, FilteredRecordCursorFactory.class);
     }
 
     @Test
     public void testNoLimitDisabledParallelFilterNonJit() throws Exception {
-        testNoLimit(false, SqlJitMode.JIT_MODE_DISABLED, io.questdb.griffin.engine.table.FilteredRecordCursorFactory.class);
+        testNoLimit(false, SqlJitMode.JIT_MODE_DISABLED, FilteredRecordCursorFactory.class);
     }
 
     @Test
     public void testSymbolEqualsBindVariableFilter() throws Exception {
-        testSymbolEqualsBindVariableFilter(SqlJitMode.JIT_MODE_DISABLED, io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class);
+        testSymbolEqualsBindVariableFilter(SqlJitMode.JIT_MODE_DISABLED, AsyncFilteredRecordCursorFactory.class);
     }
 
     @Test
     public void testSymbolEqualsBindVariableFilterJit() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
-        testSymbolEqualsBindVariableFilter(SqlJitMode.JIT_MODE_ENABLED, io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.class);
+        testSymbolEqualsBindVariableFilter(SqlJitMode.JIT_MODE_ENABLED, AsyncJitFilteredRecordCursorFactory.class);
     }
 
     @Test
@@ -113,7 +113,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
             final String sql = "select * from x where s ~ $1 limit 10";
             try (RecordCursorFactory f = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.assertEquals(io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class, f.getClass());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
             }
 
             bindVariableService.clear();
@@ -152,7 +152,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
             final String sql = "select * from x where s in ('C','D') limit 10";
             try (final RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.assertEquals(io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class, factory.getClass());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, factory.getClass());
 
                 assertCursor(
                         "s\tt\n",
@@ -164,21 +164,21 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                         sqlExecutionContext
                 );
 
-                compiler.compile("insert into x select rnd_symbol('C','D') s, timestamp_sequence(1000000000, 100000) from long_sequence(100)", sqlExecutionContext);
+                compiler.compile("insert into x select rnd_symbol('C','D') s, timestamp_sequence(100000000000, 100000) from long_sequence(100)", sqlExecutionContext);
 
                 // Verify that all symbol tables (original and views) are refreshed to include the new symbols.
                 assertCursor(
                         "s\tt\n" +
-                                "C\t1970-01-01T00:16:40.000000Z\n" +
-                                "C\t1970-01-01T00:16:40.100000Z\n" +
-                                "D\t1970-01-01T00:16:40.200000Z\n" +
-                                "C\t1970-01-01T00:16:40.300000Z\n" +
-                                "D\t1970-01-01T00:16:40.400000Z\n" +
-                                "C\t1970-01-01T00:16:40.500000Z\n" +
-                                "D\t1970-01-01T00:16:40.600000Z\n" +
-                                "D\t1970-01-01T00:16:40.700000Z\n" +
-                                "C\t1970-01-01T00:16:40.800000Z\n" +
-                                "D\t1970-01-01T00:16:40.900000Z\n",
+                                "C\t1970-01-02T03:46:40.000000Z\n" +
+                                "C\t1970-01-02T03:46:40.100000Z\n" +
+                                "D\t1970-01-02T03:46:40.200000Z\n" +
+                                "C\t1970-01-02T03:46:40.300000Z\n" +
+                                "D\t1970-01-02T03:46:40.400000Z\n" +
+                                "C\t1970-01-02T03:46:40.500000Z\n" +
+                                "D\t1970-01-02T03:46:40.600000Z\n" +
+                                "D\t1970-01-02T03:46:40.700000Z\n" +
+                                "C\t1970-01-02T03:46:40.800000Z\n" +
+                                "D\t1970-01-02T03:46:40.900000Z\n",
                         factory,
                         true,
                         true,
@@ -199,7 +199,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575 limit 5";
             try (RecordCursorFactory f = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.assertEquals(io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class, f.getClass());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
             }
 
             assertQuery(compiler,
@@ -244,7 +244,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575 limit $1";
             try (RecordCursorFactory f = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.assertEquals(io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class, f.getClass());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
             }
 
             sqlExecutionContext.getBindVariableService().setLong(0, 3);
@@ -311,7 +311,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "x where a > 0.345747032 and a < 0.34575 limit -5";
             try (RecordCursorFactory f = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.assertEquals(io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class, f.getClass());
+                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getClass());
             }
 
             assertQuery(compiler,
@@ -335,12 +335,12 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     public void testPageFrameSequenceJit() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
-        testPageFrameSequence(SqlJitMode.JIT_MODE_ENABLED, io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.class);
+        testPageFrameSequence(SqlJitMode.JIT_MODE_ENABLED, AsyncJitFilteredRecordCursorFactory.class);
     }
 
     @Test
     public void testPageFrameSequenceNonJit() throws Exception {
-        testPageFrameSequence(SqlJitMode.JIT_MODE_DISABLED, io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory.class);
+        testPageFrameSequence(SqlJitMode.JIT_MODE_DISABLED, AsyncFilteredRecordCursorFactory.class);
     }
 
     @Test
