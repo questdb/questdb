@@ -43,7 +43,7 @@ import java.io.Closeable;
 public class PageFrameReduceJob implements Job, Closeable {
 
     private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);
-    private final PageAddressCacheRecord record;
+    private PageAddressCacheRecord record;
     private final int[] shards;
     private final int shardCount;
     private final MessageBus messageBus;
@@ -183,6 +183,7 @@ public class PageFrameReduceJob implements Job, Closeable {
     @Override
     public void close() {
         circuitBreaker = Misc.free(circuitBreaker);
+        record = Misc.free(record);
     }
 
     @Override

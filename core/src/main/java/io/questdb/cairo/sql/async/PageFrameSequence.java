@@ -153,6 +153,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     @Override
     public void close() {
         Misc.free(circuitBreakers);
+        Misc.free(records);
     }
 
     public PageFrameSequence<T> of(

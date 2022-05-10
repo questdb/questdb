@@ -84,6 +84,8 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
         Misc.free(filterAtom);
         Misc.free(frameSequence);
         Misc.free(negativeLimitRows);
+        cursor.freeRecords();
+        negativeLimitCursor.freeRecords();
     }
 
     @Override

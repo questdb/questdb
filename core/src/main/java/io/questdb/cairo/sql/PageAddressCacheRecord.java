@@ -32,7 +32,9 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
-public class PageAddressCacheRecord implements Record {
+import java.io.Closeable;
+
+public class PageAddressCacheRecord implements Record, Closeable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
     private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
@@ -61,6 +63,11 @@ public class PageAddressCacheRecord implements Record {
     }
 
     public PageAddressCacheRecord() {
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(symbolTableCache);
     }
 
     @Override
@@ -284,15 +291,15 @@ public class PageAddressCacheRecord implements Record {
     public void of(SymbolTableSource symbolTableSource, PageAddressCache pageAddressCache) {
         this.symbolTableSource = symbolTableSource;
         if (symbolTableSource instanceof PageFrameCursor) {
-            this.cursor = (PageFrameCursor) symbolTableSource;
+            cursor = (PageFrameCursor) symbolTableSource;
         } else {
-            this.cursor = null;
+            cursor = null;
         }
         this.pageAddressCache = pageAddressCache;
-        this.frameIndex = 0;
-        this.rowIndex = 0;
-        // TODO check if we need to close() any SymbolTable impl that we use.
-        this.symbolTableCache.clear();
+        frameIndex = 0;
+        rowIndex = 0;
+        Misc.freeObjList(symbolTableCache);
+        symbolTableCache.clear();
     }
 
     public void setFrameIndex(int frameIndex) {

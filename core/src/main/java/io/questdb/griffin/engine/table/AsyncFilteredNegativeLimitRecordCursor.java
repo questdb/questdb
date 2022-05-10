@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 
@@ -83,6 +84,11 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
             frameSequence.await();
         }
         frameSequence.clear();
+    }
+
+    public void freeRecords() {
+        Misc.free(record);
+        Misc.free(recordB);
     }
 
     @Override
