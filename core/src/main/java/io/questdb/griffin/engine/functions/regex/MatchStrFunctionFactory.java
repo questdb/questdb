@@ -99,6 +99,11 @@ public class MatchStrFunctionFactory implements FunctionFactory {
             CharSequence cs = getArg().getStr(rec);
             return cs != null && matcher.reset(cs).find();
         }
+
+        @Override
+        public boolean isReadoutStateless() {
+            return false;
+        }
     }
 
     private static class MatchRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction {
@@ -131,6 +136,11 @@ public class MatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isRuntimeConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isReadoutStateless() {
             return false;
         }
 

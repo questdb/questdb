@@ -75,11 +75,11 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default boolean isStateless() {
+    default boolean isReadoutStateless() {
         final ObjList<Function> args = getArgs();
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
-            if (!function.isStateless()) {
+            if (!function.isReadoutStateless()) {
                 return false;
             }
         }

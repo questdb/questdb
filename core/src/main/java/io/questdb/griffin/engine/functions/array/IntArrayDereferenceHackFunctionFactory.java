@@ -72,5 +72,10 @@ public class IntArrayDereferenceHackFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return indexFunction;
         }
+
+        @Override
+        public boolean isReadoutStateless() {
+            return true;
+        }
     }
 }

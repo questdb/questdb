@@ -122,7 +122,7 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public boolean isStateless() {
-        return false;
+    public boolean isReadoutStateless() {
+        return true;
     }
 }

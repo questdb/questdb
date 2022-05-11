@@ -124,7 +124,7 @@ public class SumDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return false;
     }
 }

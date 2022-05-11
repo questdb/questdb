@@ -57,7 +57,7 @@ public class RndShortFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isStateless() {
+        public boolean isReadoutStateless() {
             return false;
         }
 

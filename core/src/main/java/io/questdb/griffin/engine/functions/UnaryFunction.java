@@ -57,7 +57,7 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default boolean isStateless() {
-        return getArg().isStateless();
+    default boolean isReadoutStateless() {
+        return getArg().isReadoutStateless();
     }
 }

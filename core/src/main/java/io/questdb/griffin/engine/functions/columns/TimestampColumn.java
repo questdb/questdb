@@ -52,7 +52,7 @@ public class TimestampColumn extends TimestampFunction implements ScalarFunction
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return true;
     }
 

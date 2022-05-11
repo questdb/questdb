@@ -57,7 +57,7 @@ public class RndLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isStateless() {
+        public boolean isReadoutStateless() {
             return false;
         }
 

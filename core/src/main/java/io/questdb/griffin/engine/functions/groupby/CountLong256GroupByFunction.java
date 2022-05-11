@@ -110,8 +110,8 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
     }
 
     @Override
-    public boolean isStateless() {
-        return false;
+    public boolean isReadoutStateless() {
+        return true;
     }
 
     @Override

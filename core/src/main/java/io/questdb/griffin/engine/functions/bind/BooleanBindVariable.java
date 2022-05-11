@@ -48,7 +48,7 @@ public class BooleanBindVariable extends BooleanFunction implements ScalarFuncti
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return true;
     }
 }

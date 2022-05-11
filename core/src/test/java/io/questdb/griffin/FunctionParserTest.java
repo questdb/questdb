@@ -108,7 +108,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isStateless() {
+                    public boolean isReadoutStateless() {
                         return true;
                     }
 
@@ -130,7 +130,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isStateless() {
+                    public boolean isReadoutStateless() {
                         return true;
                     }
                 };
@@ -641,7 +641,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public boolean isStateless() {
+            public boolean isReadoutStateless() {
                 return true;
             }
         };
@@ -684,7 +684,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isStateless() {
+                    public boolean isReadoutStateless() {
                         return true;
                     }
                 };
@@ -717,7 +717,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isStateless() {
+                    public boolean isReadoutStateless() {
                         return true;
                     }
                 };
@@ -750,7 +750,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isStateless() {
+                    public boolean isReadoutStateless() {
                         return true;
                     }
                 };
@@ -783,7 +783,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isStateless() {
+                    public boolean isReadoutStateless() {
                         return true;
                     }
                 };
@@ -816,7 +816,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isStateless() {
+                    public boolean isReadoutStateless() {
                         return true;
                     }
                 };
@@ -849,7 +849,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isStateless() {
+                    public boolean isReadoutStateless() {
                         return true;
                     }
                 };
@@ -882,7 +882,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isStateless() {
+                    public boolean isReadoutStateless() {
                         return true;
                     }
                 };
@@ -966,7 +966,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isStateless() {
+                    public boolean isReadoutStateless() {
                         return true;
                     }
                 };
@@ -1052,7 +1052,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isStateless() {
+                    public boolean isReadoutStateless() {
                         return true;
                     }
                 };

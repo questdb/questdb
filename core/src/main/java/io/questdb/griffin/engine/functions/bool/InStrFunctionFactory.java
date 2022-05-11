@@ -99,5 +99,10 @@ public class InStrFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return set.contains(arg.getStr(rec));
         }
+
+        @Override
+        public boolean isReadoutStateless() {
+            return false;
+        }
     }
 }

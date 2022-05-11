@@ -122,7 +122,7 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     }
 
     @Override
-    public boolean isStateless() {
-        return false;
+    public boolean isReadoutStateless() {
+        return true;
     }
 }

@@ -60,7 +60,7 @@ public class GeoLongColumn extends GeoLongFunction {
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return true;
     }
 

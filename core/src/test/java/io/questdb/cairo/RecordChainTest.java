@@ -142,7 +142,7 @@ public class RecordChainTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean isStateless() {
+                public boolean isReadoutStateless() {
                     return true;
                 }
             });
@@ -155,7 +155,7 @@ public class RecordChainTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean isStateless() {
+                public boolean isReadoutStateless() {
                     return true;
                 }
             });

@@ -84,5 +84,10 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
             CharSequence str = arg.getStr(rec);
             return str != null && set.excludes(str);
         }
+
+        @Override
+        public boolean isReadoutStateless() {
+            return false;
+        }
     }
 }

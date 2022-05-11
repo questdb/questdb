@@ -105,8 +105,8 @@ public class CountStringGroupByFunction extends LongFunction implements GroupByF
     }
 
     @Override
-    public boolean isStateless() {
-        return false;
+    public boolean isReadoutStateless() {
+        return true;
     }
 
     @Override
