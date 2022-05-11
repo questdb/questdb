@@ -598,9 +598,9 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
-    public void testMonthName() throws Exception {
+    public void testMonthNameAndThreeDigitYear() throws Exception {
         assertThat("dd-MMM-y", "2012-11-15T00:00:00.000Z", "15-NOV-12");
-        assertThat("dd MMMM yyy", "2013-09-18T00:00:00.000Z", "18 September 2013");
+        assertThat("dd MMMM yyy", "0213-09-18T00:00:00.000Z", "18 September 213");
     }
 
     @Test

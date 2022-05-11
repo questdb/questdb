@@ -326,6 +326,13 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                     }
                     TimestampFormatUtils.append0(sink, year % 100);
                     break;
+                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+                    if (year == Integer.MIN_VALUE) {
+                        year = Timestamps.getYear(micros);
+                        leap = Timestamps.isLeapYear(year);
+                    }
+                    TimestampFormatUtils.append000(sink, year % 1000);
+                    break;
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
@@ -619,6 +626,10 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                 case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
                     TimestampFormatUtils.assertRemaining(pos + 1, hi);
                     year = TimestampFormatUtils.adjustYear(Numbers.parseInt(in, pos, pos += 2));
+                    break;
+                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+                    TimestampFormatUtils.assertRemaining(pos + 2, hi);
+                    year = Numbers.parseInt(in, pos, pos += 3);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (pos < hi && in.charAt(pos) == '-') {
