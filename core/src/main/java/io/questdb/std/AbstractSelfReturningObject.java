@@ -24,21 +24,18 @@
 
 package io.questdb.std;
 
-import org.jetbrains.annotations.NotNull;
-
 import java.io.Closeable;
 
-public class WeakAutoClosableObjectPool<T extends Closeable> extends WeakObjectPoolBase<T> {
-    private final AutoClosableObjectFactory<T> factory;
+public abstract class AbstractSelfReturningObject<T extends AbstractSelfReturningObject<?>> implements Closeable {
+    private final WeakSelfReturningObjectPool<T> parentPool;
 
-    public WeakAutoClosableObjectPool(@NotNull AutoClosableObjectFactory<T> factory, int initSize) {
-        super(initSize);
-        this.factory = factory;
-        fill();
+    public AbstractSelfReturningObject(WeakSelfReturningObjectPool<T> parentPool) {
+        this.parentPool = parentPool;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    T newInstance() {
-        return factory.newInstance(this);
+    public void close() {
+        parentPool.push((T) this);
     }
 }

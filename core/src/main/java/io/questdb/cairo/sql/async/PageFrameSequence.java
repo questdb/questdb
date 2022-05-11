@@ -67,7 +67,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private SqlExecutionCircuitBreaker[] circuitBreakers;
     // Local reduce task used when there is no slots in the queue to dispatch tasks.
     private PageFrameReduceTask localTask;
-    private final WeakAutoClosableObjectPool<PageFrameReduceTask> localTaskPool;
+    private final WeakClosableObjectPool<PageFrameReduceTask> localTaskPool;
     private long startTimeUs;
     private long circuitBreakerFd;
     private SqlExecutionContext sqlExecutionContext;
@@ -76,7 +76,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             CairoConfiguration configuration,
             MessageBus messageBus,
             PageFrameReducer reducer,
-            WeakAutoClosableObjectPool<PageFrameReduceTask> localTaskPool
+            WeakClosableObjectPool<PageFrameReduceTask> localTaskPool
     ) {
         this.pageAddressCache = new PageAddressCache(configuration);
         this.messageBus = messageBus;

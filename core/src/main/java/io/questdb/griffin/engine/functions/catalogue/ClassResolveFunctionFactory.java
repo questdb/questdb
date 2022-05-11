@@ -30,6 +30,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.functions.cast.CastStrToDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToTimestampFunctionFactory;
@@ -42,6 +43,7 @@ import static io.questdb.cutlass.pgwire.PGOids.PG_NAMESPACE_OID;
 
 public class ClassResolveFunctionFactory implements FunctionFactory {
     private static final CharSequenceObjHashMap<IntConstant> map = new CharSequenceObjHashMap<>();
+    private static final CastStrToDoubleFunctionFactory strToDoubleFunction = new CastStrToDoubleFunctionFactory();
 
     @Override
     public String getSignature() {
@@ -82,6 +84,11 @@ public class ClassResolveFunctionFactory implements FunctionFactory {
 
         if (SqlKeywords.isTextArrayKeyword(type)) {
             return new StringToStringArrayFunction(argPositions.getQuick(0), nameFunction.getStr(null));
+        }
+
+        // 'float' keyword in Python drivers is double in Java
+        if (SqlKeywords.isFloatKeyword(type)) {
+            return strToDoubleFunction.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         }
 
         throw SqlException.$(argPositions.getQuick(1), "unsupported type");
