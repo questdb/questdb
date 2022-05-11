@@ -47,16 +47,20 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
+import org.junit.rules.Timeout;
 
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 public class AbstractCairoTest {
 
     protected static final StringSink sink = new StringSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
-    protected final static Log LOG = LogFactory.getLog(AbstractCairoTest.class);
+    protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
+    public static long writerAsyncCommandBusyWaitTimeout = -1;
+    public static long writerAsyncCommandMaxTimeout = -1;
     protected static CharSequence root;
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
@@ -76,22 +80,30 @@ public class AbstractCairoTest {
     protected static int sampleByIndexSearchPageSize;
     protected static int binaryEncodingMaxLength = -1;
     protected static CharSequence defaultMapType;
-    protected static int pageFrameMaxSize = -1;
+    protected static int pageFrameMaxRows = -1;
+    protected static int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     protected static int rndFunctionMemoryPageSize = -1;
     protected static int rndFunctionMemoryMaxPages = -1;
     protected static String snapshotInstanceId = null;
     protected static Boolean snapshotRecoveryEnabled = null;
+    protected static Boolean enableParallelFilter = null;
     protected static int queryCacheEventQueueCapacity = -1;
+    protected static int pageFrameReduceShardCount = -1;
+    protected static int pageFrameReduceQueueCapacity = -1;
 
     @Rule
     public TestName testName = new TestName();
-    public static long writerAsyncCommandBusyWaitTimeout = -1;
-    public static long writerAsyncCommandMaxTimeout = -1;
     public static long spinLockTimeoutUs = -1;
     protected static boolean hideTelemetryTable = false;
     private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @BeforeClass
     public static void setUpStatic() {
@@ -115,11 +127,8 @@ public class AbstractCairoTest {
 
         configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
-                if (ff != null) {
-                    return ff;
-                }
-                return super.getFilesFacade();
+            public int getBinaryEncodingMaxLength() {
+                return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
             }
 
             @Override
@@ -144,8 +153,19 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public MicrosecondClock getMicrosecondClock() {
-                return testMicrosClock;
+            public CharSequence getDefaultMapType() {
+                if (defaultMapType == null) {
+                    return super.getDefaultMapType();
+                }
+                return defaultMapType;
+            }
+
+            @Override
+            public FilesFacade getFilesFacade() {
+                if (ff != null) {
+                    return ff;
+                }
+                return super.getFilesFacade();
             }
 
             @Override
@@ -157,6 +177,7 @@ public class AbstractCairoTest {
             public long getCommitLag() {
                 return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
             }
+
 
             @Override
             public long getSpinLockTimeoutUs() {
@@ -173,21 +194,23 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return testMicrosClock;
+            }
+
+            @Override
             public int getSampleByIndexSearchPageSize() {
                 return sampleByIndexSearchPageSize > 0 ? sampleByIndexSearchPageSize : super.getSampleByIndexSearchPageSize();
             }
 
             @Override
-            public int getBinaryEncodingMaxLength() {
-                return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
+            public int getSqlJitMode() {
+                return jitMode;
             }
 
             @Override
-            public CharSequence getDefaultMapType() {
-                if (defaultMapType == null) {
-                    return super.getDefaultMapType();
-                }
-                return defaultMapType;
+            public int getSqlPageFrameMaxRows() {
+                return pageFrameMaxRows < 0 ? super.getSqlPageFrameMaxRows() : pageFrameMaxRows;
             }
 
             @Override
@@ -203,18 +226,6 @@ public class AbstractCairoTest {
             @Override
             public boolean enableDevelopmentUpdates() {
                 return true;
-            }
-
-            @Override
-            public int getSqlJitMode() {
-                // JIT compiler is a beta feature and thus is disabled by default,
-                // but we want to have it enabled in tests.
-                return SqlJitMode.JIT_MODE_ENABLED;
-            }
-
-            @Override
-            public int getSqlPageFrameMaxSize() {
-                return pageFrameMaxSize < 0 ? super.getSqlPageFrameMaxSize() : pageFrameMaxSize;
             }
 
             @Override
@@ -266,6 +277,21 @@ public class AbstractCairoTest {
             public int getQueryCacheEventQueueCapacity() {
                 return queryCacheEventQueueCapacity < 0 ? super.getQueryCacheEventQueueCapacity() : queryCacheEventQueueCapacity;
             }
+
+            @Override
+            public int getPageFrameReduceShardCount() {
+                return pageFrameReduceShardCount < 0 ? super.getPageFrameReduceShardCount() : pageFrameReduceShardCount;
+            }
+
+            @Override
+            public int getPageFrameReduceQueueCapacity() {
+                return pageFrameReduceQueueCapacity < 0 ? super.getPageFrameReduceQueueCapacity() : pageFrameReduceQueueCapacity;
+            }
+
+            @Override
+            public boolean isSqlParallelFilterEnabled() {
+                return enableParallelFilter != null ? enableParallelFilter : super.isSqlParallelFilterEnabled();
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -304,12 +330,19 @@ public class AbstractCairoTest {
         defaultMapType = null;
         writerAsyncCommandBusyWaitTimeout = -1;
         writerAsyncCommandMaxTimeout = -1;
-        pageFrameMaxSize = -1;
+        pageFrameMaxRows = -1;
+        jitMode = SqlJitMode.JIT_MODE_ENABLED;
+        rndFunctionMemoryPageSize = -1;
+        rndFunctionMemoryMaxPages = -1;
         spinLockTimeoutUs = -1;
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
+        enableParallelFilter = null;
         hideTelemetryTable = false;
         writerCommandQueueCapacity = 4;
+        queryCacheEventQueueCapacity = -1;
+        pageFrameReduceShardCount = -1;
+        pageFrameReduceQueueCapacity = -1;
     }
 
     protected static void configureForBackups() throws IOException {

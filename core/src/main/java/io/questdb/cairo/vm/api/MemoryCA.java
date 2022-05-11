@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+//contiguous appendable 
 public interface MemoryCA extends MemoryA {
     long getAddress();
 }

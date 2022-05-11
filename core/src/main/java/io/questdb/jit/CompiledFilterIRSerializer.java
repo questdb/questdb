@@ -25,11 +25,12 @@ package io.questdb.jit;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.CompiledFilterSymbolBindVariable;
+import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
@@ -387,7 +388,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         if (token.charAt(0) == ':') {
             // name bind variable case
-            varFunction = getBindVariableService().getFunction(token);
+            Function bindFunction = getBindVariableService().getFunction(token);
+            if (bindFunction == null) {
+                throw SqlException.position(position).put("failed to find function for bind variable: ").put(token);
+            }
+            varFunction = new NamedParameterLinkFunction(Chars.toString(token), bindFunction.getType());
         } else {
             // indexed bind variable case
             try {
@@ -395,14 +400,18 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 if (variableIndex < 1) {
                     throw SqlException.$(position, "invalid bind variable index [value=").put(variableIndex).put(']');
                 }
-                varFunction = getBindVariableService().getFunction(variableIndex - 1);
+                Function bindFunction = getBindVariableService().getFunction(variableIndex - 1);
+                if (bindFunction == null) {
+                    throw SqlException.position(position).put("failed to find function for bind variable: ").put(token);
+                }
+                varFunction = new IndexedParameterLinkFunction(
+                        variableIndex - 1,
+                        bindFunction.getType(),
+                        position);
+
             } catch (NumericException e) {
                 throw SqlException.$(position, "invalid bind variable index [value=").put(token).put(']');
             }
-        }
-
-        if (varFunction == null) {
-            throw SqlException.position(position).put("failed to find function for bind variable: ").put(token);
         }
 
         return varFunction;
@@ -554,11 +563,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             symbol = symbol.subSequence(1, len - 1);
         }
 
-        if (predicateContext.symbolMapReader == null || predicateContext.symbolColumnIndex == -1) {
+        if (predicateContext.symbolTable == null || predicateContext.symbolColumnIndex == -1) {
             throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
         }
 
-        final int key = predicateContext.symbolMapReader.keyOf(symbol);
+        final int key = predicateContext.symbolTable.keyOf(symbol);
         if (key != SymbolTable.VALUE_NOT_FOUND) {
             // Known symbol constant case
             putOperand(offset, IMM, I4_TYPE, key);
@@ -888,7 +897,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         private ExpressionNode rootNode;
         PredicateType type;
-        SymbolMapReader symbolMapReader; // used for known symbol constant lookups
+        StaticSymbolTable symbolTable; // used for known symbol constant lookups
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
         boolean singleBooleanColumn;
         boolean hasArithmeticOperations;
@@ -905,7 +914,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private void reset() {
             rootNode = null;
             type = null;
-            symbolMapReader = null;
+            symbolTable = null;
             symbolColumnIndex = -1;
             singleBooleanColumn = false;
             hasArithmeticOperations = false;
@@ -963,7 +972,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int columnType = metadata.getColumnType(columnIndex);
             final int columnTypeTag = ColumnType.tagOf(columnType);
             if (columnTypeTag == ColumnType.SYMBOL) {
-                symbolMapReader = pageFrameCursor.getSymbolMapReader(columnIndex);
+                symbolTable = (StaticSymbolTable) pageFrameCursor.getSymbolTable(columnIndex);
                 symbolColumnIndex = columnIndex;
             }
 

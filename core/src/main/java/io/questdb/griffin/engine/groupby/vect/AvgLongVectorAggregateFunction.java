@@ -28,9 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.std.Rosti;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 
 import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.atomic.LongAdder;
@@ -44,7 +42,9 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
+    private final int workerCount;
     private int valueOffset;
+    private long counts;
 
     public AvgLongVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
@@ -55,15 +55,20 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
             distinctFunc = Rosti::keyedIntDistinct;
             keyValueFunc = Rosti::keyedIntSumLongLong;
         }
+        counts = Unsafe.malloc((long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_DEFAULT);
+        this.workerCount = workerCount;
     }
 
     @Override
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
-            final double value = Vect.avgLong(address, addressSize / Long.BYTES);
+            final double value = Vect.avgLongAcc(address, addressSize / Long.BYTES, counts + (long) workerId * Misc.CACHE_LINE_SIZE);
             if (value == value) {
-                sum.add(value);
-                this.count.increment();
+                final long count = Unsafe.getUnsafe().getLong(counts + (long) workerId * Misc.CACHE_LINE_SIZE);
+                // we have to include "weight" of this avg value in the formula,
+                // which calculates final result
+                sum.add(value * count);
+                this.count.add(count);
             }
         }
     }
@@ -119,6 +124,15 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     public void clear() {
         sum.reset();
         count.reset();
+    }
+
+    @Override
+    public void close() {
+        if (counts != 0) {
+            Unsafe.free(counts, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            counts = 0;
+        }
+        super.close();
     }
 
     @Override

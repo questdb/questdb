@@ -66,10 +66,10 @@ public class LineTcpConnectionContextBrokenUTF8Test extends BaseLineTcpContextTe
     }
 
     NetworkFacade provideLineTcpNetworkFacade() {
-        return new LineTcpNetworkFacadeBrokenUTF8Enconding();
+        return new LineTcpNetworkFacadeBrokenUTF8Encoding();
     }
 
-    class LineTcpNetworkFacadeBrokenUTF8Enconding extends LineTcpNetworkFacade {
+    class LineTcpNetworkFacadeBrokenUTF8Encoding extends LineTcpNetworkFacade {
         @Override
         byte[] getBytes(String recvBuffer) {
             return recvBuffer.getBytes(StandardCharsets.ISO_8859_1);

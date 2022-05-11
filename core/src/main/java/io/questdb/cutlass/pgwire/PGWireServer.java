@@ -36,7 +36,7 @@ import io.questdb.mp.*;
 import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.WeakObjectPool;
+import io.questdb.std.WeakMutableObjectPool;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -185,11 +185,11 @@ public class PGWireServer implements Closeable {
     }
 
     public static class PGConnectionContextFactory implements IOContextFactory<PGConnectionContext>, Closeable, EagerThreadSetup {
-        private final ThreadLocal<WeakObjectPool<PGConnectionContext>> contextPool;
+        private final ThreadLocal<WeakMutableObjectPool<PGConnectionContext>> contextPool;
         private boolean closed = false;
 
         public PGConnectionContextFactory(CairoEngine engine, PGWireConfiguration configuration, int workerCount) {
-            this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
+            this.contextPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(() ->
                     new PGConnectionContext(engine, configuration, getSqlExecutionContext(engine, workerCount)), configuration.getConnectionPoolInitialCapacity()));
         }
 

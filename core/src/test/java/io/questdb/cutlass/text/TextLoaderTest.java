@@ -552,12 +552,12 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertNoLeak(textLoader -> {
             final String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\n" +
                     "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
-                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.3420000000000005\tfalse\tLorem ipsum \n" +
+                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tfalse\tLorem ipsum \n" +
                     "\n" +
                     "dolor \"sit\" amet.\t546756\n" +
                     "125\tabc\t2015-01-20T21:00:00.000Z\t9.334\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
                     "126\tabc\t2015-01-20T21:00:00.000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
-                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.5332100000000002\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
+                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
                     "128\tabc\t2015-01-20T21:00:00.000Z\t2.456\ttrue\tLorem ipsum dolor sit amet.\t122\n";
 
             String csv = "123,abc,2015-01-20T21:00:00.000Z,3.1415,TRUE,Lorem ipsum dolor sit amet.,122\r\n" +
@@ -589,12 +589,12 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertNoLeak(textLoader -> {
             final String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\n" +
                     "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
-                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.3420000000000005\tfalse\tLorem ipsum \n" +
+                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tfalse\tLorem ipsum \n" +
                     "\n" +
                     "dolor \"sit\" amet.\t546756\n" +
                     "125\tabc\t2015-01-20T21:00:00.000Z\t9.334\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
                     "126\tabc\t2015-01-20T21:00:00.000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
-                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.5332100000000002\ttrue\tLorem ipsum dolor sit amet.\t112\n";
+                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112\n";
 
             String csv = "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\tTRUE\tLorem ipsum dolor sit amet.\t122\n" +
                     "124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tFALSE\t\"Lorem ipsum \n" +
@@ -1178,29 +1178,29 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     engine,
                     textLoader -> {
                         String expected = "s\n" +
-                                "0.5035558920000001\n" +
-                                "0.5370835850000001\n" +
+                                "0.503555892\n" +
+                                "0.537083585\n" +
                                 "0.518392756\n" +
                                 "0.898078974\n" +
                                 "0.153959029\n" +
                                 "0.368878817\n" +
-                                "0.7685725170000001\n" +
+                                "0.768572517\n" +
                                 "0.409412157\n" +
                                 "0.959138401\n" +
-                                "0.49868191100000003\n" +
+                                "0.498681911\n" +
                                 "0.466161354\n" +
-                                "0.6500869570000001\n" +
+                                "0.650086957\n" +
                                 "0.201807867\n" +
                                 "0.699247724\n" +
-                                "0.8836387710000001\n" +
+                                "0.883638771\n" +
                                 "0.855572368\n" +
-                                "0.7143630950000001\n" +
-                                "0.14668836100000002\n" +
+                                "0.714363095\n" +
+                                "0.146688361\n" +
                                 "0.507968298\n" +
                                 "0.064159752\n" +
-                                "0.19579689800000002\n" +
-                                "0.7118503740000001\n" +
-                                "0.24136422300000002\n";
+                                "0.195796898\n" +
+                                "0.711850374\n" +
+                                "0.241364223\n";
 
 
                         String csv = "s\n" +
@@ -1450,20 +1450,20 @@ public class TextLoaderTest extends AbstractGriffinTest {
     public void testLoadRowsWithExtraColumns() throws Exception {
         assertNoLeak(textLoader -> {
             final String expected = "VendorID\tlpep_pickup_datetime\tLpep_dropoff_datetime\tStore_and_fwd_flag\tRateCodeID\tPickup_longitude\tPickup_latitude\tDropoff_longitude\tDropoff_latitude\tPassenger_count\tTrip_distance\tFare_amount\tExtra\tMTA_tax\tTip_amount\tTolls_amount\tEhail_fee\tTotal_amount\tPayment_type\tTrip_type\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:18:34.000Z\tN\t1\t0\t0\t-73.87202453613283\t40.678714752197266\t6\t7.0200000000000005\t28.5\t0.0\t0.5\t0.0\t0\t\t29.0\t2\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T13:10:37.000Z\tN\t1\t0\t0\t-73.91783905029298\t40.75776672363282\t1\t5.43\t23.5\t0.0\t0.5\t5.88\t0\t\t29.88\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:18:34.000Z\tN\t1\t0\t0\t-73.87202453613281\t40.678714752197266\t6\t7.02\t28.5\t0.0\t0.5\t0.0\t0\t\t29.0\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T13:10:37.000Z\tN\t1\t0\t0\t-73.91783905029298\t40.75776672363281\t1\t5.43\t23.5\t0.0\t0.5\t5.88\t0\t\t29.88\t1\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T14:36:16.000Z\tN\t1\t0\t0\t-73.88289642333984\t40.87045669555664\t1\t0.84\t5.0\t0.0\t0.5\t0.0\t0\t\t5.5\t1\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T02:51:03.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t8.98\t26.5\t0.5\t0.5\t5.4\t0\t\t32.9\t1\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T03:13:09.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t0.91\t5.5\t0.5\t0.5\t0.0\t0\t\t6.5\t2\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T14:12:18.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t2.88\t13.0\t0.0\t0.5\t2.6\t0\t\t16.1\t1\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:37:31.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t2.04\t9.0\t0.0\t0.5\t0.0\t0\t\t9.5\t2\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T08:05:26.000Z\tN\t1\t0\t0\t-73.86398315429689\t40.89520645141602\t1\t7.61\t22.5\t0.0\t0.5\t0.0\t0\t\t23.0\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T08:05:26.000Z\tN\t1\t0\t0\t-73.86398315429688\t40.895206451416016\t1\t7.61\t22.5\t0.0\t0.5\t0.0\t0\t\t23.0\t2\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T17:02:26.000Z\tN\t1\t0\t0\t0.0\t0.0\t1\t3.37\t14.0\t0.0\t0.5\t7.5\t0\t\t22.0\t1\t1\n" +
                     "2\t2014-03-01T00:00:00.000Z\t2014-03-01T10:45:08.000Z\tN\t1\t0\t0\t-73.98382568359375\t40.67216491699219\t5\t2.98\t11.0\t0.0\t0.5\t0.0\t0\t\t11.5\t2\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:23:12.000Z\tN\t1\t0\t0\t-73.89750671386719\t40.856563568115234\t1\t6.1000000000000005\t21.0\t0.0\t0.5\t4.2\t0\t\t25.700000000000003\t1\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T20:30:34.000Z\tN\t1\t0\t0\t-73.83473205566408\t40.769981384277344\t1\t4.03\t13.5\t0.5\t0.5\t0.0\t0\t\t14.5\t2\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T02:11:02.000Z\tN\t1\t0\t0\t-73.9626922607422\t40.80527877807618\t1\t11.02\t36.5\t0.5\t0.5\t9.25\t0\t\t46.75\t1\t1\n" +
-                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T01:12:02.000Z\tN\t1\t0\t0\t-73.81257629394531\t40.72515869140625\t1\t2.98\t11.0\t0.5\t0.5\t2.3000000000000003\t0\t\t14.3\t1\t1\n";
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T19:23:12.000Z\tN\t1\t0\t0\t-73.89750671386719\t40.856563568115234\t1\t6.1\t21.0\t0.0\t0.5\t4.2\t0\t\t25.7\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T20:30:34.000Z\tN\t1\t0\t0\t-73.83473205566406\t40.769981384277344\t1\t4.03\t13.5\t0.5\t0.5\t0.0\t0\t\t14.5\t2\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T02:11:02.000Z\tN\t1\t0\t0\t-73.96269226074219\t40.80527877807618\t1\t11.02\t36.5\t0.5\t0.5\t9.25\t0\t\t46.75\t1\t1\n" +
+                    "2\t2014-03-01T00:00:00.000Z\t2014-03-01T01:12:02.000Z\tN\t1\t0\t0\t-73.81257629394531\t40.72515869140625\t1\t2.98\t11.0\t0.5\t0.5\t2.3\t0\t\t14.3\t1\t1\n";
 
             String csv = "VendorID,lpep_pickup_datetime,Lpep_dropoff_datetime,Store_and_fwd_flag,RateCodeID,Pickup_longitude,Pickup_latitude,Dropoff_longitude,Dropoff_latitude,Passenger_count,Trip_distance,Fare_amount,Extra,MTA_tax,Tip_amount,Tolls_amount,Ehail_fee,Total_amount,Payment_type,Trip_type\n" +
                     "\n" +
@@ -2094,12 +2094,12 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertNoLeak(textLoader -> {
             final String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\n" +
                     "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
-                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.3420000000000005\tfalse\tLorem ipsum \n" +
+                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tfalse\tLorem ipsum \n" +
                     "\n" +
                     "dolor \"sit\" amet.\t546756\n" +
                     "125\tabc\t2015-01-20T21:00:00.000Z\t9.334\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
                     "126\tabc\t2015-01-20T21:00:00.000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
-                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.5332100000000002\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
+                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
                     "128\tabc\t2015-01-20T21:00:00.000Z\t2.456\ttrue\tLorem ipsum dolor sit amet.\t122\n";
 
             String csv = "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\tTRUE\tLorem ipsum dolor sit amet.\t122\n" +
@@ -2131,12 +2131,12 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertNoLeak(textLoader -> {
             final String expected = "f0\tf1\tf2\tf3\tf4\tf5\tf6\n" +
                     "123\tabc\t2015-01-20T21:00:00.000Z\t3.1415\ttrue\tLorem ipsum dolor sit amet.\t122\n" +
-                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.3420000000000005\tfalse\tLorem ipsum \n" +
+                    "124\tabc\t2015-01-20T21:00:00.000Z\t7.342\tfalse\tLorem ipsum \n" +
                     "\n" +
                     "dolor \"sit\" amet.\t546756\n" +
                     "125\tabc\t2015-01-20T21:00:00.000Z\t9.334\tfalse\tLorem ipsum \"dolor\" sit amet.\t23\n" +
                     "126\tabc\t2015-01-20T21:00:00.000Z\t1.345\ttrue\tLorem, ipsum, dolor sit amet.\t434\n" +
-                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.5332100000000002\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
+                    "127\tabc\t2015-01-20T21:00:00.000Z\t1.53321\ttrue\tLorem ipsum dolor sit amet.\t112\n" +
                     "128\tabc\t2015-01-20T21:00:00.000Z\t2.456\ttrue\tLorem ipsum dolor sit amet.\t122\n";
 
             String csv = "123|abc|2015-01-20T21:00:00.000Z|3.1415|TRUE|Lorem ipsum dolor sit amet.|122\n" +

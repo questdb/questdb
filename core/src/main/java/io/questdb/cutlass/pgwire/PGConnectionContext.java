@@ -28,8 +28,8 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
@@ -55,8 +55,6 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_Z_FORMAT
  */
 public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
-    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
-
     public static final String TAG_SET = "SET";
     public static final String TAG_BEGIN = "BEGIN";
     public static final String TAG_COMMIT = "COMMIT";
@@ -65,11 +63,10 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public static final String TAG_OK = "OK";
     public static final String TAG_COPY = "COPY";
     public static final String TAG_INSERT = "INSERT";
-
     public static final char STATUS_IN_TRANSACTION = 'T';
     public static final char STATUS_IN_ERROR = 'E';
     public static final char STATUS_IDLE = 'I';
-
+    private final static Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     private static final int INT_NULL_X = Numbers.bswap(-1);
 
@@ -109,7 +106,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
     private static final String WRITER_LOCK_REASON = "pgConnection";
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
-
     private final long recvBuffer;
     private final long sendBuffer;
     private final int recvBufferSize;
@@ -128,9 +124,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final Path path = new Path();
     private final IntList bindVariableTypes = new IntList();
     private final IntList selectColumnTypes = new IntList();
-    private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
-    private final WeakObjectPool<Portal> namedPortalPool;
-    private final WeakAutoClosableObjectPool<TypesAndInsert> typesAndInsertPool;
+    private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
+    private final WeakMutableObjectPool<Portal> namedPortalPool;
+    private final WeakSelfReturningObjectPool<TypesAndInsert> typesAndInsertPool;
     private final DateLocale locale;
     private final CharSequenceObjHashMap<TableWriter> pendingWriters;
     private final DirectCharSink utf8Sink;
@@ -184,7 +180,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
     private NamedStatementWrapper wrapper;
     private AssociativeCache<TypesAndSelect> typesAndSelectCache;
-    private WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool;
+    private WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool;
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
     private boolean sendParameterDescription;
@@ -216,14 +212,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.locale = configuration.getDefaultDateLocale();
         this.sqlExecutionContext = sqlExecutionContext;
         this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
-        this.namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 16
-        this.namedPortalPool = new WeakObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 16
+        this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
+        this.namedPortalPool = new WeakMutableObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 32
         this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.pendingWriters = new CharSequenceObjHashMap<>(configuration.getPendingWritersCacheSize());
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
-        this.typesAndInsertPool = new WeakAutoClosableObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 32
+        this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 64
         final boolean enableInsertCache = configuration.isInsertCacheEnabled();
         final int blockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
         final int rowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1; // 8
@@ -364,7 +360,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public void handleClientOperation(
             @Transient SqlCompiler compiler,
             @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
-            @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool,
+            @Transient WeakSelfReturningObjectPool<TypesAndSelect> selectAndTypesPool,
             int operation
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException, BadProtocolException {
 
@@ -761,7 +757,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 case ColumnType.INT:
                     appendIntCol(record, i);
                     break;
-                case ColumnType.NULL:
                 case ColumnType.STRING:
                 case BINARY_TYPE_STRING:
                     appendStrColumn(record, i);
@@ -841,6 +836,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     break;
                 case ColumnType.GEOLONG:
                     putGeoHashStringLongValue(record, i, activeSelectColumnTypes.getQuick(2 * i + 1));
+                    break;
+                case ColumnType.NULL:
+                    responseAsciiSink.setNullValue();
                     break;
                 default:
                     assert false;
@@ -1052,8 +1050,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         recvBufferReadOffset = 0;
     }
 
-    private boolean compileQuery(@Transient SqlCompiler compiler)
-            throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private boolean compileQuery(@Transient SqlCompiler compiler) throws SqlException {
         if (queryText != null && queryText.length() > 0) {
 
             // try insert, peek because this is our private cache
@@ -1072,6 +1069,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
+                LOG.info().$("query cache used [fd=").$(fd).I$();
                 // cache hit, define bind variables
                 bindVariableService.clear();
                 typesAndSelect.defineBindVariables(bindVariableService);
@@ -1081,7 +1079,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
             // not cached - compile to see what it is
             final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext); //here
-            processCompiledQuery(compiler, cc);
+            processCompiledQuery(cc);
 
         } else {
             isEmptyQuery = true;
@@ -1091,7 +1089,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void configureContextFromNamedStatement(CharSequence statementName, @Nullable @Transient SqlCompiler compiler)
-            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+            throws BadProtocolException, SqlException {
 
         this.sendParameterDescription = statementName != null;
 
@@ -1434,8 +1432,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void parseQueryText(long lo, long hi, @Transient SqlCompiler compiler)
-            throws BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    private void parseQueryText(long lo, long hi, @Transient SqlCompiler compiler) throws BadProtocolException, SqlException {
         CharacterStoreEntry e = characterStore.newEntry();
         if (Chars.utf8Decode(lo, hi, e)) {
             queryText = characterStore.toImmutable();
@@ -1650,7 +1647,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void processBind(long lo, long msgLimit, @Transient SqlCompiler compiler)
-            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+            throws BadProtocolException, SqlException {
 
         short parameterFormatCount;
         short parameterValueCount;
@@ -1812,8 +1809,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         prepareCloseComplete();
     }
 
-    private void processCompiledQuery(SqlCompiler compiler, CompiledQuery cq)
-            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    private void processCompiledQuery(CompiledQuery cq) throws SqlException {
         sqlExecutionContext.storeTelemetry(cq.getType(), Telemetry.ORIGIN_POSTGRES);
 
         switch (cq.getType()) {
@@ -1844,7 +1840,6 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             case CompiledQuery.COPY_LOCAL:
                 // uncached
                 queryTag = TAG_COPY;
-                sendCopyInResponse(compiler.getEngine(), cq.getTextLoader());
                 break;
             case CompiledQuery.SET:
                 queryTag = TAG_SET;
@@ -1875,7 +1870,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     private void processDescribe(long lo, long msgLimit, @Transient SqlCompiler compiler)
-            throws SqlException, BadProtocolException, PeerDisconnectedException, PeerIsSlowToReadException {
+            throws SqlException, BadProtocolException {
 
         boolean isPortal = Unsafe.getUnsafe().getByte(lo) == 'P';
         long hi = getStringLength(lo + 1, msgLimit, "bad prepared statement name length");
@@ -2017,8 +2012,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
     }
 
-    private void processParse(long address, long lo, long msgLimit, @Transient SqlCompiler compiler)
-            throws BadProtocolException, SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    private void processParse(long address, long lo, long msgLimit, @Transient SqlCompiler compiler) throws BadProtocolException, SqlException {
         // 'Parse'
         //message length
         long hi = getStringLength(lo, msgLimit, "bad prepared statement name length");
@@ -2213,6 +2207,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         responseAsciiSink.reset();
     }
 
+    // This method is currently unused. it's used for the COPY sub-protocol, which is currently not implemented.
+    // It's left here so when we add the sub-protocol later we won't need to reimplemented it.
+    // We could keep it just in git history, but chances are nobody would recall to search for it there
     private void sendCopyInResponse(CairoEngine engine, TextLoader textLoader) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (
                 TableUtils.TABLE_EXISTS == engine.getStatus(
@@ -2301,7 +2298,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         sendAndReset();
     }
 
-    private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+    private void setupFactoryAndCursor(SqlCompiler compiler) throws SqlException {
         if (currentCursor == null) {
             boolean recompileStale = true;
             do {
@@ -2328,7 +2325,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void setupVariableSettersFromWrapper(
             @Transient NamedStatementWrapper wrapper,
             @Nullable @Transient SqlCompiler compiler
-    ) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+    ) throws SqlException {
         queryText = wrapper.queryText;
         LOG.debug().$("wrapper query [q=`").$(wrapper.queryText).$("`]").$();
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
@@ -2401,7 +2398,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
             PGConnectionContext.this.queryText = text;
             LOG.info().$("parse [fd=").$(fd).$(", q=").utf8(text).I$();
-            processCompiledQuery(compiler, cq);
+            processCompiledQuery(cq);
 
             if (typesAndSelect != null) {
                 activeSelectColumnTypes = selectColumnTypes;

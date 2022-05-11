@@ -41,11 +41,13 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.Timeout;
 
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.util.concurrent.TimeUnit;
 
 public class AbstractO3Test {
     protected static final StringSink sink = new StringSink();
@@ -55,6 +57,12 @@ public class AbstractO3Test {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static int dataAppendPageSize = -1;
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @BeforeClass
     public static void setupStatic() {
@@ -212,7 +220,7 @@ public class AbstractO3Test {
 
     protected static void executeWithPool(
             int workerCount,
-            O3Runnable runnable
+            CustomisableRunnable runnable
     ) throws Exception {
         executeWithPool(
                 workerCount,
@@ -223,7 +231,7 @@ public class AbstractO3Test {
 
     protected static void executeWithPool(
             int workerCount,
-            O3Runnable runnable,
+            CustomisableRunnable runnable,
             FilesFacade ff
     ) throws Exception {
         executeVanilla(() -> {
@@ -275,7 +283,7 @@ public class AbstractO3Test {
                     }
                 };
 
-                execute(pool, runnable, configuration);
+                TestUtils.execute(pool, runnable, configuration);
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
@@ -324,33 +332,9 @@ public class AbstractO3Test {
                         return 0;
                     }
                 };
-                execute(null, runnable, configuration);
+                TestUtils.execute(null, runnable, configuration);
             }
         });
-    }
-
-    protected static void execute(@Nullable WorkerPool pool, O3Runnable runnable, CairoConfiguration configuration) throws Exception {
-        try (
-                final CairoEngine engine = new CairoEngine(configuration);
-                final SqlCompiler compiler = new SqlCompiler(engine);
-                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-        ) {
-            try {
-                if (pool != null) {
-                    pool.assignCleaner(Path.CLEANER);
-                    O3Utils.setupWorkerPool(pool, engine.getMessageBus());
-                    pool.start(LOG);
-                }
-
-                runnable.run(engine, compiler, sqlExecutionContext);
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-            } finally {
-                if (pool != null) {
-                    pool.halt();
-                }
-            }
-        }
     }
 
     protected static void assertXCountY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -358,8 +342,8 @@ public class AbstractO3Test {
         assertMaxTimestamp(compiler.getEngine(), compiler, sqlExecutionContext, "select max(ts) from y");
     }
 
-    protected static void executeVanilla(O3Runnable code) throws Exception {
-        executeVanilla(() -> execute(null, code, new DefaultCairoConfiguration(root)));
+    protected static void executeVanilla(CustomisableRunnable code) throws Exception {
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root)));
     }
 
     static void assertO3DataConsistency(

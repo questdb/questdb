@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticContextImpl;
@@ -132,7 +133,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
-        circuitBreaker.powerUp();
+        circuitBreaker.resetTimer();
         return circuitBreaker;
     }
 

@@ -22,25 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.sql.Record;
 
-public class WeakObjectPool<T extends Mutable> extends WeakObjectPoolBase<T> {
-    private final ObjectFactory<T> factory;
+class IntValueRecord implements Record {
+    private final int value;
 
-    public WeakObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
-        super(initSize);
-        this.factory = factory;
-        fill();
+    public IntValueRecord(int value) {
+        this.value = value;
     }
 
     @Override
-    void clear(T obj) {
-        obj.clear();
-    }
-
-    T newInstance() {
-        return factory.newInstance();
+    public int getInt(int col) {
+        return value;
     }
 }

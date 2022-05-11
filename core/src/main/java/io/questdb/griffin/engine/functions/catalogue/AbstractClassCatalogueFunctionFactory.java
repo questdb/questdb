@@ -248,6 +248,11 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
                 }
                 return -1;
             }
+
+            @Override
+            public boolean getBool(int col) {
+                return false;
+            }
         }
 
         private class DiskReadingRecord implements Record {
@@ -287,6 +292,12 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
                 return -1;
             }
 
+            @Override
+            public boolean getBool(int col) {
+                // none of the boolean fields are true
+                return false;
+            }
+
             @Nullable
             private CharSequence getName(StringSink sink) {
                 sink.clear();
@@ -307,6 +318,9 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
         metadata.add(new TableColumnMetadata("relowner", 4, ColumnType.INT));
         metadata.add(new TableColumnMetadata("oid", 5, ColumnType.INT));
         metadata.add(new TableColumnMetadata("relpartbound", 6, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("relhasrules", 7, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("relhasoids", 8, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("relhassubclass", 9, ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

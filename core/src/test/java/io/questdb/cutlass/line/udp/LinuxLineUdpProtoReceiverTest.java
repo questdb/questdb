@@ -226,16 +226,16 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
     private void assertReceive(LineUdpReceiverConfiguration receiverCfg, ReceiverFactory factory) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final String expected = "colour\tshape\tsize\ttimestamp\n" +
-                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n" +
-                    "blue\tx square\t3.4000000000000004\t1970-01-01T00:01:40.000000Z\n";
+                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n" +
+                    "blue\tx square\t3.4\t1970-01-01T00:01:40.000000Z\n";
 
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 try (AbstractLineProtoUdpReceiver receiver = factory.create(receiverCfg, engine, null, false, null, null, metrics)) {

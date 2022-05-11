@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+//contiguous mapped
 public interface MemoryCM extends MemoryC, MemoryM {
 
     @Override

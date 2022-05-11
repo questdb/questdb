@@ -98,11 +98,6 @@ public class WriterPool extends AbstractPool {
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
 
-    public boolean exists(CharSequence tableName) {
-        checkClosed();
-        return entries.contains(tableName);
-    }
-
     /**
      * <p>
      * Creates or retrieves existing TableWriter from pool. Because of TableWriter compliance with <b>single

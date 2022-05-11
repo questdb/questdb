@@ -27,6 +27,7 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.http.*;
@@ -91,7 +92,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
         this.doubleScale = configuration.getDoubleScale();
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
+        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration());
         this.metrics = engine.getMetrics();
     }
 
@@ -148,7 +149,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         }
                     } while (runQuery);
                     state.metadata = state.recordCursorFactory.getMetadata();
-                    header(context.getChunkedResponseSocket(), state);
+                    header(context.getChunkedResponseSocket(), state, 200);
                     resumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
@@ -321,8 +322,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         return LOG.error().$('[').$(state.getFd()).$("] ");
     }
 
-    protected void header(HttpChunkedResponseSocket socket, TextQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        socket.status(200, "text/csv; charset=utf-8");
+    protected void header(HttpChunkedResponseSocket socket, TextQueryProcessorState state, int status_code) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        socket.status(status_code, "text/csv; charset=utf-8");
         if (state.fileName != null && state.fileName.length() > 0) {
             socket.headers().put("Content-Disposition: attachment; filename=\"").put(state.fileName).put(".csv\"").put(Misc.EOL);
         } else {
@@ -541,7 +542,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             CharSequence message,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(socket, state);
+        header(socket, state, 400);
         JsonQueryProcessorState.prepareExceptionJson(socket, position, message, state.query);
     }
 

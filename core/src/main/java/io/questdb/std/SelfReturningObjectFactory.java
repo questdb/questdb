@@ -22,20 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.std;
 
-public interface SqlExecutionCircuitBreaker {
-    SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
-        @Override
-        public void test() {
-        }
-
-        @Override
-        public void powerUp() {
-        }
-    };
-
-    void test();
-
-    void powerUp();
+@FunctionalInterface
+public interface SelfReturningObjectFactory<T extends AbstractSelfReturningObject<?>> {
+    T newInstance(WeakSelfReturningObjectPool<T> parent);
 }

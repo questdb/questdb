@@ -26,7 +26,16 @@ package io.questdb.std;
 
 import java.io.Closeable;
 
-@FunctionalInterface
-public interface AutoClosableObjectFactory<T extends Closeable> {
-    T newInstance(WeakAutoClosableObjectPool<T> parent);
+public abstract class AbstractSelfReturningObject<T extends AbstractSelfReturningObject<?>> implements Closeable {
+    private final WeakSelfReturningObjectPool<T> parentPool;
+
+    public AbstractSelfReturningObject(WeakSelfReturningObjectPool<T> parentPool) {
+        this.parentPool = parentPool;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public void close() {
+        parentPool.push((T) this);
+    }
 }

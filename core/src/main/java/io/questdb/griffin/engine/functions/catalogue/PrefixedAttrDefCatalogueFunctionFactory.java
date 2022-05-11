@@ -22,22 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.network.NetworkFacade;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-
-public interface SqlExecutionCircuitBreakerConfiguration {
-    int getBufferSize();
-
-    int getCircuitBreakerThrottle();
-
-    NetworkFacade getNetworkFacade();
-
-    boolean isEnabled();
-
-    MicrosecondClock getClock();
-
-    // maximum SQL execution time in micros
-    long getMaxTime();
+public class PrefixedAttrDefCatalogueFunctionFactory extends AttrDefCatalogueFunctionFactory {
+    @Override
+    public String getSignature() {
+        return "pg_catalog.pg_attrdef()";
+    }
 }

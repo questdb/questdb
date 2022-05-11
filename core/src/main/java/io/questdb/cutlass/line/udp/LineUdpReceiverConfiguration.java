@@ -61,4 +61,8 @@ public interface LineUdpReceiverConfiguration {
     LineProtoTimestampAdapter getTimestampAdapter();
 
     int getDefaultPartitionBy();
+
+    short getDefaultColumnTypeForFloat();
+
+    short getDefaultColumnTypeForInteger();
 }

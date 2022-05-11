@@ -165,12 +165,28 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.explain = Chars.equalsNc("true", request.getUrlParam("explain"));
     }
 
+    public LogRecord debug() {
+        return LOG.debug().$('[').$(getFd()).$("] ");
+    }
+
     public LogRecord error() {
         return LOG.error().$('[').$(getFd()).$("] ");
     }
 
     public QueryFuture getContinueExecution() {
         return continueExecution;
+    }
+
+    public void setContinueExecution(QueryFuture execution) {
+        continueExecution = execution;
+    }
+
+    public SCSequence getEventSubSequence() {
+        return eventSubSequence;
+    }
+
+    public long getExecutionTime() {
+        return nanosecondClock.getTicks() - this.executeStartNanos;
     }
 
     public HttpConnectionContext getHttpConnectionContext() {
@@ -185,20 +201,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return rnd;
     }
 
-    public SCSequence getEventSubSequence() {
-        return eventSubSequence;
-    }
-
-    public void setContinueExecution(QueryFuture execution) {
-        continueExecution = execution;
-    }
-
     public void setRnd(Rnd rnd) {
         this.rnd = rnd;
-    }
-
-    public LogRecord debug() {
-        return LOG.debug().$('[').$(getFd()).$("] ");
     }
 
     public LogRecord info() {
@@ -241,10 +245,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.executeStartNanos = nanosecondClock.getTicks();
     }
 
-    public long getExecutionTime() {
-        return nanosecondClock.getTicks() - this.executeStartNanos;
-    }
-
     static void prepareExceptionJson(HttpChunkedResponseSocket socket, int position, CharSequence message, CharSequence query) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.put('{').
                 putQuoted("query").put(':').encodeUtf8AndQuote(query == null ? "" : query).put(',').
@@ -260,11 +260,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         } else {
             r.encodeUtf8AndQuote(str);
         }
-    }
-
-    private void putBinValue(HttpChunkedResponseSocket socket) {
-        socket.put('[');
-        socket.put(']');
     }
 
     private static void putBooleanValue(HttpChunkedResponseSocket socket, Record rec, int col) {
@@ -381,7 +376,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (start == hi) {
             info().$("empty column in list '").$(columnNames).$('\'').$();
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-            JsonQueryProcessor.header(socket, "");
+            JsonQueryProcessor.header(socket, "", 400);
             socket.put('{').
                     putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',').
                     putQuoted("error").put(':').putQuoted("empty column in list");
@@ -394,7 +389,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (columnIndex == RecordMetadata.COLUMN_NOT_FOUND) {
             info().$("invalid column in list: '").$(columnNames, start, hi).$('\'').$();
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-            JsonQueryProcessor.header(socket, "");
+            JsonQueryProcessor.header(socket, "", 400);
             socket.put('{').
                     putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',').
                     putQuoted("error").put(':').put('\'').put("invalid column in list: ").put(columnNames, start, hi).put('\'');
@@ -406,6 +401,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         addColumnTypeAndName(metadata, columnIndex);
         this.columnSkewList.add(columnIndex);
         return false;
+    }
+
+    private void addColumnTypeAndName(RecordMetadata metadata, int i) {
+        int columnType = metadata.getColumnType(i);
+        int flags = GeoHashes.getBitFlags(columnType);
+        this.columnTypesAndFlags.add(columnType);
+        this.columnTypesAndFlags.add(flags);
+        this.columnNames.add(metadata.getColumnName(i));
     }
 
     private void doFirstRecordLoop(
@@ -441,7 +444,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             socket.put('{').
                     putQuoted("name").put(':').encodeUtf8AndQuote(columnNames.getQuick(columnIndex)).
                     put(',').
-                    putQuoted("type").put(':').putQuoted(ColumnType.nameOf(columnType));
+                    putQuoted("type").put(':').putQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType));
             socket.put('}');
         }
     }
@@ -544,6 +547,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 case ColumnType.RECORD:
                     putRecValue(socket);
                     break;
+                case ColumnType.NULL:
+                    socket.put("null");
+                    break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
                     socket.put("null"); // To make JSON valid
@@ -637,7 +643,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             } catch (Utf8Exception e) {
                 info().$("utf8 error when decoding column list '").$(columnNames).$('\'').$();
                 HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
-                JsonQueryProcessor.header(socket, "");
+                JsonQueryProcessor.header(socket, "", 400);
                 socket.put('{').
                         putQuoted("error").put(':').putQuoted("utf8 error in column list");
                 socket.put('}');
@@ -671,19 +677,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
         this.columnCount = columnCount;
         return true;
-    }
-
-    private void addColumnTypeAndName(RecordMetadata metadata, int i) {
-        int columnType = metadata.getColumnType(i);
-
-        if (ColumnType.isNull(columnType)) {
-            columnType = ColumnType.STRING;
-        }
-
-        int flags = GeoHashes.getBitFlags(columnType);
-        this.columnTypesAndFlags.add(columnType);
-        this.columnTypesAndFlags.add(flags);
-        this.columnNames.add(metadata.getColumnName(i));
     }
 
     private void onNoMoreData() {
@@ -772,6 +765,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnIndex = 0;
         record = cursor.getRecord();
         return true;
+    }
+
+    private void putBinValue(HttpChunkedResponseSocket socket) {
+        socket.put('[');
+        socket.put(']');
     }
 
     private void putDoubleValue(HttpChunkedResponseSocket socket, Record rec, int col) {

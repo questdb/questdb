@@ -22,50 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.std;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
+import org.jetbrains.annotations.NotNull;
 
-class StringValueRecordCursor implements RecordCursor {
-    private final Record record;
-    private int remaining = 1;
+import java.io.Closeable;
 
-    public StringValueRecordCursor(Record record) {
-        this.record = record;
+public class WeakClosableObjectPool<T extends Closeable> extends WeakObjectPoolBase<T> implements Closeable {
+    private final ObjectFactory<T> factory;
+
+    public WeakClosableObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
+        super(initSize);
+        this.factory = factory;
+        fill();
+    }
+
+    @Override
+    public boolean push(T obj) {
+        return super.push(obj);
     }
 
     @Override
     public void close() {
+        while (cache.size() > 0) {
+            Misc.free(cache.pop());
+        }
     }
 
     @Override
-    public Record getRecord() {
-        return record;
+    void close(T obj) {
+        Misc.free(obj);
     }
 
     @Override
-    public boolean hasNext() {
-        return remaining-- > 0;
-    }
-
-    @Override
-    public Record getRecordB() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void toTop() {
-        remaining = 1;
-    }
-
-    @Override
-    public long size() {
-        return 1;
+    T newInstance() {
+        return factory.newInstance();
     }
 }
