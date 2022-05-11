@@ -33,7 +33,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.Misc;
-import io.questdb.std.WeakAutoClosableObjectPool;
+import io.questdb.std.WeakSelfReturningObjectPool;
 
 import java.io.Closeable;
 
@@ -41,9 +41,9 @@ public class PGJobContext implements Closeable {
 
     private final SqlCompiler compiler;
     private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
-    private final WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool;
+    private final WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool;
     private final AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
-    private final WeakAutoClosableObjectPool<TypesAndUpdate> typesAndUpdatePool;
+    private final WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
 
     public PGJobContext(
             PGWireConfiguration configuration,
@@ -57,13 +57,13 @@ public class PGJobContext implements Closeable {
         final int blockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
         final int rowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;
         typesAndSelectCache = new AssociativeCache<>(blockCount, rowCount);
-        typesAndSelectPool = new WeakAutoClosableObjectPool<>(TypesAndSelect::new, blockCount * rowCount);
+        typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, blockCount * rowCount);
 
         final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
         final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1; // 8
         final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1; // 8
         typesAndUpdateCache = new AssociativeCache<>(updateBlockCount, updateRowCount);
-        typesAndUpdatePool = new WeakAutoClosableObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
+        typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
     }
 
     @Override

@@ -70,7 +70,7 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
             @NotNull ObjList<Function> bindVarFunctions,
             @NotNull Function filter,
             @NotNull CompiledFilter compiledFilter,
-            @NotNull @Transient WeakAutoClosableObjectPool<PageFrameReduceTask> localTaskPool,
+            @NotNull @Transient WeakClosableObjectPool<PageFrameReduceTask> localTaskPool,
             @Nullable Function limitLoFunction,
             int limitLoPos
     ) {

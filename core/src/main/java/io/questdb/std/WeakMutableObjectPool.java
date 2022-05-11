@@ -22,25 +22,45 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.std;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.InsertOperation;
-import io.questdb.std.WeakSelfReturningObjectPool;
+import org.jetbrains.annotations.NotNull;
 
-public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
-    private InsertOperation insert;
+import java.io.Closeable;
 
-    public TypesAndInsert(WeakSelfReturningObjectPool<TypesAndInsert> parentPool) {
-        super(parentPool);
+public class WeakMutableObjectPool<T extends Mutable> extends WeakObjectPoolBase<T> implements Closeable {
+    private final ObjectFactory<T> factory;
+
+    public WeakMutableObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
+        super(initSize);
+        this.factory = factory;
+        fill();
     }
 
-    public InsertOperation getInsert() {
-        return insert;
+    @Override
+    public boolean push(T obj) {
+        return super.push(obj);
     }
 
-    public void of(InsertOperation insert, BindVariableService bindVariableService) {
-        this.insert = insert;
-        copyTypesFrom(bindVariableService);
+    @Override
+    public void close() {
+        while (cache.size() > 0) {
+            Misc.free(cache.pop());
+        }
+    }
+
+    @Override
+    void clear(T obj) {
+        obj.clear();
+    }
+
+    @Override
+    void close(T obj) {
+        Misc.free(obj);
+    }
+
+    @Override
+    T newInstance() {
+        return factory.newInstance();
     }
 }
