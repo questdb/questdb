@@ -31,17 +31,18 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.WeakAutoClosableObjectPool;
+import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.std.WeakSelfReturningObjectPool;
 import org.jetbrains.annotations.Nullable;
 
 public class UpdateOperationDispatcher implements OperationDispatcher<UpdateOperation> {
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final CairoEngine engine;
-    private final WeakAutoClosableObjectPool<OperationFutureImpl> futurePool;
+    private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
 
     public UpdateOperationDispatcher(CairoEngine engine) {
         this.engine = engine;
-        futurePool = new WeakAutoClosableObjectPool<>(pool -> new OperationFutureImpl(engine, pool), 2);
+        futurePool = new WeakSelfReturningObjectPool<>(pool -> new OperationFutureImpl(engine, pool), 2);
     }
 
     public OperationFuture execute(UpdateOperation operation, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {

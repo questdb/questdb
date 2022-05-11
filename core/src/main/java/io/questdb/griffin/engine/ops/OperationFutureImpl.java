@@ -39,19 +39,19 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.AbstractSelfReturningObject;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.WeakAutoClosableObjectPool;
+import io.questdb.std.WeakSelfReturningObjectPool;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TableWriterTask;
 
 import static io.questdb.tasks.TableWriterTask.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 
-class OperationFutureImpl implements OperationFuture {
+class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImpl> implements OperationFuture {
     private static final Log LOG = LogFactory.getLog(OperationFutureImpl.class);
     private final CairoEngine engine;
-    private final WeakAutoClosableObjectPool<OperationFutureImpl> objectPool;
     private SCSequence eventSubSeq;
     private int status;
     private long affectedRowsCount;
@@ -61,9 +61,9 @@ class OperationFutureImpl implements OperationFuture {
     private int tableNamePositionInSql;
     private boolean closing;
 
-    OperationFutureImpl(CairoEngine engine, WeakAutoClosableObjectPool<OperationFutureImpl> pool) {
+    OperationFutureImpl(CairoEngine engine, WeakSelfReturningObjectPool<OperationFutureImpl> pool) {
+        super(pool);
         this.engine = engine;
-        objectPool = pool;
     }
 
     @Override
@@ -113,7 +113,7 @@ class OperationFutureImpl implements OperationFuture {
 
         if (!closing) {
             closing = true;
-            objectPool.push(this);
+            super.close();
             closing = false;
         }
     }

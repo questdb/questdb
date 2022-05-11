@@ -62,7 +62,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
     private final Sequence inSubSequence;
     private final MicrosecondClock clock;
     private final PriorityQueue<ColumnVersionPurgeTaskRun> houseKeepingRunQueue;
-    private final WeakObjectPool<ColumnVersionPurgeTaskRun> taskPool;
+    private final WeakMutableObjectPool<ColumnVersionPurgeTaskRun> taskPool;
     private final long maxWaitCapMicro;
     private final long startWaitMicro;
     private final double exponentialWaitMultiplier;
@@ -78,7 +78,7 @@ public class ColumnVersionPurgeJob extends SynchronizedJob implements Closeable 
         this.inQueue = engine.getMessageBus().getColumnVersionPurgeQueue();
         this.inSubSequence = engine.getMessageBus().getColumnVersionPurgeSubSeq();
         this.tableName = configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
-        this.taskPool = new WeakObjectPool<>(ColumnVersionPurgeTaskRun::new, configuration.getColumnVersionTaskPoolCapacity());
+        this.taskPool = new WeakMutableObjectPool<>(ColumnVersionPurgeTaskRun::new, configuration.getColumnVersionTaskPoolCapacity());
         this.houseKeepingRunQueue = new PriorityQueue<>(configuration.getColumnVersionPurgeQueueCapacity(), ColumnVersionPurgeJob::compareHouseKeepingTasks);
         this.maxWaitCapMicro = configuration.getColumnVersionPurgeMaxTimeoutMicros();
         this.startWaitMicro = configuration.getColumnVersionPurgeStartWaitTimeoutMicros();

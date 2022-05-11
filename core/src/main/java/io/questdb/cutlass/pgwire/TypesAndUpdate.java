@@ -30,12 +30,12 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.CompiledQueryImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Misc;
-import io.questdb.std.WeakAutoClosableObjectPool;
+import io.questdb.std.WeakSelfReturningObjectPool;
 
 public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
     private final CompiledQueryImpl compiledQuery;
 
-    public TypesAndUpdate(WeakAutoClosableObjectPool<TypesAndUpdate> parentPool, CairoEngine engine) {
+    public TypesAndUpdate(WeakSelfReturningObjectPool<TypesAndUpdate> parentPool, CairoEngine engine) {
         super(parentPool);
         compiledQuery = new CompiledQueryImpl(engine);
     }
