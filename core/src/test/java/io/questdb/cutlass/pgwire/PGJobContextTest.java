@@ -6126,7 +6126,6 @@ create table tab as (
         };
 
         WorkerPool pool = new WorkerPool(conf, metrics);
-        pool.assign(engine.getEngineMaintenanceJob());
 
         final PGWireServer pgWireServer = PGWireServer.create(
                 conf,
