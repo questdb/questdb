@@ -58,7 +58,7 @@ public class BinColumn extends BinFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return true;
     }
 

@@ -53,7 +53,7 @@ public class ByteColumn extends ByteFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return true;
     }
 

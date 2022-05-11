@@ -44,7 +44,7 @@ public class BinFunctionTest {
         }
 
         @Override
-        public boolean isStateless() {
+        public boolean isReadoutStateless() {
             return true;
         }
     };

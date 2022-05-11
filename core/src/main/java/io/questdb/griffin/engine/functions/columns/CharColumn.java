@@ -52,7 +52,7 @@ public class CharColumn extends CharFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return true;
     }
 

@@ -75,7 +75,7 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isStateless() {
+        public boolean isReadoutStateless() {
             return true;
         }
     }

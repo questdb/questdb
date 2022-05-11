@@ -81,7 +81,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return false;
     }
 

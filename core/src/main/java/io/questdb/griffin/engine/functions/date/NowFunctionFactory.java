@@ -65,7 +65,7 @@ public class NowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isStateless() {
+        public boolean isReadoutStateless() {
             return true;
         }
 

@@ -827,7 +827,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode filter,
             Function filterFunction
     ) throws SqlException {
-        if (!filterFunction.isStateless()) {
+        if (!filterFunction.isReadoutStateless()) {
             ObjList<Function> perWorkerFilters = new ObjList<>();
             for (int i = 0, c = executionContext.getWorkerCount(); i < c; i++) {
                 final Function perWorkerFilter = compileFilter(filter, metadata, executionContext);

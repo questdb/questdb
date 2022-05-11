@@ -156,7 +156,7 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return false;
     }
 }

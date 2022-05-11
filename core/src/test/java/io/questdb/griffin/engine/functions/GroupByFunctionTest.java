@@ -214,7 +214,7 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public boolean isStateless() {
+        public boolean isReadoutStateless() {
             return false;
         }
     };

@@ -40,7 +40,7 @@ public class GeoHashFunctionTest {
         }
 
         @Override
-        public boolean isStateless() {
+        public boolean isReadoutStateless() {
             return true;
         }
     };

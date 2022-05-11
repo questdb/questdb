@@ -52,7 +52,7 @@ public class DoubleColumn extends DoubleFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return true;
     }
 

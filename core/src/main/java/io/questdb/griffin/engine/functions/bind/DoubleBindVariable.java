@@ -48,7 +48,7 @@ class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutab
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return true;
     }
 }

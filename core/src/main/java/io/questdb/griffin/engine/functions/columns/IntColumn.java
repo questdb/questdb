@@ -52,7 +52,7 @@ public class IntColumn extends IntFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return true;
     }
 

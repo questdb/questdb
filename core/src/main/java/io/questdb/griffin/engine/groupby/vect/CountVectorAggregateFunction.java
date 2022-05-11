@@ -94,8 +94,8 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     }
 
     @Override
-    public boolean isStateless() {
-        return false;
+    public boolean isReadoutStateless() {
+        return true;
     }
 
     @FunctionalInterface

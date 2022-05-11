@@ -52,7 +52,7 @@ public class DateColumn extends DateFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return true;
     }
 

@@ -48,7 +48,7 @@ class CharBindVariable extends CharFunction implements ScalarFunction, Mutable {
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return true;
     }
 }

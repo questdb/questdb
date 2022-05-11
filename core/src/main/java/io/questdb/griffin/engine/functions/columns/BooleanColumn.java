@@ -52,7 +52,7 @@ public class BooleanColumn extends BooleanFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return true;
     }
 

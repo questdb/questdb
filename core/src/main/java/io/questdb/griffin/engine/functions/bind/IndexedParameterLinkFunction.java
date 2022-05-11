@@ -198,7 +198,7 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         switch (type) {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:

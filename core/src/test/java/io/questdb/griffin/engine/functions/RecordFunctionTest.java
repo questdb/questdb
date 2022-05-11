@@ -42,7 +42,7 @@ public class RecordFunctionTest {
         }
 
         @Override
-        public boolean isStateless() {
+        public boolean isReadoutStateless() {
             return true;
         }
     };

@@ -148,7 +148,7 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     }
 
     @Override
-    public boolean isStateless() {
+    public boolean isReadoutStateless() {
         return false;
     }
 }

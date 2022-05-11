@@ -70,7 +70,7 @@ public class RndDoubleCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isStateless() {
+        public boolean isReadoutStateless() {
             return false;
         }
 

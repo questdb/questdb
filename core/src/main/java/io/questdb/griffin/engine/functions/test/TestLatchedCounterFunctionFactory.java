@@ -91,7 +91,7 @@ public class TestLatchedCounterFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isStateless() {
+        public boolean isReadoutStateless() {
             return true;
         }
     }

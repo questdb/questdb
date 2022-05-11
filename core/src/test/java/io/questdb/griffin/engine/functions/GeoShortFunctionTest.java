@@ -44,7 +44,7 @@ public class GeoShortFunctionTest extends AbstractGriffinTest {
         }
 
         @Override
-        public boolean isStateless() {
+        public boolean isReadoutStateless() {
             return true;
         }
     };
