@@ -63,4 +63,9 @@ public interface BinaryFunction extends Function {
         final Function r = getRight();
         return (l.isConstant() && r.isRuntimeConstant()) || (r.isConstant() && l.isRuntimeConstant()) || (l.isRuntimeConstant() && r.isRuntimeConstant());
     }
+
+    @Override
+    default boolean isStateless() {
+        return getLeft().isStateless() && getRight().isStateless();
+    }
 }

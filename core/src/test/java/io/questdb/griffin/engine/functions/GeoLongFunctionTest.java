@@ -42,6 +42,11 @@ public class GeoLongFunctionTest extends AbstractGriffinTest {
         public long getGeoLong(Record rec) {
             return hash;
         }
+
+        @Override
+        public boolean isStateless() {
+            return true;
+        }
     };
 
     @Test

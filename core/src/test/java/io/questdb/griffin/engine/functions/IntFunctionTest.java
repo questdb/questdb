@@ -36,6 +36,11 @@ public class IntFunctionTest {
         public int getInt(Record rec) {
             return 150;
         }
+
+        @Override
+        public boolean isStateless() {
+            return true;
+        }
     };
 
     @Test

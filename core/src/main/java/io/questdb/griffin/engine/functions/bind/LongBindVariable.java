@@ -31,6 +31,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 
 class LongBindVariable extends LongFunction implements ScalarFunction, Mutable {
+
     long value;
 
     @Override
@@ -45,6 +46,11 @@ class LongBindVariable extends LongFunction implements ScalarFunction, Mutable {
 
     @Override
     public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isStateless() {
         return true;
     }
 }

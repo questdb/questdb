@@ -124,4 +124,9 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
         }
         return min;
     }
+
+    @Override
+    public boolean isStateless() {
+        return false;
+    }
 }

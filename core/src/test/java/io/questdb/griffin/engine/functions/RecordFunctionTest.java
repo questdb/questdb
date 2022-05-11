@@ -40,6 +40,11 @@ public class RecordFunctionTest {
         public Record getRecord(Record rec) {
             return record;
         }
+
+        @Override
+        public boolean isStateless() {
+            return true;
+        }
     };
 
     @Test(expected = UnsupportedOperationException.class)

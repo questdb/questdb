@@ -120,4 +120,9 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
         final long value = accumulator.longValue();
         return value == Long.MAX_VALUE ? Numbers.LONG_NaN : value;
     }
+
+    @Override
+    public boolean isStateless() {
+        return false;
+    }
 }

@@ -154,10 +154,7 @@ public interface Function extends Closeable, StatefulAtom {
      * and, thus, can be called concurrently, false - otherwise. Used as a hint for
      * parallel SQL filters runtime.
      */
-    default boolean supportsConcurrentExecution() {
-        // TODO change to true once the Function impl plumbing is done
-        return false;
-    }
+    boolean isStateless();
 
     default void toTop() {
     }

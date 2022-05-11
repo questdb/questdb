@@ -141,4 +141,11 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
         }
         return Double.NaN;
     }
+
+    @Override
+    public boolean isStateless() {
+        // group-by functions are not stateless when values are computed
+        // however, once values are calculated, the read becomes stateless
+        return true;
+    }
 }

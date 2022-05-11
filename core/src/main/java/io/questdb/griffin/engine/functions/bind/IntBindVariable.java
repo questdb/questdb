@@ -38,17 +38,22 @@ class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
     }
 
     @Override
-    public int getInt(Record rec) {
-        return value;
-    }
-
-    @Override
     public void clear() {
         this.value = Numbers.INT_NaN;
     }
 
     @Override
+    public int getInt(Record rec) {
+        return value;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isStateless() {
         return true;
     }
 }

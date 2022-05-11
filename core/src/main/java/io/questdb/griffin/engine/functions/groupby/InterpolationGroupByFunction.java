@@ -52,22 +52,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
         return new InterpolationGroupByFunction(wrappedFunction);
     }
 
-    public void startInterpolating(long startTime, long currentTime, long endTime) {
-        interpolating = true;
-        this.startTime = startTime;
-        this.endTime = endTime;
-        this.interval = currentTime-startTime;
-        this.current = 1;
-    }
-
-    public void stopInterpolating() {
-        interpolating = false;
-    }
-
-    public void setTarget(Record target) {
-        this.target = target;
-    }
-
     @Override
     public void computeFirst(MapValue mapValue, Record record) {
         wrappedFunction.computeFirst(mapValue, record);
@@ -279,5 +263,26 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     @Override
     public int getType() {
         return wrappedFunction.getType();
+    }
+
+    @Override
+    public boolean isStateless() {
+        return false;
+    }
+
+    public void setTarget(Record target) {
+        this.target = target;
+    }
+
+    public void startInterpolating(long startTime, long currentTime, long endTime) {
+        interpolating = true;
+        this.startTime = startTime;
+        this.endTime = endTime;
+        this.interval = currentTime - startTime;
+        this.current = 1;
+    }
+
+    public void stopInterpolating() {
+        interpolating = false;
     }
 }

@@ -81,6 +81,11 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     }
 
     @Override
+    public boolean isStateless() {
+        return false;
+    }
+
+    @Override
     public @Nullable SymbolTable newInstance() {
         return symbolTableSource.newSymbolTable(columnIndex);
     }

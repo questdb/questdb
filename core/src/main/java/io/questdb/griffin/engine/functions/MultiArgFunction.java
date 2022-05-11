@@ -73,4 +73,16 @@ public interface MultiArgFunction extends Function {
         }
         return true;
     }
+
+    @Override
+    default boolean isStateless() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (!function.isStateless()) {
+                return false;
+            }
+        }
+        return true;
+    }
 }

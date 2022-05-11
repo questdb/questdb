@@ -46,4 +46,9 @@ class FloatBindVariable extends FloatFunction implements ScalarFunction, Mutable
     public boolean isRuntimeConstant() {
         return true;
     }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
 }

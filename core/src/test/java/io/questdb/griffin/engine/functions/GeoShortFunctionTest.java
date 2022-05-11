@@ -42,6 +42,11 @@ public class GeoShortFunctionTest extends AbstractGriffinTest {
         public short getGeoShort(Record rec) {
             return (short) hash;
         }
+
+        @Override
+        public boolean isStateless() {
+            return true;
+        }
     };
 
     @Test(expected = UnsupportedOperationException.class)

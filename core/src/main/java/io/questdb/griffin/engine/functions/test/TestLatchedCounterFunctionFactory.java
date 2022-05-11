@@ -36,59 +36,63 @@ import io.questdb.std.ObjList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TestLatchedCounterFunctionFactory implements FunctionFactory {
-	private static final AtomicInteger COUNTER = new AtomicInteger();
-	private static volatile Callback CALLBACK;
+    private static final AtomicInteger COUNTER = new AtomicInteger();
+    private static volatile Callback CALLBACK;
 
-	public static void reset(Callback callback) {
-		CALLBACK = callback;
-		COUNTER.set(0);
-	}
+    public static int getCount() {
+        return COUNTER.get();
+    }
 
-	public static int getCount() {
-		return COUNTER.get();
-	}
+    public static void reset(Callback callback) {
+        CALLBACK = callback;
+        COUNTER.set(0);
+    }
 
-	@Override
-	public String getSignature() {
-		return "test_latched_counter()";
-	}
+    @Override
+    public String getSignature() {
+        return "test_latched_counter()";
+    }
 
-	@Override
-	public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-		return new TestLatchFunction();
-	}
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new TestLatchFunction();
+    }
 
-	private static class TestLatchFunction extends BooleanFunction {
-		private final Callback callback;
+    public interface Callback {
+        default void onClose() {
+        }
 
-		public TestLatchFunction() {
-			callback = CALLBACK;
-		}
+        default boolean onGet(Record rec, int count) {
+            return true;
+        }
+    }
 
-		@Override
-		public boolean getBool(Record rec) {
-			int count = COUNTER.incrementAndGet();
-			if (null == callback) {
-				return true;
-			}
-			return callback.onGet(rec, count);
-		}
+    private static class TestLatchFunction extends BooleanFunction {
+        private final Callback callback;
 
-		@Override
-		public void close() {
-			if (null != callback) {
-				callback.onClose();
-			}
-		}
+        public TestLatchFunction() {
+            callback = CALLBACK;
+        }
 
-	}
+        @Override
+        public void close() {
+            if (null != callback) {
+                callback.onClose();
+            }
+        }
 
-	public interface Callback {
-		default boolean onGet(Record rec, int count) {
-			return true;
-		}
-		
-		default void onClose() {
-		}
-	}
+        @Override
+        public boolean getBool(Record rec) {
+            int count = COUNTER.incrementAndGet();
+            if (null == callback) {
+                return true;
+            }
+            return callback.onGet(rec, count);
+        }
+
+        @Override
+        public boolean isStateless() {
+            return true;
+        }
+    }
 }

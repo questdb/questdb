@@ -51,4 +51,9 @@ public class BinBindVariable extends BinFunction implements ScalarFunction {
     public boolean isRuntimeConstant() {
         return true;
     }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
 }

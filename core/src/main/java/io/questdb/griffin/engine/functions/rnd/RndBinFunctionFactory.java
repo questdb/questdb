@@ -55,11 +55,6 @@ public class RndBinFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.sequence.rnd = executionContext.getRandom();
-        }
-
-        @Override
         public BinarySequence getBin(Record rec) {
             return sequence;
         }
@@ -67,6 +62,16 @@ public class RndBinFunctionFactory implements FunctionFactory {
         @Override
         public long getBinLen(Record rec) {
             return sequence.len;
+        }
+
+        @Override
+        public boolean isStateless() {
+            return false;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.sequence.rnd = executionContext.getRandom();
         }
     }
 

@@ -119,4 +119,9 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
         final double value = max.get();
         return Double.isInfinite(value) ? Double.NaN : value;
     }
+
+    @Override
+    public boolean isStateless() {
+        return false;
+    }
 }

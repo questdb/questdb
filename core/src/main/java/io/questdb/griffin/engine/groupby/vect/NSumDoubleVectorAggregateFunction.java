@@ -143,6 +143,11 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
         return transientCount > 0 ? transientSum + transientC : Double.NaN;
     }
 
+    @Override
+    public boolean isStateless() {
+        return false;
+    }
+
     private void computeSum() {
         double sum = 0;
         long count = 0;

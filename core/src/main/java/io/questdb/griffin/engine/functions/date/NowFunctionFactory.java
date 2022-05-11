@@ -60,14 +60,19 @@ public class NowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            executionContext.initNow();
-            context = executionContext;
+        public boolean isRuntimeConstant() {
+            return true;
         }
 
         @Override
-        public boolean isRuntimeConstant() {
+        public boolean isStateless() {
             return true;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            executionContext.initNow();
+            context = executionContext;
         }
     }
 }

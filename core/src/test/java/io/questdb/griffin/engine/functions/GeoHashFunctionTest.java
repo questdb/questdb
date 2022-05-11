@@ -38,6 +38,11 @@ public class GeoHashFunctionTest {
         public byte getGeoByte(Record rec) {
             return GeoHashes.BYTE_NULL;
         }
+
+        @Override
+        public boolean isStateless() {
+            return true;
+        }
     };
 
     @Test

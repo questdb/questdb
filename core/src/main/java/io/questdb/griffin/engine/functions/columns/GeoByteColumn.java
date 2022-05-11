@@ -41,11 +41,6 @@ public class GeoByteColumn extends GeoByteFunction {
         this.columnIndex = columnIndex;
     }
 
-    @Override
-    public byte getGeoByte(Record rec) {
-        return rec.getGeoByte(columnIndex);
-    }
-
     public static GeoByteColumn newInstance(int columnIndex, int columnType) {
         assert ColumnType.getGeoHashBits(columnType) >= ColumnType.GEOBYTE_MIN_BITS &&
                 ColumnType.getGeoHashBits(columnType) <= ColumnType.GEOBYTE_MAX_BITS;
@@ -59,6 +54,21 @@ public class GeoByteColumn extends GeoByteFunction {
         return new GeoByteColumn(columnIndex, columnType);
     }
 
+    @Override
+    public byte getGeoByte(Record rec) {
+        return rec.getGeoByte(columnIndex);
+    }
+
+    @Override
+    public boolean isStateless() {
+        return true;
+    }
+
+    @TestOnly
+    int getColumnIndex() {
+        return columnIndex;
+    }
+
     static {
         int bits = ColumnType.GEOBYTE_MAX_BITS - ColumnType.GEOBYTE_MIN_BITS + 1;
         COLUMNS = new GeoByteColumn[STATIC_COLUMN_COUNT * bits];
@@ -68,10 +78,5 @@ public class GeoByteColumn extends GeoByteFunction {
                 COLUMNS[col * bits + bit - ColumnType.GEOBYTE_MIN_BITS] = new GeoByteColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
             }
         }
-    }
-
-    @TestOnly
-    int getColumnIndex() {
-        return columnIndex;
     }
 }

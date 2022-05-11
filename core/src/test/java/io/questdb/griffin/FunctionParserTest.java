@@ -106,6 +106,12 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public double getDouble(Record rec) {
                         return 123.123;
                     }
+
+                    @Override
+                    public boolean isStateless() {
+                        return true;
+                    }
+
                 };
             }
         });
@@ -121,6 +127,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     @Override
                     public float getFloat(Record rec) {
                         return 123.123f;
+                    }
+
+                    @Override
+                    public boolean isStateless() {
+                        return true;
                     }
                 };
             }
@@ -628,6 +639,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             public boolean isConstant() {
                 return true;
             }
+
+            @Override
+            public boolean isStateless() {
+                return true;
+            }
         };
 
         functions.add(new FunctionFactory() {
@@ -666,6 +682,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
+
+                    @Override
+                    public boolean isStateless() {
+                        return true;
+                    }
                 };
             }
         });
@@ -692,6 +713,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
                     @Override
                     public boolean isConstant() {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isStateless() {
                         return true;
                     }
                 };
@@ -722,6 +748,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
+
+                    @Override
+                    public boolean isStateless() {
+                        return true;
+                    }
                 };
             }
         });
@@ -748,6 +779,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
                     @Override
                     public boolean isConstant() {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isStateless() {
                         return true;
                     }
                 };
@@ -778,6 +814,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
+
+                    @Override
+                    public boolean isStateless() {
+                        return true;
+                    }
                 };
             }
         });
@@ -806,6 +847,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
+
+                    @Override
+                    public boolean isStateless() {
+                        return true;
+                    }
                 };
             }
         });
@@ -832,6 +878,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
                     @Override
                     public boolean isConstant() {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isStateless() {
                         return true;
                     }
                 };
@@ -913,6 +964,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     public boolean isConstant() {
                         return true;
                     }
+
+                    @Override
+                    public boolean isStateless() {
+                        return true;
+                    }
                 };
             }
         });
@@ -992,6 +1048,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
                     @Override
                     public boolean isConstant() {
+                        return true;
+                    }
+
+                    @Override
+                    public boolean isStateless() {
                         return true;
                     }
                 };

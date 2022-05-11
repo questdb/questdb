@@ -229,5 +229,10 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         public long getTimestamp(Record rec) {
             return sampleLocalEpoch - tzOffset;
         }
+
+        @Override
+        public boolean isStateless() {
+            return false;
+        }
     }
 }
