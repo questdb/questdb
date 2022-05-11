@@ -28,13 +28,13 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.*;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import io.questdb.cairo.TableReader;
 import org.junit.*;
 import org.postgresql.util.PSQLException;
 
@@ -242,38 +242,36 @@ public class PGUpdateConcurrentTest extends BasePGTest {
         });
     }
 
-    private void assertSql(String sql, IntObjHashMap<CharSequence[]> expectedValues, IntObjHashMap<Validator> validators, SqlCompiler readerCompiler) throws SqlException {
-        try (RecordCursorFactory factory = readerCompiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            final RecordMetadata metadata = factory.getMetadata();
+    private void assertReader(TableReader rdr, IntObjHashMap<CharSequence[]> expectedValues, IntObjHashMap<Validator> validators) throws SqlException {
+        final RecordMetadata metadata = rdr.getMetadata();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            validators.get(i).reset();
+        }
+        RecordCursor cursor = rdr.getCursor();
+        final Record record = cursor.getRecord();
+        int recordIndex = 0;
+        while (cursor.hasNext()) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                validators.get(i).reset();
-            }
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                final Record record = cursor.getRecord();
-                int recordIndex = 0;
-                while (cursor.hasNext()) {
-                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                        final StringSink readerSink = this.readerSink.get();
-                        readerSink.clear();
-                        TestUtils.printColumn(record, metadata, i, readerSink);
-                        CharSequence[] expectedValueArray = expectedValues.get(i);
-                        CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
-                        if (!validators.get(i).validate(expectedValue, readerSink)) {
-                            throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
-                                    .put(", columnIndex=").put(i)
-                                    .put(", expected=").put(expectedValue)
-                                    .put(", actual=").put(readerSink);
-                        }
-                    }
-                    recordIndex++;
+                final StringSink readerSink = this.readerSink.get();
+                readerSink.clear();
+                TestUtils.printColumn(record, metadata, i, readerSink);
+                CharSequence[] expectedValueArray = expectedValues.get(i);
+                CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
+                if (!validators.get(i).validate(expectedValue, readerSink)) {
+                    throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
+                            .put(", columnIndex=").put(i)
+                            .put(", expected=").put(expectedValue)
+                            .put(", actual=").put(readerSink);
                 }
             }
+            recordIndex++;
         }
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
         writerAsyncCommandBusyWaitTimeout = 20_000_000L; // On in CI Windows updates are particularly slow
         writerAsyncCommandMaxTimeout = 90_000_000L;
+        spinLockTimeoutUs = 20_000_000L;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
@@ -352,12 +350,13 @@ public class PGUpdateConcurrentTest extends BasePGTest {
                     });
 
                     try {
-                        final SqlCompiler readerCompiler = new SqlCompiler(engine, null, snapshotAgent);
                         barrier.await();
-                        while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
-                            assertSql("up", expectedValues, validators, readerCompiler);
+                        try(TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
+                            while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                                rdr.reload();
+                                assertReader(rdr, expectedValues, validators);
+                            }
                         }
-                        readerCompiler.close();
                     } catch (Throwable th) {
                         LOG.error().$("reader error ").$(th).$();
                         exceptions.add(th);

@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
@@ -200,9 +201,12 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                     try {
                         final SqlCompiler readerCompiler = new SqlCompiler(engine, null, snapshotAgent);
                         barrier.await();
-                        while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
-                            assertSql("up", expectedValues, validators, readerCompiler);
-                            Os.sleep(1);
+                        try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up")) {
+                            while (current.get() < numOfWriters * numOfUpdates && exceptions.size() == 0) {
+                                rdr.reload();
+                                assertReader(rdr, expectedValues, validators);
+                                Os.sleep(1);
+                            }
                         }
                         readerCompiler.close();
                     } catch (Throwable th) {
@@ -230,32 +234,29 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertSql(String sql, IntObjHashMap<CharSequence[]> expectedValues, IntObjHashMap<Validator> validators, SqlCompiler readerCompiler) throws SqlException {
-        try (RecordCursorFactory factory = readerCompiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            final RecordMetadata metadata = factory.getMetadata();
+    private void assertReader(TableReader rdr, IntObjHashMap<CharSequence[]> expectedValues, IntObjHashMap<Validator> validators) throws SqlException {
+        final RecordMetadata metadata = rdr.getMetadata();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            validators.get(i).reset();
+        }
+        RecordCursor cursor = rdr.getCursor();
+        final Record record = cursor.getRecord();
+        int recordIndex = 0;
+        while (cursor.hasNext()) {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                validators.get(i).reset();
-            }
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                final Record record = cursor.getRecord();
-                int recordIndex = 0;
-                while (cursor.hasNext()) {
-                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                        final StringSink readerSink = this.readerSink.get();
-                        readerSink.clear();
-                        TestUtils.printColumn(record, metadata, i, readerSink);
-                        CharSequence[] expectedValueArray = expectedValues.get(i);
-                        CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
-                        if (!validators.get(i).validate(expectedValue, readerSink)) {
-                            throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
-                                    .put(", columnIndex=").put(i)
-                                    .put(", expected=").put(expectedValue)
-                                    .put(", actual=").put(readerSink);
-                        }
-                    }
-                    recordIndex++;
+                final StringSink readerSink = this.readerSink.get();
+                readerSink.clear();
+                TestUtils.printColumn(record, metadata, i, readerSink);
+                CharSequence[] expectedValueArray = expectedValues.get(i);
+                CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
+                if (!validators.get(i).validate(expectedValue, readerSink)) {
+                    throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
+                            .put(", columnIndex=").put(i)
+                            .put(", expected=").put(expectedValue)
+                            .put(", actual=").put(readerSink);
                 }
             }
+            recordIndex++;
         }
     }
 
