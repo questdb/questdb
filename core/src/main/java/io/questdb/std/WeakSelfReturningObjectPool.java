@@ -22,25 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.std;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.InsertStatement;
-import io.questdb.std.WeakSelfReturningObjectPool;
+import org.jetbrains.annotations.NotNull;
 
-public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
-    private InsertStatement insert;
+/**
+ * This object pool does not attempt to close pooled objects and instead assumes that
+ * objects return themselves to the pool on close() method call. Note that the push()
+ * method is not exposed by this class - the only way an object returns to the pool is
+ * a close() call.
+ */
+public class WeakSelfReturningObjectPool<T extends AbstractSelfReturningObject<?>> extends WeakObjectPoolBase<T> {
+    private final SelfReturningObjectFactory<T> factory;
 
-    public TypesAndInsert(WeakSelfReturningObjectPool<TypesAndInsert> parentPool) {
-        super(parentPool);
+    public WeakSelfReturningObjectPool(@NotNull SelfReturningObjectFactory<T> factory, int initSize) {
+        super(initSize);
+        this.factory = factory;
+        fill();
     }
 
-    public InsertStatement getInsert() {
-        return insert;
-    }
-
-    public void of(InsertStatement insert, BindVariableService bindVariableService) {
-        this.insert = insert;
-        copyTypesFrom(bindVariableService);
+    @Override
+    T newInstance() {
+        return factory.newInstance(this);
     }
 }
