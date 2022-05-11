@@ -33,6 +33,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -523,6 +524,7 @@ public class SymbolMapTest extends AbstractCairoTest {
         });
     }
 
+    @Ignore("Activate when we implement eager loading of symbol index reader memory")
     @Test
     public void testConcurrentSymbolTableAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -530,42 +532,43 @@ public class SymbolMapTest extends AbstractCairoTest {
             final int iterations = 10000;
             final int readerCount = 3;
 
-            final Path path = new Path().of(configuration.getRoot());
-
             CountDownLatch stopLatch = new CountDownLatch(readerCount);
             CyclicBarrier startBarrier = new CyclicBarrier(readerCount);
             AtomicInteger errors = new AtomicInteger();
 
             IntObjHashMap<String> symbols = new IntObjHashMap<>();
 
-            create(path, "x", keys, false);
+            SymbolMapReaderImpl reader;
+            try (final Path path = new Path().of(configuration.getRoot())) {
+                create(path, "x", keys, false);
 
-            // Obtain the reader when there are no symbols yet.
-            final SymbolMapReaderImpl reader = new SymbolMapReaderImpl(
-                    configuration,
-                    path,
-                    "x",
-                    COLUMN_NAME_TXN_NONE,
-                    0
-            );
+                // Obtain the reader when there are no symbols yet.
+                reader = new SymbolMapReaderImpl(
+                        configuration,
+                        path,
+                        "x",
+                        COLUMN_NAME_TXN_NONE,
+                        0
+                );
 
-            // Write the symbols.
-            try (final SymbolMapWriter writer = new SymbolMapWriter(
-                    configuration,
-                    path,
-                    "x",
-                    COLUMN_NAME_TXN_NONE,
-                    0,
-                    -1,
-                    NOOP_COLLECTOR
-            )) {
-                int prev = -1;
-                for (int i = 0; i < keys; i++) {
-                    String symbol = "sym" + i;
-                    int key = writer.put(symbol);
-                    Assert.assertEquals(prev + 1, key);
-                    prev = key;
-                    symbols.put(key, symbol);
+                // Write the symbols.
+                try (final SymbolMapWriter writer = new SymbolMapWriter(
+                        configuration,
+                        path,
+                        "x",
+                        COLUMN_NAME_TXN_NONE,
+                        0,
+                        -1,
+                        NOOP_COLLECTOR
+                )) {
+                    int prev = -1;
+                    for (int i = 0; i < keys; i++) {
+                        String symbol = "sym" + i;
+                        int key = writer.put(symbol);
+                        Assert.assertEquals(prev + 1, key);
+                        prev = key;
+                        symbols.put(key, symbol);
+                    }
                 }
             }
 
@@ -593,6 +596,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                         errors.incrementAndGet();
                         e.printStackTrace();
                     } finally {
+                        Misc.free(symbolTable);
                         stopLatch.countDown();
                     }
                 }
@@ -603,13 +607,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                 new ReaderThread(reader.newSymbolTableView()).start();
             }
 
-            try {
-                Assert.assertTrue(stopLatch.await(20000, TimeUnit.SECONDS));
-                Assert.assertEquals(0, errors.get());
-            } finally {
-                Misc.free(reader);
-                Misc.free(path);
-            }
+            Assert.assertTrue(stopLatch.await(20000, TimeUnit.SECONDS));
+            Assert.assertEquals(0, errors.get());
         });
     }
 }

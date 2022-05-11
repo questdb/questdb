@@ -44,9 +44,9 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected int blockCapacity;
     protected long spinLockTimeoutUs;
     protected MicrosecondClock clock;
-    protected volatile int keyCount;
-    private volatile int keyCountIncludingNulls;
+    protected int keyCount;
     protected long unIndexedNullCount;
+    private int keyCountIncludingNulls;
 
     @Override
     public void close() {

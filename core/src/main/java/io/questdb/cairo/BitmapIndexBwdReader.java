@@ -106,13 +106,10 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         public boolean hasNext() {
             if (valueCount > 0) {
                 long cellIndex = getValueCellIndex(--valueCount);
-                long result;
-                synchronized (valueMem) {
-                    result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
-                    if (cellIndex == 0 && valueCount > 0) {
-                        // we are at edge of block right now, next value will be in previous block
-                        jumpToPreviousValueBlock();
-                    }
+                long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
+                if (cellIndex == 0 && valueCount > 0) {
+                    // we are at edge of block right now, next value will be in previous block
+                    jumpToPreviousValueBlock();
                 }
 
                 if (result >= minValue) {
@@ -151,44 +148,40 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             } else {
                 assert key > -1 : "key must be positive integer: " + key;
                 long offset = BitmapIndexUtils.getKeyEntryOffset(key);
+                keyMem.extend(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
+                // Read value count and last block offset atomically. In that we must orderly read value count first and
+                // value count check last. If they match - everything we read between those holds true. We must retry
+                // should these values do not match.
                 long valueCount;
                 long valueBlockOffset;
-                synchronized (keyMem) {
-                    keyMem.extend(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
-                    // Read value count and last block offset atomically. In that we must orderly read value count first and
-                    // value count check last. If they match - everything we read between those holds true. We must retry
-                    // should these values do not match.
-                    final long deadline = clock.getTicks() + spinLockTimeoutUs;
-                    while (true) {
-                        valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+                final long deadline = clock.getTicks() + spinLockTimeoutUs;
+                while (true) {
+                    valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+
+                    Unsafe.getUnsafe().loadFence();
+                    if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
+                        valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
 
                         Unsafe.getUnsafe().loadFence();
-                        if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
-                            valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
-
-                            Unsafe.getUnsafe().loadFence();
-                            if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
-                                break;
-                            }
+                        if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
+                            break;
                         }
+                    }
 
-                        if (clock.getTicks() > deadline) {
-                            LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
-                            throw CairoException.instance(0).put(INDEX_CORRUPT);
-                        }
+                    if (clock.getTicks() > deadline) {
+                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
+                        throw CairoException.instance(0).put(INDEX_CORRUPT);
                     }
                 }
 
-                synchronized (valueMem) {
-                    valueMem.extend(valueBlockOffset + blockCapacity);
+                valueMem.extend(valueBlockOffset + blockCapacity);
 
-                    if (valueCount > 0) {
-                        BitmapIndexUtils.seekValueBlockRTL(valueCount, valueBlockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
-                    } else {
-                        seekValue(valueCount, valueBlockOffset);
-                    }
-                    this.minValue = minValue;
+                if (valueCount > 0) {
+                    BitmapIndexUtils.seekValueBlockRTL(valueCount, valueBlockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
+                } else {
+                    seekValue(valueCount, valueBlockOffset);
                 }
+                this.minValue = minValue;
             }
         }
 
