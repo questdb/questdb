@@ -4084,7 +4084,11 @@ public class TableWriter implements Closeable {
     }
 
     private void publishTableWriterEvent(int cmdType, long tableId, long correlationId, int errorCode, CharSequence errorMsg, long affectedRowsCount, int eventType) {
-        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        long pubCursor;
+        do {
+            pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        } while (pubCursor < -1);
+
         if (pubCursor > -1) {
             try {
                 final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
@@ -4112,7 +4116,7 @@ public class TableWriter implements Closeable {
                 }
                 lg.I$();
             }
-        } else if (pubCursor == -1) {
+        } else {
             // Queue is full
             LOG.error()
                     .$("cannot publish sync command complete event [type=").$(cmdType)

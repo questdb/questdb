@@ -79,6 +79,11 @@ public abstract class AbstractOperation implements AsyncWriterCommand {
     }
 
     @Override
+    public long getCorrelationId() {
+        return correlationId;
+    }
+
+    @Override
     public void setCommandCorrelationId(long correlationId) {
         this.correlationId = correlationId;
     }

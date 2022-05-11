@@ -44,6 +44,8 @@ public interface AsyncWriterCommand {
 
     long getTableVersion();
 
+    long getCorrelationId();
+
     void startAsync();
 
     void serialize(TableWriterTask task);

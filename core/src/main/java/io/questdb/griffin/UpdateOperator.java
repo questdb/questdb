@@ -83,7 +83,7 @@ public class UpdateOperator implements Closeable {
 
     public long executeUpdate(SqlExecutionContext sqlExecutionContext, UpdateOperation op) throws SqlException, ReaderOutOfDateException {
 
-        LOG.info().$("updating [table=").$(tableWriter.getTableName()).I$();
+        LOG.info().$("updating [table=").$(tableWriter.getTableName()).$(" instance=").$(op.getCorrelationId()).I$();
 
         try {
             final int tableId = op.getTableId();
@@ -94,7 +94,7 @@ public class UpdateOperator implements Closeable {
 
             final String tableName = tableWriter.getTableName();
             if (tableWriter.inTransaction()) {
-                LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableName).I$();
+                LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableName).$(" instance=").$(op.getCorrelationId()).I$();
                 tableWriter.commit();
             }
 
@@ -235,6 +235,7 @@ public class UpdateOperator implements Closeable {
             }
 
             LOG.info().$("update finished [table=").$(tableName)
+                    .$(", instance=").$(op.getCorrelationId())
                     .$(", updated=").$(rowsUpdated)
                     .$(", txn=").$(tableWriter.getTxn())
                     .I$();
