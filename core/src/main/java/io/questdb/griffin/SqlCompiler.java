@@ -1948,8 +1948,8 @@ public class SqlCompiler implements Closeable {
 
                     FileIndexer indexer = new FileIndexer(executionContext);
                     DateFormat dateFormat = engine.getConfiguration().getTextConfiguration().getInputFormatConfiguration().getTimestampFormatFactory().get(model.getTimestampFormat());
-                    indexer.of(PartitionBy.DAY, (byte) ',', model.getTimestampColumn(), dateFormat, true);
-                    indexer.process(name);
+                    indexer.of(name, PartitionBy.DAY, (byte) ',', model.getTimestampColumn(), dateFormat, true);
+                    indexer.process();
                     return;
                 }
 

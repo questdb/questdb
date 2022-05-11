@@ -64,9 +64,9 @@ public class FileIndexer implements Closeable, Mutable {
     private final ObjList<FileSplitter> splitters = new ObjList<>();
     private final FilesFacade ff;
 
-    //work dir path
-    private final Path path = new Path();
+    private final Path inputFilePath = new Path();
     private final int dirMode;
+    private final Path tmpPath = new Path();
 
     private final RingQueue<TextImportTask> queue;
     private final Sequence pubSeq;
@@ -77,17 +77,23 @@ public class FileIndexer implements Closeable, Mutable {
     private final CharSequence inputRoot;
     private final CharSequence inputWorkRoot;
 
+    //name of file to process in inputRoot dir
+    private CharSequence inputFileName;
+
     private final int bufferLength;
 
     public FileIndexer(SqlExecutionContext sqlExecutionContext) {
-        this.workerCount = sqlExecutionContext.getWorkerCount();
-
         MessageBus bus = sqlExecutionContext.getMessageBus();
         this.queue = bus.getTextImportQueue();
         this.pubSeq = bus.getTextImportPubSeq();
         this.subSeq = bus.getTextImportSubSeq();
 
         CairoConfiguration cfg = sqlExecutionContext.getCairoEngine().getConfiguration();
+        this.workerCount = sqlExecutionContext.getWorkerCount();
+        for (int i = 0; i < workerCount; i++) {
+            splitters.add(new FileSplitter(cfg));
+        }
+
         this.ff = cfg.getFilesFacade();
 
         this.inputRoot = cfg.getInputRoot();
@@ -101,96 +107,89 @@ public class FileIndexer implements Closeable, Mutable {
     public void clear() {
         doneLatch.reset();
         chunkStats.clear();
-        splitters.clear(); //todo: fix it
+
+        for (int i = 0; i < splitters.size(); i++) {
+            splitters.get(i).clear();
+        }
     }
 
     @Override
     public void close() throws IOException {
+        clear();
         Misc.freeObjList(splitters);
-        path.close();
-        clear();
+        inputFilePath.close();
+        tmpPath.close();
     }
 
-    public void of(int partitionBy, byte columnDelimiter, int timestampIndex, DateFormat format, boolean ignoreHeader) {
-        //todo: pass to all splitters
-    }
-
-    public void process(final CharSequence inputFileName) {
+    public void of(CharSequence inputFileName, int partitionBy, byte columnDelimiter, int timestampIndex, DateFormat format, boolean ignoreHeader) {
         clear();
 
-        long fileSize = ff.length(path.of(inputRoot).slash().concat(inputFileName).slash$().$());
-        assert fileSize > 0;
+        this.inputFileName = inputFileName;
+        inputFilePath.of(inputRoot).slash().concat(inputFileName).$();
 
-        final long chunkSize = (fileSize + workerCount - 1) / workerCount;
-        final int taskCount = (int) ((fileSize + chunkSize - 1) / chunkSize);
+        for (int i = 0; i < splitters.size(); i++) {
+            FileSplitter splitter = splitters.get(i);
+            splitter.of(inputFileName, i, partitionBy, columnDelimiter, timestampIndex, format, ignoreHeader);
 
-        //todo: splitting part
-        int queuedCount = 0;
-        doneLatch.reset();
-
-        createWorkDir(path.of(inputWorkRoot).slash().concat(inputFileName).slash$().$());
-
-        chunkStats.setPos(taskCount * 4); // quotesEven, quotesOdd, newlineOffsetEven, newlineOffsetOdd
-        chunkStats.zero(0);
-
-        for (int i = 0; i < taskCount; ++i) {
-            final long chunkLo = i * chunkSize;
-            final long chunkHi = Long.min(chunkLo + chunkSize, fileSize);
-
-            final long seq = pubSeq.next();
-            if (seq < 0) {
-                // process locally
-            } else {
-                //queue.get(seq).of(4 * i, chunkLo, chunkHi, chunkStats, doneLatch);//TODO: fix 
-                pubSeq.done(seq);
-                queuedCount++;
+            //TODO: what to do with ignoreHeader?
+            if (ignoreHeader) {
+                ignoreHeader = false;//only first splitter will process file with header
             }
         }
+    }
 
-        // process our own queue
-        // this should fix deadlock with 1 worker configuration
-        while (doneLatch.getCount() > -queuedCount) {
-            long seq = subSeq.next();
-            if (seq > -1) {
-                queue.get(seq).run();
-                subSeq.done(seq);
-            }
+    public void process() throws SqlException {
+        long fd = ff.openRO(inputFilePath);
+        if (fd < 0) {
+            throw CairoException.instance(ff.errno()).put("Can't open input file").put(inputFilePath);
         }
 
-        doneLatch.await(queuedCount);
+        try {
+            final long fileLength = ff.length(fd);
+            if (fileLength < 1) {
+                LOG.info().$("Ignoring file because it's empty. Path=").$(inputFilePath).$();
+                return;
+            }
 
-        queuedCount = 0;
-        doneLatch.reset();
-        //todo: parsing part
+            findChunkBoundaries(fd);
+            indexChunks();
+
+            //TODO:  sort merge phase
+            //TODO:  import phase
+        } finally {
+            ff.close(fd);
+        }
     }
 
     //TODO: we'll' need to lock dir or acquire table lock to make sure there are no two parallel user-issued imports of the same file
-    private void createWorkDir(final Path path) {
+    private void createWorkDir() {
+        //TODO: remove file separator and dots from input file name !
+        Path workDirPath = tmpPath.of(inputWorkRoot).slash().concat(inputFileName).slash$();
 
-        if (ff.exists(path)) {
-            int errno = ff.rmdir(path);
+        if (ff.exists(workDirPath)) {
+            int errno = ff.rmdir(workDirPath);
             if (errno != 0) {
-                throw CairoException.instance(errno).put("Can't remove import work dir ").put(path).put(" errno=").put(errno);
+                throw CairoException.instance(errno).put("Can't remove import pre-existing work dir ").put(workDirPath).put(" errno=").put(errno);
             }
         }
 
-        int errno = ff.mkdir(path, dirMode);
+        int errno = ff.mkdir(workDirPath, dirMode);
         if (errno != 0) {
-            throw CairoException.instance(errno).put("Can't create import work dir ").put(path).put(" errno=").put(errno);
+            throw CairoException.instance(errno).put("Can't create import work dir ").put(workDirPath).put(" errno=").put(errno);
         }
 
-        LOG.info().$("created import dir ").$(path).$();
+        LOG.info().$("created import dir ").$(workDirPath).$();
     }
 
     //returns list with N chunk boundaries
-    public LongList findChunkBoundaries(long fd, Path inputFilePath) throws SqlException {
+    LongList findChunkBoundaries(long fd) throws SqlException {
         final long fileLength = ff.length(fd);
 
         if (fileLength < 1) {
             return null;
         }
 
-        path.of(inputFilePath).$();//of() doesn't copy null terminator!
+        LOG.info().$("Started checking boundaries in file=").$(inputFilePath).$();
 
         assert (workerCount > 0 && minChunkSize > 0);
 
@@ -206,14 +205,16 @@ public class FileIndexer implements Closeable, Mutable {
         chunkStats.zero(0);
 
         for (int i = 0; i < chunks; i++) {
+            FileSplitter splitter = splitters.get(i);
+
             final long chunkLo = i * chunkSize;
             final long chunkHi = Long.min(chunkLo + chunkSize, fileLength);
 
             final long seq = pubSeq.next();
             if (seq < 0) {
-                countQuotes(fd, chunkLo, chunkHi, chunkStats, 5 * i, bufferLength, ff);
+                splitter.countQuotes(chunkLo, chunkHi, chunkStats, 5 * i);
             } else {
-                queue.get(seq).of(5 * i, this, chunkLo, chunkHi, chunkStats, doneLatch);
+                queue.get(seq).of(5 * i, splitter, chunkLo, chunkHi, chunkStats, doneLatch, TextImportTask.PHASE_BOUNDARY_CHECK);
                 pubSeq.done(seq);
                 queuedCount++;
             }
@@ -235,7 +236,7 @@ public class FileIndexer implements Closeable, Mutable {
 
         processChunkStats(fileLength, chunks);
 
-        LOG.info().$("Finished finding boundaries in file=").$(path).$();
+        LOG.info().$("Finished checking boundaries in file=").$(inputFilePath).$();
 
         return chunkStats;
     }
@@ -253,8 +254,8 @@ public class FileIndexer implements Closeable, Mutable {
                 startPos = chunkStats.get(5 * i + 3);
             }
 
-            //whole chunk might belong to huge quoted string or contain one very long line
-            //so it should be merged with previous chunk
+            //if whole chunk  belongs to huge quoted string or contains one very long line
+            //then it should be ignored here and merged with previous chunk
             if (startPos > -1) {
                 chunkStats.set(actualChunks++, startPos);
             }
@@ -265,56 +266,43 @@ public class FileIndexer implements Closeable, Mutable {
         chunkStats.add(fileLength);
     }
 
-    public static void countQuotes(long fd, long chunkStart, long chunkEnd, LongList chunkStats, int chunkIndex, int bufferLength, FilesFacade ff) throws SqlException {
-        long offset = chunkStart;
+    void indexChunks() throws SqlException {
+        int queuedCount = 0;
+        doneLatch.reset();
 
-        //output vars
-        long quotes = 0;
-        long[] nlCount = new long[2];
-        long[] nlFirst = new long[]{-1, -1};
+        LOG.info().$("Started indexing file=").$(inputFilePath).$();
 
-        long read;
-        long ptr;
-        long hi;
+        createWorkDir();
 
-        long buffer = Unsafe.malloc(bufferLength, MemoryTag.NATIVE_DEFAULT);
-        try {
-            do {
-                long leftToRead = Math.min(chunkEnd - offset, bufferLength);
-                read = (int) ff.read(fd, buffer, leftToRead, offset);
-                if (read < 1) {
-                    break;
-                }
-                hi = buffer + read;
-                ptr = buffer;
+        for (int i = 0, n = chunkStats.size() - 1; i < n; i++) {
+            final long chunkLo = chunkStats.get(i);
+            final long chunkHi = chunkStats.get(i + 1);
 
-                while (ptr < hi) {
-                    final byte c = Unsafe.getUnsafe().getByte(ptr++);
-                    if (c == '"') {
-                        quotes++;
-                    } else if (c == '\n') {
-                        nlCount[(int) (quotes & 1)]++;
-                        if (nlFirst[(int) (quotes & 1)] == -1) {
-                            nlFirst[(int) (quotes & 1)] = chunkStart + ptr - buffer;
-                        }
-                    }
-                }
+            FileSplitter splitter = splitters.get(i);
 
-                offset += read;
-            } while (offset < chunkEnd);
-
-            if (read < 0 || offset < chunkEnd) {
-                throw SqlException.$(/*model.getFileName().position*/1, "could not read file [errno=").put(ff.errno()).put(']');
+            final long seq = pubSeq.next();
+            if (seq < 0) {
+                splitter.index(chunkLo, chunkHi, 5 * i);
+            } else {//TODO: maybe could re-use chunkStats to store number of rows found in each chunk  
+                queue.get(seq).of(5 * i, splitter, chunkLo, chunkHi, chunkStats, doneLatch, TextImportTask.PHASE_INDEXING);
+                pubSeq.done(seq);
+                queuedCount++;
             }
-
-            chunkStats.set(chunkIndex, quotes);
-            chunkStats.set(chunkIndex + 1, nlCount[0]);
-            chunkStats.set(chunkIndex + 2, nlCount[1]);
-            chunkStats.set(chunkIndex + 3, nlFirst[0]);
-            chunkStats.set(chunkIndex + 4, nlFirst[1]);
-        } finally {
-            Unsafe.free(buffer, bufferLength, MemoryTag.NATIVE_DEFAULT);
         }
+
+        // process our own queue (this should fix deadlock with 1 worker configuration)
+        while (doneLatch.getCount() > -queuedCount) {
+            long seq = subSeq.next();
+            if (seq > -1) {
+                queue.get(seq).run();
+                subSeq.done(seq);
+            }
+        }
+
+        doneLatch.await(queuedCount);//TODO: add timeout ?
+        doneLatch.reset();
+
+        LOG.info().$("Finished indexing file=").$(inputFilePath).$();
     }
 
     public void setMinChunkSize(int minChunkSize) {
@@ -322,7 +310,7 @@ public class FileIndexer implements Closeable, Mutable {
     }
 
     Path getInputFilePath() {
-        return path;
+        return inputFilePath;
     }
 
     FilesFacade getFf() {

@@ -30,43 +30,51 @@ import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.LongList;
 
 public class TextImportTask {
+
+    public static final byte PHASE_BOUNDARY_CHECK = 1;
+    public static final byte PHASE_INDEXING = 2;
+
     private int index;
 
-    private FileIndexer indexer;
+    private FileSplitter splitter;
 
     private long chunkLo;
     private long chunkHi;
     private LongList stats;
     private CountDownLatchSPI doneLatch;
+    private byte phase;
 
     public void of(
             int index,
-            FileIndexer splitter,
+            FileSplitter splitter,
             long chunkLo,
             long chunkHi,
             LongList stats,
-            CountDownLatchSPI doneLatch
+            CountDownLatchSPI doneLatch,
+            byte phase
     ) {
         this.index = index;
-        this.indexer = splitter;
+        this.splitter = splitter;
         this.chunkLo = chunkLo;
         this.chunkHi = chunkHi;
         this.stats = stats;
         this.doneLatch = doneLatch;
+        this.phase = phase;
     }
 
     public boolean run() {
-        long fd = indexer.getFf().openRO(indexer.getInputFilePath());
-        if (fd < 0)
-            throw CairoException.instance(indexer.getFf().errno()).put("could not open read-only [file=").put(indexer.getInputFilePath()).put(']');
-
         try {
-            FileIndexer.countQuotes(fd, chunkLo, chunkHi, stats, index, indexer.getBufferLength(), indexer.getFf());
+            if (phase == PHASE_BOUNDARY_CHECK) {
+                splitter.countQuotes(chunkLo, chunkHi, stats, index);
+            } else if (phase == PHASE_INDEXING) {
+                splitter.index(chunkLo, chunkHi, index);
+            } else {
+                throw new RuntimeException("Unexpected phase " + phase);
+            }
         } catch (SqlException e) {
-            e.printStackTrace();//TODO: fix 
-        } finally {
-            indexer.getFf().close(fd);
+            e.printStackTrace();//TODO: how can we react to job failing 
         }
+
         doneLatch.countDown();
         return true;
     }

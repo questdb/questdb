@@ -46,58 +46,51 @@ public class FileSplitterTest extends AbstractGriffinTest {
     @Test
     public void testFindChunkBoundariesForEmptyFile() throws Exception {
         executeWithPool(3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                assertChunkBoundariesFor("src/test/resources/csv/test-quotes-empty.csv", null, sqlExecutionContext)
+                assertChunkBoundariesFor("test-quotes-empty.csv", null, sqlExecutionContext)
         );
     }
 
     @Test
     public void testFindChunkBoundariesForFileWithNoQuotes() throws Exception {
         executeWithPool(3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                assertChunkBoundariesFor("src/test/resources/csv/test-import.csv", list(0, 4565, 9087, 13612), sqlExecutionContext)
+                assertChunkBoundariesFor("test-import.csv", list(0, 4565, 9087, 13612), sqlExecutionContext)
         );
     }
 
     @Test
     public void testFindChunkBoundariesForFileWithLongLines() throws Exception {
         executeWithPool(3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                assertChunkBoundariesFor("src/test/resources/csv/test-quotes-small.csv", list(0, 170, 241), sqlExecutionContext)
+                assertChunkBoundariesFor("test-quotes-small.csv", list(0, 170, 241), sqlExecutionContext)
         );
     }
 
     @Test
     public void testFindChunkBoundariesForFileWithOneLongLine() throws Exception {
         executeWithPool(3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                assertChunkBoundariesFor("src/test/resources/csv/test-quotes-oneline.csv", list(0, 234), sqlExecutionContext)
+                assertChunkBoundariesFor("test-quotes-oneline.csv", list(0, 234), sqlExecutionContext)
         );
     }
 
     @Test
     public void testFindChunkBoundariesWithPool() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                assertChunkBoundariesFor("src/test/resources/csv/test-quotes-oneline.csv", list(0, 234), sqlExecutionContext)
+                assertChunkBoundariesFor("test-quotes-oneline.csv", list(0, 234), sqlExecutionContext)
         );
     }
 
-    @Test
-    public void testFindBoundariesForSimpleCsvWithPool() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+    @Test//60 seconds for boundary check + indexing of 56GB file  
+    public void testProcessLargeCsvWithPool() throws Exception {
+        executeWithPool(8, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             //String inputDir = new File(".").getAbsolutePath();
-            String inputDir = new File("E:/dev/tmp").getAbsolutePath();
+            inputRoot = new File("E:/dev/tmp").getAbsolutePath();
 
             //try (Path path = new Path().of(inputDir).slash().concat("src/test/resources/csv/test-import.csv").$();
-            try (Path path = new Path().of(inputDir).slash().concat("trips300mil.csv").$();
-                 FileIndexer splitter = new FileIndexer(sqlExecutionContext)) {
+            try (Path path = new Path().of(inputRoot).slash().concat("trips300mil.csv").$();
+                 FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
 
-                long fd = ff.openRO(path);
-                Assert.assertTrue(fd > -1);
-
-                try {
-                    LongList chunkBoundaries = splitter.findChunkBoundaries(fd, path);
-                    System.out.println(chunkBoundaries);
-                } finally {
-                    ff.close(fd);
-                }
+                DateFormat dateFormat = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
+                indexer.of("trips300mil.csv", PartitionBy.YEAR, (byte) ',', 2, dateFormat, true);
+                indexer.process();
             }
         });
     }
@@ -110,19 +103,20 @@ public class FileSplitterTest extends AbstractGriffinTest {
         return result;
     }
 
-    private void assertChunkBoundariesFor(String filename, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws SqlException, IOException {
+    private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws SqlException, IOException {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        String inputDir = new File(".").getAbsolutePath();
+        inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
 
-        try (Path path = new Path().of(inputDir).slash().concat(filename).$();
+        try (Path path = new Path().of(inputRoot).slash().concat(fileName).$();
              FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
             indexer.setMinChunkSize(1);
+            indexer.of(fileName, PartitionBy.DAY, (byte) ',', -1, null, false);
 
             long fd = ff.openRO(path);
             Assert.assertTrue(fd > -1);
 
             try {
-                LongList actualBoundaries = indexer.findChunkBoundaries(fd, path);
+                LongList actualBoundaries = indexer.findChunkBoundaries(fd);
                 Assert.assertEquals(expectedBoundaries, actualBoundaries);
             } finally {
                 ff.close(fd);
@@ -133,17 +127,15 @@ public class FileSplitterTest extends AbstractGriffinTest {
     @Ignore
     @Test//47s with on thread and old implementation
     public void testSimpleCsv() throws Exception {
-        assertMemoryLeak(() -> {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             //String inputDir = new File(".").getAbsolutePath();
-            String inputDir = new File("E:/dev/tmp").getAbsolutePath();
+            inputRoot = new File("E:/dev/tmp").getAbsolutePath();
 
             //try (Path path = new Path().of(inputDir).slash().concat("src/test/resources/csv/test-import.csv").$();
-            inputRoot = inputDir;
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 DateFormat dateFormat = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
-                indexer.of(PartitionBy.MONTH, (byte) ',', 2, dateFormat, true);
-//                indexer.process("test-import-csv");
-                indexer.process("trips300mil.csv");
+                indexer.of("trips300mil.csv", PartitionBy.MONTH, (byte) ',', 2, dateFormat, true);
+                indexer.process();
             }
         });
     }
@@ -202,6 +194,11 @@ public class FileSplitterTest extends AbstractGriffinTest {
                     @Override
                     public CharSequence getInputWorkRoot() {
                         return FileSplitterTest.inputWorkRoot;
+                    }
+
+                    @Override
+                    public CharSequence getInputRoot() {
+                        return FileSplitterTest.inputRoot;
                     }
                 };
 

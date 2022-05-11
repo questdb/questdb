@@ -67,20 +67,25 @@ public class FileSplitter implements Closeable, Mutable {
     //used for timestamp parsing
     private final DirectCharSink utf8Sink;
 
-    private final int bufferLength;
-
     //work dir path
     private final Path path = new Path();
-    private CharSequence inputRoot;
-    private CharSequence inputWorkRoot;
+    private final CharSequence inputRoot;
+    private final CharSequence inputWorkRoot;
 
     private final FilesFacade ff;
+    private final int dirMode;
     private CharSequence inputFileName;
+
+    //input file descriptor (cached between initial boundary scan & indexing phases)
+    private long fd = -1;
+    //input file buffer (used in multiple phases)
+    private long fileBufferPtr = -1;
+    private final int bufferLength;
 
     //file offset of current start of buffered block
     private long offset;
 
-    //position of timestamp column in csv 
+    //position of timestamp column in csv (0-based) 
     private int timestampIndex;
 
     //adapter used to parse timestamp column
@@ -139,6 +144,7 @@ public class FileSplitter implements Closeable, Mutable {
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         this.ff = configuration.getFilesFacade();
+        this.dirMode = configuration.getMkDirMode();
 
         this.inputRoot = configuration.getInputRoot();
         this.inputWorkRoot = configuration.getInputWorkRoot();
@@ -151,7 +157,6 @@ public class FileSplitter implements Closeable, Mutable {
         this.fieldRollBufCur = fieldRollBufPtr;
 
         this.timestampField = new DirectByteCharSequence();
-
     }
 
     public void of(CharSequence inputFileName, int index, int partitionBy, byte columnDelimiter, int timestampIndex, DateFormat format, boolean ignoreHeader) {
@@ -189,6 +194,10 @@ public class FileSplitter implements Closeable, Mutable {
         MemoryMA target = outputFiles.get(floor);
         if (target == null) {
             path.of(inputWorkRoot).slash().concat(inputFileName).slash().put(index).slash$();
+            if (!ff.exists(path)) {
+                ff.mkdir(path, dirMode);
+            }
+            path.chop$();
             partitionDirFormatMethod.format(floor, null, null, path);
             path.put("_idx").$();
 
@@ -228,10 +237,21 @@ public class FileSplitter implements Closeable, Mutable {
         this.inputFileName = null;
 
         outputFiles.forEach((key, value) -> {
-            value.close();//TODO: truncate ?
+            value.close(true);//TODO: we've to mark actual end of file because truncate isn't exact 
         });
 
         this.outputFiles.clear();
+
+        if (fileBufferPtr > -1) {
+            Unsafe.free(fileBufferPtr, bufferLength, MemoryTag.NATIVE_DEFAULT);
+            fileBufferPtr = -1;
+        }
+
+        if (fd > -1) {
+            ff.close(fd);
+            fd = -1;
+            //TODO: warn if fails ?
+        }
     }
 
     @Override
@@ -470,40 +490,105 @@ public class FileSplitter implements Closeable, Mutable {
         this.lastLineStart = this.fieldLo - lo;
     }
 
-    //timestampIndex - zero-based index of timestamp column
-    public void split(long chunkOffset, long chunkLength) throws TextException, SqlException {
+    public void index(long chunkLo, long chunkHi, int chunkIndex) throws SqlException {
+        assert chunkHi > 0;
+        assert chunkLo >= 0 && chunkLo < chunkHi;
 
-        path.of(inputRoot).slash().concat(inputFileName).slash$().$();
-        assert ff.exists(path);
-        assert chunkLength > 0;
-        assert chunkOffset >= 0 && chunkOffset < chunkLength;
+        openInputFile();
+        prepareBuffer();
+
+        this.offset = chunkLo;
+        long read;
+
+        do {
+            long leftToRead = Math.min(chunkHi - offset, bufferLength);
+            read = (int) ff.read(fd, fileBufferPtr, leftToRead, offset);
+            if (read < 1) {
+                break;
+            }
+            parse(fileBufferPtr, fileBufferPtr + read);
+            offset += read;
+        } while (offset < chunkHi);
+
+        if (read < 0 || offset < chunkHi) {
+            throw SqlException.$(0, "could not read file [errno=").put(ff.errno()).put(']');
+        } else {
+            parseLast();
+        }
+
+        LOG.info().$("Finished indexing chunk [no=").$(chunkIndex / 5).$(", lines=").$(lineCount).$(']').$();
+    }
+
+    void openInputFile() {
+        if (fd > -1) {
+            return;
+        }
+
+        path.of(inputRoot).slash().concat(inputFileName).$();
 
         long fd = ff.openRO(path);
-        if (fd == -1) {
-            throw SqlException.$(0, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
+        if (fd < 0)
+            throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
+
+        this.fd = fd;
+    }
+
+    void prepareBuffer() {
+        if (fileBufferPtr < 0) {
+            fileBufferPtr = Unsafe.malloc(bufferLength, MemoryTag.NATIVE_DEFAULT);
         }
+    }
 
-        long buffer = Unsafe.malloc(bufferLength, MemoryTag.NATIVE_DEFAULT);
-        this.offset = chunkOffset;
-        try {
-            chunkLength = Math.min(ff.length(fd), chunkLength);
-            long read = ff.read(fd, buffer, bufferLength, offset);
+    public void countQuotes(long chunkStart, long chunkEnd, LongList chunkStats, int chunkIndex) throws SqlException {
+        long offset = chunkStart;
 
-            while (read > 0) {
-                parse(buffer, buffer + read);
-                offset += read;
-                read = ff.read(fd, buffer, bufferLength, offset);
+        //output vars
+        long quotes = 0;
+        long[] nlCount = new long[2];
+        long[] nlFirst = new long[]{-1, -1};
+
+        long read;
+        long ptr;
+        long hi;
+
+        openInputFile();
+        prepareBuffer();
+
+        do {
+            long leftToRead = Math.min(chunkEnd - offset, bufferLength);
+            read = (int) ff.read(fd, fileBufferPtr, leftToRead, offset);
+            if (read < 1) {
+                break;
+            }
+            hi = fileBufferPtr + read;
+            ptr = fileBufferPtr;
+
+            while (ptr < hi) {
+                final byte c = Unsafe.getUnsafe().getByte(ptr++);
+                if (c == '"') {
+                    quotes++;
+                } else if (c == '\n') {
+                    nlCount[(int) (quotes & 1)]++;
+                    if (nlFirst[(int) (quotes & 1)] == -1) {
+                        nlFirst[(int) (quotes & 1)] = chunkStart + ptr - fileBufferPtr;
+                    }
+                }
             }
 
-            if (read < 0 || offset < chunkLength) {
-                throw SqlException.$(0, "could not read file [errno=").put(ff.errno()).put(']');
-            } else {
-                parseLast();
-            }
-        } finally {
-            Unsafe.free(buffer, bufferLength, MemoryTag.NATIVE_DEFAULT);
-            clear();
+            offset += read;
+        } while (offset < chunkEnd);
+
+        if (read < 0 || offset < chunkEnd) {
+            throw SqlException.$(/*model.getFileName().position*/1, "could not read file [errno=").put(ff.errno()).put(']');
         }
+
+        chunkStats.set(chunkIndex, quotes);
+        chunkStats.set(chunkIndex + 1, nlCount[0]);
+        chunkStats.set(chunkIndex + 2, nlCount[1]);
+        chunkStats.set(chunkIndex + 3, nlFirst[0]);
+        chunkStats.set(chunkIndex + 4, nlFirst[1]);
+
+        LOG.info().$("Finished checking boundaries in chunk [no=").$(chunkIndex / 5).$(']').$();
     }
 
 }
