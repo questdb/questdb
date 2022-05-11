@@ -58,7 +58,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
     }
 
     @Override
-    public synchronized RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
+    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
         assert minValue <= maxValue;
 
         if (key >= keyCount) {
@@ -104,30 +104,37 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
         @Override
         public boolean hasNext() {
-            synchronized (BitmapIndexBwdReader.this) {
-                if (valueCount > 0) {
-                    long cellIndex = getValueCellIndex(--valueCount);
-                    long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
+            if (valueCount > 0) {
+                long cellIndex = getValueCellIndex(--valueCount);
+                long result;
+                synchronized (valueMem) {
+                    result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
                     if (cellIndex == 0 && valueCount > 0) {
                         // we are at edge of block right now, next value will be in previous block
                         jumpToPreviousValueBlock();
                     }
-
-                    if (result >= minValue) {
-                        this.next = result;
-                        return true;
-                    }
-
-                    valueCount = 0;
-                    return false;
                 }
+
+                if (result >= minValue) {
+                    this.next = result;
+                    return true;
+                }
+
+                valueCount = 0;
                 return false;
             }
+            return false;
         }
 
         @Override
         public long next() {
             return next;
+        }
+
+        private void jumpToPreviousValueBlock() {
+            // we don't need to extend valueMem because we're going from the farthest block back to start of file
+            // to closest, e.g. valueBlockOffset is decreasing.
+            valueBlockOffset = getPreviousBlock(valueBlockOffset);
         }
 
         private long getPreviousBlock(long currentValueBlockOffset) {
@@ -138,52 +145,50 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             return absoluteValueIndex & blockValueCountMod;
         }
 
-        private void jumpToPreviousValueBlock() {
-            // we don't need to extend valueMem because we're going from the farthest block back to start of file
-            // to closest, e.g. valueBlockOffset is decreasing.
-            valueBlockOffset = getPreviousBlock(valueBlockOffset);
-        }
-
         void of(int key, long minValue, long maxValue, long keyCount) {
             if (keyCount == 0) {
                 valueCount = 0;
             } else {
                 assert key > -1 : "key must be positive integer: " + key;
                 long offset = BitmapIndexUtils.getKeyEntryOffset(key);
-                keyMem.extend(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
-                // Read value count and last block offset atomically. In that we must orderly read value count first and
-                // value count check last. If they match - everything we read between those holds true. We must retry
-                // should these values do not match.
                 long valueCount;
                 long valueBlockOffset;
-                final long deadline = clock.getTicks() + spinLockTimeoutUs;
-                while (true) {
-                    valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
-
-                    Unsafe.getUnsafe().loadFence();
-                    if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
-                        valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
+                synchronized (keyMem) {
+                    keyMem.extend(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
+                    // Read value count and last block offset atomically. In that we must orderly read value count first and
+                    // value count check last. If they match - everything we read between those holds true. We must retry
+                    // should these values do not match.
+                    final long deadline = clock.getTicks() + spinLockTimeoutUs;
+                    while (true) {
+                        valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
 
                         Unsafe.getUnsafe().loadFence();
-                        if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
-                            break;
+                        if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
+                            valueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
+
+                            Unsafe.getUnsafe().loadFence();
+                            if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
+                                break;
+                            }
+                        }
+
+                        if (clock.getTicks() > deadline) {
+                            LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
+                            throw CairoException.instance(0).put(INDEX_CORRUPT);
                         }
                     }
+                }
 
-                    if (clock.getTicks() > deadline) {
-                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs, key=").$(key).$(", offset=").$(offset).$(']').$();
-                        throw CairoException.instance(0).put(INDEX_CORRUPT);
+                synchronized (valueMem) {
+                    valueMem.extend(valueBlockOffset + blockCapacity);
+
+                    if (valueCount > 0) {
+                        BitmapIndexUtils.seekValueBlockRTL(valueCount, valueBlockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
+                    } else {
+                        seekValue(valueCount, valueBlockOffset);
                     }
+                    this.minValue = minValue;
                 }
-
-                valueMem.extend(valueBlockOffset + blockCapacity);
-
-                if (valueCount > 0) {
-                    BitmapIndexUtils.seekValueBlockRTL(valueCount, valueBlockOffset, valueMem, maxValue, blockValueCountMod, SEEKER);
-                } else {
-                    seekValue(valueCount, valueBlockOffset);
-                }
-                this.minValue = minValue;
             }
         }
 

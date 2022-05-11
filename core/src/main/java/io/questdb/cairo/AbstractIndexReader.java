@@ -44,9 +44,9 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected int blockCapacity;
     protected long spinLockTimeoutUs;
     protected MicrosecondClock clock;
-    protected int keyCount;
+    protected volatile int keyCount;
+    private volatile int keyCountIncludingNulls;
     protected long unIndexedNullCount;
-    private int keyCountIncludingNulls;
 
     @Override
     public void close() {
@@ -145,10 +145,8 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
             this.blockValueCountMod = blockValueCountMod;
             this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
-            this.keyCount = this.keyCountIncludingNulls = keyCount;
-            if (unIndexedNullCount > 0) {
-                this.keyCountIncludingNulls++;
-            }
+            this.keyCount = keyCount;
+            this.keyCountIncludingNulls = unIndexedNullCount > 0 ? keyCount + 1 : keyCount;
             this.valueMem.of(configuration.getFilesFacade(), BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn), valueMemSize, valueMemSize, MemoryTag.MMAP_INDEX_READER);
         } catch (Throwable e) {
             close();
@@ -166,7 +164,6 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
             Unsafe.getUnsafe().loadFence();
             if (this.keyMem.getLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK) == seq) {
-
                 keyCount = this.keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
 
                 Unsafe.getUnsafe().loadFence();
@@ -184,10 +181,8 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         }
 
         if (keyCount > this.keyCount) {
-            this.keyCount = this.keyCountIncludingNulls = keyCount;
-            if (unIndexedNullCount > 0) {
-                this.keyCountIncludingNulls++;
-            }
+            this.keyCount = keyCount;
+            this.keyCountIncludingNulls = unIndexedNullCount > 0 ? keyCount + 1 : keyCount;
         }
     }
 }
