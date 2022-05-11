@@ -58,8 +58,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
-
+    public synchronized RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
         assert minValue <= maxValue;
 
         if (key >= keyCount) {
@@ -105,23 +104,25 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
         @Override
         public boolean hasNext() {
-            if (valueCount > 0) {
-                long cellIndex = getValueCellIndex(--valueCount);
-                long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
-                if (cellIndex == 0 && valueCount > 0) {
-                    // we are at edge of block right now, next value will be in previous block
-                    jumpToPreviousValueBlock();
-                }
+            synchronized (BitmapIndexBwdReader.this) {
+                if (valueCount > 0) {
+                    long cellIndex = getValueCellIndex(--valueCount);
+                    long result = valueMem.getLong(valueBlockOffset + cellIndex * 8);
+                    if (cellIndex == 0 && valueCount > 0) {
+                        // we are at edge of block right now, next value will be in previous block
+                        jumpToPreviousValueBlock();
+                    }
 
-                if (result >= minValue) {
-                    this.next = result;
-                    return true;
-                }
+                    if (result >= minValue) {
+                        this.next = result;
+                        return true;
+                    }
 
-                valueCount = 0;
+                    valueCount = 0;
+                    return false;
+                }
                 return false;
             }
-            return false;
         }
 
         @Override

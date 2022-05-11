@@ -24,17 +24,21 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjList;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
@@ -84,10 +88,10 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 NOOP_COLLECTOR
                         )
                 ) {
-                    long prev = -1L;
+                    int prev = -1;
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
-                        long key = writer.put(cs);
+                        int key = writer.put(cs);
                         Assert.assertEquals(prev + 1, key);
                         Assert.assertEquals(key, writer.put(cs));
                         prev = key;
@@ -105,11 +109,11 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 NOOP_COLLECTOR
                         )
                 ) {
-                    long prev = N - 1;
+                    int prev = N - 1;
                     // append second batch and check that symbol keys start with N
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
-                        long key = writer.put(cs);
+                        int key = writer.put(cs);
                         Assert.assertEquals(prev + 1, key);
                         Assert.assertEquals(key, writer.put(cs));
                         prev = key;
@@ -120,7 +124,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                     prev = -1;
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
-                        long key = writer.put(cs);
+                        int key = writer.put(cs);
                         Assert.assertEquals(prev + 1, key);
                         prev = key;
                     }
@@ -150,10 +154,10 @@ public class SymbolMapTest extends AbstractCairoTest {
                         )
                 ) {
                     Rnd rnd = new Rnd();
-                    long prev = -1L;
+                    int prev = -1;
                     for (int i = 0; i < symbolCount; i++) {
                         CharSequence cs = rnd.nextChars(10);
-                        long key = writer.put(cs);
+                        int key = writer.put(cs);
                         symbols.add(cs.toString());
                         Assert.assertEquals(prev + 1, key);
                         prev = key;
@@ -255,10 +259,10 @@ public class SymbolMapTest extends AbstractCairoTest {
                         )
                 ) {
                     Rnd rnd = new Rnd();
-                    long prev = -1L;
+                    int prev = -1;
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
-                        long key = writer.put(cs);
+                        int key = writer.put(cs);
                         Assert.assertEquals(prev + 1, key);
                         Assert.assertEquals(key, writer.put(cs));
                         prev = key;
@@ -269,7 +273,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                     prev = N / 2 - 1;
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
-                        long key = writer.put(cs);
+                        int key = writer.put(cs);
                         Assert.assertEquals(prev + 1, key);
                         Assert.assertEquals(key, writer.put(cs));
                         prev = key;
@@ -363,10 +367,10 @@ public class SymbolMapTest extends AbstractCairoTest {
                 )
                 ) {
                     Rnd rnd = new Rnd();
-                    long prev = -1L;
+                    int prev = -1;
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
-                        long key = writer.put(cs);
+                        int key = writer.put(cs);
                         Assert.assertEquals(prev + 1, key);
                         Assert.assertEquals(key, writer.put(cs));
                         prev = key;
@@ -394,10 +398,10 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 NOOP_COLLECTOR
                         )
                 ) {
-                    long prev = -1L;
+                    int prev = -1;
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
-                        long key = writer.put(cs);
+                        int key = writer.put(cs);
                         Assert.assertEquals(prev + 1, key);
                         prev = key;
                     }
@@ -437,10 +441,10 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 NOOP_COLLECTOR
                         )
                 ) {
-                    long prev = -1L;
+                    int prev = -1;
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
-                        long key = writer.put(cs);
+                        int key = writer.put(cs);
                         Assert.assertEquals(prev + 1, key);
                         prev = key;
                     }
@@ -488,10 +492,10 @@ public class SymbolMapTest extends AbstractCairoTest {
                         )
                 ) {
                     Rnd rnd = new Rnd();
-                    long prev = -1L;
+                    int prev = -1;
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
-                        long key = writer.put(cs);
+                        int key = writer.put(cs);
                         Assert.assertEquals(prev + 1, key);
                         Assert.assertEquals(key, writer.put(cs));
                         prev = key;
@@ -508,13 +512,103 @@ public class SymbolMapTest extends AbstractCairoTest {
                     prev = -1;
                     for (int i = 0; i < N; i++) {
                         CharSequence cs = rnd.nextChars(10);
-                        long key = writer.put(cs);
+                        int key = writer.put(cs);
                         Assert.assertEquals(prev + 1, key);
                         Assert.assertEquals(key, writer.put(cs));
                         prev = key;
                     }
                     Assert.assertEquals(N, writer.getSymbolCount());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentSymbolTableAccess() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int keys = 1000;
+            final int iterations = 10000;
+            final int readerCount = 3;
+
+            final Path path = new Path().of(configuration.getRoot());
+
+            CountDownLatch stopLatch = new CountDownLatch(readerCount);
+            CyclicBarrier startBarrier = new CyclicBarrier(readerCount);
+            AtomicInteger errors = new AtomicInteger();
+
+            IntObjHashMap<String> symbols = new IntObjHashMap<>();
+
+            create(path, "x", keys, false);
+
+            // Obtain the reader when there are no symbols yet.
+            final SymbolMapReaderImpl reader = new SymbolMapReaderImpl(
+                    configuration,
+                    path,
+                    "x",
+                    COLUMN_NAME_TXN_NONE,
+                    0
+            );
+
+            // Write the symbols.
+            try (final SymbolMapWriter writer = new SymbolMapWriter(
+                    configuration,
+                    path,
+                    "x",
+                    COLUMN_NAME_TXN_NONE,
+                    0,
+                    -1,
+                    NOOP_COLLECTOR
+            )) {
+                int prev = -1;
+                for (int i = 0; i < keys; i++) {
+                    String symbol = "sym" + i;
+                    int key = writer.put(symbol);
+                    Assert.assertEquals(prev + 1, key);
+                    prev = key;
+                    symbols.put(key, symbol);
+                }
+            }
+
+            // Reload the reader.
+            reader.updateSymbolCount(keys);
+
+            class ReaderThread extends Thread {
+                final StaticSymbolTable symbolTable;
+
+                ReaderThread(StaticSymbolTable symbolTable) {
+                    this.symbolTable = symbolTable;
+                }
+
+                @Override
+                public void run() {
+                    Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
+                    try {
+                        startBarrier.await();
+                        for (int i = 0; i < iterations; i++) {
+                            int key = rnd.nextPositiveInt() % symbols.size();
+                            int actualKey = symbolTable.keyOf(symbols.get(key));
+                            Assert.assertEquals(key, actualKey);
+                        }
+                    } catch (Throwable e) {
+                        errors.incrementAndGet();
+                        e.printStackTrace();
+                    } finally {
+                        stopLatch.countDown();
+                    }
+                }
+            }
+
+            new ReaderThread(reader).start();
+            for (int i = 0; i < readerCount - 1; i++) {
+                new ReaderThread(reader.newSymbolTableView()).start();
+            }
+
+            try {
+                Assert.assertTrue(stopLatch.await(20000, TimeUnit.SECONDS));
+                Assert.assertEquals(0, errors.get());
+            } finally {
+                Misc.free(reader);
+                Misc.free(path);
             }
         });
     }
