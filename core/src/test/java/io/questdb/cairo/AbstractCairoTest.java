@@ -47,8 +47,10 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
+import org.junit.rules.Timeout;
 
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 public class AbstractCairoTest {
 
@@ -100,6 +102,12 @@ public class AbstractCairoTest {
     protected static double columnVersionPurgeWaitExponent = -1;
     protected static long columnVersionPurgeStartWaitTimeoutMicros = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @BeforeClass
     public static void setUpStatic() {
