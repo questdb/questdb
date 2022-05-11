@@ -1,0 +1,9 @@
+"line1","2022-05-10T11:52:00.000Z",111.11,"some text
+spanning two lines"
+"line2","2022-05-10T11:52:00.000Z",222.22,"some text
+spanning 
+many 
+many 
+many 
+lines",
+line3,2022-05-10T11:52:00.000Z,333.33,single line text without quotes

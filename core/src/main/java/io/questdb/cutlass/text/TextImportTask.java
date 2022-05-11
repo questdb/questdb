@@ -24,11 +24,16 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.griffin.SqlException;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.LongList;
 
 public class TextImportTask {
     private int index;
+
+    private FileIndexer indexer;
+
     private long chunkLo;
     private long chunkHi;
     private LongList stats;
@@ -36,12 +41,14 @@ public class TextImportTask {
 
     public void of(
             int index,
+            FileIndexer splitter,
             long chunkLo,
             long chunkHi,
             LongList stats,
             CountDownLatchSPI doneLatch
     ) {
         this.index = index;
+        this.indexer = splitter;
         this.chunkLo = chunkLo;
         this.chunkHi = chunkHi;
         this.stats = stats;
@@ -49,11 +56,17 @@ public class TextImportTask {
     }
 
     public boolean run() {
-        // process
-        stats.set(index, index);
-        stats.set(index + 1, index + 1);
-        stats.set(index + 2, index + 2);
-        stats.set(index + 3, index + 3);
+        long fd = indexer.getFf().openRO(indexer.getInputFilePath());
+        if (fd < 0)
+            throw CairoException.instance(indexer.getFf().errno()).put("could not open read-only [file=").put(indexer.getInputFilePath()).put(']');
+
+        try {
+            FileIndexer.countQuotes(fd, chunkLo, chunkHi, stats, index, indexer.getBufferLength(), indexer.getFf());
+        } catch (SqlException e) {
+            e.printStackTrace();//TODO: fix 
+        } finally {
+            indexer.getFf().close(fd);
+        }
         doneLatch.countDown();
         return true;
     }
