@@ -121,7 +121,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     @Test
     @Ignore
-    public void testGenerateTables() throws SqlException, NumericException, IOException {
+    public void testGenerateTables() throws SqlException, NumericException {
         generateMigrationTables();
         engine.releaseAllWriters();
         assertData(true, true, true);
@@ -1269,7 +1269,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         assertAppendedData(withColTopO3);
     }
 
-    private void generateMigrationTables() throws SqlException, NumericException, IOException {
+    private void generateMigrationTables() throws SqlException, NumericException {
         compiler.compile(
                 "create table t_none_nts as (" +
                         "select" +
@@ -1502,19 +1502,21 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         );
 
         Path from = Path.getThreadLocal(configuration.getRoot()).concat("t_col_top_день");
-        Path to = Path.getThreadLocal2(configuration.getRoot()).concat("t_col_top_день_missing_parts");
+        String copyTableWithMissingPartitions = "t_col_top_день_missing_parts";
+        Path to = Path.getThreadLocal2(configuration.getRoot()).concat(copyTableWithMissingPartitions);
 
 
-        TestUtils.copyDirectory(from, to, configuration.getMkDirMode());
+        TestUtils.copyDirectory(from.$(), to.$(), configuration.getMkDirMode());
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
 
         // Remove first partition
+        to.of(configuration.getRoot()).concat(copyTableWithMissingPartitions);
         if (ff.rmdir(to.concat("1970-01-01").put(Files.SEPARATOR).$()) != 0) {
             throw CairoException.instance(ff.errno()).put("cannot remove ").put(to);
         }
 
-        // Rename last partiton from 1970-01-04 to 1970-01-04.4
-        from.trimTo(0).put(configuration.getRoot()).concat("t_col_top_день_missing_parts").concat("1970-01-04");
+        // Rename last partition from 1970-01-04 to 1970-01-04.4
+        from.of(configuration.getRoot()).concat(copyTableWithMissingPartitions).concat("1970-01-04");
         to.trimTo(0).put(from).put(".4");
 
         if (!ff.rename(from.put(Files.SEPARATOR).$(), to.put(Files.SEPARATOR).$())) {

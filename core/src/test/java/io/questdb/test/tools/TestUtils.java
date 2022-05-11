@@ -525,22 +525,22 @@ public final class TestUtils {
         return Net.connect(fd, sockAddr);
     }
 
-    public static void copyDirectory(Path from, Path to, int dirMode) throws IOException {
-        if (Files.mkdir(to, dirMode) != 0) {
-            Assert.fail("Cannot create " + to + ". Error: " + Os.errno());
+    public static void copyDirectory(Path src, Path dst, int dirMode) {
+        if (Files.mkdir(dst, dirMode) != 0) {
+            Assert.fail("Cannot create " + dst + ". Error: " + Os.errno());
         }
 
-        java.nio.file.Path dest = FileSystems.getDefault().getPath(to.toString() + Files.SEPARATOR);
-        java.nio.file.Path src = FileSystems.getDefault().getPath(from.toString() + Files.SEPARATOR);
-        java.nio.file.Files.walk(src)
-                .forEach(file -> {
-                    java.nio.file.Path destination = dest.resolve(src.relativize(file));
-                    try {
-                        java.nio.file.Files.copy(file, destination, REPLACE_EXISTING);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                });
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        final int srcLen = src.length();
+        final int dstLen = dst.length();
+        ff.walk(
+                src, (pUtf8NameZ, type) -> {
+                    src.concat(pUtf8NameZ).$();
+                    dst.trimTo(dstLen).concat(src.address() + srcLen).$();
+                    ff.mkdirs(dst, dirMode);
+                    ff.copy(src, dst);
+                }
+        );
     }
 
     public static void copyMimeTypes(String targetDir) throws IOException {
