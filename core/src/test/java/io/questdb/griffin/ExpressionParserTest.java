@@ -352,6 +352,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatQualifier() throws SqlException {
+        x("'NaN'float::", "'NaN'::float");
+    }
+
+    @Test
     public void testCaseLikeSwitch() throws SqlException {
         x("x1'a'2'b'case", "case x when 1 then 'a' when 2 then 'b' end");
     }
