@@ -404,9 +404,9 @@ public class RetryIODispatcherTest {
     protected void assertNRowsInserted(final int nRows) throws InterruptedException {
         new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                 "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
-                "83\r\n" +
-                        "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + nRows +
-                        "]],\"count\":1}\r\n" +
+                "85\r\n" +
+                        "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[\"" + nRows +
+                        "\"]],\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n");
     }
@@ -466,8 +466,8 @@ public class RetryIODispatcherTest {
                     // check if we have parallelCount x insertCount  records
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n",
-                            "71\r\n" +
-                                    "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount - fails.get()) + "]],\"count\":1}\r\n" +
+                            "73\r\n" +
+                                    "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[\"" + (parallelCount * insertCount - fails.get()) + "\"]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
@@ -527,8 +527,8 @@ public class RetryIODispatcherTest {
                     // check if we have parallelCount x insertCount  records
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=select+count(*)+from+balances_x&count=true HTTP/1.1\r\n",
-                            "71\r\n" +
-                                    "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount * insertCount + "]],\"count\":1}\r\n" +
+                            "73\r\n" +
+                                    "{\"query\":\"select count(*) from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[\"" + parallelCount * insertCount + "\"]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
@@ -607,8 +607,8 @@ public class RetryIODispatcherTest {
                     int rowsExpected = (successRequests.get() + 1) * validRequestRecordCount;
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
-                            (rowsExpected < 100 ? "83" : "84") + "\r\n" +
-                                    "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + rowsExpected + "]],\"count\":1}\r\n" +
+                            (rowsExpected < 100 ? "85" : "86") + "\r\n" +
+                                    "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[\"" + rowsExpected + "\"]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
 
@@ -711,8 +711,8 @@ public class RetryIODispatcherTest {
                     // check that we have all the records inserted
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=select+count()+from+balances_x&count=true HTTP/1.1\r\n",
-                            "6f\r\n" +
-                                    "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + parallelCount + "]],\"count\":1}\r\n" +
+                            "71\r\n" +
+                                    "{\"query\":\"select count() from balances_x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[\"" + parallelCount + "\"]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n"
                     );
@@ -775,8 +775,8 @@ public class RetryIODispatcherTest {
                     LOG.info().$("Requesting row count").$();
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=select+count(*)+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
-                            "84\r\n" +
-                                    "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[" + (parallelCount * insertCount + 1 - failedImports.get()) * validRequestRecordCount + "]],\"count\":1}\r\n" +
+                            "86\r\n" +
+                                    "{\"query\":\"select count(*) from \\\"fhv_tripdata_2017-02.csv\\\"\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[\"" + (parallelCount * insertCount + 1 - failedImports.get()) * validRequestRecordCount + "\"]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
 

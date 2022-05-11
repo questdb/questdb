@@ -792,8 +792,8 @@ public class ImportIODispatcherTest {
 
                     // Cache query plan
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders("GET /query?query=select+count(*)+from+xyz+where+x+%3E+0; HTTP/1.1\r\n",
-                            "76\r\n" +
-                                    "{\"query\":\"select count(*) from xyz where x > 0;\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[1]],\"count\":1}\r\n" +
+                            "78\r\n" +
+                                    "{\"query\":\"select count(*) from xyz where x > 0;\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"dataset\":[[\"1\"]],\"count\":1}\r\n" +
                                     "00\r\n" +
                                     "\r\n");
 

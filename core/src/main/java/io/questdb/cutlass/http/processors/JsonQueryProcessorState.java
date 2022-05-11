@@ -308,7 +308,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (l == Long.MIN_VALUE) {
             socket.put("null");
         } else {
-            socket.put(l);
+            socket.put('"').put(l).put('"');
         }
     }
 
