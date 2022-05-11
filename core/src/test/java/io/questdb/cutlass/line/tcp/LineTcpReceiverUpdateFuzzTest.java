@@ -245,11 +245,9 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                     final CharSequence tableName = pickCreatedTableName(rnd);
                     List<ColumnNameType> metadata = getMetaData(readers, tableName);
                     final TableData table = tables.get(tableName);
-                    int lineNo = rnd.nextInt(table.size());
+                    LineData line = table.getRandomValidLine(rnd);
 
                     Collections.shuffle(metadata);
-                    LineData line = table.getLine(lineNo);
-
                     sql = line.generateRandomUpdate(tableName, metadata, rnd);
                     executeUpdate(compiler, executionContext, sql, waitSequence);
                     this.updatesSql.add(new TableSql(tableName, sql));

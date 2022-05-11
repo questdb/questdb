@@ -39,8 +39,8 @@ public class LineData {
     // column/tag name can be different to real name (dupes, uppercase...)
     private final ObjList<CharSequence> names = new ObjList<>();
     private final ObjList<CharSequence> values = new ObjList<>();
-    private final BoolList updated = new BoolList();
     private final BoolList tagFlags = new BoolList();
+    private final LowerCaseCharSequenceHashSet updated = new LowerCaseCharSequenceHashSet();
 
     private final LowerCaseCharSequenceIntHashMap nameToIndex = new LowerCaseCharSequenceIntHashMap();
     private int tagsCount;
@@ -75,22 +75,24 @@ public class LineData {
         OUT:
         for (int i = 0; i < metadata.size(); i++) {
             name = metadata.get(i).columnName;
-            columnType = metadata.get(i).columnType;
+            if (!updated.contains(name)) {
+                columnType = metadata.get(i).columnType;
 
-            for (int j = 0; j < names.size(); j++) {
-                fieldIndex = j;
-                if (Chars.equals(name, names.getQuick(j)) && !updated.get(j)) {
-                    updated.set(j, true);
-                    break OUT;
+                for (int j = 0; j < names.size(); j++) {
+                    if (Chars.equals(name, names.getQuick(j))) {
+                        fieldIndex = j;
+                        updated.add(name);
+                        break OUT;
+                    }
                 }
             }
         }
         if (fieldIndex == -1) {
             // Nothing to update anymore on this like. Update field to the value of the self.
-            return String.format("update \"%s\" set %s=%s where timestamp='%s'", tableName, metadata.get(0), metadata.get(0), TimestampsToString(timestampNanos / 1000));
+            return String.format("update \"%s\" set %s=%s where 1 != 1", tableName, metadata.get(0), metadata.get(0));
         }
 
-        double value = 500.0 + rnd.nextInt(1000);
+        double value = 5000.0 + rnd.nextInt(1000);
         String valueStr = String.valueOf(value);
         values.set(fieldIndex, valueStr);
 
@@ -112,7 +114,6 @@ public class LineData {
         names.add(name);
         values.add(value);
         tagFlags.add(isTag);
-        updated.add(false);
         nameToIndex.putIfAbsent(name, names.size() - 1);
     }
 
