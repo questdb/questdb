@@ -24,7 +24,6 @@ jobs:
           jdk: "1.11"
           testset: "coverage"
           excludeTests: "**/griffin/**,**/cairo/**"
-          includeTests: "**.*?"
     pool:
       vmImage: $(imageName)
       name: $(poolName)
