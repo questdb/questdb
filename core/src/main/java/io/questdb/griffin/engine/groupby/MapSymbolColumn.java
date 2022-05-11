@@ -68,7 +68,7 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
-    public @Nullable SymbolTable newInstance() {
+    public @Nullable SymbolTable newSymbolTable() {
         return symbolTableSource.newSymbolTable(cursorColumnIndex);
     }
 

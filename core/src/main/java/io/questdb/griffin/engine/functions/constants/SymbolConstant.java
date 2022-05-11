@@ -99,7 +99,7 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     }
 
     @Override
-    public @Nullable SymbolTable newInstance() {
+    public @Nullable SymbolTable newSymbolTable() {
         return this;
     }
 }

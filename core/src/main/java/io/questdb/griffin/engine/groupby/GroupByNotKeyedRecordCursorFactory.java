@@ -111,7 +111,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return ((SymbolFunction)groupByFunctions.getQuick(columnIndex)).newInstance();
+            return ((SymbolFunction)groupByFunctions.getQuick(columnIndex)).newSymbolTable();
         }
 
         @Override

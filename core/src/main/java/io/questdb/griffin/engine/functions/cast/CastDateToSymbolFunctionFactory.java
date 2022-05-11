@@ -143,7 +143,7 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public @Nullable SymbolTable newInstance() {
+        public @Nullable SymbolTable newSymbolTable() {
             Func copy = new Func(arg);
             copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
             copy.symbols.clear();

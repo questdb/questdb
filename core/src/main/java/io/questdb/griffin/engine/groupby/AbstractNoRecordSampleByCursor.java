@@ -83,7 +83,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return ((SymbolFunction) recordFunctions.getQuick(columnIndex)).newInstance();
+        return ((SymbolFunction) recordFunctions.getQuick(columnIndex)).newSymbolTable();
     }
 
     @Override

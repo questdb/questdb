@@ -86,7 +86,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     }
 
     @Override
-    public @Nullable SymbolTable newInstance() {
+    public @Nullable SymbolTable newSymbolTable() {
         return symbolTableSource.newSymbolTable(columnIndex);
     }
 

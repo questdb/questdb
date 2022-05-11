@@ -95,7 +95,7 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public @Nullable SymbolTable newInstance() {
+        public @Nullable SymbolTable newSymbolTable() {
             // this is an entity function
             return this;
         }

@@ -117,7 +117,7 @@ public abstract class AbstractToSymbolCastFunction extends SymbolFunction implem
     protected abstract AbstractToSymbolCastFunction newFunc();
 
     @Override
-    public @Nullable SymbolTable newInstance() {
+    public @Nullable SymbolTable newSymbolTable() {
         AbstractToSymbolCastFunction copy = newFunc();
         copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
         copy.symbols.clear();

@@ -100,9 +100,9 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
-    public @Nullable SymbolTable newInstance() {
+    public @Nullable SymbolTable newSymbolTable() {
         // this implementation does not have its own symbol table
         // it fully relies on the argument
-        return arg.newInstance();
+        return arg.newSymbolTable();
     }
 }
