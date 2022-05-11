@@ -234,6 +234,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private class SymbolTableView implements StaticSymbolTable {
         private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
         private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
+        private final MemoryCR.CharSequenceView csviewInternal = new MemoryCR.CharSequenceView();
 
         @Override
         public boolean containsNullValue() {
@@ -252,7 +253,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
                 final RowCursor cursor = indexReader.getCursor(false, hash, 0, maxOffset - Long.BYTES);
                 while (cursor.hasNext()) {
                     final long offsetOffset = cursor.next();
-                    if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
+                    if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset), csviewInternal))) {
                         return SymbolMapWriter.offsetToKey(offsetOffset);
                     }
                 }

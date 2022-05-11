@@ -120,7 +120,6 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
                 valueCount = 0;
                 return false;
-
             }
             return false;
         }
