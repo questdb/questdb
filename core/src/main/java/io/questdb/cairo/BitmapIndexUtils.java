@@ -149,6 +149,12 @@ public final class BitmapIndexUtils {
     ) {
         long valueCount = totalCount;
         long valueBlockOffset = firstValueBlockOffset;
+        if (firstValueBlockOffset >= valueMem.size()) {
+            // The very first block is beyond the memory boundary. Report that we didn't find the value by
+            // using the total count of values in the seeker call.
+            seeker.seek(totalCount, firstValueBlockOffset);
+            return;
+        }
         if (valueCount > 0) {
             long cellCount;
             do {
@@ -170,7 +176,7 @@ public final class BitmapIndexUtils {
                         if (valueBlockOffset >= valueMem.size()) {
                             // We've reached the memory boundary. Report that we didn't find the value by
                             // using the total count of values in the seeker call.
-                            seeker.seek(totalCount, firstValueBlockOffset);
+                            seeker.seek(totalCount, valueBlockOffset);
                             return;
                         }
                         continue;
