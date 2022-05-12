@@ -410,6 +410,39 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testFormatYearThreeDigits() throws Exception {
+        assertFormat("09, 017", "dd, yyy", "2017-04-09T00:00:00.000Z");
+        assertFormat("017", "yyy", "2017-04-09T00:00:00.000Z");
+
+        assertFormat("09, 777", "dd, yyy", "0777-04-09T00:00:00.000Z");
+        assertFormat("099", "yyy", "0099-04-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatZeroYear() throws Exception {
+        assertFormat("09, 1", "dd, y", "0000-04-09T00:00:00.000Z");
+        assertFormat("09, 01", "dd, yy", "0000-04-09T00:00:00.000Z");
+        assertFormat("09, 001", "dd, yyy", "0000-04-09T00:00:00.000Z");
+        assertFormat("09, 0001", "dd, yyyy", "0000-04-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatNanoOneDigits() throws Exception {
+        // we do not store nanos
+        assertFormat("09, 017 0", "dd, yyy N", "2017-04-09T00:00:00.333123Z");
+        // in this format N - nanos should not be greedy
+        assertMicros("yyyy-MM-dd HH:mm:ss.NSSS", "2014-04-03T04:32:49.010000Z", "2014-04-03 04:32:49.1010");
+    }
+
+    @Test
+    public void testFormatNanoThreeDigits() throws Exception {
+        // we do not store nanos
+        assertFormat("09, 017 000", "dd, yyy NNN", "2017-04-09T00:00:00.333123Z");
+        // in this format N - nanos should not be greedy
+        assertMicros("yyyy-MM-dd HH:mm:ss.SSSNNN", "2014-04-03T04:32:49.010000Z", "2014-04-03 04:32:49.010123");
+    }
+
+    @Test
     public void testGreedyMillis() throws NumericException {
         assertThat("y-MM-dd HH:mm:ss.Sz", "2014-04-03T04:32:49.010Z", "2014-04-03 04:32:49.01Z");
     }
@@ -720,6 +753,11 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testWeekdayDigit() throws Exception {
         assertThat("u, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "5, 03-04-2014");
+    }
+
+    @Test
+    public void testThreeDigitYear() throws Exception {
+        assertThat("u, dd-MM-yyy", "0999-04-03T00:00:00.000Z", "5, 03-04-999");
     }
 
     @Test(expected = NumericException.class)

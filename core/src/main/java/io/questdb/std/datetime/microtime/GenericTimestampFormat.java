@@ -317,28 +317,28 @@ public class GenericTimestampFormat extends AbstractDateFormat {
                         year = Timestamps.getYear(micros);
                         leap = Timestamps.isLeapYear(year);
                     }
-                    sink.put(year);
+                    TimestampFormatUtils.appendYear(sink, year);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
                         leap = Timestamps.isLeapYear(year);
                     }
-                    TimestampFormatUtils.append0(sink, year % 100);
+                    TimestampFormatUtils.appendYear0(sink, year % 100);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
                         leap = Timestamps.isLeapYear(year);
                     }
-                    TimestampFormatUtils.append000(sink, year % 1000);
+                    TimestampFormatUtils.appendYear00(sink, year % 1000);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Timestamps.getYear(micros);
                         leap = Timestamps.isLeapYear(year);
                     }
-                    TimestampFormatUtils.append000(sink, year);
+                    TimestampFormatUtils.appendYear000(sink, year);
                     break;
 
                 // ERA

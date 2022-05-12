@@ -100,7 +100,6 @@ public class TimestampFormatCompiler {
     private static final int FA_LEAP = 8;
     private static final int FA_DAY_OF_WEEK = 10;
     private static final int FA_MILLIS_MICROS = 11;
-    private static final int FA_NANOS = 12;
     private static final int P_INPUT_STR = 1;
     private static final int P_LO = 2;
     private static final int P_HI = 3;
@@ -264,9 +263,12 @@ public class TimestampFormatCompiler {
             int getMillisOfSecondIndex,
             int getMicrosOfSecondIndex,
             int getDayOfWeekIndex,
-            int append000Index,
             int append00Index,
             int append0Index,
+            int appendYear000Index,
+            int appendYear00Index,
+            int appendYear0Index,
+            int appendYearIndex,
             int sinkPutIntIndex,
             int sinkPutStrIndex,
             int sinkPutChrIndex,
@@ -497,27 +499,26 @@ public class TimestampFormatCompiler {
                 case TimestampFormatCompiler.OP_YEAR_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
-                    asm.invokeInterface(sinkPutIntIndex, 1);
-                    asm.pop();
+                    asm.invokeStatic(appendYearIndex);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.iconst(100);
                     asm.irem();
-                    asm.invokeStatic(append0Index);
+                    asm.invokeStatic(appendYear0Index);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.iconst(1000);
                     asm.irem();
-                    asm.invokeStatic(append000Index);
+                    asm.invokeStatic(appendYear00Index);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
-                    asm.invokeStatic(append000Index);
+                    asm.invokeStatic(appendYear000Index);
                     break;
                 // ERA
                 case TimestampFormatCompiler.OP_ERA:
@@ -1465,9 +1466,12 @@ public class TimestampFormatCompiler {
         int appendHour12PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121Index = asm.poolMethod(TimestampFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSink;I)V");
-        int append000Index = asm.poolMethod(TimestampFormatUtils.class, "append000", "(Lio/questdb/std/str/CharSink;I)V");
         int append00Index = asm.poolMethod(TimestampFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
         int append0Index = asm.poolMethod(TimestampFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYear000Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear000", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYear00Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear00", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYear0Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear0", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYearIndex = asm.poolMethod(TimestampFormatUtils.class, "appendYear", "(Lio/questdb/std/str/CharSink;I)V");
 
         int parseOffsetIndex = asm.poolMethod(Timestamps.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
         int getYearIndex = asm.poolMethod(Timestamps.class, "getYear", "(J)I");
@@ -1570,9 +1574,12 @@ public class TimestampFormatCompiler {
                 getMillisOfSecondIndex,
                 getMicrosOfSecondIndex,
                 getDayOfWeekIndex,
-                append000Index,
                 append00Index,
                 append0Index,
+                appendYear000Index,
+                appendYear00Index,
+                appendYear0Index,
+                appendYearIndex,
                 sinkPutIntIndex,
                 sinkPutStrIndex,
                 sinkPutChrIndex,

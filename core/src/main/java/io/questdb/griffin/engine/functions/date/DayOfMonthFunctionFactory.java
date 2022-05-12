@@ -54,7 +54,6 @@ public class DayOfMonthFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public DayOfMonthFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 

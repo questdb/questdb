@@ -137,7 +137,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public CenturyFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 
@@ -161,7 +160,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public DecadeFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 
@@ -185,7 +183,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public DowFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 
@@ -209,7 +206,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public DoyFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 
@@ -233,7 +229,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public WeekFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 
@@ -257,7 +252,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public IsoYearFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 
@@ -281,7 +275,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public EpochFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 
@@ -305,7 +298,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public MicrosecondsFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 
@@ -329,7 +321,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public MillisecondsFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 
@@ -353,7 +344,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public IsoDowFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 
@@ -377,7 +367,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public MillenniumFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 
@@ -401,7 +390,6 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         private final Function arg;
 
         public QuarterFunction(Function arg) {
-            super();
             this.arg = arg;
         }
 
@@ -419,5 +407,4 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             return Numbers.INT_NaN;
         }
     }
-
 }

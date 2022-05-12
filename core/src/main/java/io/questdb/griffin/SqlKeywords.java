@@ -135,16 +135,6 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'h';
     }
 
-    public static boolean isAtKeyword(CharSequence tok) {
-        if (tok.length() != 2) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i) | 32) == 't';
-    }
-
     public static boolean isBatch(CharSequence tok) {
         if (tok.length() != 5) {
             return false;
@@ -303,20 +293,6 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'm'
                 && (tok.charAt(i++) | 32) == 'n'
                 && (tok.charAt(i) | 32) == 's';
-    }
-
-    public static boolean isCommit(CharSequence tok) {
-        if (tok.length() != 6) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i++) | 32) == 'm'
-                && (tok.charAt(i++) | 32) == 'm'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i) | 32) == 't';
     }
 
     public static boolean isCommitLag(CharSequence tok) {
