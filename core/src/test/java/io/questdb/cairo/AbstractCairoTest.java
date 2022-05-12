@@ -99,12 +99,11 @@ public class AbstractCairoTest {
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
 
-    // TODO: uncomment this before pushing
-//    @Rule
-//    public Timeout timeout = Timeout.builder()
-//            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
-//            .withLookingForStuckThread(true)
-//            .build();
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @BeforeClass
     public static void setUpStatic() {
