@@ -112,5 +112,7 @@ public interface FilesFacade {
 
     boolean allocate(long fd, long size);
 
+    void walk(Path src, FindVisitor func);
+
     long write(long fd, long address, long len, long offset);
 }
