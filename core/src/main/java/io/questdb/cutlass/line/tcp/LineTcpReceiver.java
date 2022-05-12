@@ -131,7 +131,7 @@ public class LineTcpReceiver implements Closeable {
     }
 
     private class LineTcpConnectionContextFactory implements IOContextFactory<LineTcpConnectionContext>, Closeable, EagerThreadSetup {
-        private final ThreadLocal<WeakObjectPool<LineTcpConnectionContext>> contextPool;
+        private final ThreadLocal<WeakMutableObjectPool<LineTcpConnectionContext>> contextPool;
         private boolean closed = false;
 
         public LineTcpConnectionContextFactory(LineTcpReceiverConfiguration configuration) {
@@ -145,7 +145,7 @@ public class LineTcpReceiver implements Closeable {
                 factory = () -> new LineTcpAuthConnectionContext(configuration, authDb, scheduler, metrics);
             }
 
-            this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(factory, configuration.getConnectionPoolInitialCapacity()));
+            this.contextPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(factory, configuration.getConnectionPoolInitialCapacity()));
         }
 
         @Override

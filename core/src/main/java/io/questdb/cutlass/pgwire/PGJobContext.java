@@ -33,7 +33,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.Misc;
-import io.questdb.std.WeakAutoClosableObjectPool;
+import io.questdb.std.WeakSelfReturningObjectPool;
 
 import java.io.Closeable;
 
@@ -41,7 +41,7 @@ public class PGJobContext implements Closeable {
 
     private final SqlCompiler compiler;
     private final AssociativeCache<TypesAndSelect> selectAndTypesCache;
-    private final WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool;
+    private final WeakSelfReturningObjectPool<TypesAndSelect> selectAndTypesPool;
 
     public PGJobContext(
             PGWireConfiguration configuration,
@@ -54,7 +54,7 @@ public class PGJobContext implements Closeable {
         final int blockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
         final int rowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;
         this.selectAndTypesCache = new AssociativeCache<>(blockCount, rowCount);
-        this.selectAndTypesPool = new WeakAutoClosableObjectPool<>(TypesAndSelect::new, blockCount * rowCount);
+        this.selectAndTypesPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, blockCount * rowCount);
     }
 
     @Override

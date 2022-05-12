@@ -122,7 +122,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final IntList groupByFunctionPositions = new IntList();
     private final LongList prefixes = new LongList();
     private final ObjectPool<ExpressionNode> expressionNodePool;
-    private final WeakAutoClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
+    private final WeakClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
 
@@ -143,8 +143,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         jitIRMem.putByte((byte) 0);
         jitIRMem.truncate();
         this.expressionNodePool = expressionNodePool;
-        this.reduceTaskPool = new WeakAutoClosableObjectPool<>(
-                (p) -> new PageFrameReduceTask(configuration),
+        this.reduceTaskPool = new WeakClosableObjectPool<>(
+                () -> new PageFrameReduceTask(configuration),
                 configuration.getPageFrameReduceTaskPoolCapacity()
         );
     }
