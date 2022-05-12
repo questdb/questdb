@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -37,6 +38,7 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -319,5 +321,109 @@ public class FileIndexer implements Closeable, Mutable {
 
     int getBufferLength() {
         return bufferLength;
+    }
+
+    public void merge(final Path root, int chunkCount) {
+        // reuse collections
+        LongList descriptors = new LongList(chunkCount);
+        DirectLongList indexes = new DirectLongList(chunkCount, MemoryTag.NATIVE_DEFAULT);
+        StringSink sink = new StringSink();
+        // close indexes
+
+        int rootlen = root.length();
+        long partition = ff.findFirst(root);
+        if (partition > 0) {
+            try {
+                do {
+                    // partition loop
+                    long partitionName = ff.findName(partition);
+                    long partitionType = ff.findType(partition);
+                    if (Files.isDir(partitionName, partitionType, sink)) {
+                        //todo: make parallel
+                        descriptors.clear();
+                        indexes.clear();
+                        long mergedSize = 0;
+                        root.trimTo(rootlen);
+                        long chunk = ff.findFirst(root.concat(partitionName).slash$());
+                        int partlen = root.length();
+                        if (chunk > 0) {
+                            try {
+                                do {
+                                    // chunk loop
+                                    long chunkName = ff.findName(chunk);
+                                    long chunkType = ff.findType(chunk);
+                                    if (chunkType == Files.DT_FILE) {
+                                        root.trimTo(partlen);
+                                        root.concat(chunkName).$();
+                                        try {
+                                            final long fd = TableUtils.openRO(ff, root, LOG);
+                                            final long size = ff.length(fd);
+                                            final long address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
+
+                                            descriptors.add(fd);
+                                            indexes.add(address);
+                                            indexes.add(size / 16);
+                                            mergedSize += size;
+                                        } catch (Exception e) {
+                                            for (int i = 0, sz = descriptors.size(); i < sz; i++) {
+                                                ff.close(descriptors.get(i));
+                                            }
+                                            throw e;
+                                        }
+                                    }
+                                } while (ff.findNext(chunk) > 0);
+                            } finally {
+                                ff.findClose(chunk);
+                            }
+                        }
+
+                        long fd = -1;
+                        try {
+                            root.trimTo(rootlen);
+                            root.concat("merged").$();
+                            fd = TableUtils.openFileRWOrFail(ff, root, CairoConfiguration.O_NONE);
+                            final long address = TableUtils.mapRW(ff, fd, mergedSize, MemoryTag.MMAP_DEFAULT);
+                            final long merged = Vect.mergeLongIndexesAscExt(indexes.getAddress(), (int) indexes.size() / 2, address);
+                            assert merged == address;
+                        } finally {
+                            ff.fsync(fd);
+                            ff.close(fd);
+
+                            for (int i = 0, sz = descriptors.size(); i < sz; i++) {
+                                ff.close(descriptors.get(i));
+                            }
+                        }
+                    }
+                } while (ff.findNext(partition) > 0);
+            } finally {
+                ff.findClose(partition);
+            }
+        }
+    }
+
+    public void sort(final Path path) {
+        int plen = path.length();
+        long srcFd = -1;
+        long dstFd = -1;
+        try {
+            srcFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+            final long srcSize = ff.length(srcFd);
+            final long srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_DEFAULT);
+
+            dstFd = TableUtils.openFileRWOrFail(ff, path.chop$().put(".s").$(), CairoConfiguration.O_NONE);
+            final long dstAddress = TableUtils.mapRW(ff, dstFd, srcSize, MemoryTag.MMAP_DEFAULT);
+
+            Vect.radixSortLongIndexAscInPlace(srcAddress, srcSize / (2 * Long.BYTES), dstAddress);
+        } finally {
+            if (srcFd != -1) {
+                ff.close(srcFd);
+                ff.remove(path);
+                path.trimTo(plen);
+            }
+            if (dstFd != -1) {
+                ff.fsync(dstFd);
+                ff.close(dstFd);
+            }
+        }
     }
 }

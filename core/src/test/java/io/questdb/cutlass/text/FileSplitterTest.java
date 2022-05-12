@@ -6,21 +6,21 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.MemoryPMARImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.griffin.*;
 import io.questdb.mp.WorkerPool;
-import io.questdb.griffin.SqlException;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.LongList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Ignore;
+import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
@@ -29,14 +29,16 @@ import java.io.IOException;
  *
  */
 public class FileSplitterTest extends AbstractGriffinTest {
+    private static final Rnd rnd = new Rnd();
 
-    //test csv with timestamp over buffer boundaries 
+    //test csv with timestamp over buffer boundaries
     //test csv with timestamp over buffer boundaries that's too long 
     //test csv with bad timestamp value 
     //test csv with quoted field that is too long and doesn't end before newline (should make a mess also with TextLexer/TextLoader)
 
     @Before
     public void before() throws IOException {
+        rnd.reset();
         inputRoot = new File(".").getAbsolutePath();
         if (inputWorkRoot == null) {
             inputWorkRoot = temp.newFolder("imports" + System.currentTimeMillis()).getAbsolutePath();
@@ -145,6 +147,108 @@ public class FileSplitterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             //Thread.sleep(180000);
         });
+    }
+
+    @Test
+    public void testIndexMerge() throws Exception {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path().of(inputRoot).slash().concat("chunks")) {
+            int plen = path.length();
+            path.concat("part").slash$();
+
+            if (!ff.exists(path)) {
+                int result = ff.mkdirs(path, engine.getConfiguration().getMkDirMode());
+                if (result != 0) {
+                    LOG.info().$("Couldn't create partition dir=").$(path).$();//TODO: maybe we can ignore it
+                }
+            }
+            int chunks = 10;
+            createAndSortChunkFiles(path, chunks, 10_000, 1_000_000);
+
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                path.trimTo(plen);
+                indexer.merge(path.$(), chunks);
+            }
+            path.trimTo(plen);
+            ff.rmdir(path.$()); // clean all
+        }
+    }
+
+    @Test
+    public void testIndexSort() throws Exception {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path().of(inputRoot).slash().concat("chunk").$();
+             FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+
+            MemoryPMARImpl chunk = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+            try {
+                long lo = 0;
+                long hi = Long.MAX_VALUE;
+                long range = hi - lo + 1;
+                for (int i = 0; i < 10; i++) {
+                    final long z = lo + rnd.nextPositiveLong() % range;
+//                    final long z = 10 - i;
+                    chunk.putLong(z);
+                    chunk.putLong(i);
+                }
+            } finally {
+                chunk.close(true, Vm.TRUNCATE_TO_POINTER);
+            }
+
+            indexer.sort(path);
+            long len = ff.length(path.$());
+            try (MemoryCMRImpl sorted = new MemoryCMRImpl(ff, path.$(), len, MemoryTag.MMAP_DEFAULT)) {
+                long offset = 0;
+                while (offset < len) {
+                    long ts = sorted.getLong(offset);
+                    long id = sorted.getLong(offset + 8);
+                    System.err.println(ts);
+                    System.err.println(id);
+                    offset += 16;
+                }
+            }
+            ff.remove(path);
+//            System.err.println("---------------");
+//            try(MemoryCMRImpl sorted = new MemoryCMRImpl(ff, path.chop$().put(".s").$(), len, MemoryTag.MMAP_DEFAULT)) {
+//                long offset = 0;
+//                while (offset < len) {
+//                    long ts = sorted.getLong(offset);
+//                    long id = sorted.getLong(offset + 8);
+//                    System.err.println(ts);
+//                    System.err.println(id);
+//                    offset += 16;
+//                }
+//            }
+        }
+    }
+
+    private void createAndSortChunkFiles(Path path, int nChunks, int chunkSizeMin, int chunkSizeMax) throws IOException {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        int plen = path.length();
+        for (int i = 0; i < nChunks; i++) {
+            path.trimTo(plen);
+            path.slash().concat("chunk").put(i).$();
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                long rng = chunkSizeMax - chunkSizeMin + 1;
+                final long count = chunkSizeMin + rnd.nextPositiveLong() % rng;
+
+                MemoryPMARImpl chunk = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                try {
+                    long lo = 0;
+                    long hi = Long.MAX_VALUE;
+                    long range = hi - lo + 1;
+                    for (int v = 0; v < count; v++) {
+                        final long z = lo + rnd.nextPositiveLong() % range;
+                        chunk.putLong(z);
+                        chunk.putLong(v);
+                    }
+                } finally {
+                    chunk.close(true, Vm.TRUNCATE_TO_POINTER);
+                }
+                indexer.sort(path);
+            }
+        }
+        path.trimTo(plen);
     }
 
     protected void executeWithPool(
