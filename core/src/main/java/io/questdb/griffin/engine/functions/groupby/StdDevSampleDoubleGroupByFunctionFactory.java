@@ -22,25 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin.engine.functions.groupby;
 
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class WeakObjectPool<T extends Mutable> extends WeakObjectPoolBase<T> {
-    private final ObjectFactory<T> factory;
-
-    public WeakObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
-        super(initSize);
-        this.factory = factory;
-        fill();
+public class StdDevSampleDoubleGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "stddev_samp(D)";
     }
 
     @Override
-    void clear(T obj) {
-        obj.clear();
+    public boolean isGroupBy() {
+        return true;
     }
 
-    T newInstance() {
-        return factory.newInstance();
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new StdDevSampleDoubleGroupByFunction(args.getQuick(0));
     }
 }
