@@ -185,7 +185,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
 
         MapValue value = key.createValue();
         if (!value.isNew()) {
-            throw duplicateColumnException(tableAlias, columnName);
+            throw CairoException.duplicateColumn(columnName, "(tableAlias=" + tableAlias + ")");
         }
 
         value.putLong(0, columnCount++);
@@ -209,17 +209,6 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
             // we would treat this lookup as if column hadn't been found.
             value.putInt(0, -1);
         }
-    }
-
-    private CairoException duplicateColumnException(CharSequence tableAlias, CharSequence columnName) {
-        final CairoException exception = CairoException.instance(0).put("Duplicate column [name=");
-        sink.clear();
-        Chars.toLowerCase(columnName, sink);
-        exception.put(sink).put(", tableAlias=");
-        sink.clear();
-        Chars.toLowerCase(tableAlias, sink);
-        exception.put(sink).put(']');
-        return exception;
     }
 
     static {

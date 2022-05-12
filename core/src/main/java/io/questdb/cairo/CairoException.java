@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Sinkable;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.*;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
@@ -40,6 +40,20 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private int errno;
     private boolean cacheable;
     private boolean interruption;
+
+    public static CairoException duplicateColumn(CharSequence colName) {
+        return duplicateColumn(colName, null);
+    }
+
+    public static CairoException duplicateColumn(CharSequence colName, CharSequence additionalMessage) {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        Chars.toLowerCase(colName, sink);
+        CairoException exception = instance(METADATA_VALIDATION).put("Duplicate column '").put(sink).put('\'');
+        if (additionalMessage != null) {
+            exception.put(' ').put(additionalMessage);
+        }
+        return exception;
+    }
 
     public static CairoException instance(int errno) {
         CairoException ex = tlException.get();

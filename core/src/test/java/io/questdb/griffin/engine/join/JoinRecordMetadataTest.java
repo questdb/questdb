@@ -100,14 +100,14 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
             metadata.add("a", "X", 1, ColumnType.FLOAT, false, 0, false, null);
             Assert.fail();
         } catch (Exception ignored) {
-            TestUtils.assertContains(ignored.getMessage(), "Duplicate column [name=x, tableAlias=a]");
+            TestUtils.assertContains(ignored.getMessage(), "Duplicate column 'x' (tableAlias=a)");
         }
 
         try {
             metadata.add("A", "X", 7, ColumnType.FLOAT, false, 0, false, null);
             Assert.fail();
         } catch (Exception ignored) {
-            TestUtils.assertContains(ignored.getMessage(), "Duplicate column [name=x, tableAlias=a]");
+            TestUtils.assertContains(ignored.getMessage(), "Duplicate column 'x' (tableAlias=A)");
         }
 
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("x"));

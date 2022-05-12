@@ -25,15 +25,12 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 
 public class GenericRecordMetadata extends BaseRecordMetadata {
     public static final GenericRecordMetadata EMPTY = new GenericRecordMetadata();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap;
-    private final StringSink sink = new StringSink();
 
     public GenericRecordMetadata() {
         this.columnMetadata = new ObjList<>();
@@ -103,9 +100,7 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
             columnCount++;
             return this;
         } else {
-            sink.clear();
-            Chars.toLowerCase(meta.getName(), sink);
-            throw CairoException.instance(0).put("Duplicate column '").put(sink).put('\'');
+            throw CairoException.duplicateColumn(meta.getName());
         }
     }
 
