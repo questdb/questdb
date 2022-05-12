@@ -798,6 +798,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectContainsDuplicateColumnAliases() throws Exception {
+        assertSyntaxError(
+                "select t2.ts as \"TS\", t1.*, t2.ts as ts1 from t1 asof join (select * from t2) t2;",
+                0,
+                "Duplicate column 'ts1'",
+                modelOf("t1").col("x", ColumnType.INT).timestamp("ts"),
+                modelOf("t2").col("x", ColumnType.INT).timestamp("ts")
+        );
+    }
+
+    @Test
     public void testCreateAsSelectDuplicateColumn0() throws Exception {
         assertSyntaxError(
                 "create table tab as (select rnd_byte() b, rnd_boolean() b from long_sequence(1))",

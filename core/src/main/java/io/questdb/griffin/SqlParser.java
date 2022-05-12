@@ -1466,6 +1466,7 @@ public final class SqlParser {
             }
 
             final CharSequence alias;
+            boolean isUserDefinedAlias = false;
 
             tok = optTok(lexer);
 
@@ -1521,12 +1522,12 @@ public final class SqlParser {
 
             if (tok != null && Chars.equals(tok, ';')) {
                 alias = createColumnAlias(expr, model);
-                //tok = optTok(lexer);
             } else if (tok != null && columnAliasStop.excludes(tok)) {
                 assertNotDot(lexer, tok);
 
                 if (isAsKeyword(tok)) {
                     alias = GenericLexer.unquote(GenericLexer.immutableOf(tok(lexer, "alias")));
+                    isUserDefinedAlias = true;
                 } else {
                     alias = GenericLexer.immutableOf(GenericLexer.unquote(tok));
                 }
@@ -1535,7 +1536,7 @@ public final class SqlParser {
                 alias = createColumnAlias(expr, model);
             }
 
-            col.setAlias(alias);
+            col.setAlias(alias, isUserDefinedAlias);
             if (!model.addBottomUpColumn(col)) {
                 throw duplicateColumnException(colPosition, col.getName());
             }

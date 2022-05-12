@@ -790,6 +790,7 @@ class SqlOptimiser {
 
     private void createSelectColumn(
             CharSequence columnName,
+            boolean isUserDefinedAlias,
             ExpressionNode columnAst,
             QueryModel validatingModel,
             QueryModel translatingModel,
@@ -807,6 +808,11 @@ class SqlOptimiser {
         int index = translatingAliasMap.keyIndex(columnAst.token);
         if (index < 0) {
             // column is already being referenced by translating model
+            if (isUserDefinedAlias && translatingModel.getAliasToColumnMap().contains(columnName)) {
+                sink.clear();
+                Chars.toLowerCase(columnName, sink);
+                throw SqlException.$(0, "Duplicate column '").put(sink).put('\'');
+            }
             final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
             final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
             final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName);
@@ -960,6 +966,7 @@ class SqlOptimiser {
             }
             createSelectColumn(
                     name,
+                    false,
                     nextLiteral(token, wildcardPosition),
                     null, // do not validate
                     translatingModel,
@@ -2980,6 +2987,7 @@ class SqlOptimiser {
                 } else {
                     createSelectColumn(
                             qc.getAlias(),
+                            qc.isUserDefinedAlias(),
                             qc.getAst(),
                             baseModel,
                             translatingModel,
