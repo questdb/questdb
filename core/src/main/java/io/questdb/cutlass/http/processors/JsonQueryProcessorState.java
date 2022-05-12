@@ -90,7 +90,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long executeStartNanos;
     private long recordCountNanos;
     private long compilerNanos;
-    private boolean consoleRequest;
+    private boolean wrapLargeNum;
     private boolean timings;
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
@@ -164,7 +164,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.countRows = Chars.equalsNc("true", request.getUrlParam("count"));
         this.timings = Chars.equalsNc("true", request.getUrlParam("timings"));
         this.explain = Chars.equalsNc("true", request.getUrlParam("explain"));
-        this.consoleRequest = Chars.equalsNc("con", request.getUrlParam("src"));
+        this.wrapLargeNum = Chars.equalsNc("true", request.getUrlParam("wrapLargeNum"))
+                || Chars.equalsNc("con", request.getUrlParam("src"));
     }
 
     public LogRecord debug() {
@@ -305,11 +306,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         socket.put('"');
     }
 
-    private static void putLongValue(HttpChunkedResponseSocket socket, Record rec, int col, boolean isConsoleRequest) {
+    private static void putLongValue(HttpChunkedResponseSocket socket, Record rec, int col, boolean wrapLargeNum) {
         final long l = rec.getLong(col);
         if (l == Long.MIN_VALUE) {
             socket.put("null");
-        } else if (isConsoleRequest) {
+        } else if (wrapLargeNum) {
             socket.put('"').put(l).put('"');
         } else {
             socket.put(l);
@@ -510,7 +511,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putIntValue(socket, record, columnIdx);
                     break;
                 case ColumnType.LONG:
-                    putLongValue(socket, record, columnIdx, consoleRequest);
+                    putLongValue(socket, record, columnIdx, wrapLargeNum);
                     break;
                 case ColumnType.DATE:
                     putDateValue(socket, record, columnIdx);
