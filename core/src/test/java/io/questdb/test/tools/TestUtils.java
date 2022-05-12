@@ -46,11 +46,8 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 import java.io.*;
-import java.nio.file.FileSystems;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 public final class TestUtils {
 
