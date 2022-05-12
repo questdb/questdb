@@ -121,6 +121,9 @@ public final class Vect {
     //caller must call freeMergedIndex !!!
     private static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
 
+    // accept externally allocated memory for merged index of proper size
+    public static native long mergeLongIndexesAscExt(long pIndexStructArray, int count, long mergedIndex);
+
     public static long mergeLongIndexesAsc(long pIndexStructArray, int count, long indexSize) {
         Unsafe.recordMemAlloc(indexSize, MemoryTag.NATIVE_O3);
         return mergeLongIndexesAsc(pIndexStructArray, count);
