@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.vm.MemoryPMARImpl;
-import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.SqlException;
@@ -40,6 +40,7 @@ import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
@@ -101,7 +102,7 @@ public class FileSplitter implements Closeable, Mutable {
     private static final int MAX_TIMESTAMP_LENGTH = 100;
 
     //maps partitionFloors to output file descriptors
-    final private LongObjHashMap<MemoryMA> outputFiles = new LongObjHashMap<>();
+    final private LongObjHashMap<MemoryPMARImpl> outputFiles = new LongObjHashMap<>();
 
     //timestamp field of current line
     final private DirectByteCharSequence timestampField;
@@ -191,29 +192,43 @@ public class FileSplitter implements Closeable, Mutable {
 
         long floor = partitionFloorMethod.floor(timestamp);
 
-        MemoryMA target = outputFiles.get(floor);
+        MemoryPMARImpl target = outputFiles.get(floor);
         if (target == null) {
-            path.of(inputWorkRoot).slash().concat(inputFileName).slash().put(index).slash$();
-            if (!ff.exists(path)) {
-                ff.mkdir(path, dirMode);
-            }
-            path.chop$();
-            partitionDirFormatMethod.format(floor, null, null, path);
-            path.put("_idx").$();
-
-            if (ff.exists(path)) {
-                //TODO: change exception type?
-                throw CairoException.instance(-1).put("index file already exists [path=").put(path).put(']');
-            } else {
-                LOG.info().$("created import index file ").$(path).$();
-            }
-
-            target = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-            outputFiles.put(floor, target);
+            target = prepareTargetFile(floor);
         }
 
         target.putLong(timestamp);
         target.putLong(lineStartOffset);
+    }
+
+    @NotNull
+    private MemoryPMARImpl prepareTargetFile(long floor) {
+        MemoryPMARImpl target;
+        path.of(inputWorkRoot).slash().concat(inputFileName).slash();
+        partitionDirFormatMethod.format(floor, null, null, path);
+        path.slash$();
+
+        if (!ff.exists(path)) {
+            int result = ff.mkdir(path, dirMode);
+            if (result != 0) {
+                LOG.info().$("Couldn't create partition dir=").$(path).$();//TODO: maybe we can ignore it
+            }
+        }
+
+        path.chop$();
+        path.put(index).$();
+        //path.put("_idx")
+
+        if (ff.exists(path)) {
+            //TODO: change exception type?
+            throw CairoException.instance(-1).put("index file already exists [path=").put(path).put(']');
+        } else {
+            LOG.info().$("created import index file ").$(path).$();
+        }
+
+        target = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+        outputFiles.put(floor, target);
+        return target;
     }
 
     @Override
@@ -236,9 +251,7 @@ public class FileSplitter implements Closeable, Mutable {
 
         this.inputFileName = null;
 
-        outputFiles.forEach((key, value) -> {
-            value.close(true);//TODO: we've to mark actual end of file because truncate isn't exact 
-        });
+        outputFiles.forEach((key, value) -> value.close(true, Vm.TRUNCATE_TO_POINTER));
 
         this.outputFiles.clear();
 
@@ -248,9 +261,12 @@ public class FileSplitter implements Closeable, Mutable {
         }
 
         if (fd > -1) {
-            ff.close(fd);
+            boolean closed = ff.close(fd);
+            if (!closed) {
+                LOG.error().$("Couldn't close file fd=").$(fd).$();
+            }
+
             fd = -1;
-            //TODO: warn if fails ?
         }
     }
 

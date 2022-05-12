@@ -127,14 +127,14 @@ public class FileSplitterTest extends AbstractGriffinTest {
     @Ignore
     @Test//47s with on thread and old implementation
     public void testSimpleCsv() throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(7, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             //String inputDir = new File(".").getAbsolutePath();
             inputRoot = new File("E:/dev/tmp").getAbsolutePath();
 
             //try (Path path = new Path().of(inputDir).slash().concat("src/test/resources/csv/test-import.csv").$();
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 DateFormat dateFormat = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
-                indexer.of("trips300mil.csv", PartitionBy.MONTH, (byte) ',', 2, dateFormat, true);
+                indexer.of("trips300mil.csv", PartitionBy.HOUR, (byte) ',', 2, dateFormat, true);
                 indexer.process();
             }
         });
