@@ -25,10 +25,12 @@
 package io.questdb.griffin;
 
 import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 
 public class SqlKeywords {
     public static final String CONCAT_FUNC_NAME = "concat";
     public static final int CASE_KEYWORD_LENGTH = 4;
+    private static final LowerCaseCharSequenceHashSet TIMESTAMP_PART_SET = new LowerCaseCharSequenceHashSet();
     public static int GEOHASH_KEYWORD_LENGTH = 7;
 
     public static boolean isAddKeyword(CharSequence tok) {
@@ -912,6 +914,35 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'k';
     }
 
+    public static boolean isMaxIdentifierLengthKeyword(CharSequence tok) {
+        if (tok.length() != 21) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'm'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'x'
+                && tok.charAt(i++) == '_'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'd'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'f'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'r'
+                && tok.charAt(i++) == '_'
+                && (tok.charAt(i++) | 32) == 'l'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i++) | 32) == 'g'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i) | 32) == 'h';
+    }
+
     public static boolean isMaxUncommittedRowsParam(CharSequence tok) {
         if (tok.length() != 18) {
             return false;
@@ -1569,54 +1600,6 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'o';
     }
 
-    public static boolean isTransactionKeyword(CharSequence tok) {
-        if (tok.length() != 11) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'r'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 'n'
-                && (tok.charAt(i++) | 32) == 's'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 'c'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 'o'
-                && (tok.charAt(i) | 32) == 'n';
-    }
-
-    public static boolean isMaxIdentifierLengthKeyword(CharSequence tok) {
-        if (tok.length() != 21) {
-            return false;
-        }
-
-        int i = 0;
-        return (tok.charAt(i++) | 32) == 'm'
-                && (tok.charAt(i++) | 32) == 'a'
-                && (tok.charAt(i++) | 32) == 'x'
-                && tok.charAt(i++) == '_'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 'd'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'n'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 'f'
-                && (tok.charAt(i++) | 32) == 'i'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'r'
-                && tok.charAt(i++) == '_'
-                && (tok.charAt(i++) | 32) == 'l'
-                && (tok.charAt(i++) | 32) == 'e'
-                && (tok.charAt(i++) | 32) == 'n'
-                && (tok.charAt(i++) | 32) == 'g'
-                && (tok.charAt(i++) | 32) == 't'
-                && (tok.charAt(i) | 32) == 'h';
-    }
-
     public static boolean isTransactionIsolationKeyword(CharSequence tok) {
         if (tok.length() != 21) {
             return false;
@@ -1640,6 +1623,25 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'o'
                 && (tok.charAt(i++) | 32) == 'l'
                 && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i) | 32) == 'n';
+    }
+
+    public static boolean isTransactionKeyword(CharSequence tok) {
+        if (tok.length() != 11) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i++) | 32) == 's'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'c'
                 && (tok.charAt(i++) | 32) == 't'
                 && (tok.charAt(i++) | 32) == 'i'
                 && (tok.charAt(i++) | 32) == 'o'
@@ -1811,6 +1813,10 @@ public class SqlKeywords {
         return isGeoHashKeyword(tok, i);
     }
 
+    public static boolean validateExtractPart(CharSequence token) {
+        return TIMESTAMP_PART_SET.contains(token);
+    }
+
     private static boolean isGeoHashKeyword(CharSequence tok, int i) {
         return (tok.charAt(i++) | 32) == 'g'
                 && (tok.charAt(i++) | 32) == 'e'
@@ -1819,5 +1825,26 @@ public class SqlKeywords {
                 && (tok.charAt(i++) | 32) == 'a'
                 && (tok.charAt(i++) | 32) == 's'
                 && (tok.charAt(i) | 32) == 'h';
+    }
+
+    static {
+        TIMESTAMP_PART_SET.add("microseconds");
+        TIMESTAMP_PART_SET.add("milliseconds");
+        TIMESTAMP_PART_SET.add("second");
+        TIMESTAMP_PART_SET.add("minute");
+        TIMESTAMP_PART_SET.add("hour");
+        TIMESTAMP_PART_SET.add("day");
+        TIMESTAMP_PART_SET.add("doy");
+        TIMESTAMP_PART_SET.add("dow");
+        TIMESTAMP_PART_SET.add("week");
+        TIMESTAMP_PART_SET.add("month");
+        TIMESTAMP_PART_SET.add("quarter");
+        TIMESTAMP_PART_SET.add("year");
+        TIMESTAMP_PART_SET.add("isoyear");
+        TIMESTAMP_PART_SET.add("isodow");
+        TIMESTAMP_PART_SET.add("decade");
+        TIMESTAMP_PART_SET.add("century");
+        TIMESTAMP_PART_SET.add("millennium");
+        TIMESTAMP_PART_SET.add("epoch");
     }
 }

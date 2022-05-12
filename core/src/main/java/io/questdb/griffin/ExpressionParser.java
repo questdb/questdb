@@ -1149,29 +1149,38 @@ class ExpressionParser {
                                 // check if this is "extract(something from ...)"
                                 // we can do this by analyzing opStack
                                 if (opStack.size() > 2) {
+                                    boolean extractError = true;
                                     ExpressionNode member = opStack.peek(0);
-                                    if (member.type == ExpressionNode.LITERAL) {
+                                    if (member.type == ExpressionNode.LITERAL || (member.type == ExpressionNode.CONSTANT)) {
                                         if (Chars.equals(opStack.peek(1).token, '(')) {
                                             if (SqlKeywords.isExtractKeyword(opStack.peek(2).token)) {
-                                                // in this case "from" keyword acts as ',' in function call
-                                                member.type = ExpressionNode.MEMBER_ACCESS;
-                                                argStackDepth = onNode(
-                                                        listener,
-                                                        member,
-                                                        argStackDepth
-                                                );
-                                                opStack.pop();
-                                                paramCount++;
-                                                thisBranch = BRANCH_COMMA;
-                                                continue;
+                                                // validate part
+                                                if (SqlKeywords.validateExtractPart(GenericLexer.unquote(member.token))) {
+                                                    // in this case "from" keyword acts as ',' in function call
+                                                    member.type = ExpressionNode.MEMBER_ACCESS;
+                                                    argStackDepth = onNode(
+                                                            listener,
+                                                            member,
+                                                            argStackDepth
+                                                    );
+                                                    opStack.pop();
+                                                    paramCount++;
+                                                    thisBranch = BRANCH_COMMA;
+                                                    continue;
+                                                } else {
+                                                    throw SqlException.$(member.position, "unsupported timestamp part: ").put(member.token);
+                                                }
+                                            } else {
+                                                extractError = false;
                                             }
                                         }
-                                    } else {
-                                        boolean found = isExtractFunctionOnStack();
-                                        if (found) {
-                                            throw SqlException.$(member.position, "did you mean 'hour'?");
-                                        }
                                     }
+
+                                    // report error on extract
+                                    if (extractError && isExtractFunctionOnStack()) {
+                                        throw SqlException.$(member.position, "we expect timestamp part here");
+                                    }
+
                                 }
                             }
                         }

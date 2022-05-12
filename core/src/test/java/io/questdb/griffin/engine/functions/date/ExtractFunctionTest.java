@@ -41,6 +41,17 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 true,
                 true
         );
+
+        assertQuery(
+                "extract\n" +
+                        "2\n",
+                "select extract('millennium' from to_timestamp('1997-04-11T22:00:30.555555Z'))",
+                null,
+                null,
+                true,
+                true,
+                true
+        );
     }
 
     @Test
@@ -49,6 +60,17 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "extract\n" +
                         "364\n",
                 "select extract(doy from to_timestamp('2022-12-30T22:00:30.555555Z'))",
+                null,
+                null,
+                true,
+                true,
+                true
+        );
+
+        assertQuery(
+                "extract\n" +
+                        "364\n",
+                "select extract('doy' from to_timestamp('2022-12-30T22:00:30.555555Z'))",
                 null,
                 null,
                 true,
@@ -415,7 +437,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(1+1 from to_timestamp('2022-03-11T22:00:30.555555Z'))",
                 null,
                 17,
-                "did you mean 'hour'?"
+                "we expect timestamp part here"
         );
     }
 
@@ -435,7 +457,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(null from to_timestamp('2022-03-11T22:00:30.555555Z'))",
                 null,
                 15,
-                "did you mean 'hour'?"
+                "unsupported timestamp part: null"
         );
     }
 
@@ -557,7 +579,7 @@ public class ExtractFunctionTest extends AbstractGriffinTest {
                 "select extract(timezone from to_timestamp('2022-12-30T22:00:30.555555Z'))",
                 null,
                 15,
-                "unsupported part 'timezone'"
+                "unsupported timestamp part: timezone"
         );
     }
 
