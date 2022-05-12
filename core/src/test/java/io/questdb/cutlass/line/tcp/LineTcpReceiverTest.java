@@ -981,12 +981,23 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             }).start();
 
+            // this will wait until the writer is returned into the pool or times out after 20 seconds
             finished.await(20_000_000_000L);
             engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
             });
 
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertEquals(numOfRows / 2, reader.getTransientRowCount());
+                final int expectedNumOfRows = numOfRows / 2;
+                // usually the data will be in the table by the time we get here but
+                // if it is not we will wait for it in a loop for a maximum of 20 seconds
+                for (int i = 0; i < 200; i++) {
+                    if (reader.getTransientRowCount() < expectedNumOfRows) {
+                        Os.sleep(100);
+                    } else {
+                        break;
+                    }
+                }
+                Assert.assertEquals(expectedNumOfRows, reader.getTransientRowCount());
             } catch (Exception e) {
                 Assert.fail("Reader failed [e=" + e + "]");
                 throw new RuntimeException(e);
