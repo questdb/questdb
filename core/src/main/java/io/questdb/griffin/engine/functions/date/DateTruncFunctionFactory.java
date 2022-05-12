@@ -71,11 +71,10 @@ public class DateTruncFunctionFactory implements FunctionFactory {
             return new TimestampFloorFunctions.TimestampFloorDecadeFunction(innerFunction);
         } else if (Chars.equals(kind, "century")) {
             return new TimestampFloorFunctions.TimestampFloorCenturyFunction(innerFunction);
-        } else {
-            // parts are pre-validated by ExpressionParser
-
-            // millennium
+        } else if (Chars.equals(kind, "millennium")) {
             return new TimestampFloorFunctions.TimestampFloorMillenniumFunction(innerFunction);
+        } else {
+            throw SqlException.$(argPositions.getQuick(0), "invalid kind '").put(kind).put('\'');
         }
     }
 }
