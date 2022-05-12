@@ -30,6 +30,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
@@ -920,8 +921,16 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     @NotNull
     protected static CompiledQuery compile(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         CompiledQuery cc = compiler.compile(query, executionContext);
-        try (OperationFuture future = cc.execute(null)) {
-            future.await();
+        if (cc.getType() == CompiledQuery.UPDATE) {
+            try (UpdateOperation op = cc.getUpdateOperation()) {
+                try (OperationFuture future = cc.getDispatcher().execute(op, sqlExecutionContext, null)) {
+                    future.await();
+                }
+            }
+        } else {
+            try (OperationFuture future = cc.execute(null)) {
+                future.await();
+            }
         }
         return cc;
     }

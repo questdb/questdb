@@ -95,6 +95,16 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSymbolReplaceDistinctQueryIndexed() throws Exception {
+        testSymbolsReplacedDistinct(true);
+    }
+
+    @Test
+    public void testSymbolReplaceDistinctQueryNotIndexed() throws Exception {
+        testSymbolsReplacedDistinct(false);
+    }
+
+    @Test
     public void testInsertAfterUpdate() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(
@@ -2017,6 +2027,37 @@ public class UpdateTest extends AbstractGriffinTest {
                     "ABC\t1970-01-01T00:00:02.000000Z\t3\n", sink);
 
             assertSql("up where symCol = 'WCP'", "symCol\tts\tx\n");
+        });
+    }
+
+    private void testSymbolsReplacedDistinct(boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)", sqlExecutionContext);
+
+            executeUpdate("update up set symCol = 'ABC' where symCol = 'WCP'");
+            assertSql("up", "symCol\tts\tx\n" +
+                    "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "ABC\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            assertQuery("symCol\n" +
+                            "\n" +
+                            "ABC\n" +
+                            "VTJ\n",
+                    "select distinct symCol from up order by symCol",
+                    null,
+                    true,
+                    true);
+
+            assertSql("select symCol, count() from up order by symCol", "symCol\tcount\n" +
+                    "\t1\n" +
+                    "ABC\t3\n" +
+                    "VTJ\t1\n");
         });
     }
 
