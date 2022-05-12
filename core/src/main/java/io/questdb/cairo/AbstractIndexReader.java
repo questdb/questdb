@@ -143,6 +143,10 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                 Os.pause();
             }
 
+            // Resize key memory eagerly to avoid doing that when searching keys.
+            long offset = BitmapIndexUtils.getKeyEntryOffset(keyCount);
+            keyMem.extend(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
+
             this.blockValueCountMod = blockValueCountMod;
             this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
             this.keyCount = this.keyCountIncludingNulls = keyCount;

@@ -73,10 +73,10 @@ public final class BitmapIndexUtils {
      * <p>
      * List of value blocks is assumed to be ordered by value in ascending order.
      *
-     * @param valueCount         total count of values in all blocks.
-     * @param blockOffset offset of last value block in chain of blocks.
+     * @param valueCount           total count of values in all blocks
+     * @param blockOffset          offset of last value block in chain of blocks
      * @param valueMem             value block memory
-     * @param maxValue             upper limit for block values.
+     * @param maxValue             upper limit for block values
      * @param blockValueCountMod   number of values in single block - 1
      * @param seeker               interface that collects results of the search
      */
@@ -97,7 +97,7 @@ public final class BitmapIndexUtils {
                 long lo = valueMem.getLong(valueBlockOffset);
                 cellCount = (valueCount - 1 & blockValueCountMod) + 1;
 
-                // can we skip this block ?
+                // can we skip this block?
                 if (lo > maxValue) {
                     valueCount -= cellCount;
                     // do we have previous block?
@@ -125,10 +125,14 @@ public final class BitmapIndexUtils {
      * Seeks first block that contains first value, which is greater or equal to minValue.
      * It starts from first block in the list and proceeds moving right until it finds
      * block with low and high values surrounding minValue.
-     * This block is then binary searched to count values that are all greater or equal
-     * than minValue.
+     * <p>
+     * The found block is then binary searched to count values that are all greater or
+     * equal than minValue.
+     * <p>
+     * Unlike seekValueBlockRTL, this method does a boundary check over the valueMem size.
      *
-     * @param initialCount          total count of values in all blocks.
+     * @param totalCount            total count of values in all blocks;
+     *                              *important note*: initialCount may include blocks that exceed the file boundary
      * @param firstValueBlockOffset offset of first block in linked list
      * @param valueMem              value block memory
      * @param minValue              lower limit for values
@@ -136,14 +140,14 @@ public final class BitmapIndexUtils {
      * @param seeker                interface that collects results of the search
      */
     static void seekValueBlockLTR(
-            long initialCount,
+            long totalCount,
             long firstValueBlockOffset,
             MemoryR valueMem,
             long minValue,
             long blockValueCountMod,
             ValueBlockSeeker seeker
     ) {
-        long valueCount = initialCount;
+        long valueCount = totalCount;
         long valueBlockOffset = firstValueBlockOffset;
         if (valueCount > 0) {
             long cellCount;
@@ -156,13 +160,19 @@ public final class BitmapIndexUtils {
                 }
                 final long hi = valueMem.getLong(valueBlockOffset + (cellCount - 1) * 8);
 
-                // can we skip this block ?
+                // can we skip this block?
                 if (hi < minValue) {
                     valueCount -= cellCount;
-                    // do we have previous block?
+                    // do we have next block?
                     if (valueCount > 0) {
                         final long nextBlockOffset = (blockValueCountMod + 1) * 8 + 8;
                         valueBlockOffset = valueMem.getLong(valueBlockOffset + nextBlockOffset);
+                        if (valueBlockOffset >= valueMem.size()) {
+                            // We've reached the memory boundary. Report that we didn't find the value by
+                            // using the total count of values in the seeker call.
+                            seeker.seek(totalCount, firstValueBlockOffset);
+                            return;
+                        }
                         continue;
                     }
                 }
@@ -178,9 +188,8 @@ public final class BitmapIndexUtils {
                 }
             }
         }
-        seeker.seek(initialCount - valueCount, valueBlockOffset);
+        seeker.seek(totalCount - valueCount, valueBlockOffset);
     }
-
 
     static long getKeyEntryOffset(int key) {
         return key * KEY_ENTRY_SIZE + KEY_FILE_RESERVED;
