@@ -31,8 +31,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 /**
- * Cursors returned by this class are thread-safe since they never extend key & value
- * memories or mutate any shared variables.
+ * Cursors returned by this class are thread-safe since they never extend key and
+ * value memories or mutate any shared variables.
  * <p>
  * The important assumption is that of() method should be called on a single thread
  * prior to any cursor operations. Once this happens, cursors can be obtained and
