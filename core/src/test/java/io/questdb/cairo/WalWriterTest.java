@@ -37,7 +37,6 @@ public class WalWriterTest extends AbstractGriffinTest {
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("a", ColumnType.INT)
         ) {
-
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
                 WalWriter.Row row = walWriter.newRow();

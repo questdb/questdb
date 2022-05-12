@@ -34,17 +34,13 @@ import io.questdb.cairo.vm.MemoryFMCRImpl;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryFR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.vm.api.MemoryMAT;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.griffin.AlterStatement;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -53,12 +49,10 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
@@ -72,7 +66,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 import io.questdb.std.Sinkable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -82,18 +75,11 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.tasks.ColumnIndexerTask;
-import io.questdb.tasks.O3CallbackTask;
-import io.questdb.tasks.O3CopyTask;
-import io.questdb.tasks.O3OpenColumnTask;
-import io.questdb.tasks.O3PartitionTask;
-import io.questdb.tasks.O3PartitionUpdateTask;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.StatusCode.CANNOT_ATTACH_MISSING_PARTITION;
@@ -149,8 +135,6 @@ public class WalWriter implements Closeable {
     private final PartitionBy.PartitionCeilMethod partitionCeilMethod;
     private final int defaultCommitMode;
     private final ObjList<Runnable> nullSetters;
-    private final AtomicLong o3PartitionUpdRemaining = new AtomicLong();
-    private final AtomicInteger o3ErrorCount = new AtomicInteger();
     private final MemoryMARW todoMem = Vm.getMARWInstance();
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
@@ -179,7 +163,6 @@ public class WalWriter implements Closeable {
     private boolean avoidIndexOnCommit = false;
     private long partitionTimestampHi;
     private long masterRef = 0;
-    private long o3MasterRef = -1;
     private boolean removeDirOnCancelRow = true;
     private long tempMem16b = Unsafe.malloc(16, MemoryTag.NATIVE_DEFAULT);
     private int metaSwapIndex;
@@ -858,10 +841,6 @@ public class WalWriter implements Closeable {
         return newRow(0L);
     }
 
-    public void o3BumpErrorCount() {
-        o3ErrorCount.incrementAndGet();
-    }
-
     public void processCommandAsync(WriteToQueue<TableWriterTask> writeFunc) {
         while (true) {
             long seq = commandPubSeq.next();
@@ -1224,8 +1203,6 @@ public class WalWriter implements Closeable {
                 rollbackSymbolTables();
                 purgeUnusedPartitions();
                 configureAppendPosition();
-                // when we rolled transaction back, hasO3() has to be false
-                o3MasterRef = -1;
                 LOG.info().$("tx rollback complete [name=").$(tableName).$(']').$();
                 processCommandQueue(false);
                 metrics.tableWriter().incrementRollbacks();
@@ -1827,13 +1804,6 @@ public class WalWriter implements Closeable {
         return txnScoreboard.getMin() != lastCommittedTxn;
     }
 
-    private void clearO3() {
-        this.o3MasterRef = -1; // clears o3 flag, hasO3() will be returning false
-        rowActon = ROW_ACTION_SWITCH_PARTITION;
-        // transaction log is either not required or pending
-        activeColumns = columns;
-        activeNullSetters = nullSetters;
-    }
 
     private void clearTodoLog() {
         try {
@@ -2203,11 +2173,6 @@ public class WalWriter implements Closeable {
         Misc.free(columns.getAndSetQuick(si, NullMemory.INSTANCE));
     }
 
-    private void freeAndRemoveO3ColumnPair(ObjList<MemoryCARW> columns, int pi, int si) {
-        Misc.free(columns.getAndSetQuick(pi, NullMemory.INSTANCE));
-        Misc.free(columns.getAndSetQuick(si, NullMemory.INSTANCE));
-    }
-
     private void freeColumns(boolean truncate) {
         // null check is because this method could be called from the constructor
         if (columns != null) {
@@ -2276,26 +2241,6 @@ public class WalWriter implements Closeable {
 
     CairoConfiguration getConfiguration() {
         return configuration;
-    }
-
-    Sequence getO3CopyPubSeq() {
-        return messageBus.getO3CopyPubSeq();
-    }
-
-    RingQueue<O3CopyTask> getO3CopyQueue() {
-        return messageBus.getO3CopyQueue();
-    }
-
-    Sequence getO3OpenColumnPubSeq() {
-        return messageBus.getO3OpenColumnPubSeq();
-    }
-
-    RingQueue<O3OpenColumnTask> getO3OpenColumnQueue() {
-        return messageBus.getO3OpenColumnQueue();
-    }
-
-    private long getO3RowCount0() {
-        return (masterRef - o3MasterRef + 1) / 2;
     }
 
     private long getPartitionLo(long timestamp) {
@@ -2409,11 +2354,6 @@ public class WalWriter implements Closeable {
             throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
         }
     }
-
-    void o3ClockDownPartitionUpdateCount() {
-        o3PartitionUpdRemaining.decrementAndGet();
-    }
-
 
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
         MemoryMA mem1 = getPrimaryColumn(columnIndex);
@@ -3701,16 +3641,6 @@ public class WalWriter implements Closeable {
     @FunctionalInterface
     private interface FragileCode {
         void run(CharSequence columnName);
-    }
-
-    @FunctionalInterface
-    public interface O3ColumnUpdateMethod {
-        void run(
-                int columnIndex,
-                final int columnType,
-                long mergedTimestampsAddr,
-                long valueCount
-        );
     }
 
     public interface Row {
