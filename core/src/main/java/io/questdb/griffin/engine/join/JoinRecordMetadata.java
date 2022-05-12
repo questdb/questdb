@@ -35,7 +35,6 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -43,7 +42,6 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
 
     private final static ColumnTypes keyTypes;
     private final static ColumnTypes valueTypes;
-    private final StringSink sink = new StringSink();
     private final Map map;
     private int refCount;
 
