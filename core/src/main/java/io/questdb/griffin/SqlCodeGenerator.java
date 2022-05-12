@@ -812,8 +812,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext.getMessageBus(),
                     factory,
                     f,
-                    perWorkerFilters,
                     reduceTaskPool,
+                    perWorkerFilters,
                     limitLoFunction,
                     limitLoPos
             );
@@ -1051,8 +1051,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 executionContext.getMessageBus(),
                                 master,
                                 f,
-                                perWorkerFilters,
                                 reduceTaskPool,
+                                perWorkerFilters,
                                 null,
                                 0
                         );
