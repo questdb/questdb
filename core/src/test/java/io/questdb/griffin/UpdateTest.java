@@ -36,6 +36,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -376,7 +377,7 @@ public class UpdateTest extends AbstractGriffinTest {
     public void testUpdateAsyncModeFailed() throws Exception {
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1) {
             @Override
-            public int getWorkerCount() {
+            public Rnd getAsyncRandom() {
                 throw new RuntimeException("test error");
             }
         }.with(AllowAllCairoSecurityContext.INSTANCE,
