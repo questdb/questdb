@@ -39,6 +39,9 @@ import java.util.Arrays;
 import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 
 public class SumDoubleVectorAggregateFunction extends DoubleFunction implements VectorAggregateFunction {
+    private static final int SUM_PADDING = Misc.CACHE_LINE_SIZE / Double.BYTES;
+    private static final int COUNT_PADDING = Misc.CACHE_LINE_SIZE / Long.BYTES;
+
     private final int columnIndex;
     private final double[] sum;
     private final long[] count;
@@ -49,8 +52,8 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     public SumDoubleVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
         this.columnIndex = columnIndex;
-        this.sum = new double[workerCount * Misc.CACHE_LINE_SIZE];
-        this.count = new long[workerCount * Misc.CACHE_LINE_SIZE];
+        this.sum = new double[workerCount * SUM_PADDING];
+        this.count = new long[workerCount * COUNT_PADDING];
         this.workerCount = workerCount;
 
         if (keyKind == GKK_HOUR_INT) {
@@ -67,9 +70,8 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
         if (address != 0) {
             final double value = Vect.sumDouble(address, addressSize / Double.BYTES);
             if (value == value) {
-                final int offset = workerId * Misc.CACHE_LINE_SIZE;
-                this.sum[offset] += value;
-                this.count[offset]++;
+                this.sum[workerId * SUM_PADDING] += value;
+                this.count[workerId * COUNT_PADDING]++;
             }
         }
     }
@@ -118,9 +120,8 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
         double sum = 0;
         long count = 0;
         for (int i = 0; i < workerCount; i++) {
-            final int offset = i * Misc.CACHE_LINE_SIZE;
-            sum += this.sum[offset];
-            count += this.count[offset];
+            sum += this.sum[i * SUM_PADDING];
+            count += this.count[i * COUNT_PADDING];
         }
         Rosti.keyedIntSumDoubleWrapUp(pRosti, valueOffset, sum, count);
     }
@@ -136,9 +137,8 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
         double sum = 0;
         long count = 0;
         for (int i = 0; i < workerCount; i++) {
-            final int offset = i * Misc.CACHE_LINE_SIZE;
-            sum += this.sum[offset];
-            count += this.count[offset];
+            sum += this.sum[i * SUM_PADDING];
+            count += this.count[i * COUNT_PADDING];
         }
         return count > 0 ? sum : Double.NaN;
     }

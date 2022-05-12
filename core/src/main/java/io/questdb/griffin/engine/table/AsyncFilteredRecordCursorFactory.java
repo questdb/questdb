@@ -62,8 +62,8 @@ public class AsyncFilteredRecordCursorFactory implements RecordCursorFactory {
             @NotNull MessageBus messageBus,
             @NotNull RecordCursorFactory base,
             @NotNull Function filter,
+            @NotNull @Transient WeakClosableObjectPool<PageFrameReduceTask> localTaskPool,
             @Nullable ObjList<Function> perWorkerFilters,
-            @NotNull @Transient WeakAutoClosableObjectPool<PageFrameReduceTask> localTaskPool,
             @Nullable Function limitLoFunction,
             int limitLoPos
     ) {

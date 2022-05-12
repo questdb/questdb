@@ -559,6 +559,9 @@ io.questdb.griffin.engine.functions.str.RightFunctionFactory
 # avg()
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
 
+# stddev_samp()
+io.questdb.griffin.engine.functions.groupby.StdDevSampleDoubleGroupByFunctionFactory
+
 # strpos()
 io.questdb.griffin.engine.functions.str.StrPosFunctionFactory
 io.questdb.griffin.engine.functions.str.StrPosCharFunctionFactory
