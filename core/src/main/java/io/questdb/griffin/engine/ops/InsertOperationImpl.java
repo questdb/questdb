@@ -130,17 +130,7 @@ public class InsertOperationImpl implements InsertOperation {
         }
     }
 
-    private class InsertOperationFuture implements OperationFuture {
-
-        @Override
-        public void await() throws SqlException {
-
-        }
-
-        @Override
-        public int await(long timeout) throws SqlException {
-            return 0;
-        }
+    private class InsertOperationFuture extends DoneOperationFuture {
 
         @Override
         public long getInstanceId() {
@@ -148,18 +138,8 @@ public class InsertOperationImpl implements InsertOperation {
         }
 
         @Override
-        public int getStatus() {
-            return 0;
-        }
-
-        @Override
         public long getAffectedRowsCount() {
             return insertRows.size();
-        }
-
-        @Override
-        public void close() {
-
         }
     }
 }

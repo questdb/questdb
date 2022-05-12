@@ -215,7 +215,6 @@ public class UpdateOperator implements Closeable {
                             minRow
                     );
                 }
-
             } finally {
                 Misc.freeObjList(srcColumns);
                 Misc.freeObjList(dstColumns);

@@ -761,10 +761,6 @@ public class TableWriter implements Closeable {
         return defaultValue;
     }
 
-    public long getColumnVersion() {
-        return columnVersionWriter.getVersion();
-    }
-
     public long getCommitInterval() {
         return commitInterval;
     }
@@ -4128,7 +4124,11 @@ public class TableWriter implements Closeable {
     }
 
     void publishTableWriterEvent(TableSyncModel model, long tableId, long dst, long dstIP) {
-        final long pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        long pubCursor;
+        do {
+            pubCursor = messageBus.getTableWriterEventPubSeq().next();
+        } while (pubCursor < -1);
+
         if (pubCursor > -1) {
             final TableWriterTask event = messageBus.getTableWriterEventQueue().get(pubCursor);
             model.toBinary(event);

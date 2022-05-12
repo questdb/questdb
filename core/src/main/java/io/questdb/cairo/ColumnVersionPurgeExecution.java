@@ -358,7 +358,6 @@ public class ColumnVersionPurgeExecution implements Closeable {
         }
 
         // file did not exist, we don't care of the error
-
         return false;
     }
 }

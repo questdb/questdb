@@ -59,21 +59,6 @@ public class PageAddressCache implements Mutable {
         }
     }
 
-    public void add(int frameIndex, @Transient PageFrame frame) {
-        if (pageAddresses.size() >= columnCount * (frameIndex + 1)) {
-            return; // The page frame is already cached
-        }
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            pageAddresses.add(frame.getPageAddress(columnIndex));
-            int varLenColumnIndex = varLenColumnIndexes.getQuick(columnIndex);
-            if (varLenColumnIndex > -1) {
-                indexPageAddresses.add(frame.getIndexPageAddress(columnIndex));
-                pageSizes.add(frame.getPageSize(columnIndex));
-            }
-        }
-        pageRowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
-    }
-
     @Override
     public void clear() {
         varLenColumnIndexes.clear();
@@ -88,6 +73,21 @@ public class PageAddressCache implements Mutable {
             pageSizes = new LongList();
             pageRowIdOffsets = new LongList();
         }
+    }
+
+    public void add(int frameIndex, @Transient PageFrame frame) {
+        if (pageAddresses.size() >= columnCount * (frameIndex + 1)) {
+            return; // The page frame is already cached
+        }
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            pageAddresses.add(frame.getPageAddress(columnIndex));
+            int varLenColumnIndex = varLenColumnIndexes.getQuick(columnIndex);
+            if (varLenColumnIndex > -1) {
+                indexPageAddresses.add(frame.getIndexPageAddress(columnIndex));
+                pageSizes.add(frame.getPageSize(columnIndex));
+            }
+        }
+        pageRowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
 
     public long getPageAddress(int frameIndex, int columnIndex) {
