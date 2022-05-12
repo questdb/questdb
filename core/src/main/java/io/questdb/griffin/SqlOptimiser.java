@@ -99,7 +99,6 @@ class SqlOptimiser {
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<Function> functionsInFlight = new ObjList<>();
-    private final StringSink sink = new StringSink();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
 
@@ -809,9 +808,7 @@ class SqlOptimiser {
         if (index < 0) {
             // column is already being referenced by translating model
             if (isUserDefinedAlias && translatingModel.getAliasToColumnMap().contains(columnName)) {
-                sink.clear();
-                Chars.toLowerCase(columnName, sink);
-                throw SqlException.$(0, "Duplicate column '").put(sink).put('\'');
+                throw SqlException.duplicateColumn(0, columnName);
             }
             final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
             final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
@@ -1092,7 +1089,7 @@ class SqlOptimiser {
             final int joinCount = validatingModel.getJoinModels().size();
             if (joinCount > 1) {
                 boolean found = false;
-                sink.clear();
+                final StringSink sink = Misc.getThreadLocalBuilder();
                 for (int i = 0; i < joinCount; i++) {
                     final QueryModel jm = validatingModel.getJoinModels().getQuick(i);
                     if (jm.getAliasToColumnMap().keyIndex(node.token) < 0) {
@@ -3379,9 +3376,7 @@ class SqlOptimiser {
                     throw SqlException.$(position, "Designated timestamp column cannot be updated");
                 }
                 if (tempList.getQuick(columnIndex) == 1) {
-                    sink.clear();
-                    Chars.toLowerCase(queryColumn.getName(), sink);
-                    throw SqlException.$(position, "Duplicate column '").put(sink).put("' in SET clause");
+                    throw SqlException.duplicateColumn(position, queryColumn.getName(), "in SET clause");
                 }
                 tempList.set(columnIndex, 1);
 

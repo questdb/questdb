@@ -25,11 +25,10 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Sinkable;
+import io.questdb.std.*;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.ThreadLocal;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
 
@@ -52,6 +51,20 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException ambiguousColumn(int position) {
         return position(position).put("Ambiguous column name");
+    }
+
+    public static SqlException duplicateColumn(int position, CharSequence colName) {
+        return duplicateColumn(position, colName, null);
+    }
+
+    public static SqlException duplicateColumn(int position, CharSequence colName, CharSequence additionalMessage) {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        Chars.toLowerCase(colName, sink);
+        SqlException exception = SqlException.$(position, "Duplicate column '").put(sink).put('\'');
+        if (additionalMessage != null) {
+            exception.put(' ').put(additionalMessage);
+        }
+        return exception;
     }
 
     public static SqlException inconvertibleTypes(int position, int fromType, CharSequence fromName, int toType, CharSequence toName) {

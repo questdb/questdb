@@ -63,7 +63,6 @@ public final class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcat0Ref = this::rewriteConcat0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteTypeQualifier0Ref = this::rewriteTypeQualifier0;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
-    private final StringSink sink = new StringSink();
     private boolean subQueryMode = false;
 
     SqlParser(
@@ -163,7 +162,6 @@ public final class SqlParser {
         expressionTreeBuilder.reset();
         copyModelPool.clear();
         topLevelWithModel.clear();
-        sink.clear();
     }
 
     private CharSequence createColumnAlias(ExpressionNode node, QueryModel model) {
@@ -645,7 +643,7 @@ public final class SqlParser {
             }
 
             if (!model.addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong())) {
-                throw duplicateColumnException(position, name);
+                throw SqlException.duplicateColumn(position, name);
             }
 
             CharSequence tok;
@@ -1209,10 +1207,10 @@ public final class SqlParser {
                     throw err(lexer, "missing column name");
                 }
 
-                sink.clear();
+                StringSink sink = Misc.getThreadLocalBuilder();
                 Chars.toLowerCase(GenericLexer.unquote(tok), sink);
                 if (!model.addColumn(sink, lexer.lastTokenPosition())) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "Duplicate column '").put(sink).put('\'');
+                    throw SqlException.duplicateColumn(lexer.lastTokenPosition(), sink.toString());
                 }
 
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
@@ -1538,7 +1536,7 @@ public final class SqlParser {
 
             col.setAlias(alias, isUserDefinedAlias);
             if (!model.addBottomUpColumn(col)) {
-                throw duplicateColumnException(colPosition, col.getName());
+                throw SqlException.duplicateColumn(colPosition, col.getName());
             }
 
             if (tok == null || Chars.equals(tok, ';')) {
@@ -1658,7 +1656,7 @@ public final class SqlParser {
 
             QueryColumn valueColumn = queryColumnPool.next().of(col, expr);
             if (!fromModel.addBottomUpColumn(valueColumn)) {
-                throw duplicateColumnException(colPosition, col, "in SET clause");
+                throw SqlException.duplicateColumn(colPosition, col, "in SET clause");
             }
 
             tok = optTok(lexer);
@@ -1954,20 +1952,6 @@ public final class SqlParser {
             throw SqlException.position(pos).put(expectedList).put(" expected");
         }
         return tok;
-    }
-
-    private SqlException duplicateColumnException(int position, CharSequence colName) {
-        return duplicateColumnException(position, colName, null);
-    }
-
-    private SqlException duplicateColumnException(int position, CharSequence colName, CharSequence additionalMessage) {
-        sink.clear();
-        Chars.toLowerCase(colName, sink);
-        SqlException exception = SqlException.$(position, "Duplicate column '").put(sink).put('\'');
-        if (additionalMessage != null) {
-            exception.put(' ').put(additionalMessage);
-        }
-        return exception;
     }
 
     private @NotNull CharSequence tokIncludingLocalBrace(GenericLexer lexer, String expectedList) throws SqlException {
