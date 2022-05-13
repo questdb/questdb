@@ -279,6 +279,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMaxImportIndexChunkSize() {
+        return 100 * 1024 * 1024L;
+    }
+
+    @Override
     public int getInsertPoolCapacity() {
         return 8;
     }

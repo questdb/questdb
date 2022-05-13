@@ -128,6 +128,7 @@ public enum PropertyKey {
     CAIRO_WRITER_FO_OPTS("cairo.writer.fo_opts"),
     CAIRO_SQL_COPY_ROOT("cairo.sql.copy.root"),
     CAIRO_SQL_COPY_WORK_ROOT("cairo.sql.copy.work.root"),
+    CAIRO_MAX_IMPORT_INDEX_CHUNK_SIZE("cairo.max.import.index.chunk.size"),
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
     CAIRO_SQL_BACKUP_DIR_TMP_NAME("cairo.sql.backup.dir.tmp.name"),
     CAIRO_SQL_BACKUP_MKDIR_MODE("cairo.sql.backup.mkdir.mode"),

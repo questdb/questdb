@@ -152,6 +152,8 @@ public interface CairoConfiguration {
 
     CharSequence getInputWorkRoot();
 
+    long getMaxImportIndexChunkSize();
+
     int getInsertPoolCapacity();
 
     int getLatestByQueueCapacity();

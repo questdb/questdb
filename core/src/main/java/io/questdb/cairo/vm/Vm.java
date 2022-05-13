@@ -53,7 +53,7 @@ public class Vm {
     public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, byte truncateMode) {
         long sz = (truncateMode == TRUNCATE_TO_PAGE) ? Files.ceilPageSize(size) : size;
         if (ff.truncate(Math.abs(fd), sz)) {
-            log.info()
+            log.debug()
                     .$("truncated and closed [fd=").$(fd)
                     .$(", size=").$(sz)
                     .$(']').$();

@@ -36,6 +36,7 @@ import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.text.FileSplitter;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.log.Log;
@@ -290,6 +291,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
+    private long maxImportIndexChunkSize;
     private MimeTypesCache mimeTypesCache;
     private String keepAliveHeader;
     private int httpNetBindIPv4Address;
@@ -758,6 +760,9 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.inputRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
             this.inputWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.inputRoot);
+            this.maxImportIndexChunkSize = getLong(properties, env, PropertyKey.CAIRO_MAX_IMPORT_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
+            this.maxImportIndexChunkSize -= (maxImportIndexChunkSize % FileSplitter.INDEX_ENTRY_SIZE);
+
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
             this.backupTempDirName = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_TMP_NAME, "tmp");
@@ -1973,6 +1978,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getInputWorkRoot() {
             return inputWorkRoot;
+        }
+
+        @Override
+        public long getMaxImportIndexChunkSize() {
+            return maxImportIndexChunkSize;
         }
 
         @Override

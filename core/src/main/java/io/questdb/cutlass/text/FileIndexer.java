@@ -156,8 +156,8 @@ public class FileIndexer implements Closeable, Mutable {
             findChunkBoundaries(fd);
             indexChunks();
 
-            //TODO:  sort merge phase
-            //TODO:  import phase
+            //TODO: merge phase
+            //TODO: import phase
         } finally {
             ff.close(fd);
         }
@@ -397,32 +397,6 @@ public class FileIndexer implements Closeable, Mutable {
                 } while (ff.findNext(partition) > 0);
             } finally {
                 ff.findClose(partition);
-            }
-        }
-    }
-
-    public void sort(final Path path) {
-        int plen = path.length();
-        long srcFd = -1;
-        long dstFd = -1;
-        try {
-            srcFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
-            final long srcSize = ff.length(srcFd);
-            final long srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_DEFAULT);
-
-            dstFd = TableUtils.openFileRWOrFail(ff, path.chop$().put(".s").$(), CairoConfiguration.O_NONE);
-            final long dstAddress = TableUtils.mapRW(ff, dstFd, srcSize, MemoryTag.MMAP_DEFAULT);
-
-            Vect.radixSortLongIndexAscInPlace(srcAddress, srcSize / (2 * Long.BYTES), dstAddress);
-        } finally {
-            if (srcFd != -1) {
-                ff.close(srcFd);
-                ff.remove(path);
-                path.trimTo(plen);
-            }
-            if (dstFd != -1) {
-                ff.fsync(dstFd);
-                ff.close(dstFd);
             }
         }
     }

@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryPMARImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cutlass.text.types.TimestampAdapter;
@@ -37,6 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
@@ -57,6 +59,8 @@ import java.io.Closeable;
  * <p>
  */
 public class FileSplitter implements Closeable, Mutable {
+
+    public static final long INDEX_ENTRY_SIZE = 2 * Long.BYTES;
 
     private static final Log LOG = LogFactory.getLog(FileSplitter.class);
     //TODO: rework
@@ -83,6 +87,8 @@ public class FileSplitter implements Closeable, Mutable {
     private long fileBufferPtr = -1;
     private final int bufferLength;
 
+    private final long maxIndexChunkSize;
+
     //file offset of current start of buffered block
     private long offset;
 
@@ -102,7 +108,7 @@ public class FileSplitter implements Closeable, Mutable {
     private static final int MAX_TIMESTAMP_LENGTH = 100;
 
     //maps partitionFloors to output file descriptors
-    final private LongObjHashMap<MemoryPMARImpl> outputFiles = new LongObjHashMap<>();
+    final private LongObjHashMap<IndexOutputFile> outputFiles = new LongObjHashMap<>();
 
     //timestamp field of current line
     final private DirectByteCharSequence timestampField;
@@ -149,6 +155,7 @@ public class FileSplitter implements Closeable, Mutable {
 
         this.inputRoot = configuration.getInputRoot();
         this.inputWorkRoot = configuration.getInputWorkRoot();
+        this.maxIndexChunkSize = configuration.getMaxImportIndexChunkSize();
 
         this.bufferLength = configuration.getSqlCopyBufferSize();
 
@@ -190,45 +197,103 @@ public class FileSplitter implements Closeable, Mutable {
         }
         //long lineEndOffset = offset + lastLineStart;
 
-        long floor = partitionFloorMethod.floor(timestamp);
+        long partitionKey = partitionFloorMethod.floor(timestamp);
+        long mapKey = partitionKey / Timestamps.HOUR_MICROS; //remove trailing zeros to avoid excessive collisions in hashmap 
 
-        MemoryPMARImpl target = outputFiles.get(floor);
+        IndexOutputFile target = outputFiles.get(mapKey);
         if (target == null) {
-            target = prepareTargetFile(floor);
+            target = prepareTargetFile(partitionKey);
+            outputFiles.put(mapKey, target);
         }
 
-        target.putLong(timestamp);
-        target.putLong(lineStartOffset);
+        target.putEntry(timestamp, lineStartOffset);
+
+        if (target.size == maxIndexChunkSize) {
+            target.nextChunk(ff, getPartitionIndexPrefix(partitionKey));
+        }
+    }
+
+    static class IndexOutputFile {
+        MemoryPMARImpl memory;
+        long size;
+        int chunkNumber;
+
+        IndexOutputFile(FilesFacade ff, Path path) {
+            this.size = 0;
+            this.chunkNumber = 0;
+
+            nextChunk(ff, path);
+        }
+
+        public void nextChunk(FilesFacade ff, Path path) {
+            if (memory != null) {
+                sortAndClose(ff);
+            }
+
+            //start with file name like $workerIndex_$chunkIndex, e.g. 1_1
+            chunkNumber++;
+            size = 0;
+
+            path.put('_').put(chunkNumber).$();
+
+            if (ff.exists(path)) {
+                throw CairoException.instance(-1).put("index file already exists [path=").put(path).put(']');
+            } else {
+                LOG.info().$("created import index file ").$(path).$();
+            }
+
+            if (this.memory == null) {
+                this.memory = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+            } else {
+                this.memory.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+            }
+        }
+
+        void putEntry(long timestamp, long offset) {
+            memory.putLong(timestamp);
+            memory.putLong(offset);
+            size += INDEX_ENTRY_SIZE;
+        }
+
+        private void sortAndClose(FilesFacade ff) {
+            if (memory != null) {
+                sort(ff, memory.getFd(), size);
+
+                memory.close(true, Vm.TRUNCATE_TO_POINTER);
+            }
+        }
+
+        public void close(FilesFacade ff) {
+            sortAndClose(ff);
+            memory = null;
+        }
     }
 
     @NotNull
-    private MemoryPMARImpl prepareTargetFile(long floor) {
-        MemoryPMARImpl target;
-        path.of(inputWorkRoot).slash().concat(inputFileName).slash();
-        partitionDirFormatMethod.format(floor, null, null, path);
+    private IndexOutputFile prepareTargetFile(long partitionKey) {
+        getPartitionIndexDir(partitionKey);
         path.slash$();
 
         if (!ff.exists(path)) {
             int result = ff.mkdir(path, dirMode);
-            if (result != 0) {
-                LOG.info().$("Couldn't create partition dir=").$(path).$();//TODO: maybe we can ignore it
+            if (result != 0) {//TODO: maybe we can ignore it
+                LOG.error().$("Couldn't create partition dir=").$(path).$();
             }
         }
 
-        path.chop$();
-        path.put(index).$();
-        //path.put("_idx")
+        path.chop$().put(index);
 
-        if (ff.exists(path)) {
-            //TODO: change exception type?
-            throw CairoException.instance(-1).put("index file already exists [path=").put(path).put(']');
-        } else {
-            LOG.info().$("created import index file ").$(path).$();
-        }
+        return new IndexOutputFile(ff, path);
+    }
 
-        target = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-        outputFiles.put(floor, target);
-        return target;
+    private Path getPartitionIndexDir(long partitionKey) {
+        path.of(inputWorkRoot).slash().concat(inputFileName).slash();
+        partitionDirFormatMethod.format(partitionKey, null, null, path);
+        return path;
+    }
+
+    private Path getPartitionIndexPrefix(long partitionKey) {
+        return getPartitionIndexDir(partitionKey).slash().put(index);
     }
 
     @Override
@@ -251,9 +316,7 @@ public class FileSplitter implements Closeable, Mutable {
 
         this.inputFileName = null;
 
-        outputFiles.forEach((key, value) -> value.close(true, Vm.TRUNCATE_TO_POINTER));
-
-        this.outputFiles.clear();
+        closeOutputFiles();
 
         if (fileBufferPtr > -1) {
             Unsafe.free(fileBufferPtr, bufferLength, MemoryTag.NATIVE_DEFAULT);
@@ -268,6 +331,11 @@ public class FileSplitter implements Closeable, Mutable {
 
             fd = -1;
         }
+    }
+
+    private void closeOutputFiles() {
+        this.outputFiles.forEach((key, value) -> value.close(ff));
+        this.outputFiles.clear();
     }
 
     @Override
@@ -516,20 +584,24 @@ public class FileSplitter implements Closeable, Mutable {
         this.offset = chunkLo;
         long read;
 
-        do {
-            long leftToRead = Math.min(chunkHi - offset, bufferLength);
-            read = (int) ff.read(fd, fileBufferPtr, leftToRead, offset);
-            if (read < 1) {
-                break;
-            }
-            parse(fileBufferPtr, fileBufferPtr + read);
-            offset += read;
-        } while (offset < chunkHi);
+        try {
+            do {
+                long leftToRead = Math.min(chunkHi - offset, bufferLength);
+                read = (int) ff.read(fd, fileBufferPtr, leftToRead, offset);
+                if (read < 1) {
+                    break;
+                }
+                parse(fileBufferPtr, fileBufferPtr + read);
+                offset += read;
+            } while (offset < chunkHi);
 
-        if (read < 0 || offset < chunkHi) {
-            throw SqlException.$(0, "could not read file [errno=").put(ff.errno()).put(']');
-        } else {
-            parseLast();
+            if (read < 0 || offset < chunkHi) {
+                throw SqlException.$(0, "could not read file [errno=").put(ff.errno()).put(']');
+            } else {
+                parseLast();
+            }
+        } finally {
+            closeOutputFiles();
         }
 
         LOG.info().$("Finished indexing chunk [no=").$(chunkIndex / 5).$(", lines=").$(lineCount).$(']').$();
@@ -605,6 +677,48 @@ public class FileSplitter implements Closeable, Mutable {
         chunkStats.set(chunkIndex + 4, nlFirst[1]);
 
         LOG.info().$("Finished checking boundaries in chunk [no=").$(chunkIndex / 5).$(']').$();
+    }
+
+    public static void sort(FilesFacade ff, final long srcFd, long srcSize) {
+        //int plen = path.length();
+        //long srcFd = -1;
+        long srcAddress = -1;
+
+        //long dstFd = -1;
+        long bufferPtr = -1;
+
+        try {
+            //srcFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+            //final long srcSize = ff.length(srcFd);
+            srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_DEFAULT);
+
+//            dstFd = TableUtils.openFileRWOrFail(ff, path.chop$().put(".s").$(), CairoConfiguration.O_NONE);
+//            final long dstAddress = TableUtils.mapRW(ff, dstFd, srcSize, MemoryTag.MMAP_DEFAULT);
+
+            bufferPtr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+
+            Vect.radixSortLongIndexAscInPlace(srcAddress, srcSize / INDEX_ENTRY_SIZE, bufferPtr);
+        } finally {
+            if (srcAddress != -1) {
+                ff.munmap(srcAddress, srcSize, MemoryTag.MMAP_DEFAULT);
+            }
+
+            //srcFc belongs to outside object
+//            if (srcFd != -1) {
+//                ff.close(srcFd);
+//                //ff.remove(path);
+//                //path.trimTo(plen);
+//            }
+
+            if (bufferPtr != -1) {
+                Unsafe.free(bufferPtr, srcSize, MemoryTag.MMAP_DEFAULT);
+            }
+
+//            if (dstFd != -1) {
+//                ff.fsync(dstFd);
+//                ff.close(dstFd);
+//            }
+        }
     }
 
 }

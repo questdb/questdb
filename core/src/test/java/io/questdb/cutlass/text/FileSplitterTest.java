@@ -80,6 +80,13 @@ public class FileSplitterTest extends AbstractGriffinTest {
         );
     }
 
+    //random order file , 300 mil records , 100GB of data, 8 workers
+    //scan + index
+    //partition by year  - 1 min 56 s
+    //partition by day   - 2 min 1s   (29k output files)
+    //partition by hour  - 8 min 56s  
+    //TODO: add max chunk size to config - e.g. 100 MB
+    //start checking how to create copies of target table 
     @Test//60 seconds for boundary check + indexing of 56GB file  
     public void testProcessLargeCsvWithPool() throws Exception {
         executeWithPool(8, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
@@ -87,11 +94,11 @@ public class FileSplitterTest extends AbstractGriffinTest {
             inputRoot = new File("E:/dev/tmp").getAbsolutePath();
 
             //try (Path path = new Path().of(inputDir).slash().concat("src/test/resources/csv/test-import.csv").$();
-            try (Path path = new Path().of(inputRoot).slash().concat("trips300mil.csv").$();
-                 FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
 
                 DateFormat dateFormat = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
-                indexer.of("trips300mil.csv", PartitionBy.YEAR, (byte) ',', 2, dateFormat, true);
+                //trips300mil.csv
+                indexer.of("unordered_trips_300mil.csv", PartitionBy.YEAR, (byte) ',', 2, dateFormat, true);
                 indexer.process();
             }
         });
@@ -126,17 +133,19 @@ public class FileSplitterTest extends AbstractGriffinTest {
         }
     }
 
-    @Ignore
+    //1m 27s for boundaries + index 
+    //1m 36s for boundaries + index + sort  
     @Test//47s with on thread and old implementation
     public void testSimpleCsv() throws Exception {
-        executeWithPool(7, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             //String inputDir = new File(".").getAbsolutePath();
             inputRoot = new File("E:/dev/tmp").getAbsolutePath();
 
             //try (Path path = new Path().of(inputDir).slash().concat("src/test/resources/csv/test-import.csv").$();
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 DateFormat dateFormat = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
-                indexer.of("trips300mil.csv", PartitionBy.HOUR, (byte) ',', 2, dateFormat, true);
+                //unordered_trips_300mil.csv
+                indexer.of("trips300mil.csv", PartitionBy.YEAR, (byte) ',', 2, dateFormat, true);
                 indexer.process();
             }
         });
@@ -195,7 +204,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
                 chunk.close(true, Vm.TRUNCATE_TO_POINTER);
             }
 
-            indexer.sort(path);
+            //indexer.sort(path)//TODO: TEST !
             long len = ff.length(path.$());
             try (MemoryCMRImpl sorted = new MemoryCMRImpl(ff, path.$(), len, MemoryTag.MMAP_DEFAULT)) {
                 long offset = 0;
@@ -245,7 +254,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
                 } finally {
                     chunk.close(true, Vm.TRUNCATE_TO_POINTER);
                 }
-                indexer.sort(path);
+                //indexer.sort(path);//TODO: fix 
             }
         }
         path.trimTo(plen);
