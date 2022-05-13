@@ -359,6 +359,11 @@ public final class TableUtils {
         return path.$();
     }
 
+    public static LPSZ walDFile(Path path, CharSequence columnName) {
+        path.concat(columnName).put(FILE_SUFFIX_D);
+        return path.$();
+    }
+
     public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
         path.concat(columnName).put(".o");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
@@ -431,6 +436,12 @@ public final class TableUtils {
         }
         return path.$();
     }
+
+    public static LPSZ walDIFile(Path path, CharSequence columnName) {
+        path.concat(columnName).put(FILE_SUFFIX_I);
+        return path.$();
+    }
+
 
     public static boolean isValidColumnName(CharSequence seq) {
         for (int i = 0, l = seq.length(); i < l; i++) {

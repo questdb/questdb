@@ -39,11 +39,13 @@ public class WalWriterTest extends AbstractGriffinTest {
         ) {
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
-                WalWriter.Row row = walWriter.newRow();
-                row.putLong(0, 1);
-                row.append();
+                for (int i = 0; i < 100; i++) {
+                    WalWriter.Row row = walWriter.newRow();
+                    row.putByte(0, (byte) i);
+                    row.append();
+                }
             }
+            System.out.println("done");
         }
     }
-
 }

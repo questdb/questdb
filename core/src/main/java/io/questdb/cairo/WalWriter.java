@@ -103,8 +103,10 @@ public class WalWriter implements Closeable {
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final Path path;
     private final Path other;
+    private final Path walDPath;
     private final LongList rowValueIsNotNull = new LongList();
     private final Row regularRow = new RowImpl();
+    private final int walDRootLen;
     private final int rootLen;
     private final MemoryMR metaMem;
     private final int partitionBy;
@@ -135,6 +137,7 @@ public class WalWriter implements Closeable {
     private final PartitionBy.PartitionCeilMethod partitionCeilMethod;
     private final int defaultCommitMode;
     private final ObjList<Runnable> nullSetters;
+    private final ObjList<Runnable> walDNullSetters;
     private final MemoryMARW todoMem = Vm.getMARWInstance();
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
@@ -178,6 +181,7 @@ public class WalWriter implements Closeable {
     private String designatedTimestampColumnName;
     private long lastPartitionTimestamp;
     private ObjList<? extends MemoryA> activeColumns;
+    private ObjList<MemoryMA> walDColumns;
     private ObjList<Runnable> activeNullSetters;
     private int rowActon = ROW_ACTION_OPEN_PARTITION;
     private long committedMasterRef;
@@ -234,6 +238,8 @@ public class WalWriter implements Closeable {
         this.path = new Path();
         this.path.of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
+        this.walDPath = new Path().of(root).concat(tableName).concat("wal");
+        this.walDRootLen = walDPath.length();
         this.rootLen = path.length();
         try {
             if (lock) {
@@ -285,6 +291,7 @@ public class WalWriter implements Closeable {
             this.indexers = new ObjList<>(columnCount);
             this.denseSymbolMapWriters = new ObjList<>(metadata.getSymbolMapCount());
             this.nullSetters = new ObjList<>(columnCount);
+            this.walDNullSetters = new ObjList<>(columnCount);
             this.activeNullSetters = nullSetters;
             this.columnTops = new LongList(columnCount);
             this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
@@ -297,6 +304,9 @@ public class WalWriter implements Closeable {
             this.commitInterval = calculateCommitInterval();
 
             configureColumnMemory();
+            this.walDColumns = new ObjList<>(columnCount * 2);
+            configureWalDColumnMemory();
+            openWalDPartition();
             configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
             configureAppendPosition();
@@ -1940,6 +1950,32 @@ public class WalWriter implements Closeable {
         rowValueIsNotNull.add(0);
     }
 
+    private void configureWalDColumn(int type, int index) {
+        final MemoryMA primary;
+        final MemoryMA secondary;
+
+        if (type > 0) {
+            primary = Vm.getMAInstance();
+
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.BINARY:
+                case ColumnType.STRING:
+                    secondary = Vm.getMAInstance();
+                    break;
+                default:
+                    secondary = null;
+                    break;
+            }
+        } else {
+            primary = secondary = NullMemory.INSTANCE;
+        }
+
+        int baseIndex = getPrimaryColumnIndex(index);
+        walDColumns.extendAndSet(baseIndex, primary);
+        walDColumns.extendAndSet(baseIndex + 1, secondary);
+        configureNullSetters(walDNullSetters, type, primary, secondary);
+    }
+
     private void configureColumnMemory() {
         this.symbolMapWriters.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
@@ -1967,7 +2003,31 @@ public class WalWriter implements Closeable {
                 indexers.extendAndSet(i, new SymbolColumnIndexer());
             }
         }
-        final int timestampIndex = metadata.getTimestampIndex();
+    }
+
+    private void configureWalDColumnMemory() {
+        for (int i = 0; i < columnCount; i++) {
+            int type = metadata.getColumnType(i);
+            configureWalDColumn(type, i);
+
+            if (ColumnType.isSymbol(type)) {
+                throw new UnsupportedOperationException("not supported yet");
+//                final int symbolIndex = denseSymbolMapWriters.size();
+//                long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(i);
+//                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
+//                        configuration,
+//                        path.trimTo(rootLen),
+//                        metadata.getColumnName(i),
+//                        columnNameTxn,
+//                        txWriter.unsafeReadSymbolTransientCount(symbolIndex),
+//                        symbolIndex,
+//                        txWriter
+//                );
+//
+//                symbolMapWriters.extendAndSet(i, symbolMapWriter);
+//                denseSymbolMapWriters.add(symbolMapWriter);
+            }
+        }
     }
 
     private void configureTimestampSetter() {
@@ -2260,9 +2320,19 @@ public class WalWriter implements Closeable {
         return columns.getQuick(getPrimaryColumnIndex(column));
     }
 
+    private MemoryMA getPrimaryWalDColumn(int column) {
+        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
+        return walDColumns.getQuick(getPrimaryColumnIndex(column));
+    }
+
     private MemoryMA getSecondaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getSecondaryColumnIndex(column));
+    }
+
+    private MemoryMA getSecondaryWalDColumn(int column) {
+        assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
+        return walDColumns.getQuick(getSecondaryColumnIndex(column));
     }
 
     MapWriter getSymbolMapWriter(int columnIndex) {
@@ -2382,6 +2452,33 @@ public class WalWriter implements Closeable {
         }
     }
 
+    private void openWalDColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
+        MemoryMA mem1 = getPrimaryWalDColumn(columnIndex);
+        MemoryMA mem2 = getSecondaryWalDColumn(columnIndex);
+
+        try {
+            mem1.of(ff, walDFile(
+                            walDPath.trimTo(pathTrimToLen), name),
+                    configuration.getDataAppendPageSize(),
+                    -1,
+                    MemoryTag.MMAP_TABLE_WALD_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
+            if (mem2 != null) {
+                mem2.of(
+                        ff,
+                        walDIFile(walDPath.trimTo(pathTrimToLen), name),
+                        configuration.getDataAppendPageSize(),
+                        -1,
+                        MemoryTag.MMAP_TABLE_WALD_WRITER,
+                        configuration.getWriterFileOpenOpts()
+                );
+            }
+        } finally {
+            walDPath.trimTo(pathTrimToLen);
+        }
+    }
+
     private void openFirstPartition(long timestamp) {
         final long ts = repairDataGaps(timestamp);
         openPartition(ts);
@@ -2475,6 +2572,30 @@ public class WalWriter implements Closeable {
             throw e;
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    private void openWalDPartition() {
+        try {
+            int plen = walDPath.length();
+            if (ff.mkdirs(walDPath.slash$(), mkDirMode) != 0) {
+                throw CairoException.instance(ff.errno()).put("Cannot create WAL-D directory: ").put(walDPath);
+            }
+
+            assert columnCount > 0;
+
+            for (int i = 0; i < columnCount; i++) {
+                if (metadata.getColumnType(i) > 0) {
+                    final CharSequence name = metadata.getColumnName(i);
+                    openWalDColumnFiles(name, i, plen);
+                }
+            }
+            LOG.info().$("switched WAL-D partition [path='").$(walDPath).$('\'').I$();
+        } catch (Throwable e) {
+            distressed = true;
+            throw e;
+        } finally {
+            path.trimTo(walDRootLen);
         }
     }
 
