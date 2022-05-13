@@ -99,6 +99,9 @@ public final class TimestampSamplerFactory {
     @NotNull
     private static TimestampSampler createTimestampSampler(long interval, char timeUnit, int position) throws SqlException {
         switch (timeUnit) {
+            case 'U':
+                // micros
+                return new MicroTimestampSampler(interval);
             case 'T':
                 // millis
                 return new MicroTimestampSampler(Timestamps.MILLI_MICROS * interval);
