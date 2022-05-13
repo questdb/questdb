@@ -22,20 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.std;
 
-public interface SqlExecutionCircuitBreaker {
-    SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
-        @Override
-        public void test() {
-        }
+import java.io.Closeable;
 
-        @Override
-        public void powerUp() {
-        }
-    };
+public abstract class AbstractSelfReturningObject<T extends AbstractSelfReturningObject<?>> implements Closeable {
+    private final WeakSelfReturningObjectPool<T> parentPool;
 
-    void test();
+    public AbstractSelfReturningObject(WeakSelfReturningObjectPool<T> parentPool) {
+        this.parentPool = parentPool;
+    }
 
-    void powerUp();
+    @SuppressWarnings("unchecked")
+    @Override
+    public void close() {
+        parentPool.push((T) this);
+    }
 }

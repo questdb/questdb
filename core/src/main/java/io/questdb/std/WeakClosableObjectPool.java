@@ -22,22 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.std;
 
-import io.questdb.network.NetworkFacade;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import org.jetbrains.annotations.NotNull;
 
-public interface SqlExecutionCircuitBreakerConfiguration {
-    int getBufferSize();
+import java.io.Closeable;
 
-    int getCircuitBreakerThrottle();
+public class WeakClosableObjectPool<T extends Closeable> extends WeakObjectPoolBase<T> implements Closeable {
+    private final ObjectFactory<T> factory;
 
-    NetworkFacade getNetworkFacade();
+    public WeakClosableObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
+        super(initSize);
+        this.factory = factory;
+        fill();
+    }
 
-    boolean isEnabled();
+    @Override
+    public boolean push(T obj) {
+        return super.push(obj);
+    }
 
-    MicrosecondClock getClock();
+    @Override
+    public void close() {
+        while (cache.size() > 0) {
+            Misc.free(cache.pop());
+        }
+    }
 
-    // maximum SQL execution time in micros
-    long getMaxTime();
+    @Override
+    void close(T obj) {
+        Misc.free(obj);
+    }
+
+    @Override
+    T newInstance() {
+        return factory.newInstance();
+    }
 }

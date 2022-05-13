@@ -81,6 +81,11 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
         return false;
     }
 
+    @Override
+    public boolean hasDescendingOrder() {
+        return masterFactory.hasDescendingOrder();
+    }
+
     private static class AsOfLightJoinRecordCursor implements NoRandomAccessRecordCursor {
         private final OuterJoinRecord record;
         private final int columnSplit;

@@ -24,6 +24,7 @@
 
 package io.questdb.mp;
 
+//single consumer sequence 
 public class SCSequence extends AbstractSSequence {
 
     public SCSequence(WaitStrategy waitStrategy) {
@@ -36,10 +37,6 @@ public class SCSequence extends AbstractSSequence {
     }
 
     public SCSequence() {
-    }
-
-    SCSequence(long index) {
-        this.value = index;
     }
 
     public long available() {

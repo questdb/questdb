@@ -24,5 +24,6 @@
 
 package io.questdb.cairo.vm.api;
 
+//appendable readable
 public interface MemoryAR extends MemoryA, MemoryR {
 }

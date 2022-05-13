@@ -26,6 +26,7 @@ package io.questdb.cairo.vm.api;
 
 import java.io.Closeable;
 
+//mapped appendable tailing 
 public interface MemoryMAT extends Closeable {
 
     @Override

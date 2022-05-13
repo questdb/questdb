@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
+//mapped and readable 
 public interface MemoryMR extends MemoryM, MemoryR {
     default void growToFileSize() {
         extend(getFilesFacade().length(getFd()));

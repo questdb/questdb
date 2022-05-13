@@ -27,13 +27,12 @@ package io.questdb.test.tools;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
@@ -43,10 +42,12 @@ import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 import java.io.*;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class TestUtils {
@@ -56,6 +57,7 @@ public final class TestUtils {
     private static final StringSink sink = new StringSink();
 
     private static final RecordCursorPrinter printerWithTypes = new RecordCursorPrinter().withTypes(true);
+    private static final Log LOG = LogFactory.getLog(TestUtils.class);
 
     private TestUtils() {
     }
@@ -330,6 +332,15 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(LongList expected, LongList actual) {
+        Assert.assertEquals(expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            if (expected.getQuick(i) != actual.getQuick(i)) {
+                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+            }
+        }
+    }
+
     public static void assertEqualsIgnoreCase(CharSequence expected, CharSequence actual) {
         assertEqualsIgnoreCase(null, expected, actual);
     }
@@ -512,6 +523,24 @@ public final class TestUtils {
         return Net.connect(fd, sockAddr);
     }
 
+    public static void copyDirectory(Path src, Path dst, int dirMode) {
+        if (Files.mkdir(dst, dirMode) != 0) {
+            Assert.fail("Cannot create " + dst + ". Error: " + Os.errno());
+        }
+
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        final int srcLen = src.length();
+        final int dstLen = dst.length();
+        ff.walk(
+                src, (pUtf8NameZ, type) -> {
+                    src.concat(pUtf8NameZ).$();
+                    dst.trimTo(dstLen).concat(src.address() + srcLen).$();
+                    ff.mkdirs(dst, dirMode);
+                    ff.copy(src, dst);
+                }
+        );
+    }
+
     public static void copyMimeTypes(String targetDir) throws IOException {
         try (InputStream stream = TestUtils.class.getResourceAsStream("/site/conf/mime.types")) {
             Assert.assertNotNull(stream);
@@ -632,6 +661,35 @@ public final class TestUtils {
                 return;
             }
             Files.mkdirs(path.of(root).slash$(), 509);
+        }
+    }
+
+    public static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runnable,
+            CairoConfiguration configuration
+    ) throws Exception {
+        final int workerCount = pool != null ? pool.getWorkerCount() : 1;
+        try (
+                final CairoEngine engine = new CairoEngine(configuration);
+                final SqlCompiler compiler = new SqlCompiler(engine);
+                final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
+        ) {
+            try {
+                if (pool != null) {
+                    pool.assignCleaner(Path.CLEANER);
+                    O3Utils.setupWorkerPool(pool, engine.getMessageBus(), null);
+                    pool.start(LOG);
+                }
+
+                runnable.run(engine, compiler, sqlExecutionContext);
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+            } finally {
+                if (pool != null) {
+                    pool.halt();
+                }
+            }
         }
     }
 
@@ -789,11 +847,33 @@ public final class TestUtils {
         }
     }
 
-    public static void assertEquals(LongList expected, LongList actual) {
-        Assert.assertEquals(expected.size(), actual.size());
-        for (int i = 0, n = expected.size(); i < n; i++) {
-            if (expected.getQuick(i) != actual.getQuick(i)) {
-                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+    public static void assertEventually(Runnable assertion) {
+        assertEventually(assertion, 30);
+    }
+
+    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (;;) {
+            try {
+                assertion.run();
+                return;
+            } catch (AssertionError error) {
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            try {
+                Thread.sleep(nextSleepingTimeMillis);
+                nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                long elapsedTimeMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
+                throw new AssertionError("Interrupted before timeout. Expected timeout"
+                        + TimeUnit.SECONDS.toMillis(timeoutSeconds) + " ms. Elapsed time: " + elapsedTimeMillis
+                        +" ms. ");
             }
         }
     }

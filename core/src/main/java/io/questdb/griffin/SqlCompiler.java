@@ -1274,7 +1274,7 @@ public class SqlCompiler implements Closeable {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         //ignoring `column`
         if (tok != null && !SqlKeywords.isColumnKeyword(tok)) {
-            lexer.unparse();
+            lexer.unparseLast();
         }
 
         AlterStatementBuilder addColumn = alterQueryBuilder.ofAddColumn(
@@ -1774,7 +1774,7 @@ public class SqlCompiler implements Closeable {
         // instance of compiler for safekeeping
 
         // lexer would have parsed first token to determine direction of execution flow
-        lexer.unparse();
+        lexer.unparseLast();
         codeGenerator.clear();
 
         ExecutionModel executionModel = compileExecutionModel(executionContext);
@@ -2085,8 +2085,9 @@ public class SqlCompiler implements Closeable {
     }
 
     private TableWriter createTableFromCursor(CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
-        try (final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
-             final RecordCursor cursor = factory.getCursor(executionContext)
+        try (
+                final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
+                final RecordCursor cursor = factory.getCursor(executionContext)
         ) {
             typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
@@ -2152,7 +2153,7 @@ public class SqlCompiler implements Closeable {
             }
             hasIfExists = true;
         } else {
-            lexer.unparse(); // tok has table name
+            lexer.unparseLast(); // tok has table name
         }
         final int tableNamePosition = lexer.getPosition();
         CharSequence tableName = GenericLexer.unquote(expectToken(lexer, "table name"));
@@ -2238,7 +2239,7 @@ public class SqlCompiler implements Closeable {
             if (token == null) {
                 return -1;
             } else if (!isSemicolon(token)) {
-                lexer.unparse();
+                lexer.unparseLast();
                 return lexer.lastTokenPosition();
             }
         }
@@ -2248,7 +2249,7 @@ public class SqlCompiler implements Closeable {
 
     private int goToQueryEnd() {
         CharSequence token;
-        lexer.unparse();
+        lexer.unparseLast();
         while (lexer.hasNext()) {
             token = SqlUtil.fetchNext(lexer);
             if (token == null || isSemicolon(token)) {
@@ -2440,7 +2441,7 @@ public class SqlCompiler implements Closeable {
                 }
 
                 if (writerTimestampIndex > -1 && cursorTimestampIndex > -1 && writerTimestampIndex != cursorTimestampIndex) {
-                    throw SqlException.$(name.position, "nominated column of existing table (").put(writerTimestampIndex).put(") does not match nominated column in select query (").put(cursorTimestampIndex).put(')');
+                    throw SqlException.$(name.position, "designated timestamp of existing table (").put(writerTimestampIndex).put(") does not match designated timestamp in select query (").put(cursorTimestampIndex).put(')');
                 }
                 timestampIndexFound = writerTimestampIndex;
 
@@ -2928,6 +2929,10 @@ public class SqlCompiler implements Closeable {
         //used by copier
         @SuppressWarnings("unused")
         static void checkDoubleBounds(double value, double min, double max, int fromType, int toType, int toColumnIndex) throws SqlException {
+            if (toType == ColumnType.FLOAT && Double.isInfinite(value)) {
+                // infinity in double should be able to be cast to float, since they have the same mathematical meaning
+                return;
+            }
             if (value < min || value > max) {
                 throw SqlException.inconvertibleValue(toColumnIndex, value, fromType, toType);
             }

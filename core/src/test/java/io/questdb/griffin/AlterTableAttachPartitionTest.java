@@ -38,10 +38,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
-import java.nio.file.FileSystems;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static java.nio.file.StandardCopyOption.REPLACE_EXISTING;
 
 
 public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
@@ -1095,21 +1092,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     private void copyDirectory(Path from, Path to) throws IOException {
         LOG.info().$("copying folder [from=").$(from).$(", to=").$(to).$(']').$();
-        if (Files.mkdir(to, DIR_MODE) != 0) {
-            Assert.fail("Cannot create " + to + ". Error: " + Os.errno());
-        }
-
-        java.nio.file.Path dest = FileSystems.getDefault().getPath(to.toString() + Files.SEPARATOR);
-        java.nio.file.Path src = FileSystems.getDefault().getPath(from.toString() + Files.SEPARATOR);
-        java.nio.file.Files.walk(src)
-                .forEach(file -> {
-                    java.nio.file.Path destination = dest.resolve(src.relativize(file));
-                    try {
-                        java.nio.file.Files.copy(file, destination, REPLACE_EXISTING);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                });
+        TestUtils.copyDirectory(from, to, DIR_MODE);
     }
 
     private void copyPartitionToBackup(String src, String partitionFolder, String dst) throws IOException {

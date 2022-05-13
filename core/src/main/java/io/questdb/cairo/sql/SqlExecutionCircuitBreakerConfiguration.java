@@ -22,11 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo.sql;
 
-import java.io.Closeable;
+import io.questdb.network.NetworkFacade;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 
-@FunctionalInterface
-public interface AutoClosableObjectFactory<T extends Closeable> {
-    T newInstance(WeakAutoClosableObjectPool<T> parent);
+public interface SqlExecutionCircuitBreakerConfiguration {
+    int getBufferSize();
+
+    int getCircuitBreakerThrottle();
+
+    NetworkFacade getNetworkFacade();
+
+    boolean isEnabled();
+
+    MicrosecondClock getClock();
+
+    // maximum SQL execution time in micros
+    long getMaxTime();
 }

@@ -159,7 +159,7 @@ public class UnionTest extends AbstractGriffinTest {
 
     //select distinct sym from a union all b
     @Test
-    public void testUnionAllOfSymboFor3Tablesl() throws Exception {
+    public void testUnionAllOfSymbolFor3Tables() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "t\n" +
                     "CAR\n" +

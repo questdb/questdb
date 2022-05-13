@@ -31,6 +31,7 @@ import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
 
+//mapped 
 public interface MemoryM extends Closeable {
 
     long addressOf(long offset);

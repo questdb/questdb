@@ -32,6 +32,8 @@ import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+
 public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testFactory() throws Exception {
@@ -73,7 +75,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
 
             FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(engine, "x", TableUtils.ANY_TABLE_ID, 0);
             long count = 0;
-            try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
+            try (DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_ASC)) {
                 DataFrame frame;
                 while ((frame = cursor.next()) != null) {
                     count += frame.getRowHi() - frame.getRowLo();
@@ -87,7 +89,7 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
             }
 
             try {
-                factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
+                factory.getCursor(AllowAllSqlSecurityContext.INSTANCE, ORDER_ASC);
                 Assert.fail();
             } catch (ReaderOutOfDateException ignored) {
             }

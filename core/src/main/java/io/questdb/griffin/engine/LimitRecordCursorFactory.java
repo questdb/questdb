@@ -172,7 +172,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                                 limit = count + hi;
                             } else {
                                 skipTo(count + lo);
-                                limit = -lo + hi;
+                                limit = Math.min(count, -lo + hi);
                             }
                             size = limit;
                         }
@@ -218,7 +218,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         public void skipTo(long rowCount) {
-            base.skipTo(rowCount);
+            base.skipTo(Math.max(0, rowCount));
         }
     }
 }

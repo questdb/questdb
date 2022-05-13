@@ -32,6 +32,7 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
+//readable 
 public interface MemoryR extends Closeable {
 
     @Override

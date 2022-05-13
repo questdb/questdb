@@ -22,11 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
-
-import io.questdb.cairo.CairoEngine;
+package io.questdb.std;
 
 @FunctionalInterface
-interface O3Runnable {
-    void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
+public interface SelfReturningObjectFactory<T extends AbstractSelfReturningObject<?>> {
+    T newInstance(WeakSelfReturningObjectPool<T> parent);
 }

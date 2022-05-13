@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -77,6 +77,11 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public boolean hasDescendingOrder() {
+        return masterFactory.hasDescendingOrder();
     }
 
     private static class LtJoinNoKeyJoinRecordCursor implements NoRandomAccessRecordCursor {
@@ -147,11 +152,6 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
                 record.hasSlave(true);
                 slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
             }
-        }
-
-        private void slaveIsDone() {
-            positionSlaveRecB();
-            this.slaveTimestamp = Long.MAX_VALUE;
         }
 
         private void overScrollSlave(long masterTimestamp, long slaveTimestamp) {

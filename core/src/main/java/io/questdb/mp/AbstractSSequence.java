@@ -24,9 +24,8 @@
 
 package io.questdb.mp;
 
-import io.questdb.std.Mutable;
-
-abstract class AbstractSSequence extends AbstractSequence implements Sequence, Mutable {
+//single consumer or producer sequence
+abstract class AbstractSSequence extends AbstractSequence implements Sequence {
 
     AbstractSSequence(WaitStrategy waitStrategy) {
         super(waitStrategy);
@@ -60,10 +59,11 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence, M
         return r;
     }
 
-
     @Override
     public void clear() {
         setBarrier(OpenBarrier.INSTANCE);
+        value = -1;
+        cache = -1;
     }
 
     @Override
@@ -74,7 +74,6 @@ abstract class AbstractSSequence extends AbstractSequence implements Sequence, M
     @Override
     public void setBarrier(Barrier barrier) {
         this.barrier = barrier;
-        setCurrent(barrier.current());
     }
 
     @Override

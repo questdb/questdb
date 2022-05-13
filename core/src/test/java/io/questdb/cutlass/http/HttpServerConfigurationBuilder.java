@@ -26,7 +26,6 @@ package io.questdb.cutlass.http;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -124,11 +123,6 @@ public class HttpServerConfigurationBuilder {
                 @Override
                 public long getMaxQueryResponseRowLimit() {
                     return configuredMaxQueryResponseRowLimit;
-                }
-
-                @Override
-                public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-                    return circuitBreakerConfiguration;
                 }
             };
 

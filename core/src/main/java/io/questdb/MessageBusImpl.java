@@ -26,12 +26,16 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cutlass.text.TextImportTask;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.mp.*;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
 public class MessageBusImpl implements MessageBus {
+    private final CairoConfiguration configuration;
+
     private final RingQueue<ColumnIndexerTask> indexerQueue;
     private final MPSequence indexerPubSeq;
     private final MCSequence indexerSubSeq;
@@ -71,11 +75,15 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence queryCacheEventPubSeq;
     private final FanOut queryCacheEventSubSeq;
 
+    private final int pageFrameReduceShardCount;
+    private final MPSequence[] pageFrameReducePubSeq;
+    private final MCSequence[] pageFrameReduceSubSeq;
+    private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
+    private final FanOut[] pageFrameCollectFanOut;
+
     private final RingQueue<TextImportTask> textImportQueue;
     private final MPSequence textImportPubSeq;
     private final MCSequence textImportSubSeq;
-
-    private final CairoConfiguration configuration;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -133,10 +141,43 @@ public class MessageBusImpl implements MessageBus {
         this.queryCacheEventSubSeq = new FanOut();
         this.queryCacheEventPubSeq.then(this.queryCacheEventSubSeq).then(this.queryCacheEventPubSeq);
 
+        this.pageFrameReduceShardCount = configuration.getPageFrameReduceShardCount();
+
+        //noinspection unchecked
+        pageFrameReduceQueue = new RingQueue[pageFrameReduceShardCount];
+        pageFrameReducePubSeq = new MPSequence[pageFrameReduceShardCount];
+        pageFrameReduceSubSeq = new MCSequence[pageFrameReduceShardCount];
+        pageFrameCollectFanOut = new FanOut[pageFrameReduceShardCount];
+
+        int reduceQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
+        for (int i = 0; i < pageFrameReduceShardCount; i++) {
+            final RingQueue<PageFrameReduceTask> queue = new RingQueue<PageFrameReduceTask>(
+                    () -> new PageFrameReduceTask(configuration),
+                    reduceQueueCapacity
+            );
+
+            final MPSequence reducePubSeq = new MPSequence(reduceQueueCapacity);
+            final MCSequence reduceSubSeq = new MCSequence(reduceQueueCapacity);
+            final FanOut collectFanOut = new FanOut();
+            reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
+
+            pageFrameReduceQueue[i] = queue;
+            pageFrameReducePubSeq[i] = reducePubSeq;
+            pageFrameReduceSubSeq[i] = reduceSubSeq;
+            pageFrameCollectFanOut[i] = collectFanOut;
+        }
+
         this.textImportQueue = new RingQueue<>(TextImportTask::new, configuration.getLatestByQueueCapacity()); //todo: add dedicated cfg option
         this.textImportPubSeq = new MPSequence(textImportQueue.getCycle());
         this.textImportSubSeq = new MCSequence(textImportQueue.getCycle());
         textImportPubSeq.then(textImportSubSeq).then(textImportPubSeq);
+    }
+
+    @Override
+    public void close() {
+        // We need to close only queues with native backing memory.
+        Misc.free(getTableWriterEventQueue());
+        Misc.free(pageFrameReduceQueue);
     }
 
     @Override
@@ -250,6 +291,36 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
+    public FanOut getPageFrameCollectFanOut(int shard) {
+        return pageFrameCollectFanOut[shard];
+    }
+
+    @Override
+    public MPSequence getPageFrameReducePubSeq(int shard) {
+        return pageFrameReducePubSeq[shard];
+    }
+
+    @Override
+    public RingQueue<PageFrameReduceTask> getPageFrameReduceQueue(int shard) {
+        return pageFrameReduceQueue[shard];
+    }
+
+    @Override
+    public int getPageFrameReduceShardCount() {
+        return pageFrameReduceShardCount;
+    }
+
+    @Override
+    public MCSequence getPageFrameReduceSubSeq(int shard) {
+        return pageFrameReduceSubSeq[shard];
+    }
+
+    @Override
+    public FanOut getTableWriterEventFanOut() {
+        return tableWriterEventSubSeq;
+    }
+
+    @Override
     public MPSequence getTableWriterEventPubSeq() {
         return tableWriterEventPubSeq;
     }
@@ -257,11 +328,6 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<TableWriterTask> getTableWriterEventQueue() {
         return tableWriterEventQueue;
-    }
-
-    @Override
-    public FanOut getTableWriterEventFanOut() {
-        return tableWriterEventSubSeq;
     }
 
     @Override

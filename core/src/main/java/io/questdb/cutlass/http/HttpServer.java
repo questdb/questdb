@@ -388,11 +388,11 @@ public class HttpServer implements Closeable {
     }
 
     private static class HttpContextFactory implements IOContextFactory<HttpConnectionContext>, Closeable, EagerThreadSetup {
-        private final ThreadLocal<WeakObjectPool<HttpConnectionContext>> contextPool;
+        private final ThreadLocal<WeakMutableObjectPool<HttpConnectionContext>> contextPool;
         private boolean closed = false;
 
         public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
-            this.contextPool = new ThreadLocal<>(() -> new WeakObjectPool<>(() ->
+            this.contextPool = new ThreadLocal<>(() -> new WeakMutableObjectPool<>(() ->
                     new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity()));
         }
 

@@ -31,6 +31,9 @@ public class MaxDateVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAddColumn() throws Exception {
+        // fix page frame size, because it affects AVG accuracy
+        pageFrameMaxRows = 10_000;
+
         assertQuery(
                 "avg\n" +
                         "5261.376146789\n",
@@ -47,7 +50,7 @@ public class MaxDateVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
         assertQuery(
                 "avg\tmax\n" +
-                        "2633.684612\t1970-01-01T00:01:28.964Z\n",
+                        "14.792007\t1970-01-01T00:01:28.964Z\n",
                 "select round(avg(f),6) avg, max(b) max from tab",
                 "insert into tab select rnd_int(2, 10, 2), rnd_long(16772, 88965, 4) from long_sequence(78057)",
                 null,

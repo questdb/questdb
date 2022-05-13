@@ -32,13 +32,13 @@ import java.util.List;
 
 import static org.junit.Assert.*;
 
-public class WeakAutoClosableObjectPoolTest {
-    private final int initSize = 12;
+public class WeakClosableObjectPoolTest {
+    private static final int initSize = 12;
 
     @Test
     public void testClose() {
         final List<ClosablePoolElement> tmp = new ArrayList<>();
-        final WeakAutoClosableObjectPool<ClosablePoolElement> pool = new WeakAutoClosableObjectPool<>(o -> {
+        final WeakClosableObjectPool<ClosablePoolElement> pool = new WeakClosableObjectPool<>(() -> {
             ClosablePoolElement element = new ClosablePoolElement();
             tmp.add(element);
             return element;
@@ -59,43 +59,49 @@ public class WeakAutoClosableObjectPoolTest {
 
     @Test
     public void testMaxSize() {
-        final WeakAutoClosableObjectPool<ClosablePoolElement> pool = new WeakAutoClosableObjectPool<>(o -> new ClosablePoolElement(), initSize);
-        assertEquals(initSize, pool.cache.size());
+        try (
+                WeakClosableObjectPool<ClosablePoolElement> pool = new WeakClosableObjectPool<>(ClosablePoolElement::new, initSize)
+        ) {
+            assertEquals(initSize, pool.cache.size());
 
-        for (int i = 0; i < initSize; i++) {
-            ClosablePoolElement element = new ClosablePoolElement();
-            pool.push(element);
-            assertFalse(element.closed);
-            assertEquals(initSize + 1 + i, pool.cache.size());
-        }
+            for (int i = 0; i < initSize; i++) {
+                ClosablePoolElement element = new ClosablePoolElement();
+                pool.push(element);
+                assertFalse(element.closed);
+                assertEquals(initSize + 1 + i, pool.cache.size());
+            }
 
-        for (int i = 0; i < 100; i++) {
-            ClosablePoolElement element = new ClosablePoolElement();
-            pool.push(element);
-            assertTrue(element.closed);
-            assertEquals(2 * initSize, pool.cache.size());
+            for (int i = 0; i < 100; i++) {
+                ClosablePoolElement element = new ClosablePoolElement();
+                pool.push(element);
+                assertTrue(element.closed);
+                assertEquals(2 * initSize, pool.cache.size());
+            }
         }
     }
 
     @Test
     public void testPopPush() {
-        final WeakAutoClosableObjectPool<ClosablePoolElement> pool = new WeakAutoClosableObjectPool<>(o -> new ClosablePoolElement(), initSize);
-        assertEquals(initSize, pool.cache.size());
+        try (
+                WeakClosableObjectPool<ClosablePoolElement> pool = new WeakClosableObjectPool<>(ClosablePoolElement::new, initSize)
+        ) {
+            assertEquals(initSize, pool.cache.size());
 
-        final List<ClosablePoolElement> tmp = new ArrayList<>();
-        for (int i = 0; i < initSize; i++) {
-            ClosablePoolElement element = pool.pop();
-            assertFalse(element.closed);
-            tmp.add(element);
-        }
-        assertEquals(0, pool.cache.size());
+            final List<ClosablePoolElement> tmp = new ArrayList<>();
+            for (int i = 0; i < initSize; i++) {
+                ClosablePoolElement element = pool.pop();
+                assertFalse(element.closed);
+                tmp.add(element);
+            }
+            assertEquals(0, pool.cache.size());
 
-        for (int i = 0; i < initSize; i++) {
-            ClosablePoolElement element = tmp.get(i);
-            pool.push(element);
-            assertFalse(element.closed);
+            for (int i = 0; i < initSize; i++) {
+                ClosablePoolElement element = tmp.get(i);
+                pool.push(element);
+                assertFalse(element.closed);
+            }
+            assertEquals(initSize, pool.cache.size());
         }
-        assertEquals(initSize, pool.cache.size());
     }
 
     private static class ClosablePoolElement implements Closeable {

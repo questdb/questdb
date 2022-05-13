@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
@@ -187,6 +188,18 @@ public interface CairoConfiguration {
 
     int getO3PurgeDiscoveryQueueCapacity();
 
+    boolean isSqlParallelFilterEnabled();
+
+    int getPageFrameReduceQueueCapacity();
+
+    int getPageFrameReduceShardCount();
+
+    int getPageFrameReduceRowIdListCapacity();
+
+    int getPageFrameReduceColumnListCapacity();
+
+    int getPageFrameReduceTaskPoolCapacity();
+
     int getParallelIndexThreshold();
 
     int getPartitionPurgeListCapacity();
@@ -195,7 +208,7 @@ public interface CairoConfiguration {
         Rnd rnd = RANDOM.get();
         if (rnd == null) {
             RANDOM.set(rnd = new Rnd(
-                    getMillisecondClock().getTicks(),
+                    getNanosecondClock().getTicks(),
                     getMicrosecondClock().getTicks())
             );
         }
@@ -293,7 +306,11 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
-    int getSqlPageFrameMaxSize();
+    int getSqlMaxNegativeLimit();
+
+    int getSqlPageFrameMinRows();
+
+    int getSqlPageFrameMaxRows();
 
     int getSqlSortKeyMaxPages();
 
@@ -336,6 +353,8 @@ public interface CairoConfiguration {
     boolean isParallelIndexingEnabled();
 
     boolean isSqlJitDebugEnabled();
+
+    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
     int getQueryCacheEventQueueCapacity();
 }

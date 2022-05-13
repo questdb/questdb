@@ -2559,6 +2559,59 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSampleByMicrosFillNoneNotKeyedEmpty() throws Exception {
+        assertQuery("sum\tk\n",
+                "select sum(a), k from x sample by 100U fill(none)",
+                "create table x" +
+                        "(" +
+                        " a double," +
+                        " b symbol," +
+                        " k timestamp" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(277200000000, 100) k" +
+                        " from" +
+                        " long_sequence(30)" +
+                        ") timestamp(k)",
+                "sum\tk\n" +
+                        "11.427984775756228\t1970-01-04T05:00:00.000000Z\n" +
+                        "42.17768841969397\t1970-01-04T05:00:00.000100Z\n" +
+                        "23.90529010846525\t1970-01-04T05:00:00.000200Z\n" +
+                        "70.94360487171201\t1970-01-04T05:00:00.000300Z\n" +
+                        "87.99634725391621\t1970-01-04T05:00:00.000400Z\n" +
+                        "32.881769076795045\t1970-01-04T05:00:00.000500Z\n" +
+                        "97.71103146051203\t1970-01-04T05:00:00.000600Z\n" +
+                        "81.46807944500559\t1970-01-04T05:00:00.000700Z\n" +
+                        "57.93466326862211\t1970-01-04T05:00:00.000800Z\n" +
+                        "12.026122412833129\t1970-01-04T05:00:00.000900Z\n" +
+                        "48.820511018586934\t1970-01-04T05:00:00.001000Z\n" +
+                        "26.922103479744898\t1970-01-04T05:00:00.001100Z\n" +
+                        "52.98405941762054\t1970-01-04T05:00:00.001200Z\n" +
+                        "84.45258177211063\t1970-01-04T05:00:00.001300Z\n" +
+                        "97.5019885372507\t1970-01-04T05:00:00.001400Z\n" +
+                        "49.00510449885239\t1970-01-04T05:00:00.001500Z\n" +
+                        "80.01121139739173\t1970-01-04T05:00:00.001600Z\n" +
+                        "92.050039469858\t1970-01-04T05:00:00.001700Z\n" +
+                        "45.6344569609078\t1970-01-04T05:00:00.001800Z\n" +
+                        "40.455469747939254\t1970-01-04T05:00:00.001900Z\n" +
+                        "56.594291398612405\t1970-01-04T05:00:00.002000Z\n" +
+                        "9.750574414434398\t1970-01-04T05:00:00.002100Z\n" +
+                        "12.105630273556178\t1970-01-04T05:00:00.002200Z\n" +
+                        "57.78947915182423\t1970-01-04T05:00:00.002300Z\n" +
+                        "86.85154305419587\t1970-01-04T05:00:00.002400Z\n" +
+                        "12.02416087573498\t1970-01-04T05:00:00.002500Z\n" +
+                        "49.42890511958454\t1970-01-04T05:00:00.002600Z\n" +
+                        "58.912164838797885\t1970-01-04T05:00:00.002700Z\n" +
+                        "67.52509547112409\t1970-01-04T05:00:00.002800Z\n" +
+                        "44.80468966861358\t1970-01-04T05:00:00.002900Z\n",
+                false);
+    }
+
+    @Test
     public void testSampleByNoFillAlignToCalendarTimezoneOffset() throws Exception {
         assertQuery(
                 "k\tb\tc\n" +
@@ -7990,7 +8043,7 @@ public class SampleByTest extends AbstractGriffinTest {
                 // make sure we get the same outcome when we get factory to create new cursor
                 assertCursor(expected, factory, false, true, false, false);
                 // make sure strings, binary fields and symbols are compliant with expected record behaviour
-                assertVariableColumns(factory, true);
+                assertVariableColumns(factory, true, sqlExecutionContext);
 
                 compiler.compile("truncate table x", sqlExecutionContext);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

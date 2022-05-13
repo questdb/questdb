@@ -22,25 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.griffin;
 
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.CairoEngine;
 
-public class WeakObjectPool<T extends Mutable> extends WeakObjectPoolBase<T> {
-    private final ObjectFactory<T> factory;
-
-    public WeakObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
-        super(initSize);
-        this.factory = factory;
-        fill();
-    }
-
-    @Override
-    void clear(T obj) {
-        obj.clear();
-    }
-
-    T newInstance() {
-        return factory.newInstance();
-    }
+@FunctionalInterface
+public interface CustomisableRunnable {
+    void run(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception;
 }

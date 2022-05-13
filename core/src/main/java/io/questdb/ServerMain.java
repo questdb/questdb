@@ -87,8 +87,12 @@ public class ServerMain {
 
         LogFactory.configureFromSystemProperties(LogFactory.INSTANCE, null, rootDirectory);
         final Log log = LogFactory.getLog("server-main");
-        // TODO [adam]: log.advisoryW().$("Log path: ").$(log.).$(); -- log config path.
 
+        log.advisoryW().$("QuestDB server ")
+                .$(buildInformation.getQuestDbVersion())
+                .$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis()))
+                .$(", all rights reserved.")
+                .$();
         extractSite(buildInformation, rootDirectory, log);
         final Properties properties = new Properties();
         final String configurationFileName = "/server.conf";
@@ -160,11 +164,9 @@ public class ServerMain {
             switch (jitMode) {
                 case SqlJitMode.JIT_MODE_ENABLED:
                     log.advisoryW().$("SQL JIT compiler mode: on").$();
-                    log.advisoryW().$("Note: JIT compiler mode is a beta feature.").$();
                     break;
                 case SqlJitMode.JIT_MODE_FORCE_SCALAR:
                     log.advisoryW().$("SQL JIT compiler mode: scalar").$();
-                    log.advisoryW().$("Note: JIT compiler mode is a beta feature.").$();
                     break;
                 case SqlJitMode.JIT_MODE_DISABLED:
                     log.advisoryW().$("SQL JIT compiler mode: off").$();
@@ -207,7 +209,11 @@ public class ServerMain {
         }
 
         workerPool.assignCleaner(Path.CLEANER);
-        O3Utils.setupWorkerPool(workerPool, cairoEngine.getMessageBus());
+        O3Utils.setupWorkerPool(
+                workerPool,
+                cairoEngine.getMessageBus(),
+                configuration.getCairoConfiguration().getCircuitBreakerConfiguration()
+        );
 
         try {
             initQuestDb(workerPool, cairoEngine, log);
@@ -401,7 +407,7 @@ public class ServerMain {
         }
     }
 
-    //made package level for testing only  
+    //made package level for testing only
     static void extractSite(BuildInformation buildInformation, String dir, Log log) throws IOException {
         final String publicZip = "/io/questdb/site/public.zip";
         final String publicDir = dir + "/public";
