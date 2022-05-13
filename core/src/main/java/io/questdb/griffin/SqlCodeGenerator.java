@@ -311,8 +311,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
-    private RecordMetadata calculateSetMetadata(RecordMetadata masterMetadata) {
-        return GenericRecordMetadata.removeTimestamp(masterMetadata);
+    private RecordMetadata calculateSetMetadata(RecordMetadata masterMetadata, boolean convertSymbolsToStrings) {
+        if (convertSymbolsToStrings) {
+            return GenericRecordMetadata.convertSymbolsToStrings(masterMetadata);
+        } else {
+            return GenericRecordMetadata.removeTimestamp(masterMetadata);
+        }
     }
 
     // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
@@ -2646,13 +2650,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         RecordCursorFactory slaveFactory = generateQuery0(model.getUnionModel(), executionContext, true);
         switch (model.getSetOperationType()) {
             case QueryModel.SET_OPERATION_UNION:
-                return generateUnionFactory(model, masterFactory, executionContext, slaveFactory, SET_UNION_CONSTRUCTOR);
+                return generateUnionFactory(model, masterFactory, executionContext, slaveFactory, SET_UNION_CONSTRUCTOR, true);
             case QueryModel.SET_OPERATION_UNION_ALL:
                 return generateUnionAllFactory(model, masterFactory, executionContext, slaveFactory);
             case QueryModel.SET_OPERATION_EXCEPT:
-                return generateUnionFactory(model, masterFactory, executionContext, slaveFactory, SET_EXCEPT_CONSTRUCTOR);
+                return generateUnionFactory(model, masterFactory, executionContext, slaveFactory, SET_EXCEPT_CONSTRUCTOR, false);
             case QueryModel.SET_OPERATION_INTERSECT:
-                return generateUnionFactory(model, masterFactory, executionContext, slaveFactory, SET_INTERSECT_CONSTRUCTOR);
+                return generateUnionFactory(model, masterFactory, executionContext, slaveFactory, SET_INTERSECT_CONSTRUCTOR, false);
             default:
                 assert false;
                 return null;
@@ -3166,9 +3170,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext,
             RecordCursorFactory slaveFactory
     ) throws SqlException {
-        validateJoinColumnTypes(model, masterFactory, slaveFactory);
+        validateJoinColumnTypes(model, masterFactory, slaveFactory, true);
         final RecordCursorFactory unionAllFactory = new UnionAllRecordCursorFactory(
-                calculateSetMetadata(masterFactory.getMetadata()),
+                calculateSetMetadata(masterFactory.getMetadata(), true),
                 masterFactory,
                 slaveFactory
         );
@@ -3184,9 +3188,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory masterFactory,
             SqlExecutionContext executionContext,
             RecordCursorFactory slaveFactory,
-            SetRecordCursorFactoryConstructor constructor
+            SetRecordCursorFactoryConstructor constructor,
+            boolean convertSymbolsToStrings
     ) throws SqlException {
-        validateJoinColumnTypes(model, masterFactory, slaveFactory);
+        validateJoinColumnTypes(model, masterFactory, slaveFactory, convertSymbolsToStrings);
         entityColumnFilter.of(masterFactory.getMetadata().getColumnCount());
         final RecordSink recordSink = RecordSinkFactory.getInstance(
                 asm,
@@ -3199,7 +3204,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         RecordCursorFactory unionFactory = constructor.create(
                 configuration,
-                calculateSetMetadata(masterFactory.getMetadata()),
+                calculateSetMetadata(masterFactory.getMetadata(), convertSymbolsToStrings),
                 masterFactory,
                 slaveFactory,
                 recordSink,
@@ -3455,13 +3460,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private void validateJoinColumnTypes(QueryModel model, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) throws SqlException {
+    private void validateJoinColumnTypes(QueryModel model, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, boolean convertSymbolsAsStrings) throws SqlException {
         final RecordMetadata metadata = masterFactory.getMetadata();
         final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
         final int columnCount = metadata.getColumnCount();
 
         for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) != slaveMetadata.getColumnType(i)) {
+            int type1 = metadata.getColumnType(i);
+            int type2 = slaveMetadata.getColumnType(i);
+            if (type1 != type2) {
+                if (convertSymbolsAsStrings) {
+                    if ((ColumnType.isSymbol(type1) && ColumnType.isString(type2)
+                            || ColumnType.isString(type1) && ColumnType.isSymbol(type2))) {
+                        continue;
+                    }
+                }
+
                 throw SqlException
                         .$(model.getUnionModel().getModelPosition(), "column type mismatch [index=").put(i)
                         .put(", A=").put(ColumnType.nameOf(metadata.getColumnType(i)))

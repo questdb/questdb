@@ -65,7 +65,7 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
         try {
             masterCursor = masterFactory.getCursor(executionContext);
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor, executionContext);
+            cursor.of(masterCursor, masterFactory.getMetadata(), slaveCursor, slaveFactory.getMetadata(), executionContext);
             return cursor;
         } catch (Throwable ex) {
             Misc.free(masterCursor);

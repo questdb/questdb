@@ -29,22 +29,25 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.std.Misc;
 
 class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
-    private final DelegatingRecordImpl record = new DelegatingRecordImpl();
+    private final UnionDelegatingRecordImpl record = new UnionDelegatingRecordImpl();
     private RecordCursor masterCursor;
+    private RecordMetadata masterMetadata;
     private RecordCursor slaveCursor;
     private final NextMethod nextSlave = this::nextSlave;
     private Record masterRecord;
     private Record slaveRecord;
+    private RecordMetadata slaveMetadata;
     private NextMethod nextMethod;
     private RecordCursor symbolCursor;
     private final NextMethod nextMaster = this::nextMaster;
 
-    void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
-        this.masterRecord = masterCursor.getRecord();
-        this.slaveRecord = slaveCursor.getRecord();
-        toTop();
+    @Override
+    public void toTop() {
+        record.of(masterRecord, masterMetadata);
+        nextMethod = nextMaster;
+        symbolCursor = masterCursor;
+        masterCursor.toTop();
+        slaveCursor.toTop();
     }
 
     @Override
@@ -86,20 +89,21 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
         return masterCursor.hasNext() || switchToSlaveCursor();
     }
 
+    void of(RecordCursor masterCursor, RecordMetadata masterMetadata, RecordCursor slaveCursor, RecordMetadata slaveMetadata) {
+        this.masterCursor = masterCursor;
+        this.masterMetadata = masterMetadata;
+        this.slaveCursor = slaveCursor;
+        this.masterRecord = masterCursor.getRecord();
+        this.slaveRecord = slaveCursor.getRecord();
+        this.slaveMetadata = slaveMetadata;
+        toTop();
+    }
+
     private boolean switchToSlaveCursor() {
-        record.of(slaveRecord);
+        record.of(slaveRecord, slaveMetadata);
         nextMethod = nextSlave;
         symbolCursor = slaveCursor;
         return nextMethod.next();
-    }
-
-    @Override
-    public void toTop() {
-        record.of(masterRecord);
-        nextMethod = nextMaster;
-        symbolCursor = masterCursor;
-        masterCursor.toTop();
-        slaveCursor.toTop();
     }
 
     interface NextMethod {

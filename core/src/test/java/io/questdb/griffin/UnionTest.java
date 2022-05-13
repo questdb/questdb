@@ -159,6 +159,59 @@ public class UnionTest extends AbstractGriffinTest {
 
     //select distinct sym from a union all b
     @Test
+    public void testUnionAllOfSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = "t\n" +
+                    "CAR\n" +
+                    "CAR\n" +
+                    "VAN\n" +
+                    "PLANE\n" +
+                    "PLANE\n" +
+                    "PLANE\n" +
+                    "PLANE\n";
+
+            final String expected2 = "t\n" +
+                    "CAR\n" +
+                    "PLANE\n" +
+                    "VAN\n" +
+                    "PLANE\n" +
+                    "PLANE\n" +
+                    "BICYCLE\n" +
+                    "SCOOTER\n" +
+                    "SCOOTER\n" +
+                    "SCOOTER\n" +
+                    "SCOOTER\n";
+
+            compiler.compile(
+                    "CREATE TABLE x as " +
+                            "(SELECT " +
+                            " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
+                            " FROM long_sequence(7) x)",
+                    sqlExecutionContext
+            );
+
+            try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected, rcf, true, true, true);
+            }
+
+            SharedRandom.RANDOM.get().reset();
+
+            compiler.compile(
+                    "CREATE TABLE y as " +
+                            "(SELECT " +
+                            " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
+                            " FROM long_sequence(7) x)",
+                    sqlExecutionContext
+            );//produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
+
+            try (RecordCursorFactory factory = compiler.compile("select distinct t from x order by t union all y", sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, factory, false, true, true);
+            }
+        });
+    }
+
+    //select distinct sym from a union all b
+    @Test
     public void testUnionAllOfSymbolFor3Tables() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "t\n" +
@@ -172,8 +225,8 @@ public class UnionTest extends AbstractGriffinTest {
 
             final String expected2 = "t\n" +
                     "CAR\n" +
-                    "VAN\n" +
                     "PLANE\n" +
+                    "VAN\n" +
                     "PLANE\n" +
                     "PLANE\n" +
                     "BICYCLE\n" +
@@ -225,36 +278,45 @@ public class UnionTest extends AbstractGriffinTest {
                     sqlExecutionContext
             ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
 
-            try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y union all z", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true, true);
+            try (RecordCursorFactory factory = compiler.compile("select t from (" +
+                    "select distinct t from x order by 1 " +
+                    "union all " +
+                    "y " +
+                    "union all " +
+                    "z " +
+                    ")", sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, factory, false, true, false);
             }
         });
     }
 
-    //select distinct sym from a union all b
     @Test
-    public void testUnionAllOfSymbol() throws Exception {
+    public void testUnionAllOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "t\n" +
-                    "CAR\n" +
-                    "CAR\n" +
-                    "VAN\n" +
-                    "PLANE\n" +
-                    "PLANE\n" +
-                    "PLANE\n" +
-                    "PLANE\n";
-
             final String expected2 = "t\n" +
-                    "CAR\n" +
-                    "VAN\n" +
-                    "PLANE\n" +
-                    "PLANE\n" +
-                    "PLANE\n" +
                     "BICYCLE\n" +
+                    "CAR\n" +
+                    "HELICOPTER\n" +
+                    "HELICOPTER\n" +
+                    "HELICOPTER\n" +
+                    "HELICOPTER\n" +
+                    "HELICOPTER\n" +
+                    "HELICOPTER\n" +
+                    "HELICOPTER\n" +
+                    "HELICOPTER\n" +
+                    "MOTORBIKE\n" +
+                    "MOTORBIKE\n" +
+                    "MOTORBIKE\n" +
+                    "MOTORBIKE\n" +
+                    "PLANE\n" +
+                    "PLANE\n" +
+                    "PLANE\n" +
                     "SCOOTER\n" +
                     "SCOOTER\n" +
                     "SCOOTER\n" +
-                    "SCOOTER\n";
+                    "SCOOTER\n" +
+                    "VAN\n" +
+                    "VAN\n";
 
             compiler.compile(
                     "CREATE TABLE x as " +
@@ -264,10 +326,6 @@ public class UnionTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            try (RecordCursorFactory rcf = compiler.compile("x", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected, rcf, true, true, true);
-            }
-
             SharedRandom.RANDOM.get().reset();
 
             compiler.compile(
@@ -276,10 +334,24 @@ public class UnionTest extends AbstractGriffinTest {
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
                             " FROM long_sequence(7) x)",
                     sqlExecutionContext
-            );//produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
+            ); //produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
-            try (RecordCursorFactory factory = compiler.compile("select distinct t from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, factory, false, true, true);
+            compiler.compile(
+                    "CREATE TABLE z as " +
+                            "(SELECT " +
+                            " rnd_symbol('MOTORBIKE', 'HELICOPTER', 'VAN') t " +
+                            " FROM long_sequence(13) x)",
+                    sqlExecutionContext
+            ); //produces HELICOPTER MOTORBIKE HELICOPTER HELICOPTER VAN HELICOPTER HELICOPTER HELICOPTER MOTORBIKE MOTORBIKE HELICOPTER MOTORBIKE HELICOPTER
+
+            try (RecordCursorFactory factory = compiler.compile("select t from (" +
+                    "select distinct t from x " +
+                    "union all " +
+                    "y " +
+                    "union all " +
+                    "z " +
+                    ")  order by 1", sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, factory, true, true, true);
             }
         });
     }

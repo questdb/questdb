@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -212,7 +213,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                                 Assert.assertNull(b);
                                 Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));
                             } else {
-                                if (checkSameStr) {
+                                if (a instanceof AbstractCharSequence) {
+                                    // AbstractCharSequence are usually mutable. We cannot have same mutable instance for A and B
                                     Assert.assertNotSame(a, b);
                                 }
                                 TestUtils.assertEquals(a, b);
@@ -484,11 +486,11 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     case ColumnType.STRING:
                         CharSequence s = record.getStr(i);
                         if (s != null) {
-                            if (checkSameStr) {
-                                Assert.assertNotSame("Expected string instances be different for getStr and getStrB", s, record.getStrB(i));
+                            CharSequence b = record.getStrB(i);
+                            if (b instanceof AbstractCharSequence) {
+                                // AbstractCharSequence are usually mutable. We cannot have same mutable instance for A and B
+                                Assert.assertNotSame("Expected string instances be different for getStr and getStrB", s, b);
                             }
-                            TestUtils.assertEquals(s, record.getStrB(i));
-                            Assert.assertEquals(s.length(), record.getStrLen(i));
                         } else {
                             Assert.assertNull(record.getStrB(i));
                             Assert.assertEquals(TableUtils.NULL_LEN, record.getStrLen(i));

@@ -34,10 +34,11 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;
 
 class UnionRecordCursor implements NoRandomAccessRecordCursor {
-    private final DelegatingRecordImpl record = new DelegatingRecordImpl();
+    private final UnionDelegatingRecordImpl record = new UnionDelegatingRecordImpl();
     private final Map map;
     private final RecordSink recordSink;
     private RecordCursor masterCursor;
+    private RecordMetadata masterMetadata;
     private RecordCursor slaveCursor;
     private final NextMethod nextSlave = this::nextSlave;
     private Record masterRecord;
@@ -45,6 +46,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     private NextMethod nextMethod;
     private RecordCursor symbolCursor;
     private final NextMethod nextMaster = this::nextMaster;
+    private RecordMetadata slaveMetadata;
     private SqlExecutionCircuitBreaker circuitBreaker;
 
     public UnionRecordCursor(Map map, RecordSink recordSink) {
@@ -52,13 +54,14 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
         this.recordSink = recordSink;
     }
 
-    void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
-        this.masterRecord = masterCursor.getRecord();
-        this.slaveRecord = slaveCursor.getRecord();
-        circuitBreaker = executionContext.getCircuitBreaker();
-        toTop();
+    @Override
+    public void toTop() {
+        map.clear();
+        record.of(masterRecord, masterMetadata);
+        nextMethod = nextMaster;
+        symbolCursor = masterCursor;
+        masterCursor.toTop();
+        slaveCursor.toTop();
     }
 
     @Override
@@ -109,21 +112,22 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
         return switchToSlaveCursor();
     }
 
+    void of(RecordCursor masterCursor, RecordMetadata masterMetadata, RecordCursor slaveCursor, RecordMetadata slaveMetadata, SqlExecutionContext executionContext) {
+        this.masterCursor = masterCursor;
+        this.masterMetadata = masterMetadata;
+        this.slaveCursor = slaveCursor;
+        this.masterRecord = masterCursor.getRecord();
+        this.slaveRecord = slaveCursor.getRecord();
+        this.slaveMetadata = slaveMetadata;
+        circuitBreaker = executionContext.getCircuitBreaker();
+        toTop();
+    }
+
     private boolean switchToSlaveCursor() {
-        record.of(slaveRecord);
+        record.of(slaveRecord, slaveMetadata);
         nextMethod = nextSlave;
         symbolCursor = slaveCursor;
         return nextMethod.next();
-    }
-
-    @Override
-    public void toTop() {
-        map.clear();
-        record.of(masterRecord);
-        nextMethod = nextMaster;
-        symbolCursor = masterCursor;
-        masterCursor.toTop();
-        slaveCursor.toTop();
     }
 
     @Override
