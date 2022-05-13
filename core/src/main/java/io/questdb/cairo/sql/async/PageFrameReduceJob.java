@@ -118,14 +118,15 @@ public class PageFrameReduceJob implements Job, Closeable {
                             .I$();
                     if (frameSequence.isActive()) {
                         reduce(record, circuitBreaker, task, frameSequence);
-                    } else {
-                        frameSequence.getReduceCounter().incrementAndGet();
                     }
                 } catch (Throwable e) {
                     frameSequence.cancel();
                     throw e;
                 } finally {
                     subSeq.done(cursor);
+                    // Reduce counter has to be incremented only when we make
+                    // sure that the task is available for consumers.
+                    frameSequence.getReduceCounter().incrementAndGet();
                 }
                 return false;
             } else if (cursor == -1) {
@@ -142,20 +143,16 @@ public class PageFrameReduceJob implements Job, Closeable {
             PageFrameReduceTask task,
             PageFrameSequence<?> frameSequence
     ) {
-        try {
-            // we deliberately hold the queue item because
-            // processing is daisy-chained. If we were to release item before
-            // finishing reduction, next step (job) will be processing an incomplete task
-            if (!circuitBreaker.checkIfTripped(frameSequence.getStartTimeUs(), frameSequence.getCircuitBreakerFd())) {
-                record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
-                record.setFrameIndex(task.getFrameIndex());
-                assert frameSequence.doneLatch.getCount() == 0;
-                frameSequence.getReducer().reduce(record, task);
-            } else {
-                frameSequence.cancel();
-            }
-        } finally {
-            frameSequence.getReduceCounter().incrementAndGet();
+        // we deliberately hold the queue item because
+        // processing is daisy-chained. If we were to release item before
+        // finishing reduction, next step (job) will be processing an incomplete task
+        if (!circuitBreaker.checkIfTripped(frameSequence.getStartTimeUs(), frameSequence.getCircuitBreakerFd())) {
+            record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+            record.setFrameIndex(task.getFrameIndex());
+            assert frameSequence.doneLatch.getCount() == 0;
+            frameSequence.getReducer().reduce(record, task);
+        } else {
+            frameSequence.cancel();
         }
     }
 
