@@ -34,6 +34,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -42,7 +43,7 @@ import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
-    private final BitmapIndexBwdReader indexReader = new BitmapIndexBwdReader();
+    private final ConcurrentBitmapIndexFwdReader indexReader = new ConcurrentBitmapIndexFwdReader();
     private final MemoryCMR charMem = Vm.getCMRInstance();
     private final MemoryCMR offsetMem = Vm.getCMRInstance();
     private final ObjList<String> cache = new ObjList<>();
@@ -52,6 +53,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private long maxOffset;
     private int symbolCapacity;
     private boolean nullValue;
+    private CairoConfiguration configuration;
+    private final Path path = new Path();
+    private final StringSink columnNameSink = new StringSink();
+    private long columnNameTxn;
 
     public SymbolMapReaderImpl() {
     }
@@ -67,6 +72,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         this.cache.clear();
         long fd = this.offsetMem.getFd();
         Misc.free(offsetMem);
+        Misc.free(path);
         LOG.debug().$("closed [fd=").$(fd).$(']').$();
     }
 
@@ -99,10 +105,17 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             cache.remove(symbolCount + 1, this.symbolCount);
             this.symbolCount = symbolCount;
         }
+        // Refresh index reader to avoid memory remapping on keyOf() calls.
+        this.indexReader.of(configuration, path, columnNameSink, columnNameTxn, 0, -1);
     }
 
     public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, int symbolCount) {
         FilesFacade ff = configuration.getFilesFacade();
+        this.configuration = configuration;
+        this.path.of(path);
+        this.columnNameSink.clear();
+        this.columnNameSink.put(columnName);
+        this.columnNameTxn = columnNameTxn;
         this.symbolCount = symbolCount;
         this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
         final int plen = path.length();
@@ -132,7 +145,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.cached = offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
 
-            // index writer is used to identify attempts to store duplicate symbol value
+            // index reader is used to identify attempts to store duplicate symbol value
             this.indexReader.of(configuration, path.trimTo(plen), columnName, columnNameTxn, 0, -1);
 
             // this is the place where symbol values are stored
