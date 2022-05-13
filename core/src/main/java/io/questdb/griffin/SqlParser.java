@@ -109,6 +109,8 @@ public final class SqlParser {
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
         if (token.length() != 1) return false;
         switch (token.charAt(0)) {
+            case 'U':
+                // micros
             case 'T':
                 // millis
             case 's':
