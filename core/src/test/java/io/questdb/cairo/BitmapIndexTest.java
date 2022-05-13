@@ -1006,9 +1006,10 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             LongList tmp = new LongList();
             try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
-                assertBackwardCursorLimit(reader, 0, 260, tmp, 0);
-                assertBackwardCursorLimit(reader, 0, 16, tmp, 0);
-                assertBackwardCursorLimit(reader, 0, 9, tmp, 0);
+                assertBackwardCursorLimit(reader, 0, 260, tmp, 0, false);
+                assertBackwardCursorLimit(reader, 0, 260, tmp, 0, true);
+                assertBackwardCursorLimit(reader, 0, 16, tmp, 0, true);
+                assertBackwardCursorLimit(reader, 0, 9, tmp, 0, true);
                 Assert.assertFalse(reader.getCursor(true, 0, -1L, -1L).hasNext());
             }
         });
@@ -1025,7 +1026,19 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             LongList tmp = new LongList();
             try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, nullsN)) {
-                assertBackwardCursorLimit(reader, 1, 260, tmp, nullsN - 1);
+                assertBackwardCursorLimit(reader, 1, 260, tmp, nullsN - 1, true);
+                assertBackwardCursorLimit(reader, 1, 260, tmp, nullsN - 1, false);
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyBackwardCursor() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 128);
+
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+                assertEmptyCursor(reader);
             }
         });
     }
@@ -1040,10 +1053,11 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             LongList tmp = new LongList();
             try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
-                assertForwardCursorLimit(reader, 260, N, tmp, 9, 0);
-                assertForwardCursorLimit(reader, 260, N - 2, tmp, 6, 0);
-                assertForwardCursorLimit(reader, 16, N, tmp, 498, 0);
-                assertForwardCursorLimit(reader, 9, N, tmp, 510, 0);
+                assertForwardCursorLimit(reader, 260, N, tmp, 9, 0, false);
+                assertForwardCursorLimit(reader, 260, N, tmp, 9, 0, true);
+                assertForwardCursorLimit(reader, 260, N - 2, tmp, 6, 0, true);
+                assertForwardCursorLimit(reader, 16, N, tmp, 498, 0, true);
+                assertForwardCursorLimit(reader, 9, N, tmp, 510, 0, true);
                 Assert.assertFalse(reader.getCursor(true, 0, 266, Long.MAX_VALUE).hasNext());
                 Assert.assertFalse(reader.getCursor(true, 0, Long.MAX_VALUE, Long.MAX_VALUE).hasNext());
             }
@@ -1061,7 +1075,19 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             LongList tmp = new LongList();
             try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, nullsN)) {
-                assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1);
+                assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1, true);
+                assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1, false);
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyForwardCursor() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 128);
+
+            try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+                assertEmptyCursor(reader);
             }
         });
     }
@@ -1087,16 +1113,17 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             LongList tmp = new LongList();
             try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
-                assertForwardCursorLimit(reader, 260, N, tmp, 9, 0);
-                assertForwardCursorLimit(reader, 260, N - 2, tmp, 6, 0);
-                assertForwardCursorLimit(reader, 16, N, tmp, 498, 0);
-                assertForwardCursorLimit(reader, 9, N, tmp, 510, 0);
+                assertForwardCursorLimit(reader, 260, N, tmp, 9, 0, false);
+                assertForwardCursorLimit(reader, 260, N, tmp, 9, 0, true);
+                assertForwardCursorLimit(reader, 260, N - 2, tmp, 6, 0, true);
+                assertForwardCursorLimit(reader, 16, N, tmp, 498, 0, true);
+                assertForwardCursorLimit(reader, 9, N, tmp, 510, 0, true);
                 Assert.assertFalse(reader.getCursor(true, 0, 266, Long.MAX_VALUE).hasNext());
                 Assert.assertFalse(reader.getCursor(true, 0, Long.MAX_VALUE, Long.MAX_VALUE).hasNext());
 
                 // Write a lot more values, so that we extend the value file.
                 long newMemSize;
-                int newKeysN = 15 * N;
+                int newKeysN = 5 * N;
                 try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
                     for (int i = N; i < newKeysN; i++) {
                         if (i % 3 == 0) {
@@ -1111,8 +1138,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 Assert.assertTrue("Value file should grow in size", newMemSize > initialMemSize);
 
                 // The reader should stop at the last known valueMem size boundary now.
-                assertForwardCursorLimit(reader, 0, N, tmp, 528, 0);
-                assertForwardCursorLimit(reader, 0, N + newKeysN, tmp, 639, 0);
+                assertForwardCursorLimit(reader, 0, N, tmp, 528, 0, true);
+                assertForwardCursorLimit(reader, 0, N + newKeysN, tmp, 639, 0, true);
                 Assert.assertFalse(reader.getCursor(true, 0, N + newKeysN, Long.MAX_VALUE).hasNext());
                 Assert.assertFalse(reader.getCursor(true, 0, Long.MAX_VALUE, Long.MAX_VALUE).hasNext());
             }
@@ -1130,7 +1157,19 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             LongList tmp = new LongList();
             try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, nullsN)) {
-                assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1);
+                assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1, true);
+                assertForwardCursorLimit(reader, 1, N, tmp, 530, nullsN - 1, false);
+            }
+        });
+    }
+
+    @Test
+    public void testEmptyConcurrentForwardCursor() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 128);
+
+            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, 0)) {
+                assertEmptyCursor(reader);
             }
         });
     }
@@ -1421,9 +1460,15 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
     }
 
-    private void assertBackwardCursorLimit(BitmapIndexBwdReader reader, int min, int max, LongList tmp, int nExpectedNulls) {
+    private void assertEmptyCursor(AbstractIndexReader reader) {
+        RowCursor cursor = reader.getCursor(true, 0, 0, Long.MAX_VALUE);
+        Assert.assertFalse(cursor.hasNext());
+        Assert.assertEquals(0, cursor.next());
+    }
+
+    private void assertBackwardCursorLimit(BitmapIndexBwdReader reader, int min, int max, LongList tmp, int nExpectedNulls, boolean cached) {
         tmp.clear();
-        RowCursor cursor = reader.getCursor(true, 0, min, max);
+        RowCursor cursor = reader.getCursor(cached, 0, min, max);
         while (cursor.hasNext()) {
             tmp.add(cursor.next());
         }
@@ -1453,10 +1498,10 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
     }
 
-    private void assertForwardCursorLimit(AbstractIndexReader reader, int min, int N, LongList tmp, int nExpectedResults, int nExpectedNulls) {
+    private void assertForwardCursorLimit(AbstractIndexReader reader, int min, int N, LongList tmp, int nExpectedResults, int nExpectedNulls, boolean cached) {
         Assert.assertTrue(reader instanceof BitmapIndexFwdReader || reader instanceof ConcurrentBitmapIndexFwdReader);
         tmp.clear();
-        RowCursor cursor = reader.getCursor(true, 0, min, N - 1);
+        RowCursor cursor = reader.getCursor(cached, 0, min, N - 1);
         while (cursor.hasNext()) {
             tmp.add(cursor.next());
         }

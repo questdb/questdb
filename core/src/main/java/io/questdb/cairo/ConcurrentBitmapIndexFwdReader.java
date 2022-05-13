@@ -58,20 +58,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
-        if (key == 0 && unIndexedNullCount > 0 && minValue < unIndexedNullCount) {
-            // we need to return some nulls and the whole set of actual index values
-            final Cursor cursor = getCursor(cachedInstance);
-            cursor.of(key, 0, maxValue, keyCount, minValue, unIndexedNullCount);
-            return cursor;
-        }
-
-        if (key < keyCount) {
-            final Cursor cursor = getCursor(cachedInstance);
-            cursor.of(key, minValue, maxValue, keyCount, 0, 0);
-            return cursor;
-        }
-
-        return EmptyRowCursor.INSTANCE;
+        return initCursor(cachedInstance ? this.cursor : null, key, minValue, maxValue);
     }
 
     /**
@@ -81,13 +68,13 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
         Cursor cursor = null;
         if (rowCursor != null && rowCursor != EmptyRowCursor.INSTANCE) {
             cursor = (Cursor) rowCursor;
-            assert cursor.parentReader() == this;
+            assert cursor.owner() == this;
         }
 
         if (key == 0 && unIndexedNullCount > 0 && minValue < unIndexedNullCount) {
             // we need to return some nulls and the whole set of actual index values
             if (cursor == null) {
-                cursor = getCursor(false);
+                cursor = new Cursor();
             }
             cursor.of(key, 0, maxValue, keyCount, minValue, unIndexedNullCount);
             return cursor;
@@ -95,17 +82,13 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
 
         if (key < keyCount) {
             if (cursor == null) {
-                cursor = getCursor(false);
+                cursor = new Cursor();
             }
             cursor.of(key, minValue, maxValue, keyCount, 0, 0);
             return cursor;
         }
 
         return EmptyRowCursor.INSTANCE;
-    }
-
-    private Cursor getCursor(boolean cachedInstance) {
-        return cachedInstance ? cursor : new Cursor();
     }
 
     private class Cursor implements RowCursor {
@@ -219,7 +202,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             this.valueBlockOffset = offset;
         }
 
-        private ConcurrentBitmapIndexFwdReader parentReader() {
+        private ConcurrentBitmapIndexFwdReader owner() {
             return ConcurrentBitmapIndexFwdReader.this;
         }
     }
