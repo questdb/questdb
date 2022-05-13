@@ -56,52 +56,8 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSymbolIndexCopyOnWrite() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table up as" +
-                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
-                    " x" +
-                    " from long_sequence(5)" +
-                    "), index(symCol) timestamp(ts)", sqlExecutionContext);
-
-            CompiledQuery cq = compiler.compile("up where symCol = 'WCP'", sqlExecutionContext);
-            try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
-                try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
-
-                    executeUpdate("update up set symCol = null");
-                    // Index is updated
-                    assertSql("up where symCol = null",
-                            "symCol\tts\tx\n" +
-                                    "\t1970-01-01T00:00:00.000000Z\t1\n" +
-                                    "\t1970-01-01T00:00:01.000000Z\t2\n" +
-                                    "\t1970-01-01T00:00:02.000000Z\t3\n" +
-                                    "\t1970-01-01T00:00:03.000000Z\t4\n" +
-                                    "\t1970-01-01T00:00:04.000000Z\t5\n"
-                    );
-
-                    // Old index is still working
-                    assertCursor("symCol\tts\tx\n" +
-                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
-                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
-                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n", cursor, cursorFactory.getMetadata(), true);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testInsertAfterFailedUpdateWriterReopened() throws Exception {
         testInsertAfterFailed(true);
-    }
-
-    @Test
-    public void testSymbolReplaceDistinctQueryIndexed() throws Exception {
-        testSymbolsReplacedDistinct(true);
-    }
-
-    @Test
-    public void testSymbolReplaceDistinctQueryNotIndexed() throws Exception {
-        testSymbolsReplacedDistinct(false);
     }
 
     @Test
@@ -183,6 +139,102 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSymbolIndexCopyOnWrite() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5)" +
+                    "), index(symCol) timestamp(ts)", sqlExecutionContext);
+
+            CompiledQuery cq = compiler.compile("up where symCol = 'WCP'", sqlExecutionContext);
+            try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
+                try (RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
+
+                    executeUpdate("update up set symCol = null");
+                    // Index is updated
+                    assertSql("up where symCol = null",
+                            "symCol\tts\tx\n" +
+                                    "\t1970-01-01T00:00:00.000000Z\t1\n" +
+                                    "\t1970-01-01T00:00:01.000000Z\t2\n" +
+                                    "\t1970-01-01T00:00:02.000000Z\t3\n" +
+                                    "\t1970-01-01T00:00:03.000000Z\t4\n" +
+                                    "\t1970-01-01T00:00:04.000000Z\t5\n"
+                    );
+
+                    // Old index is still working
+                    assertCursor("symCol\tts\tx\n" +
+                            "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                            "WCP\t1970-01-01T00:00:01.000000Z\t2\n" +
+                            "WCP\t1970-01-01T00:00:02.000000Z\t3\n", cursor, cursorFactory.getMetadata(), true);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolIndexRebuiltOnAffectedPartitionsOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            ff = new FilesFacadeImpl() {
+                @Override
+                public boolean remove(LPSZ name) {
+                    if (Chars.contains(name, "1970-01-01")) {
+                        return false;
+                    }
+                    return Files.remove(name);
+                }
+            };
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 60*60*1000000L) ts," +
+                    " x" +
+                    " from long_sequence(5)" +
+                    "), index(symCol) timestamp(ts) Partition by hour", sqlExecutionContext);
+
+            CompiledQuery cq = compiler.compile("up where symCol = 'WCP'", sqlExecutionContext);
+            try (RecordCursorFactory cursorFactory = cq.getRecordCursorFactory()) {
+                try (RecordCursor ignored = cursorFactory.getCursor(sqlExecutionContext)) {
+
+                    executeUpdate("update up set symCol = null where ts >= '1970-01-01T03'");
+                    // Index is updated
+                    assertSql("up",
+                            "symCol\tts\tx\n" +
+                                    "WCP\t1970-01-01T00:00:00.000000Z\t1\n" +
+                                    "WCP\t1970-01-01T01:00:00.000000Z\t2\n" +
+                                    "WCP\t1970-01-01T02:00:00.000000Z\t3\n" +
+                                    "\t1970-01-01T03:00:00.000000Z\t4\n" +
+                                    "\t1970-01-01T04:00:00.000000Z\t5\n"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolReplaceDistinctQueryIndexed() throws Exception {
+        testSymbolsReplacedDistinct(true);
+    }
+
+    @Test
+    public void testSymbolReplaceDistinctQueryNotIndexed() throws Exception {
+        testSymbolsReplacedDistinct(false);
+    }
+
+    @Test
+    public void testSymbolsIndexed_UpdateNull() throws Exception {
+        testSymbols_UpdateNull(true);
+    }
+
+    @Test
+    public void testSymbolsIndexed_UpdateWithExistingValue() throws Exception {
+        testSymbol_UpdateWithExistingValue(true);
+    }
+
+    @Test
+    public void testSymbolsIndexed_UpdateWithNewValue() throws Exception {
+        testSymbols_UpdateWithNewValue(true);
+    }
+
+    @Test
     public void testSymbolsRolledBackOnFailedUpdate() throws Exception {
         assertMemoryLeak(() -> {
             ff = new FilesFacadeImpl() {
@@ -232,21 +284,6 @@ public class UpdateTest extends AbstractGriffinTest {
                 }
             }
         });
-    }
-
-    @Test
-    public void testSymbolsIndexed_UpdateNull() throws Exception {
-        testSymbols_UpdateNull(true);
-    }
-
-    @Test
-    public void testSymbolsIndexed_UpdateWithExistingValue() throws Exception {
-        testSymbol_UpdateWithExistingValue(true);
-    }
-
-    @Test
-    public void testSymbolsIndexed_UpdateWithNewValue() throws Exception {
-        testSymbols_UpdateWithNewValue(true);
     }
 
     @Test
@@ -352,7 +389,8 @@ public class UpdateTest extends AbstractGriffinTest {
 
     @Test
     public void testUpdateAsyncMode() throws Exception {
-        testUpdateAsyncMode(tableWriter -> {}, null,
+        testUpdateAsyncMode(tableWriter -> {
+                }, null,
                 "ts\tx\n" +
                         "1970-01-01T00:00:00.000000Z\t1\n" +
                         "1970-01-01T00:00:01.000000Z\t123\n" +
@@ -373,17 +411,6 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateAsyncModeRemoveColumnInMiddle() throws Exception {
-        testUpdateAsyncMode(tableWriter -> tableWriter.removeColumn("x"), "cached query plan cannot be used because table schema has changed [table='up']",
-                "ts\n" +
-                        "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:01.000000Z\n" +
-                        "1970-01-01T00:00:02.000000Z\n" +
-                        "1970-01-01T00:00:03.000000Z\n" +
-                        "1970-01-01T00:00:04.000000Z\n");
-    }
-
-    @Test
     public void testUpdateAsyncModeFailed() throws Exception {
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1) {
             @Override
@@ -394,7 +421,8 @@ public class UpdateTest extends AbstractGriffinTest {
                 bindVariableService,
                 null, -1, null);
 
-        testUpdateAsyncMode(tableWriter -> {}, "[43] test error",
+        testUpdateAsyncMode(tableWriter -> {
+                }, "[43] test error",
                 "ts\tx\n" +
                         "1970-01-01T00:00:00.000000Z\t1\n" +
                         "1970-01-01T00:00:01.000000Z\t2\n" +
@@ -403,9 +431,20 @@ public class UpdateTest extends AbstractGriffinTest {
                         "1970-01-01T00:00:04.000000Z\t5\n");
 
         sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
-            .with(AllowAllCairoSecurityContext.INSTANCE,
-                bindVariableService,
-                null, -1, null);
+                .with(AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null, -1, null);
+    }
+
+    @Test
+    public void testUpdateAsyncModeRemoveColumnInMiddle() throws Exception {
+        testUpdateAsyncMode(tableWriter -> tableWriter.removeColumn("x"), "cached query plan cannot be used because table schema has changed [table='up']",
+                "ts\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:01.000000Z\n" +
+                        "1970-01-01T00:00:02.000000Z\n" +
+                        "1970-01-01T00:00:03.000000Z\n" +
+                        "1970-01-01T00:00:04.000000Z\n");
     }
 
     @Test
@@ -1979,6 +2018,37 @@ public class UpdateTest extends AbstractGriffinTest {
         });
     }
 
+    private void testSymbolsReplacedDistinct(boolean indexed) throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table up as" +
+                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
+                    " x" +
+                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)", sqlExecutionContext);
+
+            executeUpdate("update up set symCol = 'ABC' where symCol = 'WCP'");
+            assertSql("up", "symCol\tts\tx\n" +
+                    "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
+                    "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
+                    "ABC\t1970-01-01T00:00:02.000000Z\t3\n" +
+                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
+                    "\t1970-01-01T00:00:04.000000Z\t5\n");
+
+            assertQuery("symCol\n" +
+                            "\n" +
+                            "ABC\n" +
+                            "VTJ\n",
+                    "select distinct symCol from up order by symCol",
+                    null,
+                    true,
+                    true);
+
+            assertSql("select symCol, count() from up order by symCol", "symCol\tcount\n" +
+                    "\t1\n" +
+                    "ABC\t3\n" +
+                    "VTJ\t1\n");
+        });
+    }
+
     private void testSymbols_UpdateNull(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
@@ -2027,37 +2097,6 @@ public class UpdateTest extends AbstractGriffinTest {
                     "ABC\t1970-01-01T00:00:02.000000Z\t3\n", sink);
 
             assertSql("up where symCol = 'WCP'", "symCol\tts\tx\n");
-        });
-    }
-
-    private void testSymbolsReplacedDistinct(boolean indexed) throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table up as" +
-                    " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
-                    " x" +
-                    " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)", sqlExecutionContext);
-
-            executeUpdate("update up set symCol = 'ABC' where symCol = 'WCP'");
-            assertSql("up", "symCol\tts\tx\n" +
-                    "ABC\t1970-01-01T00:00:00.000000Z\t1\n" +
-                    "ABC\t1970-01-01T00:00:01.000000Z\t2\n" +
-                    "ABC\t1970-01-01T00:00:02.000000Z\t3\n" +
-                    "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
-                    "\t1970-01-01T00:00:04.000000Z\t5\n");
-
-            assertQuery("symCol\n" +
-                            "\n" +
-                            "ABC\n" +
-                            "VTJ\n",
-                    "select distinct symCol from up order by symCol",
-                    null,
-                    true,
-                    true);
-
-            assertSql("select symCol, count() from up order by symCol", "symCol\tcount\n" +
-                    "\t1\n" +
-                    "ABC\t3\n" +
-                    "VTJ\t1\n");
         });
     }
 

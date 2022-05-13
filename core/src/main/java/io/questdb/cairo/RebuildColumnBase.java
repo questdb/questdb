@@ -86,11 +86,11 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
                 path.trimTo(rootLen);
 
-                rebuildPartitionColumn(partitionName, columnName, columnVersionReader, ff);
+                rebuildPartitionColumn(ALL, partitionName, columnName, columnVersionReader, ff);
             }
         } finally {
                 lockName(path);
-                releaseLock(ff);
+            releaseLock(ff);
         }
     }
 
@@ -100,10 +100,14 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
 
     // if TableWriter is passed in the lock has to be held already
     public void rebuildPartitionColumn(CharSequence partitionName, CharSequence columnName, TableWriter tableWriter) {
-        rebuildPartitionColumn(partitionName, columnName, tableWriter.getColumnVersionWriter(), configuration.getFilesFacade());
+        rebuildPartitionColumn(ALL, partitionName, columnName, tableWriter.getColumnVersionWriter(), configuration.getFilesFacade());
     }
 
-    private void rebuildPartitionColumn(CharSequence rebuildPartitionName, CharSequence rebuildColumn, ColumnVersionReader columnVersionReader, FilesFacade ff) {
+    public void rebuildPartitionColumn(long partitionTs, CharSequence columnName, TableWriter tableWriter) {
+        rebuildPartitionColumn(partitionTs, null, columnName, tableWriter.getColumnVersionWriter(), configuration.getFilesFacade());
+    }
+
+    private void rebuildPartitionColumn(long partitionTs, CharSequence rebuildPartitionName, CharSequence rebuildColumn, ColumnVersionReader columnVersionReader, FilesFacade ff) {
         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
         if (metadata == null) {
             metadata = new TableReaderMetadata(ff);
@@ -130,7 +134,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
 
                 if (PartitionBy.isPartitioned(partitionBy)) {
                     // Resolve partition timestamp if partition name specified
-                    long rebuildPartitionTs = ALL;
+                    long rebuildPartitionTs = partitionTs;
                     if (rebuildPartitionName != null) {
                         rebuildPartitionTs = PartitionBy.parsePartitionDirName(rebuildPartitionName, partitionBy);
                     }
