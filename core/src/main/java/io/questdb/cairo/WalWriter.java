@@ -105,6 +105,7 @@ public class WalWriter implements Closeable {
     private final Path other;
     private final Path walDPath;
     private final LongList rowValueIsNotNull = new LongList();
+    private final LongList walDRowValueIsNotNull = new LongList();
     private final Row regularRow = new RowImpl();
     private final int walDRootLen;
     private final int rootLen;
@@ -285,6 +286,7 @@ public class WalWriter implements Closeable {
                 this.designatedTimestampColumnName = metadata.getColumnName(metadata.getTimestampIndex());
             }
             this.rowValueIsNotNull.extendAndSet(columnCount, 0);
+            this.walDRowValueIsNotNull.extendAndSet(columnCount, 0);
             this.columns = new ObjList<>(columnCount * 2);
             this.activeColumns = columns;
             this.symbolMapWriters = new ObjList<>(columnCount);
@@ -3511,6 +3513,11 @@ public class WalWriter implements Closeable {
         rowValueIsNotNull.setQuick(columnIndex, masterRef);
     }
 
+    private void setWalDRowValueNotNull(int columnIndex) {
+        assert walDRowValueIsNotNull.getQuick(columnIndex) != masterRef;
+        walDRowValueIsNotNull.setQuick(columnIndex, masterRef);
+    }
+
     /**
      * Sets path member variable to partition directory for the given timestamp and
      * partitionLo and partitionHi to partition interval in millis. These values are
@@ -3856,6 +3863,9 @@ public class WalWriter implements Closeable {
         public void putByte(int columnIndex, byte value) {
             getPrimaryColumn(columnIndex).putByte(value);
             setRowValueNotNull(columnIndex);
+
+            getPrimaryWalDColumn(columnIndex).putByte(value);
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
