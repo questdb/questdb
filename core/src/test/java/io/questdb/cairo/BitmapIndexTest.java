@@ -1096,7 +1096,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
                 // Write a lot more values, so that we extend the value file.
                 long newMemSize;
-                int newKeysN = 15 * N;
+                int newKeysN = 5 * N;
                 try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
                     for (int i = N; i < newKeysN; i++) {
                         if (i % 3 == 0) {

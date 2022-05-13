@@ -689,10 +689,10 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             String expected = symbolTableValueSnapshot[symbolColIndex][key+1];
             TestUtils.assertEquals(expected, symbolTable.valueOf(key));
             // now test static symbol table
-            //if (expected != null && symbolTable instanceof StaticSymbolTable) {
-            //    StaticSymbolTable staticSymbolTable = (StaticSymbolTable) symbolTable;
-            //    Assert.assertEquals(key, staticSymbolTable.keyOf(expected));
-            //}
+            if (expected != null && symbolTable instanceof StaticSymbolTable) {
+                StaticSymbolTable staticSymbolTable = (StaticSymbolTable) symbolTable;
+                Assert.assertEquals(key, staticSymbolTable.keyOf(expected));
+            }
         }
     }
 

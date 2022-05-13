@@ -248,6 +248,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
         private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
         private final MemoryCR.CharSequenceView csviewInternal = new MemoryCR.CharSequenceView();
+        private RowCursor rowCursor;
 
         @Override
         public boolean containsNullValue() {
@@ -263,9 +264,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         public int keyOf(CharSequence value) {
             if (value != null) {
                 int hash = Hash.boundedHash(value, maxHash);
-                final RowCursor cursor = indexReader.getCursor(false, hash, 0, maxOffset - Long.BYTES);
-                while (cursor.hasNext()) {
-                    final long offsetOffset = cursor.next();
+                rowCursor = indexReader.initCursor(rowCursor, hash, 0, maxOffset - Long.BYTES);
+                while (rowCursor.hasNext()) {
+                    final long offsetOffset = rowCursor.next();
                     if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset), csviewInternal))) {
                         return SymbolMapWriter.offsetToKey(offsetOffset);
                     }

@@ -33,7 +33,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
@@ -524,7 +523,6 @@ public class SymbolMapTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("Activate when we implement eager loading of symbol index reader memory")
     @Test
     public void testConcurrentSymbolTableAccess() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -596,7 +594,6 @@ public class SymbolMapTest extends AbstractCairoTest {
                         errors.incrementAndGet();
                         e.printStackTrace();
                     } finally {
-                        Misc.free(symbolTable);
                         stopLatch.countDown();
                     }
                 }
@@ -607,8 +604,12 @@ public class SymbolMapTest extends AbstractCairoTest {
                 new ReaderThread(reader.newSymbolTableView()).start();
             }
 
-            Assert.assertTrue(stopLatch.await(20000, TimeUnit.SECONDS));
-            Assert.assertEquals(0, errors.get());
+            try {
+                Assert.assertTrue(stopLatch.await(20000, TimeUnit.SECONDS));
+                Assert.assertEquals(0, errors.get());
+            } finally {
+                Misc.free(reader);
+            }
         });
     }
 }

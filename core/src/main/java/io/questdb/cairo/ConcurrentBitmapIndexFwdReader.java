@@ -81,7 +81,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
         Cursor cursor = null;
         if (rowCursor != null && rowCursor != EmptyRowCursor.INSTANCE) {
             cursor = (Cursor) rowCursor;
-            assert cursor.parentReader() == this;
+            assert cursor.owner() == this;
         }
 
         if (key == 0 && unIndexedNullCount > 0 && minValue < unIndexedNullCount) {
@@ -219,7 +219,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             this.valueBlockOffset = offset;
         }
 
-        private ConcurrentBitmapIndexFwdReader parentReader() {
+        private ConcurrentBitmapIndexFwdReader owner() {
             return ConcurrentBitmapIndexFwdReader.this;
         }
     }
