@@ -65,7 +65,7 @@ public class PGFlushQueryCacheTest extends BasePGTest {
 
                 statement.execute("SELECT flush_query_cache()");
 
-                checkQueryCacheFlushed(memAfterJoin);
+                checkQueryCacheFlushed(memInitial, memAfterJoin);
             }
         });
     }
