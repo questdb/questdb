@@ -24,15 +24,22 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.str.Path;
 
-public class TextImportTask {
+import java.io.Closeable;
+import java.io.IOException;
+
+public class TextImportTask implements Closeable {
 
     public static final byte PHASE_BOUNDARY_CHECK = 1;
     public static final byte PHASE_INDEXING = 2;
+    public static final byte PHASE_INDEX_MERGE = 3;
 
     private int index;
 
@@ -43,6 +50,37 @@ public class TextImportTask {
     private LongList stats;
     private CountDownLatchSPI doneLatch;
     private byte phase;
+    private final DirectLongList openFileDescriptors = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT);
+    private final DirectLongList mergeIndexes = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT);
+    private final Path path = new Path();
+    private FilesFacade ff;
+
+    @Override
+    public void close() throws IOException {
+        openFileDescriptors.close();
+        mergeIndexes.close();
+        path.close();
+    }
+
+    public Path getPath() {
+        return path;
+    }
+
+    public void of(
+            FilesFacade ff,
+            CountDownLatchSPI doneLatch,
+            byte phase
+    ) {
+        this.ff = ff;
+        this.doneLatch = doneLatch;
+        this.phase = phase;
+        resetCapacity();
+    }
+
+    public void resetCapacity() {
+        openFileDescriptors.resetCapacity();
+        mergeIndexes.resetCapacity();
+    }
 
     public void of(
             int index,
@@ -68,6 +106,8 @@ public class TextImportTask {
                 splitter.countQuotes(chunkLo, chunkHi, stats, index);
             } else if (phase == PHASE_INDEXING) {
                 splitter.index(chunkLo, chunkHi, index);
+            } else if (phase == PHASE_INDEX_MERGE) {
+                FileSplitter.mergePartitionIndex(ff, path, openFileDescriptors, mergeIndexes);
             } else {
                 throw new RuntimeException("Unexpected phase " + phase);
             }

@@ -19,7 +19,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -78,6 +77,32 @@ public class FileSplitterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
                 assertChunkBoundariesFor("test-quotes-oneline.csv", list(0, 234), sqlExecutionContext)
         );
+    }
+
+    @Test
+    public void testIndexMerge() throws Exception {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path path = new Path().of(inputRoot).slash().concat("chunks")) {
+            int plen = path.length();
+            path.concat("part").slash$();
+
+            if (!ff.exists(path)) {
+                int result = ff.mkdirs(path, engine.getConfiguration().getMkDirMode());
+                if (result != 0) {
+                    LOG.info().$("Couldn't create partition dir=").$(path).$();//TODO: maybe we can ignore it
+                }
+            }
+            int chunks = 10;
+            createAndSortChunkFiles(path, chunks, 10_000, 1_000_000);
+
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                path.trimTo(plen);
+//                indexer.mergePartitionIndexes(path.$(), chunks);
+                //todo: test!!
+            }
+            path.trimTo(plen);
+            ff.rmdir(path.$()); // clean all
+        }
     }
 
     //random order file , 300 mil records , 100GB of data, 8 workers
@@ -159,28 +184,17 @@ public class FileSplitterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIndexMerge() throws Exception {
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        try (Path path = new Path().of(inputRoot).slash().concat("chunks")) {
-            int plen = path.length();
-            path.concat("part").slash$();
-
-            if (!ff.exists(path)) {
-                int result = ff.mkdirs(path, engine.getConfiguration().getMkDirMode());
-                if (result != 0) {
-                    LOG.info().$("Couldn't create partition dir=").$(path).$();//TODO: maybe we can ignore it
-                }
-            }
-            int chunks = 10;
-            createAndSortChunkFiles(path, chunks, 10_000, 1_000_000);
-
+    public void testProcessLargeCsvWithPool0() throws Exception {
+        executeWithPool(8, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
-                path.trimTo(plen);
-                indexer.merge(path.$(), chunks);
+                DateFormat dateFormat = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.SSSZ");
+                indexer.setMinChunkSize(10);
+                indexer.of("test-import.csv", PartitionBy.YEAR, (byte) ',', 4, dateFormat, true);
+                indexer.process();
             }
-            path.trimTo(plen);
-            ff.rmdir(path.$()); // clean all
-        }
+        });
     }
 
     @Test

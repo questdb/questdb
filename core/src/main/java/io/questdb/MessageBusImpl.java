@@ -25,8 +25,8 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.text.TextImportTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cutlass.text.TextImportTask;
 import io.questdb.mp.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -178,6 +178,7 @@ public class MessageBusImpl implements MessageBus {
         // We need to close only queues with native backing memory.
         Misc.free(getTableWriterEventQueue());
         Misc.free(pageFrameReduceQueue);
+        Misc.free(textImportQueue);
     }
 
     @Override

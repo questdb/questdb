@@ -27,7 +27,6 @@ package io.questdb.cutlass.text;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -84,6 +83,10 @@ public class FileIndexer implements Closeable, Mutable {
 
     private final int bufferLength;
 
+    private final StringSink partitionNameSink = new StringSink();
+    private final DirectLongList openFileDescriptors = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT);
+    private final DirectLongList mergeIndexes = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT);
+
     public FileIndexer(SqlExecutionContext sqlExecutionContext) {
         MessageBus bus = sqlExecutionContext.getMessageBus();
         this.queue = bus.getTextImportQueue();
@@ -120,6 +123,8 @@ public class FileIndexer implements Closeable, Mutable {
         clear();
         Misc.freeObjList(splitters);
         inputFilePath.close();
+        openFileDescriptors.close();
+        mergeIndexes.close();
         tmpPath.close();
     }
 
@@ -140,27 +145,54 @@ public class FileIndexer implements Closeable, Mutable {
         }
     }
 
-    public void process() throws SqlException {
-        long fd = ff.openRO(inputFilePath);
-        if (fd < 0) {
-            throw CairoException.instance(ff.errno()).put("Can't open input file").put(inputFilePath);
-        }
+    public void mergePartitionIndexes() {
+        int queuedCount = 0;
+        doneLatch.reset();
 
-        try {
-            final long fileLength = ff.length(fd);
-            if (fileLength < 1) {
-                LOG.info().$("Ignoring file because it's empty. Path=").$(inputFilePath).$();
-                return;
+        LOG.info().$("Started index merge").$();
+        tmpPath.of(inputWorkRoot).concat(inputFileName).slash$();
+        int rootLen = tmpPath.length();
+        long partition = ff.findFirst(tmpPath);
+        if (partition > 0) {
+            try {
+                do {
+                    // partition loop
+                    long partitionName = ff.findName(partition);
+                    long partitionType = ff.findType(partition);
+                    if (Files.isDir(partitionName, partitionType, partitionNameSink)) {
+                        final long seq = pubSeq.next();
+                        if (seq < 0) {
+                            tmpPath.trimTo(rootLen);
+                            tmpPath.concat(partitionNameSink);
+                            FileSplitter.mergePartitionIndex(ff, tmpPath, openFileDescriptors, mergeIndexes);
+                        } else {
+                            TextImportTask task = queue.get(seq);
+                            Path partitionPath = task.getPath();
+                            partitionPath.of(inputWorkRoot).concat(inputFileName).concat(partitionNameSink);
+                            queue.get(seq).of(ff, doneLatch, TextImportTask.PHASE_INDEX_MERGE);
+                            pubSeq.done(seq);
+                            queuedCount++;
+                        }
+                    }
+                } while (ff.findNext(partition) > 0);
+            } finally {
+                ff.findClose(partition);
             }
-
-            findChunkBoundaries(fd);
-            indexChunks();
-
-            //TODO: merge phase
-            //TODO: import phase
-        } finally {
-            ff.close(fd);
         }
+
+        // process our own queue (this should fix deadlock with 1 worker configuration)
+        while (doneLatch.getCount() > -queuedCount) {
+            long seq = subSeq.next();
+            if (seq > -1) {
+                queue.get(seq).run();
+                subSeq.done(seq);
+            }
+        }
+
+        doneLatch.await(queuedCount);//TODO: add timeout ?
+        doneLatch.reset();
+
+        LOG.info().$("Finished index merge").$();
     }
 
     //TODO: we'll' need to lock dir or acquire table lock to make sure there are no two parallel user-issued imports of the same file
@@ -323,81 +355,25 @@ public class FileIndexer implements Closeable, Mutable {
         return bufferLength;
     }
 
-    public void merge(final Path root, int chunkCount) {
-        // reuse collections
-        LongList descriptors = new LongList(chunkCount);
-        DirectLongList indexes = new DirectLongList(chunkCount, MemoryTag.NATIVE_DEFAULT);
-        StringSink sink = new StringSink();
-        // close indexes
+    public void process() throws SqlException {
+        long fd = ff.openRO(inputFilePath);
+        if (fd < 0) {
+            throw CairoException.instance(ff.errno()).put("Can't open input file").put(inputFilePath);
+        }
 
-        int rootlen = root.length();
-        long partition = ff.findFirst(root);
-        if (partition > 0) {
-            try {
-                do {
-                    // partition loop
-                    long partitionName = ff.findName(partition);
-                    long partitionType = ff.findType(partition);
-                    if (Files.isDir(partitionName, partitionType, sink)) {
-                        //todo: make parallel
-                        descriptors.clear();
-                        indexes.clear();
-                        long mergedSize = 0;
-                        root.trimTo(rootlen);
-                        long chunk = ff.findFirst(root.concat(partitionName).slash$());
-                        int partlen = root.length();
-                        if (chunk > 0) {
-                            try {
-                                do {
-                                    // chunk loop
-                                    long chunkName = ff.findName(chunk);
-                                    long chunkType = ff.findType(chunk);
-                                    if (chunkType == Files.DT_FILE) {
-                                        root.trimTo(partlen);
-                                        root.concat(chunkName).$();
-                                        try {
-                                            final long fd = TableUtils.openRO(ff, root, LOG);
-                                            final long size = ff.length(fd);
-                                            final long address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
-
-                                            descriptors.add(fd);
-                                            indexes.add(address);
-                                            indexes.add(size / 16);
-                                            mergedSize += size;
-                                        } catch (Exception e) {
-                                            for (int i = 0, sz = descriptors.size(); i < sz; i++) {
-                                                ff.close(descriptors.get(i));
-                                            }
-                                            throw e;
-                                        }
-                                    }
-                                } while (ff.findNext(chunk) > 0);
-                            } finally {
-                                ff.findClose(chunk);
-                            }
-                        }
-
-                        long fd = -1;
-                        try {
-                            root.trimTo(rootlen);
-                            root.concat("merged").$();
-                            fd = TableUtils.openFileRWOrFail(ff, root, CairoConfiguration.O_NONE);
-                            final long address = TableUtils.mapRW(ff, fd, mergedSize, MemoryTag.MMAP_DEFAULT);
-                            final long merged = Vect.mergeLongIndexesAscExt(indexes.getAddress(), (int) indexes.size() / 2, address);
-                            assert merged == address;
-                        } finally {
-                            ff.fsync(fd);
-                            ff.close(fd);
-
-                            for (int i = 0, sz = descriptors.size(); i < sz; i++) {
-                                ff.close(descriptors.get(i));
-                            }
-                        }
-                    }
-                } while (ff.findNext(partition) > 0);
-            } finally {
-                ff.findClose(partition);
+        try {
+            final long fileLength = ff.length(fd);
+            if (fileLength < 1) {
+                LOG.info().$("Ignoring file because it's empty. Path=").$(inputFilePath).$();
+                return;
             }
+
+            findChunkBoundaries(fd);
+            indexChunks();
+            mergePartitionIndexes();
+            //TODO: import phase
+        } finally {
+            ff.close(fd);
         }
     }
 }
