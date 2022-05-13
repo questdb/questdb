@@ -34,6 +34,8 @@ import org.junit.Test;
 import java.sql.Connection;
 import java.sql.Statement;
 
+import static io.questdb.test.tools.TestUtils.assertEventually;
+
 public class PGFlushQueryCacheTest extends BasePGTest {
 
     @BeforeClass
@@ -79,8 +81,15 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                 final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
                 pubSeq.waitForNext();
 
-                long memAfterFlush = Unsafe.getMemUsed();
-                Assert.assertTrue("flush_query_cache() should release native memory", memAfterFlush < memAfterJoin);
+                // Sequence set to done before actual flush performed. We might have to try it a few times,
+                // before memory usage drop is measured.
+                assertEventually(() -> {
+                    long memAfterFlush = Unsafe.getMemUsed();
+                    Assert.assertTrue(
+                            "flush_query_cache() should release native memory: " + memInitial + ", " + memAfterJoin + ", " + memAfterFlush,
+                            memAfterFlush < memAfterJoin
+                    );
+                });
             }
         });
     }
