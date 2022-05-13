@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
@@ -32,6 +31,8 @@ import org.junit.Test;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+
+import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class PGFlushQueryCacheTest extends BasePGTest {
     @Test
@@ -102,21 +103,20 @@ public class PGFlushQueryCacheTest extends BasePGTest {
 
                 statement.execute("SELECT flush_query_cache()");
 
-                checkQueryCacheFlushed(memAfterJoin);
+                checkQueryCacheFlushed(memInitial, memAfterJoin);
             }
         });
     }
 
-    private void checkQueryCacheFlushed(long memAfterJoin) {
-        // Give max 30 seconds for the flush to execute
-        long memAfterFlush = memAfterJoin;
-        for (int i = 0; i < 1000 && memAfterFlush >= memAfterJoin; i++) {
-            Os.sleep(30);
-            memAfterFlush = Unsafe.getMemUsed();
-        }
-
-        if ( memAfterFlush >= memAfterJoin) {
-            Assert.fail("flush_query_cache() should release native memory afterJoin:" + memAfterJoin + ", afterFlush:" + memAfterFlush);
-        }
+    private void checkQueryCacheFlushed(long memInitial, long memAfterJoin) {
+        // Sequence set to done before actual flush performed. We might have to try it a few times,
+        // before memory usage drop is measured.
+        assertEventually(() -> {
+            long memAfterFlush = Unsafe.getMemUsed();
+            Assert.assertTrue(
+                    "flush_query_cache() should release native memory: " + memInitial + ", " + memAfterJoin + ", " + memAfterFlush,
+                    memAfterFlush < memAfterJoin
+            );
+        });
     }
 }

@@ -39,6 +39,8 @@ import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 
+import static io.questdb.test.tools.TestUtils.assertEventually;
+
 public class HttpFlushQueryCacheTest {
 
     private static final String JSON_DDL_RESPONSE = "0d\r\n" +
@@ -93,15 +95,15 @@ public class HttpFlushQueryCacheTest {
             final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
             pubSeq.waitForNext();
 
-            // Sequence set to done before actual flush performed.
-            // Give max 30 seconds for the flush to execute
-            long memAfterFlush = memAfterJoin;
-            for (int i = 0; i < 1000 && memAfterFlush >= memAfterJoin; i++) {
-                Os.sleep(30);
-                memAfterFlush = Unsafe.getMemUsed();
-            }
-
-            Assert.assertTrue("flush_query_cache() should release native memory", memAfterFlush < memAfterJoin);
+            // Sequence set to done before actual flush performed. We might have to try it a few times,
+            // before memory usage drop is measured.
+            assertEventually(() -> {
+                long memAfterFlush = Unsafe.getMemUsed();
+                Assert.assertTrue(
+                        "flush_query_cache() should release native memory: " + memInitial + ", " + memAfterJoin + ", " + memAfterFlush,
+                        memAfterFlush < memAfterJoin
+                );
+            });
         });
     }
 
