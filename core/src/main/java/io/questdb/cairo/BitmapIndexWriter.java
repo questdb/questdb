@@ -32,6 +32,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -458,6 +459,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
     private void seek(long count, long offset) {
         this.seekValueCount = count;
         this.seekValueBlockOffset = offset;
+    }
+
+    @TestOnly
+    long getValueMemSize() {
+        return valueMemSize;
     }
 
     void truncate() {

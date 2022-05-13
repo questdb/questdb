@@ -59,8 +59,4 @@ public class FlyweightCharSequence extends AbstractCharSequence implements Mutab
         this.len = len;
         return this;
     }
-
-    public FlyweightCharSequence ofQuoted(CharSequence delegate) {
-        return of(delegate, 1, delegate.length() - 2);
-    }
 }
