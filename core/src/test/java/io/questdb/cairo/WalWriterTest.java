@@ -35,13 +35,16 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void bootstrapWal() {
         String tableName = "testtable";
         try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE).col("a", ColumnType.INT)
+             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                     .col("a", ColumnType.INT)
+                     .col("b", ColumnType.STRING)
         ) {
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
                 for (int i = 0; i < 100; i++) {
                     WalWriter.Row row = walWriter.newRow();
                     row.putByte(0, (byte) i);
+                    row.putStr(1, String.valueOf(i));
                     row.append();
                 }
             }

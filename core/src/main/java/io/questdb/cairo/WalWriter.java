@@ -3977,6 +3977,9 @@ public class WalWriter implements Closeable {
         public void putStr(int columnIndex, CharSequence value) {
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value));
             setRowValueNotNull(columnIndex);
+
+            getSecondaryWalDColumn(columnIndex).putLong(getPrimaryWalDColumn(columnIndex).putStr(value));
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
