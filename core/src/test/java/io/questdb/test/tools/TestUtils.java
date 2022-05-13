@@ -47,6 +47,7 @@ import org.junit.Assert;
 
 import java.io.*;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class TestUtils {
@@ -331,6 +332,15 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEquals(LongList expected, LongList actual) {
+        Assert.assertEquals(expected.size(), actual.size());
+        for (int i = 0, n = expected.size(); i < n; i++) {
+            if (expected.getQuick(i) != actual.getQuick(i)) {
+                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+            }
+        }
+    }
+
     public static void assertEqualsIgnoreCase(CharSequence expected, CharSequence actual) {
         assertEqualsIgnoreCase(null, expected, actual);
     }
@@ -511,6 +521,24 @@ public final class TestUtils {
     public static long connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
         return Net.connect(fd, sockAddr);
+    }
+
+    public static void copyDirectory(Path src, Path dst, int dirMode) {
+        if (Files.mkdir(dst, dirMode) != 0) {
+            Assert.fail("Cannot create " + dst + ". Error: " + Os.errno());
+        }
+
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        final int srcLen = src.length();
+        final int dstLen = dst.length();
+        ff.walk(
+                src, (pUtf8NameZ, type) -> {
+                    src.concat(pUtf8NameZ).$();
+                    dst.trimTo(dstLen).concat(src.address() + srcLen).$();
+                    ff.mkdirs(dst, dirMode);
+                    ff.copy(src, dst);
+                }
+        );
     }
 
     public static void copyMimeTypes(String targetDir) throws IOException {
@@ -819,11 +847,33 @@ public final class TestUtils {
         }
     }
 
-    public static void assertEquals(LongList expected, LongList actual) {
-        Assert.assertEquals(expected.size(), actual.size());
-        for (int i = 0, n = expected.size(); i < n; i++) {
-            if (expected.getQuick(i) != actual.getQuick(i)) {
-                Assert.assertEquals("index " + i, expected.getQuick(i), actual.getQuick(i));
+    public static void assertEventually(Runnable assertion) {
+        assertEventually(assertion, 30);
+    }
+
+    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (;;) {
+            try {
+                assertion.run();
+                return;
+            } catch (AssertionError error) {
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            try {
+                Thread.sleep(nextSleepingTimeMillis);
+                nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                long elapsedTimeMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
+                throw new AssertionError("Interrupted before timeout. Expected timeout"
+                        + TimeUnit.SECONDS.toMillis(timeoutSeconds) + " ms. Elapsed time: " + elapsedTimeMillis
+                        +" ms. ");
             }
         }
     }
