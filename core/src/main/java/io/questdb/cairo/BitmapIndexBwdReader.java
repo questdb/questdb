@@ -28,12 +28,12 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
+/**
+ * Cursors returned by this class are not thread-safe.
+ */
 public class BitmapIndexBwdReader extends AbstractIndexReader {
     private final Cursor cursor = new Cursor();
     private final NullCursor nullCursor = new NullCursor();
-
-    public BitmapIndexBwdReader() {
-    }
 
     public BitmapIndexBwdReader(
             CairoConfiguration configuration,
@@ -128,18 +128,18 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             return next;
         }
 
-        private void jumpToPreviousValueBlock() {
-            // we don't need to extend valueMem because we're going from the farthest block back to start of file
-            // to closest, e.g. valueBlockOffset is decreasing.
-            valueBlockOffset = getPreviousBlock(valueBlockOffset);
-        }
-
         private long getPreviousBlock(long currentValueBlockOffset) {
             return valueMem.getLong(currentValueBlockOffset + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED);
         }
 
         private long getValueCellIndex(long absoluteValueIndex) {
             return absoluteValueIndex & blockValueCountMod;
+        }
+
+        private void jumpToPreviousValueBlock() {
+            // We don't need to extend valueMem because we're going from the farthest block back to start of file
+            // to closest, e.g. valueBlockOffset is decreasing.
+            valueBlockOffset = getPreviousBlock(valueBlockOffset);
         }
 
         void of(int key, long minValue, long maxValue, long keyCount) {
