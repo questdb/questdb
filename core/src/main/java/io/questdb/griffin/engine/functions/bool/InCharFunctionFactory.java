@@ -100,10 +100,5 @@ public class InCharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return set.contains(arg.getChar(rec));
         }
-
-        @Override
-        public boolean isReadoutStateless() {
-            return false;
-        }
     }
 }

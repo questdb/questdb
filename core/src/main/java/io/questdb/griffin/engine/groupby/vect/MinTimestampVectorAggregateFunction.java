@@ -122,7 +122,7 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return false;
     }
 }

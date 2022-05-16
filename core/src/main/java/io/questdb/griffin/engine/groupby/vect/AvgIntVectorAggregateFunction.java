@@ -144,7 +144,7 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return false;
     }
 }

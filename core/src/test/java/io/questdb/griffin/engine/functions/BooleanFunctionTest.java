@@ -46,7 +46,7 @@ public class BooleanFunctionTest {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return true;
         }
     };
@@ -62,7 +62,7 @@ public class BooleanFunctionTest {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return true;
         }
     };
@@ -77,7 +77,7 @@ public class BooleanFunctionTest {
             }
 
             @Override
-            public boolean isReadoutStateless() {
+            public boolean isReadThreadSafe() {
                 return true;
             }
         };

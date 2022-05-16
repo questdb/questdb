@@ -43,8 +43,8 @@ public class RecordColumn extends RecordFunction {
     }
 
     @Override
-    public boolean isReadoutStateless() {
-        return true;
+    public boolean isReadThreadSafe() {
+        return false;
     }
 
     @Override

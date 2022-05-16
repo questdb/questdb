@@ -52,7 +52,7 @@ public class LongColumn extends LongFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 

@@ -59,7 +59,7 @@ public class SystimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return true;
         }
     }

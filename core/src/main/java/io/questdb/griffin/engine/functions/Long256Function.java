@@ -155,7 +155,7 @@ public abstract class Long256Function implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return false;
     }
 }

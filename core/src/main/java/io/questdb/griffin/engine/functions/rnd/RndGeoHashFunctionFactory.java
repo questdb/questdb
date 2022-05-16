@@ -86,7 +86,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return false;
         }
 
@@ -112,7 +112,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return false;
         }
 
@@ -138,7 +138,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return false;
         }
 
@@ -169,7 +169,7 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return false;
         }
 

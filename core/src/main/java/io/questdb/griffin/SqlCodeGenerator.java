@@ -827,7 +827,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ExpressionNode filter,
             Function filterFunction
     ) throws SqlException {
-        if (!filterFunction.isReadoutStateless()) {
+        if (!filterFunction.isReadThreadSafe()) {
             ObjList<Function> perWorkerFilters = new ObjList<>();
             for (int i = 0, c = executionContext.getWorkerCount(); i < c; i++) {
                 final Function perWorkerFilter = compileFilter(filter, metadata, executionContext);
@@ -1666,8 +1666,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         keyTypes,
                         valueTypes.getColumnCount(),
                         false,
-                        timestampIndex,
-                        executionContext
+                        timestampIndex
                 );
 
 
@@ -2485,8 +2484,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         keyTypes,
                         valueTypes.getColumnCount(),
                         true,
-                        timestampIndex,
-                        executionContext
+                        timestampIndex
                 );
             } catch (Throwable e) {
                 Misc.freeObjList(recordFunctions);

@@ -118,7 +118,7 @@ public class StrPosBenchmark {
             }
 
             @Override
-            public boolean isReadoutStateless() {
+            public boolean isReadThreadSafe() {
                 return true;
             }
         };

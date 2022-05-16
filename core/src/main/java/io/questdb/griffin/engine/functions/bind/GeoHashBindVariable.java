@@ -69,7 +69,7 @@ class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunct
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 

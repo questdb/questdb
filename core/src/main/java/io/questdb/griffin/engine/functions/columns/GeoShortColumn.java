@@ -60,7 +60,7 @@ public class GeoShortColumn extends GeoShortFunction {
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 

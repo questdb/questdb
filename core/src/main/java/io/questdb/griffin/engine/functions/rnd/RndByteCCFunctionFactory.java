@@ -76,7 +76,7 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return false;
         }
 

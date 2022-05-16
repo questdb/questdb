@@ -180,7 +180,7 @@ public class CursorFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return false;
     }
 }

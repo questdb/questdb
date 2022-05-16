@@ -41,7 +41,7 @@ public class TimestampFunctionTest {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return true;
         }
     };
@@ -129,7 +129,7 @@ public class TimestampFunctionTest {
             }
 
             @Override
-            public boolean isReadoutStateless() {
+            public boolean isReadThreadSafe() {
                 return true;
             }
         };

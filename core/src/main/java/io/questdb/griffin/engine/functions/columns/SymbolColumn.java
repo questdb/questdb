@@ -61,7 +61,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         this.symbolTableSource = symbolTableSource;
-        if (executionContext.isCloneSymbolTables()) {
+        if (executionContext.getCloneSymbolTables()) {
             if (symbolTable != null) {
                 assert ownSymbolTable;
                 symbolTable = Misc.free(symbolTable);
@@ -81,7 +81,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return false;
     }
 

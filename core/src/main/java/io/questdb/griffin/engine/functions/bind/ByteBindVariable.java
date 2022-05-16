@@ -48,7 +48,7 @@ class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable {
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 }

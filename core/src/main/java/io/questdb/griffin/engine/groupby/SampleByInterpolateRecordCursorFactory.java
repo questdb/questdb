@@ -114,8 +114,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
                 keyTypes,
                 valueTypes.getColumnCount(),
                 false,
-                timestampIndex,
-                executionContext
+                timestampIndex
         );
 
         this.storeYFunctions = new ObjList<>(columnCount);

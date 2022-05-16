@@ -118,7 +118,7 @@ public class CountSymbolGroupByFunction extends LongFunction implements GroupByF
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 

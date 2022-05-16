@@ -68,7 +68,7 @@ public class LongIntHashMap extends AbstractLongHashSet implements Mutable {
     public void putAll(LongIntHashMap other) {
         long[] otherKeys = other.keys;
         int[] otherValues = other.values;
-        for (int i = 0; i < otherKeys.length; i++) {
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
             if (otherKeys[i] != other.noEntryKeyValue) {
                 put(otherKeys[i], otherValues[i]);
             }

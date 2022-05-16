@@ -58,7 +58,7 @@ public class StrArrayFunctionTest {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return true;
         }
     };

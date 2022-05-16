@@ -117,7 +117,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return false;
         }
     }
@@ -166,7 +166,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return false;
         }
     }

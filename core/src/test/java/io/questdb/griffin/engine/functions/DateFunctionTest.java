@@ -39,7 +39,7 @@ public class DateFunctionTest {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return true;
         }
     };
@@ -118,7 +118,7 @@ public class DateFunctionTest {
             }
 
             @Override
-            public boolean isReadoutStateless() {
+            public boolean isReadThreadSafe() {
                 return true;
             }
         };

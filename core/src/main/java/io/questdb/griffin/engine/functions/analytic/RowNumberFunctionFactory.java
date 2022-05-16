@@ -133,7 +133,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return false;
         }
     }

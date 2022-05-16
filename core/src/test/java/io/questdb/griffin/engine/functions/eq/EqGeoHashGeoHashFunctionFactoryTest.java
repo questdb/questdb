@@ -356,7 +356,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isReadoutStateless() {
+                    public boolean isReadThreadSafe() {
                         return true;
                     }
                 };
@@ -368,7 +368,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isReadoutStateless() {
+                    public boolean isReadThreadSafe() {
                         return true;
                     }
                 };
@@ -380,7 +380,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isReadoutStateless() {
+                    public boolean isReadThreadSafe() {
                         return true;
                     }
                 };
@@ -393,7 +393,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean isReadoutStateless() {
+                    public boolean isReadThreadSafe() {
                         return true;
                     }
                 };

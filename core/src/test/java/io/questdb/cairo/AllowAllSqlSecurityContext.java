@@ -132,12 +132,12 @@ public final class AllowAllSqlSecurityContext {
         }
 
         @Override
-        public void setCloneSymbolTables(boolean clone) {
+        public void setCloneSymbolTables(boolean cloneSymbolTables) {
 
         }
 
         @Override
-        public boolean isCloneSymbolTables() {
+        public boolean getCloneSymbolTables() {
             return false;
         }
     };

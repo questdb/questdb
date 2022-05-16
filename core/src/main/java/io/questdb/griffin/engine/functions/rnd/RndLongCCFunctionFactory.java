@@ -86,7 +86,7 @@ public class RndLongCCFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return false;
         }
     }

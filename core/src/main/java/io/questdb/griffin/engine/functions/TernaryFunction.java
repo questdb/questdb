@@ -64,8 +64,8 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default boolean isReadoutStateless() {
-        return getLeft().isReadoutStateless() && getCenter().isReadoutStateless() && getRight().isReadoutStateless();
+    default boolean isReadThreadSafe() {
+        return getLeft().isReadThreadSafe() && getCenter().isReadThreadSafe() && getRight().isReadThreadSafe();
     }
 
     @Override

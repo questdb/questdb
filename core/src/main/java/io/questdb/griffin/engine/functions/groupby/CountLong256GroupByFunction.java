@@ -110,7 +110,7 @@ public class CountLong256GroupByFunction extends LongFunction implements GroupBy
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 

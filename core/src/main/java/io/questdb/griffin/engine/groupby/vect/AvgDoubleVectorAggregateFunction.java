@@ -140,9 +140,9 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         // group-by functions are not stateless when values are computed
         // however, once values are calculated, the read becomes stateless
-        return true;
+        return false;
     }
 }

@@ -117,7 +117,7 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return false;
     }
 }

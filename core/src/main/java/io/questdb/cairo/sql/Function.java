@@ -155,7 +155,7 @@ public interface Function extends Closeable, StatefulAtom {
      * parallel SQL filters runtime, thus this method makes sense only for functions
      * that are allowed in a filter (WHERE clause).
      */
-    boolean isReadoutStateless();
+    boolean isReadThreadSafe();
 
     default void toTop() {
     }

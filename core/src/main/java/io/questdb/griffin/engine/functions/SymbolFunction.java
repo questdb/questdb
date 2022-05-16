@@ -179,7 +179,7 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     public abstract boolean isSymbolTableStatic();
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return false;
     }
 }

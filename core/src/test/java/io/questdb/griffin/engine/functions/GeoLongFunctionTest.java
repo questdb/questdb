@@ -44,7 +44,7 @@ public class GeoLongFunctionTest extends AbstractGriffinTest {
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return true;
         }
     };

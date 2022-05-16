@@ -48,7 +48,7 @@ class ShortBindVariable extends ShortFunction implements ScalarFunction, Mutable
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 }

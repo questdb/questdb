@@ -65,7 +65,7 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default boolean isReadoutStateless() {
-        return getLeft().isReadoutStateless() && getRight().isReadoutStateless();
+    default boolean isReadThreadSafe() {
+        return getLeft().isReadThreadSafe() && getRight().isReadThreadSafe();
     }
 }

@@ -50,7 +50,7 @@ class LongBindVariable extends LongFunction implements ScalarFunction, Mutable {
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 }

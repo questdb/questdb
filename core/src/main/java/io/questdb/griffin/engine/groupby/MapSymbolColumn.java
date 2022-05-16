@@ -80,7 +80,7 @@ public class MapSymbolColumn extends SymbolFunction {
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         this.symbolTableSource = symbolTableSource;
-        if (executionContext.isCloneSymbolTables()) {
+        if (executionContext.getCloneSymbolTables()) {
             if (symbolTable != null) {
                 assert ownSymbolTable;
                 symbolTable = Misc.free(symbolTable);
@@ -89,6 +89,7 @@ public class MapSymbolColumn extends SymbolFunction {
             ownSymbolTable = true;
         } else {
             symbolTable = symbolTableSource.getSymbolTable(cursorColumnIndex);
+            ownSymbolTable = false;
         }
         assert this.symbolTable != this;
         assert this.symbolTable != null;

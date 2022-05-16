@@ -122,7 +122,7 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return false;
     }
 }

@@ -118,7 +118,7 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return false;
     }
 }

@@ -52,7 +52,7 @@ public class ShortColumn extends ShortFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return true;
     }
 

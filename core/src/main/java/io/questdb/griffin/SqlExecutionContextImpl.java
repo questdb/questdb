@@ -197,8 +197,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void setCloneSymbolTables(boolean clone) {
-        this.cloneSymbolTables = clone;
+    public void setCloneSymbolTables(boolean cloneSymbolTables) {
+        this.cloneSymbolTables = cloneSymbolTables;
     }
 
     public SqlExecutionContextImpl with(
@@ -231,7 +231,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public boolean isCloneSymbolTables() {
+    public boolean getCloneSymbolTables() {
         return cloneSymbolTables;
     }
 }

@@ -99,7 +99,7 @@ public interface SqlExecutionContext extends Closeable {
     default void close(){
     }
 
-    void setCloneSymbolTables(boolean clone);
+    void setCloneSymbolTables(boolean cloneSymbolTables);
 
-    boolean isCloneSymbolTables();
+    boolean getCloneSymbolTables();
 }

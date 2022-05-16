@@ -242,7 +242,7 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             filter.init(symbolTableSource, executionContext);
             if (perWorkerFilters != null) {
-                final boolean current = executionContext.isCloneSymbolTables();
+                final boolean current = executionContext.getCloneSymbolTables();
                 executionContext.setCloneSymbolTables(true);
                 try {
                     for (int i = 0, n = perWorkerFilters.size(); i < n; i++) {

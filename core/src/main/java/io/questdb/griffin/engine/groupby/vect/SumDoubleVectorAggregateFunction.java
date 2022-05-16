@@ -144,7 +144,7 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return false;
     }
 }

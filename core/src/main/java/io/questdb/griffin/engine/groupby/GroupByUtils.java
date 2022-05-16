@@ -97,8 +97,7 @@ public class GroupByUtils {
             ArrayColumnTypes keyTypes,
             int keyColumnIndex,
             boolean timestampUnimportant,
-            int timestampIndex,
-            SqlExecutionContext sqlExecutionContext
+            int timestampIndex
     ) throws SqlException {
 
         recordFunctionPositions.clear();

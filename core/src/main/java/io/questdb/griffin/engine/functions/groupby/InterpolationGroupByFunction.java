@@ -266,7 +266,7 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public boolean isReadoutStateless() {
+    public boolean isReadThreadSafe() {
         return false;
     }
 

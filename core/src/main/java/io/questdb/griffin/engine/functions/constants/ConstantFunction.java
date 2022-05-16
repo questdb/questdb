@@ -33,7 +33,7 @@ public interface ConstantFunction extends Function {
     }
 
     @Override
-    default boolean isReadoutStateless() {
+    default boolean isReadThreadSafe() {
         return true;
     }
 }

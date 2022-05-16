@@ -231,7 +231,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
 
         @Override
-        public boolean isReadoutStateless() {
+        public boolean isReadThreadSafe() {
             return false;
         }
     }
