@@ -228,7 +228,8 @@ export class Client {
       }
     }
 
-    if (response.ok || response.status == 400) {
+    if (response.ok || response.status === 400) {
+      // 400 is only for SQL errors
       const fetchTime = (new Date().getTime() - start.getTime()) * 1e6
       const data = (await response.json()) as RawResult
 
