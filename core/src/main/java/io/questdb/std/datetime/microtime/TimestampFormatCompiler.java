@@ -35,6 +35,7 @@ public class TimestampFormatCompiler {
     static final int OP_ERA = 1;
     static final int OP_YEAR_ONE_DIGIT = 2;
     static final int OP_YEAR_TWO_DIGITS = 3;
+    static final int OP_YEAR_THREE_DIGITS = 148;
     static final int OP_YEAR_FOUR_DIGITS = 4;
     static final int OP_MONTH_ONE_DIGIT = 5;
     static final int OP_MONTH_TWO_DIGITS = 6;
@@ -99,7 +100,6 @@ public class TimestampFormatCompiler {
     private static final int FA_LEAP = 8;
     private static final int FA_DAY_OF_WEEK = 10;
     private static final int FA_MILLIS_MICROS = 11;
-    private static final int FA_NANOS = 12;
     private static final int P_INPUT_STR = 1;
     private static final int P_LO = 2;
     private static final int P_HI = 3;
@@ -127,6 +127,7 @@ public class TimestampFormatCompiler {
         addOp("G", OP_ERA);
         addOp("y", OP_YEAR_ONE_DIGIT);
         addOp("yy", OP_YEAR_TWO_DIGITS);
+        addOp("yyy", OP_YEAR_THREE_DIGITS);
         addOp("yyyy", OP_YEAR_FOUR_DIGITS);
         addOp("M", OP_MONTH_ONE_DIGIT);
         addOp("MM", OP_MONTH_TWO_DIGITS);
@@ -262,9 +263,12 @@ public class TimestampFormatCompiler {
             int getMillisOfSecondIndex,
             int getMicrosOfSecondIndex,
             int getDayOfWeekIndex,
-            int append000Index,
             int append00Index,
             int append0Index,
+            int appendYear000Index,
+            int appendYear00Index,
+            int appendYear0Index,
+            int appendYearIndex,
             int sinkPutIntIndex,
             int sinkPutStrIndex,
             int sinkPutChrIndex,
@@ -495,20 +499,26 @@ public class TimestampFormatCompiler {
                 case TimestampFormatCompiler.OP_YEAR_GREEDY:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
-                    asm.invokeInterface(sinkPutIntIndex, 1);
-                    asm.pop();
+                    asm.invokeStatic(appendYearIndex);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
                     asm.iconst(100);
                     asm.irem();
-                    asm.invokeStatic(append0Index);
+                    asm.invokeStatic(appendYear0Index);
+                    break;
+                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
+                    asm.aload(FA_LOCAL_SINK);
+                    asm.iload(fmtAttributeIndex[FA_YEAR]);
+                    asm.iconst(1000);
+                    asm.irem();
+                    asm.invokeStatic(appendYear00Index);
                     break;
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
-                    asm.invokeStatic(append000Index);
+                    asm.invokeStatic(appendYear000Index);
                     break;
                 // ERA
                 case TimestampFormatCompiler.OP_ERA:
@@ -1081,6 +1091,24 @@ public class TimestampFormatCompiler {
                     asm.invokeStatic(adjustYearIndex);
                     asm.istore(LOCAL_YEAR);
                     break;
+                case OP_YEAR_THREE_DIGITS:
+                    // assertRemaining(pos + 2, hi);
+                    // year = Numbers.parseInt(in, pos, pos += 3);
+                    stackState &= ~(1 << LOCAL_YEAR);
+
+                    asm.iload(LOCAL_POS);
+                    asm.iconst(2);
+                    asm.iadd();
+                    asm.iload(P_HI);
+                    asm.invokeStatic(assertRemainingIndex);
+
+                    asm.aload(P_INPUT_STR);
+                    asm.iload(LOCAL_POS);
+                    asm.iinc(LOCAL_POS, 3);
+                    asm.iload(LOCAL_POS);
+                    asm.invokeStatic(parseIntIndex);
+                    asm.istore(LOCAL_YEAR);
+                    break;
                 case OP_YEAR_FOUR_DIGITS: {
                     // if (pos < hi && in.charAt(pos) == '-') {
                     //    assertRemaining(pos + 4, hi);
@@ -1438,9 +1466,12 @@ public class TimestampFormatCompiler {
         int appendHour12PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121Index = asm.poolMethod(TimestampFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSink;I)V");
-        int append000Index = asm.poolMethod(TimestampFormatUtils.class, "append000", "(Lio/questdb/std/str/CharSink;I)V");
         int append00Index = asm.poolMethod(TimestampFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
         int append0Index = asm.poolMethod(TimestampFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYear000Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear000", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYear00Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear00", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYear0Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear0", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendYearIndex = asm.poolMethod(TimestampFormatUtils.class, "appendYear", "(Lio/questdb/std/str/CharSink;I)V");
 
         int parseOffsetIndex = asm.poolMethod(Timestamps.class, "parseOffset", "(Ljava/lang/CharSequence;II)J");
         int getYearIndex = asm.poolMethod(Timestamps.class, "getYear", "(J)I");
@@ -1543,9 +1574,12 @@ public class TimestampFormatCompiler {
                 getMillisOfSecondIndex,
                 getMicrosOfSecondIndex,
                 getDayOfWeekIndex,
-                append000Index,
                 append00Index,
                 append0Index,
+                appendYear000Index,
+                appendYear00Index,
+                appendYear0Index,
+                appendYearIndex,
                 sinkPutIntIndex,
                 sinkPutStrIndex,
                 sinkPutChrIndex,
@@ -1640,6 +1674,7 @@ public class TimestampFormatCompiler {
                 case TimestampFormatCompiler.OP_YEAR_ONE_DIGIT:
                 case TimestampFormatCompiler.OP_YEAR_GREEDY:
                 case TimestampFormatCompiler.OP_YEAR_TWO_DIGITS:
+                case TimestampFormatCompiler.OP_YEAR_THREE_DIGITS:
                 case TimestampFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     attributes |= (1 << FA_YEAR);
                     break;
@@ -1731,6 +1766,7 @@ public class TimestampFormatCompiler {
                     result |= (1 << LOCAL_TEMP_LONG);
                 case OP_YEAR_ONE_DIGIT:
                 case OP_YEAR_TWO_DIGITS:
+                case OP_YEAR_THREE_DIGITS:
                 case OP_YEAR_FOUR_DIGITS:
                     result |= (1 << LOCAL_YEAR);
                     break;
