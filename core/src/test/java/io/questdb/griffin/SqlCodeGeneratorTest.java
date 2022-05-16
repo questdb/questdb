@@ -842,6 +842,52 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCg() throws Exception {
+        assertQuery(
+                "title\tcurrent\told\tdifference\tdifference_percentage\tcolors\n" +
+                        "Revenue\tNaN\tNaN\tNaN\tNaN\trag\n",
+                "SELECT\n" +
+                        "  'Revenue' as title,\n" +
+                        "  current_orders as current,\n" +
+                        "  old_orders as old,\n" +
+                        "  current_orders - old_orders as difference,\n" +
+                        "  ((current_orders - old_orders) / current_orders) * 100.0 difference_percentage,\n" +
+                        "  'rag' as colors\n" +
+                        "from\n" +
+                        "(\n" +
+                        "    SELECT\n" +
+                        "      cast(max('orders_1'.revenue) as float) as current_orders,\n" +
+                        "      cast(max('orders_2'.revenue) as float) as old_orders\n" +
+                        "    from\n" +
+                        "      (\n" +
+                        "        SELECT\n" +
+                        "          timestamp as time,\n" +
+                        "          sum(total_revenue) as revenue\n" +
+                        "        from\n" +
+                        "          'mdc_data'\n" +
+                        "        WHERE\n" +
+                        "          timestamp > timestamp_floor('d', now()) SAMPLE BY 10s\n" +
+                        "      ) as orders_1,\n" +
+                        "      (\n" +
+                        "        SELECT\n" +
+                        "          timestamp as time,\n" +
+                        "          sum(total_revenue) as revenue\n" +
+                        "        from\n" +
+                        "          'mdc_data'\n" +
+                        "        WHERE\n" +
+                        "          timestamp < dateadd('d', -1, now())\n" +
+                        "          and timestamp > timestamp_floor('d', dateadd('d', -1, now())) SAMPLE BY 10s\n" +
+                        "      ) as orders_2\n" +
+                        "  );\n",
+                "create table mdc_data as (select rnd_double() total_revenue, timestamp_sequence(dateadd('d', -1, now()),2) timestamp from long_sequence(10000)) timestamp(timestamp) partition by day",
+                null,
+                false,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testFilterFunctionOnSubQuery() throws Exception {
         TestMatchFunctionFactory.clear();
         // no index

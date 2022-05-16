@@ -67,6 +67,8 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 cursor.of(masterCursor, slaveCursor);
                 return cursor;
             }
+            slaveCursor = Misc.free(slaveCursor);
+            Misc.free(masterCursor);
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
