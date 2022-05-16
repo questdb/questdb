@@ -410,6 +410,39 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testFormatYearThreeDigits() throws Exception {
+        assertFormat("09, 017", "dd, yyy", "2017-04-09T00:00:00.000Z");
+        assertFormat("017", "yyy", "2017-04-09T00:00:00.000Z");
+
+        assertFormat("09, 777", "dd, yyy", "0777-04-09T00:00:00.000Z");
+        assertFormat("099", "yyy", "0099-04-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatZeroYear() throws Exception {
+        assertFormat("09, 1", "dd, y", "0000-04-09T00:00:00.000Z");
+        assertFormat("09, 01", "dd, yy", "0000-04-09T00:00:00.000Z");
+        assertFormat("09, 001", "dd, yyy", "0000-04-09T00:00:00.000Z");
+        assertFormat("09, 0001", "dd, yyyy", "0000-04-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatNanoOneDigits() throws Exception {
+        // we do not store nanos
+        assertFormat("09, 017 0", "dd, yyy N", "2017-04-09T00:00:00.333123Z");
+        // in this format N - nanos should not be greedy
+        assertMicros("yyyy-MM-dd HH:mm:ss.NSSS", "2014-04-03T04:32:49.010000Z", "2014-04-03 04:32:49.1010");
+    }
+
+    @Test
+    public void testFormatNanoThreeDigits() throws Exception {
+        // we do not store nanos
+        assertFormat("09, 017 000", "dd, yyy NNN", "2017-04-09T00:00:00.333123Z");
+        // in this format N - nanos should not be greedy
+        assertMicros("yyyy-MM-dd HH:mm:ss.SSSNNN", "2014-04-03T04:32:49.010000Z", "2014-04-03 04:32:49.010123");
+    }
+
+    @Test
     public void testGreedyMillis() throws NumericException {
         assertThat("y-MM-dd HH:mm:ss.Sz", "2014-04-03T04:32:49.010Z", "2014-04-03 04:32:49.01Z");
     }
@@ -417,7 +450,7 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testGreedyYear() throws Exception {
         assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
-        assertThat("y-MM", "1936-03-01T00:00:00.000Z", "36-03");
+        assertThat("y-MM", "2036-03-01T00:00:00.000Z", "36-03");
         assertThat("y-MM", "2015-03-01T00:00:00.000Z", "15-03");
         assertThat("y-MM", "0137-03-01T00:00:00.000Z", "137-03");
     }
@@ -429,7 +462,7 @@ public class TimestampFormatCompilerTest {
             TimestampFormatUtils.updateReferenceYear(Timestamps.toMicros(2015, 1, 20, 0, 0));
             assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
             assertThat("y-MM", "2006-03-01T00:00:00.000Z", "06-03");
-            assertThat("y-MM", "1955-03-01T00:00:00.000Z", "55-03");
+            assertThat("y-MM", "2055-03-01T00:00:00.000Z", "55-03");
             assertThat("y-MM", "0137-03-01T00:00:00.000Z", "137-03");
         } finally {
             TimestampFormatUtils.updateReferenceYear(referenceYear);
@@ -557,7 +590,7 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testMillisGreedy() throws Exception {
-        assertThat("ddMMy HH:mm:ss.S", "1978-03-19T21:20:45.678Z", "190378 21:20:45.678");
+        assertThat("ddMMy HH:mm:ss.S", "2078-03-19T21:20:45.678Z", "190378 21:20:45.678");
     }
 
     @Test(expected = NumericException.class)
@@ -573,7 +606,7 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testMillisThreeDigits() throws Exception {
-        assertThat("ddMMy HH:mm:ss.SSS", "1978-03-19T21:20:45.678Z", "190378 21:20:45.678");
+        assertThat("ddMMy HH:mm:ss.SSS", "2078-03-19T21:20:45.678Z", "190378 21:20:45.678");
     }
 
     @Test
@@ -598,9 +631,9 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
-    public void testMonthName() throws Exception {
+    public void testMonthNameAndThreeDigitYear() throws Exception {
         assertThat("dd-MMM-y", "2012-11-15T00:00:00.000Z", "15-NOV-12");
-        assertThat("dd MMMM yyy", "2013-09-18T00:00:00.000Z", "18 September 2013");
+        assertThat("dd MMMM yyy", "0213-09-18T00:00:00.000Z", "18 September 213");
     }
 
     @Test
@@ -648,7 +681,7 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testSecondGreedy() throws Exception {
-        assertThat("ddMMy HH:mm:s", "1978-03-19T21:20:45.000Z", "190378 21:20:45");
+        assertThat("ddMMy HH:mm:s", "2078-03-19T21:20:45.000Z", "190378 21:20:45");
     }
 
     @Test
@@ -658,7 +691,7 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testSecondTwoDigits() throws Exception {
-        assertThat("ddMMy HH:mm:ss", "1978-03-19T21:20:45.000Z", "190378 21:20:45");
+        assertThat("ddMMy HH:mm:ss", "2078-03-19T21:20:45.000Z", "190378 21:20:45");
     }
 
     @Test
@@ -720,6 +753,11 @@ public class TimestampFormatCompilerTest {
     @Test
     public void testWeekdayDigit() throws Exception {
         assertThat("u, dd-MM-yyyy", "2014-04-03T00:00:00.000Z", "5, 03-04-2014");
+    }
+
+    @Test
+    public void testThreeDigitYear() throws Exception {
+        assertThat("u, dd-MM-yyy", "0999-04-03T00:00:00.000Z", "5, 03-04-999");
     }
 
     @Test(expected = NumericException.class)
