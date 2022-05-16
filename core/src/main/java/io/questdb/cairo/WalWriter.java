@@ -308,6 +308,7 @@ public class WalWriter implements Closeable {
             configureColumnMemory();
             this.walDColumns = new ObjList<>(columnCount * 2);
             configureWalDColumnMemory();
+
             openWalDPartition();
             configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
@@ -2013,7 +2014,7 @@ public class WalWriter implements Closeable {
             configureWalDColumn(type, i);
 
             if (ColumnType.isSymbol(type)) {
-                throw new UnsupportedOperationException("not supported yet");
+                throw new UnsupportedOperationException("symbols not supported yet");
 //                final int symbolIndex = denseSymbolMapWriters.size();
 //                long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(i);
 //                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
@@ -2579,10 +2580,11 @@ public class WalWriter implements Closeable {
 
     private void openWalDPartition() {
         try {
-            int plen = walDPath.length();
+            walDPath.slash().concat("0");
             if (ff.mkdirs(walDPath.slash$(), mkDirMode) != 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot create WAL-D directory: ").put(walDPath);
             }
+            int plen = walDPath.length();
 
             assert columnCount > 0;
 

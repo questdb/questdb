@@ -52,15 +52,15 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
             }
             System.out.println("done");
-            assertWalFileExist(tableName, "a", path);
-            assertWalFileExist(tableName, "b", path);
+            assertWalFileExist(tableName, "a", 0, path);
+            assertWalFileExist(tableName, "b", 0, path);
         }
     }
 
-    private void assertWalFileExist(String tableName, String columnName, Path path) {
+    private void assertWalFileExist(String tableName, String columnName, int partition, Path path) {
         int plen = path.length();
         try {
-            path.concat(tableName).slash().concat("wal").slash().concat(columnName + ".d").$();
+            path.concat(tableName).slash().concat("wal").slash().concat(String.valueOf(partition)).slash().concat(columnName + ".d").$();
             assertPathExists(path);
         } finally {
             path.trimTo(plen);
