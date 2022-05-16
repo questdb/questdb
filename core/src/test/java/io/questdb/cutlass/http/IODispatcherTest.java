@@ -4518,8 +4518,8 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testJsonQueryWrapLargeNumber() throws Exception {
-        // don't warp large numbers (LONG) by default
+    public void testJsonQueryQuoteLargeNumber() throws Exception {
+        // don't quote large numbers (LONG) by default
         testJsonQuery(
                 0,
                 "GET /query?query=select%201400055037509505337%20as%20l HTTP/1.1\r\n" +
@@ -4545,10 +4545,10 @@ public class IODispatcherTest {
                         "\r\n"
         );
 
-        // warp large numbers (LONG) on param 'wrapLargeNum=true'
+        // quote large numbers (LONG) to string, on param 'quoteLargeNum=true'
         testJsonQuery(
                 0,
-                "GET /query?query=select%201400055037509505337%20as%20l&wrapLargeNum=true HTTP/1.1\r\n" +
+                "GET /query?query=select%201400055037509505337%20as%20l&quoteLargeNum=true HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Cache-Control: max-age=0\r\n" +
@@ -4571,7 +4571,7 @@ public class IODispatcherTest {
                         "\r\n"
         );
 
-        // warp large numbers (LONG) for questdb web console
+        // quote large numbers (LONG) for questdb web console
         testJsonQuery(
                 0,
                 "GET /exec?limit=0%2C1000&explain=true&count=true&src=con&query=select%201400055037509505337%20as%20l HTTP/1.1\r\n" +
