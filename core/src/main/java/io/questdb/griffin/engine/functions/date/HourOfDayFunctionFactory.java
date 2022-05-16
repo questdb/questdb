@@ -46,14 +46,14 @@ public class HourOfDayFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new Func(arg);
+        return new HourOfDayFunction(arg);
     }
 
-    private static final class Func extends IntFunction implements UnaryFunction {
+    static final class HourOfDayFunction extends IntFunction implements UnaryFunction {
 
         private final Function arg;
 
-        public Func(Function arg) {
+        public HourOfDayFunction(Function arg) {
             super();
             this.arg = arg;
         }
