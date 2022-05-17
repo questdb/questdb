@@ -125,4 +125,9 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
     }
+
+    @Override
+    public boolean fragmentedSymbolTables() {
+        return base.fragmentedSymbolTables();
+    }
 }

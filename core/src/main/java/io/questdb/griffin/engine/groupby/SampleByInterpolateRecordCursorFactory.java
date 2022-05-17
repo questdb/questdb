@@ -532,4 +532,9 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             }
         }
     }
+
+    @Override
+    public boolean fragmentedSymbolTables() {
+        return base.fragmentedSymbolTables();
+    }
 }
