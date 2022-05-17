@@ -91,10 +91,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         if (srcDataMax < 1) {
 
-            // this has to be a brand new partition for either of two cases:
-            // - this partition is above min partition of the table
-            // - this partition is below max partition of the table
-            // - this is last partition that is empty
+            // This has to be a brand new partition for any of three cases:
+            // - This partition is above min partition of the table.
+            // - This partition is below max partition of the table.
+            // - This is last partition that is empty.
             // pure OOO data copy into new partition
 
             if (!last) {
@@ -745,6 +745,75 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             O3Basket o3Basket,
             long colTopSinkAddr
     ) {
+        java.util.function.LongFunction<String> ts2s = (long ts) -> {
+            io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
+            io.questdb.std.datetime.microtime.TimestampFormatUtils.appendDateTimeUSec(sink, ts);
+            return sink.toString();
+        };
+
+        System.err.printf(
+            "publishOpenColumnTasks :: (A) \n" +
+            "    srcOooLo: %d\n" +
+            "    srcOooHi: %d\n" +
+            "    srcOooMax: %d\n" +
+            "    oooTimestampMin: %s\n" +
+            "    oooTimestampMax: %s\n" +
+            "    oooTimestampLo: %s\n" +
+            "    partitionTimestamp: %s\n" +
+            "    prefixType: %d\n" +
+            "    prefixLo: %d\n" +
+            "    prefixHi: %d\n" +
+            "    mergeType: %d\n" +
+            "    mergeDataLo: %d\n" +
+            "    mergeDataHi: %d\n" +
+            "    mergeOOOLo: %d\n" +
+            "    mergeOOOHi: %d\n" +
+            "    suffixType: %d\n" +
+            "    suffixLo: %d\n" +
+            "    suffixHi: %d\n" +
+            "    srcDataMax: %d\n" +
+            "    srcDataTxn: %d\n" +
+            "    openColumnMode: %d\n" +
+            "    srcTimestampFd: %d\n" +
+            "    srcTimestampAddr: %d\n" +
+            "    srcTimestampSize: %d\n" +
+            "    timestampIndex: %d\n" +
+            "    sortedTimestampsAddr: %d\n",
+            srcOooLo,
+            srcOooHi,
+            srcOooMax,
+            ts2s.apply(oooTimestampMin),
+            ts2s.apply(oooTimestampMax),
+            ts2s.apply(oooTimestampLo),
+            ts2s.apply(partitionTimestamp),
+            prefixType,
+            prefixLo,
+            prefixHi,
+            mergeType,
+            mergeDataLo,
+            mergeDataHi,
+            mergeOOOLo,
+            mergeOOOHi,
+            suffixType,
+            suffixLo,
+            suffixHi,
+            srcDataMax,
+            srcDataTxn,
+            openColumnMode,
+            srcTimestampFd,
+            srcTimestampAddr,
+            srcTimestampSize,
+            timestampIndex,
+            sortedTimestampsAddr);
+
+        // Number of rows to insert from the O3 segment into this partition.
+        final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
+        
+        tableWriter.addPhysicallyWrittenRows(
+            O3OpenColumnJob.isOpenColumnModeForAppend(openColumnMode)
+                ? srcOooBatchRowSize
+                : srcDataMax + srcOooBatchRowSize);
+
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
 
         final long timestampMergeIndexAddr;

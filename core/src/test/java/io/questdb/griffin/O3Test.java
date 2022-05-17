@@ -1091,6 +1091,8 @@ public class O3Test extends AbstractO3Test {
             final long initRowCount = 24;
 
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+            printSqlResult(compiler, sqlExecutionContext, "x");
+            System.err.println(sink);
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
                     TableWriter.Row r = null;
@@ -1099,24 +1101,24 @@ public class O3Test extends AbstractO3Test {
                     r.putInt(0, 101);
                     r.append();
 
-                //     r = w.newRow(millenniumTimestamp(23, 15));
-                //     r.putInt(0, 102);
-                //     r.append();
+                    r = w.newRow(millenniumTimestamp(23, 15));
+                    r.putInt(0, 102);
+                    r.append();
 
-                //     r = w.newRow(millenniumTimestamp(23, 45));
-                //     r.putInt(0, 103);
-                //     r.append();
+                    r = w.newRow(millenniumTimestamp(23, 45));
+                    r.putInt(0, 103);
+                    r.append();
 
                     r = w.newRow(millenniumTimestamp(1, 04, 45));
                     r.putInt(0, 201);
                     r.append();
 
-                //     r = w.newRow(millenniumTimestamp(1, 04, 30));
-                //     r.putInt(0, 202);
-                //     r.append();
+                    r = w.newRow(millenniumTimestamp(1, 04, 30));
+                    r.putInt(0, 202);
+                    r.append();
 
-                //     r = w.newRow(millenniumTimestamp(1, 04, 15));
-                //     r.putInt(0, 203);
+                    r = w.newRow(millenniumTimestamp(1, 04, 15));
+                    r.putInt(0, 203);
                     r.append();
 
                     w.commit();
@@ -1143,30 +1145,31 @@ public class O3Test extends AbstractO3Test {
                 "17\t2000-01-01T21:00:00.000000Z\n" +
                 "18\t2000-01-01T22:00:00.000000Z\n" +
                 "19\t2000-01-01T23:00:00.000000Z\n" +
-                //"102\t2000-01-01T23:15:00.000000Z\n" +  // new row
+                "102\t2000-01-01T23:15:00.000000Z\n" +  // new row
                 "101\t2000-01-01T23:30:00.000000Z\n" +  // new row
-                //"103\t2000-01-01T23:45:00.000000Z\n" +  // new row
+                "103\t2000-01-01T23:45:00.000000Z\n" +  // new row
                 "20\t2000-01-02T00:00:00.000000Z\n" +
                 "21\t2000-01-02T01:00:00.000000Z\n" +
                 "22\t2000-01-02T02:00:00.000000Z\n" +
                 "23\t2000-01-02T03:00:00.000000Z\n" +
                 "24\t2000-01-02T04:00:00.000000Z\n" +
-                //"203\t2000-01-02T04:15:00.000000Z\n" +  // new row
-                //"202\t2000-01-02T04:30:00.000000Z\n" +  // new row
+                "203\t2000-01-02T04:15:00.000000Z\n" +  // new row
+                "202\t2000-01-02T04:30:00.000000Z\n" +  // new row
                 "201\t2000-01-02T04:45:00.000000Z\n";  // new row
 
-                System.err.printf("x: %s\n", sink.toString());
-                TestUtils.assertEquals(expected, sink);
+            TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
-            assertEquals(initRowCount + 2, metrics.tableWriter().committedRows());
+            assertEquals(initRowCount + 6, metrics.tableWriter().committedRows());
 
             // No partitions had to be re-written: New records appended at the end of each.
-            assertEquals(initRowCount + 2, metrics.tableWriter().physicallyWrittenRows());
+            assertEquals(initRowCount + 6, metrics.tableWriter().physicallyWrittenRows());
         });
     }
 
     // TODO: [adam] Test that creates a partition ahead of existing data.
+
+    // TODO: [adam] Test inserting into an "empty" partition with data both before and after it.
 
     private static void testWriterOpensCorrectTxnPartitionOnRestart0(
             CairoEngine engine,
