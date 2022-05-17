@@ -130,13 +130,10 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
     }
 
-    private class HashJoinRecordCursor implements NoRandomAccessRecordCursor {
+    private class HashJoinRecordCursor extends AbstractJoinCursor {
         private final JoinRecord record;
         private final LongChain slaveChain;
         private final Map joinKeyMap;
-        private final int columnSplit;
-        private RecordCursor masterCursor;
-        private RecordCursor slaveCursor;
         private Record masterRecord;
         private LongChain.TreeCursor slaveChainCursor;
         private Record slaveRecord;
@@ -146,29 +143,15 @@ public class HashJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
                 Map joinKeyMap,
                 LongChain slaveChain
         ) {
+            super(columnSplit);
             this.record = new JoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
-            this.columnSplit = columnSplit;
-        }
-
-        @Override
-        public void close() {
-            masterCursor = Misc.free(masterCursor);
-            slaveCursor = Misc.free(slaveCursor);
         }
 
         @Override
         public Record getRecord() {
             return record;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex < columnSplit) {
-                return masterCursor.getSymbolTable(columnIndex);
-            }
-            return slaveCursor.getSymbolTable(columnIndex - columnSplit);
         }
 
         @Override

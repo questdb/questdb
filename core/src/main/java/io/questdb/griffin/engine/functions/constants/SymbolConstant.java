@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Chars;
+import org.jetbrains.annotations.Nullable;
 
 public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     public static final SymbolConstant NULL = new SymbolConstant(null, VALUE_IS_NULL);
@@ -95,5 +96,10 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     @Override
     public CharSequence valueBOf(int key) {
         return value;
+    }
+
+    @Override
+    public @Nullable SymbolTable newSymbolTable() {
+        return this;
     }
 }

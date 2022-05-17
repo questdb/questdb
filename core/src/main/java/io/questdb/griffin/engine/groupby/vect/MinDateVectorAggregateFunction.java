@@ -120,4 +120,9 @@ public class MinDateVectorAggregateFunction extends DateFunction implements Vect
         final long value = accumulator.longValue();
         return value == Long.MAX_VALUE ? Numbers.LONG_NaN : value;
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }

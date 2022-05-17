@@ -93,13 +93,13 @@ public class CountSymbolGroupByFunction extends LongFunction implements GroupByF
     }
 
     @Override
-    public void setLong(MapValue mapValue, long value) {
-        mapValue.putLong(valueIndex, value);
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
     }
 
     @Override
-    public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
+    public void setLong(MapValue mapValue, long value) {
+        mapValue.putLong(valueIndex, value);
     }
 
     @Override
@@ -115,6 +115,11 @@ public class CountSymbolGroupByFunction extends LongFunction implements GroupByF
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
     }
 
     @Override

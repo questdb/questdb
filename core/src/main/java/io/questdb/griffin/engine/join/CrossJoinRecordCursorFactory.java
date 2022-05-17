@@ -67,6 +67,8 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                 cursor.of(masterCursor, slaveCursor);
                 return cursor;
             }
+            slaveCursor = Misc.free(slaveCursor);
+            Misc.free(masterCursor);
         } catch (Throwable ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
@@ -86,34 +88,17 @@ public class CrossJoinRecordCursorFactory extends AbstractRecordCursorFactory {
         return masterFactory.supportsUpdateRowId(tableName);
     }
 
-    private static class CrossJoinRecordCursor implements NoRandomAccessRecordCursor {
+    private static class CrossJoinRecordCursor extends AbstractJoinCursor {
         private final JoinRecord record;
-        private final int columnSplit;
-        private RecordCursor masterCursor;
-        private RecordCursor slaveCursor;
 
         public CrossJoinRecordCursor(int columnSplit) {
+            super(columnSplit);
             this.record = new JoinRecord(columnSplit);
-            this.columnSplit = columnSplit;
-        }
-
-        @Override
-        public void close() {
-            masterCursor = Misc.free(masterCursor);
-            slaveCursor = Misc.free(slaveCursor);
         }
 
         @Override
         public Record getRecord() {
             return record;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex < columnSplit) {
-                return masterCursor.getSymbolTable(columnIndex);
-            }
-            return slaveCursor.getSymbolTable(columnIndex - columnSplit);
         }
 
         @Override

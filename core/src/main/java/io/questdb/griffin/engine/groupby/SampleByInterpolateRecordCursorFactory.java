@@ -214,7 +214,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             // Collect map of unique key values.
             // using this values we will fill gaps in main
             // data before jumping to another timestamp.
-            // This will allow to maintain chronological order of
+            // This will allow maintaining chronological order of
             // main data map.
             //
             // At the same time check if cursor has data

@@ -62,6 +62,10 @@ public class TimestampFormatUtils {
     @SuppressWarnings({"FieldCanBeLocal", "unused"})
     private static long newYear;
 
+    public static int adjustYear(int year) {
+        return thisCenturyLow + year;
+    }
+
     public static void append0(CharSink sink, int val) {
         if (Math.abs(val) < 10) {
             sink.put('0');
@@ -91,6 +95,14 @@ public class TimestampFormatUtils {
         Numbers.append(sink, val);
     }
 
+    public static void appendAmPm(CharSink sink, int hour, DateLocale locale) {
+        if (hour < 12) {
+            sink.put(locale.getAMPM(0));
+        } else {
+            sink.put(locale.getAMPM(1));
+        }
+    }
+
     // YYYY-MM-DDThh:mm:ss.mmmZ
     public static void appendDateTime(CharSink sink, long micros) {
         if (micros == Long.MIN_VALUE) {
@@ -105,88 +117,6 @@ public class TimestampFormatUtils {
             return;
         }
         USEC_UTC_FORMAT.format(micros, null, "Z", sink);
-    }
-
-    // YYYY-MM-DD
-    public static void formatDashYYYYMMDD(CharSink sink, long millis) {
-        int y = Timestamps.getYear(millis);
-        boolean l = Timestamps.isLeapYear(y);
-        int m = Timestamps.getMonthOfYear(millis, y, l);
-        Numbers.append(sink, y);
-        append0(sink.put('-'), m);
-        append0(sink.put('-'), Timestamps.getDayOfMonth(millis, y, m, l));
-    }
-
-    public static void formatHTTP(CharSink sink, long millis) {
-        HTTP_FORMAT.format(millis, enLocale, "GMT", sink);
-    }
-
-    // YYYY-MM
-    public static void formatYYYYMM(CharSink sink, long millis) {
-        int y = Timestamps.getYear(millis);
-        int m = Timestamps.getMonthOfYear(millis, y, Timestamps.isLeapYear(y));
-        Numbers.append(sink, y);
-        append0(sink.put('-'), m);
-    }
-
-    // YYYYMMDD
-    public static void formatYYYYMMDD(CharSink sink, long millis) {
-        int y = Timestamps.getYear(millis);
-        boolean l = Timestamps.isLeapYear(y);
-        int m = Timestamps.getMonthOfYear(millis, y, l);
-        Numbers.append(sink, y);
-        append0(sink, m);
-        append0(sink, Timestamps.getDayOfMonth(millis, y, m, l));
-    }
-
-    public static long getReferenceYear() {
-        return referenceYear;
-    }
-
-    // YYYY-MM-DDThh:mm:ss.mmmZ
-    public static long parseTimestamp(CharSequence seq) throws NumericException {
-        return parseTimestamp(seq, 0, seq.length());
-    }
-
-    // YYYY-MM-DDThh:mm:ss.mmmnnn
-    public static long parseUTCTimestamp(CharSequence seq) throws NumericException {
-        return USEC_UTC_FORMAT.parse(seq, 0, seq.length(), enLocale);
-    }
-
-    public static long parseDateTime(CharSequence seq) throws NumericException {
-        return NANOS_UTC_FORMAT.parse(seq, 0, seq.length(), enLocale);
-    }
-
-    public static long tryParse(CharSequence s, int lo, int lim) throws NumericException {
-        return parseTimestamp(s, lo, lim);
-    }
-
-    public static void updateReferenceYear(long micros) {
-        referenceYear = micros;
-
-        int referenceYear = Timestamps.getYear(micros);
-        int centuryOffset = referenceYear % 100;
-        thisCenturyLimit = centuryOffset + 20;
-        if (thisCenturyLimit > 100) {
-            thisCenturyLimit = thisCenturyLimit % 100;
-            thisCenturyLow = referenceYear - centuryOffset + 100;
-        } else {
-            thisCenturyLow = referenceYear - centuryOffset;
-        }
-        prevCenturyLow = thisCenturyLow - 100;
-        newYear = Timestamps.endOfYear(referenceYear);
-    }
-
-    public static int adjustYear(int year) {
-        return (year < thisCenturyLimit ? thisCenturyLow : prevCenturyLow) + year;
-    }
-
-    public static void appendAmPm(CharSink sink, int hour, DateLocale locale) {
-        if (hour < 12) {
-            sink.put(locale.getAMPM(0));
-        } else {
-            sink.put(locale.getAMPM(1));
-        }
     }
 
     public static void appendEra(CharSink sink, int year, DateLocale locale) {
@@ -227,6 +157,39 @@ public class TimestampFormatUtils {
         } else {
             append0(sink, hour - 12);
         }
+    }
+
+    public static void appendYear(CharSink sink, int val) {
+        Numbers.append(sink, val != 0 ? val : 1);
+    }
+
+    public static void appendYear0(CharSink sink, int val) {
+        if (Math.abs(val) < 10) {
+            sink.put('0');
+        }
+        appendYear(sink, val);
+    }
+
+    public static void appendYear00(CharSink sink, int val) {
+        int v = Math.abs(val);
+        if (v < 10) {
+            sink.put('0').put('0');
+        } else if (v < 100) {
+            sink.put('0');
+        }
+        appendYear(sink, val);
+    }
+
+    public static void appendYear000(CharSink sink, int val) {
+        int v = Math.abs(val);
+        if (v < 10) {
+            sink.put('0').put('0').put('0');
+        } else if (v < 100) {
+            sink.put('0').put('0');
+        } else if (v < 1000) {
+            sink.put('0');
+        }
+        appendYear(sink, val);
     }
 
     public static void assertChar(char c, CharSequence in, int pos, int hi) throws NumericException {
@@ -339,6 +302,56 @@ public class TimestampFormatUtils {
         return datetime;
     }
 
+    // YYYY-MM-DD
+    public static void formatDashYYYYMMDD(CharSink sink, long millis) {
+        int y = Timestamps.getYear(millis);
+        boolean l = Timestamps.isLeapYear(y);
+        int m = Timestamps.getMonthOfYear(millis, y, l);
+        Numbers.append(sink, y);
+        append0(sink.put('-'), m);
+        append0(sink.put('-'), Timestamps.getDayOfMonth(millis, y, m, l));
+    }
+
+    public static void formatHTTP(CharSink sink, long millis) {
+        HTTP_FORMAT.format(millis, enLocale, "GMT", sink);
+    }
+
+    // YYYY-MM
+    public static void formatYYYYMM(CharSink sink, long millis) {
+        int y = Timestamps.getYear(millis);
+        int m = Timestamps.getMonthOfYear(millis, y, Timestamps.isLeapYear(y));
+        Numbers.append(sink, y);
+        append0(sink.put('-'), m);
+    }
+
+    // YYYYMMDD
+    public static void formatYYYYMMDD(CharSink sink, long millis) {
+        int y = Timestamps.getYear(millis);
+        boolean l = Timestamps.isLeapYear(y);
+        int m = Timestamps.getMonthOfYear(millis, y, l);
+        Numbers.append(sink, y);
+        append0(sink, m);
+        append0(sink, Timestamps.getDayOfMonth(millis, y, m, l));
+    }
+
+    public static long getReferenceYear() {
+        return referenceYear;
+    }
+
+    public static long parseDateTime(CharSequence seq) throws NumericException {
+        return NANOS_UTC_FORMAT.parse(seq, 0, seq.length(), enLocale);
+    }
+
+    // YYYY-MM-DDThh:mm:ss.mmmZ
+    public static long parseTimestamp(CharSequence seq) throws NumericException {
+        return parseTimestamp(seq, 0, seq.length());
+    }
+
+    // YYYY-MM-DDThh:mm:ss.mmmnnn
+    public static long parseUTCTimestamp(CharSequence seq) throws NumericException {
+        return USEC_UTC_FORMAT.parse(seq, 0, seq.length(), enLocale);
+    }
+
     public static long parseYearGreedy(CharSequence in, int pos, int hi) throws NumericException {
         long l = Numbers.parseIntSafely(in, pos, hi);
         int len = Numbers.decodeHighInt(l);
@@ -350,6 +363,26 @@ public class TimestampFormatUtils {
         }
 
         return Numbers.encodeLowHighInts(year, len);
+    }
+
+    public static long tryParse(CharSequence s, int lo, int lim) throws NumericException {
+        return parseTimestamp(s, lo, lim);
+    }
+
+    public static void updateReferenceYear(long micros) {
+        referenceYear = micros;
+
+        int referenceYear = Timestamps.getYear(micros);
+        int centuryOffset = referenceYear % 100;
+        thisCenturyLimit = centuryOffset + 20;
+        if (thisCenturyLimit > 100) {
+            thisCenturyLimit = thisCenturyLimit % 100;
+            thisCenturyLow = referenceYear - centuryOffset + 100;
+        } else {
+            thisCenturyLow = referenceYear - centuryOffset;
+        }
+        prevCenturyLow = thisCenturyLow - 100;
+        newYear = Timestamps.endOfYear(referenceYear);
     }
 
     private static long parseTimestamp(CharSequence value, int lo, int hi) throws NumericException {

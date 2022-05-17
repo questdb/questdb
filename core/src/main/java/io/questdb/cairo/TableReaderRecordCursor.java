@@ -61,6 +61,11 @@ public class TableReaderRecordCursor implements RecordCursor {
     }
 
     @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return reader.newSymbolTable(columnIndex);
+    }
+
+    @Override
     public boolean hasNext() {
         if (recordA.getRecordIndex() < maxRecordIndex || switchPartition()) {
             recordA.incrementRecordIndex();

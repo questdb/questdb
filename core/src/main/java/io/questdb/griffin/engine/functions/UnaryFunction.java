@@ -55,4 +55,9 @@ public interface UnaryFunction extends Function {
     default boolean isRuntimeConstant() {
         return getArg().isRuntimeConstant();
     }
+
+    @Override
+    default boolean isReadThreadSafe() {
+        return getArg().isReadThreadSafe();
+    }
 }

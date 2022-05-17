@@ -46,14 +46,14 @@ public class SecondOfMinuteFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new Func(position, arg);
+        return new SecondOfMinuteFunc(arg);
     }
 
-    private static final class Func extends IntFunction implements UnaryFunction {
+    public static final class SecondOfMinuteFunc extends IntFunction implements UnaryFunction {
 
         private final Function arg;
 
-        public Func(int position, Function arg) {
+        public SecondOfMinuteFunc(Function arg) {
             super();
             this.arg = arg;
         }
@@ -66,10 +66,10 @@ public class SecondOfMinuteFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
-                return Numbers.INT_NaN;
+            if (value != Numbers.LONG_NaN) {
+                return Timestamps.getSecondOfMinute(value);
             }
-            return Timestamps.getSecondOfMinute(value);
+            return Numbers.INT_NaN;
         }
     }
 }

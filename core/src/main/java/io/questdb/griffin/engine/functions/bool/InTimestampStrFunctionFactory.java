@@ -112,7 +112,7 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
             }
             intervals.clear();
             try {
-                // we are ignoring exception contents here, so we do not need exact position
+                // we are ignoring exception contents here, so we do not need the exact position
                 parseAndApplyIntervalEx(timestampAsString, intervals, 0);
             } catch (SqlException e) {
                 return false;
@@ -128,6 +128,12 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 

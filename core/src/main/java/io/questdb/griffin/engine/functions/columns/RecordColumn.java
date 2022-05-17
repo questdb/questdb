@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.RecordFunction;
 
-public class RecordColumn extends RecordFunction  {
+public class RecordColumn extends RecordFunction {
     private final int columnIndex;
     private final RecordMetadata metadata;
 
@@ -38,12 +38,17 @@ public class RecordColumn extends RecordFunction  {
     }
 
     @Override
-    public Record getRecord(Record rec) {
-        return rec.getRecord(columnIndex);
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
+    public Record getRecord(Record rec) {
+        return rec.getRecord(columnIndex);
     }
 }

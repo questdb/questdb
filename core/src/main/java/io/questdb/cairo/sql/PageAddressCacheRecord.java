@@ -32,7 +32,9 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
-public class PageAddressCacheRecord implements Record {
+import java.io.Closeable;
+
+public class PageAddressCacheRecord implements Record, Closeable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
     private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
@@ -42,6 +44,7 @@ public class PageAddressCacheRecord implements Record {
 
     private PageFrameCursor cursor; // Makes it possible to determine real row id, not one relative to page.
     private SymbolTableSource symbolTableSource;
+    private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private PageAddressCache pageAddressCache;
     private int frameIndex;
     private long rowIndex;
@@ -60,6 +63,11 @@ public class PageAddressCacheRecord implements Record {
     }
 
     public PageAddressCacheRecord() {
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(symbolTableCache);
     }
 
     @Override
@@ -231,14 +239,14 @@ public class PageAddressCacheRecord implements Record {
         if (address != 0) {
             key = Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
         }
-        return symbolTableSource.getSymbolTable(columnIndex).valueOf(key);
+        return getSymbolTable(columnIndex).valueOf(key);
     }
 
     @Override
     public CharSequence getSymB(int columnIndex) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         final int key = Unsafe.getUnsafe().getInt(address + rowIndex * Integer.BYTES);
-        return symbolTableSource.getSymbolTable(columnIndex).valueBOf(key);
+        return getSymbolTable(columnIndex).valueBOf(key);
     }
 
     @Override
@@ -280,13 +288,15 @@ public class PageAddressCacheRecord implements Record {
     public void of(SymbolTableSource symbolTableSource, PageAddressCache pageAddressCache) {
         this.symbolTableSource = symbolTableSource;
         if (symbolTableSource instanceof PageFrameCursor) {
-            this.cursor = (PageFrameCursor) symbolTableSource;
+            cursor = (PageFrameCursor) symbolTableSource;
         } else {
-            this.cursor = null;
+            cursor = null;
         }
         this.pageAddressCache = pageAddressCache;
-        this.frameIndex = 0;
-        this.rowIndex = 0;
+        frameIndex = 0;
+        rowIndex = 0;
+        Misc.freeObjList(symbolTableCache);
+        symbolTableCache.clear();
     }
 
     public void setFrameIndex(int frameIndex) {
@@ -358,5 +368,14 @@ public class PageAddressCacheRecord implements Record {
                     .put(']');
         }
         return null;
+    }
+
+    private SymbolTable getSymbolTable(int columnIndex) {
+        SymbolTable symbolTable = symbolTableCache.getQuiet(columnIndex);
+        if (symbolTable == null) {
+            symbolTable = symbolTableSource.newSymbolTable(columnIndex);
+            symbolTableCache.extendAndSet(columnIndex, symbolTable);
+        }
+        return symbolTable;
     }
 }

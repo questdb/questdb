@@ -377,6 +377,11 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             return parent.getSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
         }
 
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return parent.newSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
+        }
+
         private class RostiRecord implements Record {
             private long pRow;
 

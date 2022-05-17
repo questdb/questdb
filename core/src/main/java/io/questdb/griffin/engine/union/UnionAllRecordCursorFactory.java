@@ -49,6 +49,12 @@ public class UnionAllRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
+    public void close() {
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
@@ -74,8 +80,7 @@ public class UnionAllRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public void close() {
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
+    public boolean fragmentedSymbolTables() {
+        return true;
     }
 }

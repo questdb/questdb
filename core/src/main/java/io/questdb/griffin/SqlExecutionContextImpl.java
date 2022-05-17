@@ -60,6 +60,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private long now;
     private int jitMode;
+    private boolean cloneSymbolTables = false;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
         this.cairoConfiguration = cairoEngine.getConfiguration();
@@ -196,6 +197,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return this;
     }
 
+    @Override
+    public void setCloneSymbolTables(boolean cloneSymbolTables) {
+        this.cloneSymbolTables = cloneSymbolTables;
+    }
+
     public SqlExecutionContextImpl with(
             long requestFd
     ) {
@@ -223,5 +229,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     private void storeTelemetryNoop(short event, short origin) {
+    }
+
+    @Override
+    public boolean getCloneSymbolTables() {
+        return cloneSymbolTables;
     }
 }

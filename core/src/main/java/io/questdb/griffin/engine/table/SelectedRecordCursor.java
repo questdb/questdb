@@ -61,6 +61,11 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return baseCursor.newSymbolTable(columnCrossIndex.getQuick(columnIndex));
+    }
+
+    @Override
     public long size() {
         return baseCursor.size();
     }

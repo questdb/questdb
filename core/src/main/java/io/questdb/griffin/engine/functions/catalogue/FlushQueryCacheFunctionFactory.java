@@ -79,5 +79,10 @@ public class FlushQueryCacheFunctionFactory implements FunctionFactory {
                 }
             }
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     }
 }
