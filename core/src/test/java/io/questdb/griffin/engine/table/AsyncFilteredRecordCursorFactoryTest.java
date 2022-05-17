@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.AbstractGriffinTest;
@@ -532,6 +532,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     return false;
                 }
             }, Metrics.disabled());
+            pool.assignCleaner(Path.CLEANER);
 
             O3Utils.setupWorkerPool(
                     pool,
@@ -708,7 +709,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                         false,
                         sqlExecutionContext
                 );
-                Path.clearThreadLocals();
             }
             resetTaskCapacities();
         });
