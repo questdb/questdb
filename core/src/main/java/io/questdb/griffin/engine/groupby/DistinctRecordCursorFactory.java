@@ -127,6 +127,11 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
+        }
+
+        @Override
         public boolean hasNext() {
             while (baseCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();

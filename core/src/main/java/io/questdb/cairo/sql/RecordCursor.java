@@ -45,10 +45,23 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     Record getRecord();
 
     /**
+     * Cached instance of symbol table for the given column. The method
+     * guarantees that symbol table instance is reused across multiple invocations.
+     *
      * @param columnIndex numeric index of the column
      * @return instance of symbol table or null, when column is not Symbol
      */
     default SymbolTable getSymbolTable(int columnIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Creates new instance of symbol table, usually returned by {@link #getSymbolTable(int)}. Symbol table clones are
+     * used in concurrent SQL execution. They are assigned to individual threads.
+     * @param columnIndex numeric index of the column
+     * @return clone of symbol table or the same instance when instance is immutable(empty column)
+     */
+    default SymbolTable newSymbolTable(int columnIndex) {
         throw new UnsupportedOperationException();
     }
 

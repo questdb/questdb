@@ -30,6 +30,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
@@ -40,6 +41,9 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
+
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     private static final LongList rows = new LongList();
@@ -56,7 +60,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean sizeExpected,
             boolean sizeCanBeVariable,
             RecordCursor cursor,
-            RecordMetadata metadata
+            RecordMetadata metadata,
+            boolean framingSupported
     ) {
         return assertCursor(
                 expected,
@@ -68,7 +73,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 metadata,
                 sink,
                 printer,
-                rows
+                rows,
+                framingSupported
         );
     }
 
@@ -83,7 +89,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             RecordMetadata metadata,
             StringSink sink,
             RecordCursorPrinter printer,
-            LongList rows
+            LongList rows,
+            boolean fragmentedSymbolTables
     ) {
         if (expected == null) {
             Assert.assertFalse(cursor.hasNext());
@@ -94,7 +101,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
         TestUtils.assertCursor(expected, cursor, metadata, true, sink);
 
-        testSymbolAPI(metadata, cursor);
+        testSymbolAPI(metadata, cursor, fragmentedSymbolTables);
         cursor.toTop();
         testStringsLong256AndBinary(metadata, cursor, checkSameStr);
 
@@ -354,7 +361,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
             RecordMetadata metadata = factory.getMetadata();
 
-            testSymbolAPI(metadata, cursor);
+            testSymbolAPI(metadata, cursor, factory.fragmentedSymbolTables());
             cursor.toTop();
             testStringsLong256AndBinary(metadata, cursor, checkSameStr);
 
@@ -464,7 +471,9 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                             checkSameStr,
                             sizeExpected,
                             sizeCanBeVariable,
-                            cursor, factory.getMetadata()
+                            cursor,
+                            factory.getMetadata(),
+                            factory.fragmentedSymbolTables()
                     )
             ) {
                 return;
@@ -472,7 +481,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
 
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            testSymbolAPI(factory.getMetadata(), cursor);
+            testSymbolAPI(factory.getMetadata(), cursor, factory.fragmentedSymbolTables());
         }
     }
 
@@ -522,7 +531,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    private static void testSymbolAPI(RecordMetadata metadata, RecordCursor cursor) {
+    private static void testSymbolAPI(RecordMetadata metadata, RecordCursor cursor, boolean fragmentedSymbolTables) {
         IntList symbolIndexes = null;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (ColumnType.isSymbol(metadata.getColumnType(i))) {
@@ -534,26 +543,155 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
 
         if (symbolIndexes != null) {
-            cursor.toTop();
-            final Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
-                for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
-                    int column = symbolIndexes.getQuick(i);
-                    SymbolTable symbolTable = cursor.getSymbolTable(column);
-                    if (symbolTable instanceof StaticSymbolTable) {
-                        CharSequence sym = Chars.toString(record.getSym(column));
-                        int value = record.getInt(column);
-                        if (((StaticSymbolTable) symbolTable).containsNullValue() && value == ((StaticSymbolTable) symbolTable).getSymbolCount()) {
-                            Assert.assertEquals(Integer.MIN_VALUE, ((StaticSymbolTable) symbolTable).keyOf(sym));
-                        } else {
-                            Assert.assertEquals(value, ((StaticSymbolTable) symbolTable).keyOf(sym));
+
+            // create new symbol tables and make sure they are not the same
+            // as the default ones
+
+            ObjList<SymbolTable> clonedSymbolTables = new ObjList<>();
+            ObjList<SymbolTable> originalSymbolTables = new ObjList<>();
+            int[] symbolTableKeySnapshot = new int[symbolIndexes.size()];
+            String[][] symbolTableValueSnapshot = new String[symbolIndexes.size()][];
+            try {
+                cursor.toTop();
+                if (!fragmentedSymbolTables && cursor.hasNext()) {
+                    for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
+                        final int columnIndex = symbolIndexes.getQuick(i);
+                        originalSymbolTables.add(cursor.getSymbolTable(columnIndex));
+                    }
+
+                    // take snapshot of symbol tables
+                    // multiple passes over the same cursor, if not very efficient, we
+                    // can swap loops around
+                    int sumOfMax = 0;
+                    for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
+                        cursor.toTop();
+                        final Record rec = cursor.getRecord();
+                        final int column = symbolIndexes.getQuick(i);
+                        int max = -1;
+                        while (cursor.hasNext()) {
+                            max = Math.max(max, rec.getInt(column));
                         }
-                        TestUtils.assertEquals(sym, symbolTable.valueOf(value));
-                    } else {
-                        final int value = record.getInt(column);
-                        TestUtils.assertEquals(record.getSym(column), symbolTable.valueOf(value));
+                        String[] values = new String[max + 2];
+                        final SymbolTable symbolTable = cursor.getSymbolTable(column);
+                        for (int k = -1; k <= max; k++) {
+                            values[k + 1] = Chars.toString(symbolTable.valueOf(k));
+                        }
+                        symbolTableKeySnapshot[i] = max;
+                        symbolTableValueSnapshot[i] = values;
+                        sumOfMax += max;
+                    }
+
+                    // We grab clones after iterating through the symbol values due to
+                    // the cache warm up required by Cast*ToSymbolFunctionFactory functions.
+                    for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
+                        final int columnIndex = symbolIndexes.getQuick(i);
+                        SymbolTable tab = cursor.newSymbolTable(columnIndex);
+                        Assert.assertNotNull(tab);
+                        clonedSymbolTables.add(tab);
+                    }
+
+                    // Now start two threads, one will be using normal symbol table
+                    // another will be using a clone. Threads will randomly check that
+                    // symbol table is able to convert keys to values without problems
+
+                    int numberOfIterations = sumOfMax * 2;
+                    int symbolColumnCount = symbolIndexes.size();
+                    int workerCount = 2;
+                    CyclicBarrier barrier = new CyclicBarrier(workerCount);
+                    SOCountDownLatch doneLatch = new SOCountDownLatch(workerCount);
+                    AtomicInteger errorCount = new AtomicInteger(0);
+
+                    // thread that is hitting clones
+                    new Thread(() -> {
+                        try {
+                            TestUtils.await(barrier);
+                            assertSymbolColumnThreadSafety(
+                                    numberOfIterations,
+                                    symbolColumnCount,
+                                    clonedSymbolTables,
+                                    symbolTableKeySnapshot,
+                                    symbolTableValueSnapshot
+                            );
+                        } catch (Throwable e) {
+                            errorCount.incrementAndGet();
+                            e.printStackTrace();
+                        } finally {
+                            doneLatch.countDown();
+                        }
+                    }).start();
+
+                    // thread that is hitting the original symbol tables
+                    new Thread(() -> {
+                        try {
+                            TestUtils.await(barrier);
+                            assertSymbolColumnThreadSafety(
+                                    numberOfIterations,
+                                    symbolColumnCount,
+                                    originalSymbolTables,
+                                    symbolTableKeySnapshot,
+                                    symbolTableValueSnapshot
+                            );
+                        } catch (Throwable e) {
+                            errorCount.incrementAndGet();
+                            e.printStackTrace();
+                        } finally {
+                            doneLatch.countDown();
+                        }
+                    }).start();
+
+                    doneLatch.await();
+
+                    Assert.assertEquals(0, errorCount.get());
+                }
+
+                cursor.toTop();
+                final Record record = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    for (int i = 0, n = symbolIndexes.size(); i < n; i++) {
+                        int column = symbolIndexes.getQuick(i);
+                        SymbolTable symbolTable = cursor.getSymbolTable(column);
+                        if (symbolTable instanceof StaticSymbolTable) {
+                            CharSequence sym = Chars.toString(record.getSym(column));
+                            int value = record.getInt(column);
+                            if (((StaticSymbolTable) symbolTable).containsNullValue() && value == ((StaticSymbolTable) symbolTable).getSymbolCount()) {
+                                Assert.assertEquals(Integer.MIN_VALUE, ((StaticSymbolTable) symbolTable).keyOf(sym));
+                            } else {
+                                Assert.assertEquals(value, ((StaticSymbolTable) symbolTable).keyOf(sym));
+                            }
+                            TestUtils.assertEquals(sym, symbolTable.valueOf(value));
+                        } else {
+                            final int value = record.getInt(column);
+                            TestUtils.assertEquals(record.getSym(column), symbolTable.valueOf(value));
+                        }
                     }
                 }
+            } finally {
+                Misc.freeObjList(clonedSymbolTables);
+            }
+        }
+    }
+
+    private static void assertSymbolColumnThreadSafety(
+            int numberOfIterations,
+            int symbolColumnCount,
+            ObjList<SymbolTable> symbolTables,
+            int[] symbolTableKeySnapshot,
+            String[][] symbolTableValueSnapshot
+    ) {
+        final Rnd rnd = new Rnd(Os.currentTimeMicros(), System.currentTimeMillis());
+        for (int i = 0; i < numberOfIterations; i++) {
+            int symbolColIndex = rnd.nextInt(symbolColumnCount);
+            SymbolTable symbolTable = symbolTables.getQuick(symbolColIndex);
+            int max = symbolTableKeySnapshot[symbolColIndex] + 1;
+            // max could be -1 meaning we have nulls; max can also be 0, meaning only one symbol value
+            // basing boundary on 2 we convert -1 tp 1 and 0 to 2
+            int key = rnd.nextInt(max + 1) - 1;
+            String expected = symbolTableValueSnapshot[symbolColIndex][key+1];
+            TestUtils.assertEquals(expected, symbolTable.valueOf(key));
+            // now test static symbol table
+            if (expected != null && symbolTable instanceof StaticSymbolTable) {
+                StaticSymbolTable staticSymbolTable = (StaticSymbolTable) symbolTable;
+                Assert.assertEquals(key, staticSymbolTable.keyOf(expected));
             }
         }
     }
@@ -654,16 +792,18 @@ public class AbstractGriffinTest extends AbstractCairoTest {
         }
     }
 
-    private static void assertQueryNoVerify(CharSequence expected,
-                                            CharSequence query,
-                                            @Nullable CharSequence ddl,
-                                            @Nullable CharSequence expectedTimestamp,
-                                            @Nullable CharSequence ddl2,
-                                            @Nullable CharSequence expected2,
-                                            boolean supportsRandomAccess,
-                                            boolean checkSameStr,
-                                            boolean expectSize,
-                                            boolean sizeCanBeVariable) throws Exception {
+    private static void assertQueryNoVerify(
+            CharSequence expected,
+            CharSequence query,
+            @Nullable CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            @Nullable CharSequence ddl2,
+            @Nullable CharSequence expected2,
+            boolean supportsRandomAccess,
+            boolean checkSameStr,
+            boolean expectSize,
+            boolean sizeCanBeVariable
+    ) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
                 compile(ddl, sqlExecutionContext);
@@ -686,7 +826,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                                       CharSequence query,
                                       CharSequence ddl,
                                       @Nullable CharSequence expectedTimestamp) throws Exception {
-        assertQueryNoVerify(
+        assertQuery(
                 expected,
                 query,
                 ddl,
@@ -696,7 +836,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 true,
                 true,
                 false,
-                false);
+                false
+        );
     }
 
     protected static void assertQuery(CharSequence expected,
@@ -704,7 +845,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                                       CharSequence ddl,
                                       @Nullable CharSequence expectedTimestamp,
                                       boolean supportsRandomAccess) throws Exception {
-        assertQueryNoVerify(
+        assertQuery(
                 expected,
                 query,
                 ddl,
@@ -714,13 +855,14 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 true,
                 false,
-                false);
+                false
+        );
     }
 
     protected static void assertQueryExpectSize(CharSequence expected,
                                                 CharSequence query,
                                                 CharSequence ddl) throws Exception {
-        assertQueryNoVerify(
+        assertQuery(
                 expected,
                 query,
                 ddl,
@@ -730,19 +872,22 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 true,
                 true,
                 true,
-                false);
+                false
+        );
     }
 
     /**
      * expectedTimestamp can either be exact column name or in columnName###ord format, where ord is either ASC or DESC and specifies expected order.
      */
-    protected static void assertQuery(CharSequence expected,
-                                      CharSequence query,
-                                      CharSequence ddl,
-                                      @Nullable CharSequence expectedTimestamp,
-                                      boolean supportsRandomAccess,
-                                      boolean checkSameStr) throws Exception {
-        assertQueryNoVerify(
+    protected static void assertQuery(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            boolean supportsRandomAccess,
+            boolean checkSameStr
+    ) throws Exception {
+        assertQuery(
                 expected,
                 query,
                 ddl,
@@ -752,7 +897,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 checkSameStr,
                 false,
-                false);
+                false
+        );
     }
 
     /**
@@ -767,7 +913,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean checkSameStr,
             boolean expectSize
     ) throws Exception {
-        assertQueryNoVerify(
+        assertQuery(
                 expected,
                 query,
                 ddl,
@@ -777,7 +923,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 checkSameStr,
                 expectSize,
-                false);
+                false
+        );
     }
 
     /**
@@ -789,7 +936,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                                       @Nullable CharSequence expectedTimestamp,
                                       @Nullable CharSequence ddl2,
                                       @Nullable CharSequence expected2) throws Exception {
-        assertQueryNoVerify(
+        assertQuery(
                 expected,
                 query,
                 ddl,
@@ -799,7 +946,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 true,
                 true,
                 false,
-                false);
+                false
+        );
     }
 
     /**
@@ -812,7 +960,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                                       @Nullable CharSequence ddl2,
                                       @Nullable CharSequence expected2,
                                       boolean supportsRandomAccess) throws Exception {
-        assertQueryNoVerify(
+        assertQuery(
                 expected,
                 query,
                 ddl,
@@ -822,7 +970,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 true,
                 false,
-                false);
+                false
+        );
     }
 
     /**
@@ -837,7 +986,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                                       boolean supportsRandomAccess,
                                       boolean checkSameStr,
                                       boolean expectSize) throws Exception {
-        assertQueryNoVerify(
+        assertQuery(
                 expected,
                 query,
                 ddl,
@@ -847,7 +996,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 supportsRandomAccess,
                 checkSameStr,
                 expectSize,
-                false);
+                false
+        );
     }
 
     /**
@@ -1126,7 +1276,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             SqlExecutionContext sqlExecutionContext,
             boolean supportsRandomAccess,
             boolean checkSameStr,
-            boolean expectSize) throws SqlException {
+            boolean expectSize
+    ) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(
                     expected,
@@ -1135,7 +1286,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                     supportsRandomAccess,
                     sqlExecutionContext,
                     checkSameStr,
-                    expectSize);
+                    expectSize
+            );
         }
     }
 

@@ -70,6 +70,8 @@ public interface DataFrameCursor extends Closeable, SymbolTableSource  {
 
     StaticSymbolTable getSymbolTable(int columnIndex);
 
+    StaticSymbolTable newSymbolTable(int columnIndex);
+
     /**
      * @return  true if cursor supports random record access (without having to iterate through all results).
      */

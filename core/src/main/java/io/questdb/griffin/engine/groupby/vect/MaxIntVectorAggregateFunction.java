@@ -116,4 +116,9 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     public int getInt(Record rec) {
         return max.intValue();
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }

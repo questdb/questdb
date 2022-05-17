@@ -132,4 +132,14 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     default boolean hasDescendingOrder() {
         return false;
     }
+
+    // Factories, such as union all do not conform to the assumption
+    // that key read from symbol column map to symbol values unambiguously.
+    // In that if you read key 1 at row 10, it might map to 'AAA' and if you read
+    // key 1 at row 100 it might map to 'BBB'.
+    // Such factories cannot be used in multi-threaded execution and cannot be tested
+    // via `testSymbolAPI()` call.
+    default boolean fragmentedSymbolTables() {
+        return false;
+    }
 }

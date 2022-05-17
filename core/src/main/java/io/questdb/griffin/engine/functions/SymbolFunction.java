@@ -165,5 +165,21 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
         return null;
     }
 
+    /**
+     * A clone of function's symbol table to enable concurrent SQL execution.
+     * During such execution symbol table clones will be assigned to individual executing
+     * thread.
+     * @return clone of symbol table
+     */
+    @Nullable
+    public SymbolTable newSymbolTable() {
+        return null;
+    }
+
     public abstract boolean isSymbolTableStatic();
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }

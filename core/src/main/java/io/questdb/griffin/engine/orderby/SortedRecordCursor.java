@@ -56,6 +56,11 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return chainCursor.newSymbolTable(columnIndex);
+    }
+
+    @Override
     public boolean hasNext() {
         return chainCursor.hasNext();
     }

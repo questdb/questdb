@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 
@@ -78,6 +79,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         frameSequence.clear();
     }
 
+    public void freeRecords() {
+        Misc.free(record);
+        Misc.free(recordB);
+    }
+
     @Override
     public Record getRecord() {
         return record;
@@ -86,6 +92,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return frameSequence.getSymbolTableSource().getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return frameSequence.getSymbolTableSource().newSymbolTable(columnIndex);
     }
 
     @Override
@@ -197,6 +208,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.ogRowsRemaining = rowsRemaining;
         this.rowsRemaining = rowsRemaining;
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+        if (recordB != null) {
+            recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+        }
         // when frameCount is 0 our collect sequence is not subscribed
         // we should not be attempting to fetch queue using it
         if (frameLimit > -1) {
