@@ -30,10 +30,9 @@ import io.questdb.std.str.CharSink;
 
 public class DelegatingRecordImpl implements Record {
     private Record base;
-
-    public void of(Record base) {
-        this.base = base;
-    }
+    private RecordCursor currentCursor;
+    private RecordCursor masterCursor;
+    private RecordCursor slaveCursor;
 
     @Override
     public BinarySequence getBin(int col) {
@@ -163,5 +162,27 @@ public class DelegatingRecordImpl implements Record {
     @Override
     public long getGeoLong(int col) {
         return base.getGeoLong(col);
+    }
+
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return currentCursor.getSymbolTable(columnIndex);
+    }
+
+    public void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        this.masterCursor = masterCursor;
+        this.slaveCursor = slaveCursor;
+    }
+
+    public void ofMaster(Record base) {
+        this.base = base;
+        this.currentCursor = masterCursor;
+    }
+
+    public void ofSlave(Record base) {
+        this.base = base;
+        this.currentCursor = slaveCursor;
+    }
+
+    public void toTop() {
     }
 }

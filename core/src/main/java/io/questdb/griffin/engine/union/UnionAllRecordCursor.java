@@ -24,27 +24,27 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.Misc;
 
 class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
-    private final DelegatingRecordImpl record = new DelegatingRecordImpl();
+    private final DelegatingRecordImpl record;
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
     private final NextMethod nextSlave = this::nextSlave;
     private Record masterRecord;
     private Record slaveRecord;
     private NextMethod nextMethod;
-    private RecordCursor symbolCursor;
     private final NextMethod nextMaster = this::nextMaster;
 
-    void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
-        this.masterRecord = masterCursor.getRecord();
-        this.slaveRecord = slaveCursor.getRecord();
-        toTop();
+    public UnionAllRecordCursor(RecordMetadata metadata) {
+        if (metadata.hasType(ColumnType.SYMBOL)) {
+            this.record = new DelegatingSymbolRecordImpl(metadata);
+        } else {
+            this.record = new DelegatingRecordImpl();
+        }
     }
 
     @Override
@@ -59,12 +59,18 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return record.getSymbolTable(columnIndex);
+    }
+
+    @Override
     public boolean hasNext() {
         return nextMethod.next();
     }
 
-    private boolean nextSlave() {
-        return slaveCursor.hasNext();
+    @Override
+    public void toTop() {
+        toTop(false);
     }
 
     @Override
@@ -77,27 +83,35 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
         return masterSize + slaveSize;
     }
 
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return symbolCursor.getSymbolTable(columnIndex);
-    }
-
     private boolean nextMaster() {
         return masterCursor.hasNext() || switchToSlaveCursor();
     }
 
+    private boolean nextSlave() {
+        return slaveCursor.hasNext();
+    }
+
+    void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
+        this.record.of(masterCursor, slaveCursor);
+        this.masterCursor = masterCursor;
+        this.slaveCursor = slaveCursor;
+        this.masterRecord = masterCursor.getRecord();
+        this.slaveRecord = slaveCursor.getRecord();
+        toTop(true);
+    }
+
     private boolean switchToSlaveCursor() {
-        record.of(slaveRecord);
+        record.ofSlave(slaveRecord);
         nextMethod = nextSlave;
-        symbolCursor = slaveCursor;
         return nextMethod.next();
     }
 
-    @Override
-    public void toTop() {
-        record.of(masterRecord);
+    private void toTop(boolean initial) {
+        if (!initial) {
+            record.toTop();
+        }
+        record.ofMaster(masterRecord);
         nextMethod = nextMaster;
-        symbolCursor = masterCursor;
         masterCursor.toTop();
         slaveCursor.toTop();
     }

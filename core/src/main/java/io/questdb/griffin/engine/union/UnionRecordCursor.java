@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
@@ -34,7 +35,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;
 
 class UnionRecordCursor implements NoRandomAccessRecordCursor {
-    private final DelegatingRecordImpl record = new DelegatingRecordImpl();
+    private final DelegatingRecordImpl record;
     private final Map map;
     private final RecordSink recordSink;
     private RecordCursor masterCursor;
@@ -43,22 +44,17 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     private Record masterRecord;
     private Record slaveRecord;
     private NextMethod nextMethod;
-    private RecordCursor symbolCursor;
     private final NextMethod nextMaster = this::nextMaster;
     private SqlExecutionCircuitBreaker circuitBreaker;
 
-    public UnionRecordCursor(Map map, RecordSink recordSink) {
+    public UnionRecordCursor(RecordMetadata metadata, Map map, RecordSink recordSink) {
         this.map = map;
         this.recordSink = recordSink;
-    }
-
-    void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
-        this.masterRecord = masterCursor.getRecord();
-        this.slaveRecord = slaveCursor.getRecord();
-        circuitBreaker = executionContext.getCircuitBreaker();
-        toTop();
+        if (metadata.hasType(ColumnType.SYMBOL)) {
+            this.record = new DelegatingSymbolRecordImpl(metadata);
+        } else {
+            this.record = new DelegatingRecordImpl();
+        }
     }
 
     @Override
@@ -74,13 +70,14 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
-    public boolean hasNext() {
-        return nextMethod.next();
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return record.getSymbolTable(columnIndex);
     }
 
-    private boolean nextSlave() {
+    @Override
+    public boolean hasNext() {
         while (true) {
-            boolean next = slaveCursor.hasNext();
+            boolean next = nextMethod.next();
             if (next) {
                 MapKey key = map.withKey();
                 key.put(record, recordSink);
@@ -95,40 +92,51 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return symbolCursor.getSymbolTable(columnIndex);
-    }
-
-    private boolean nextMaster() {
-        if (masterCursor.hasNext()) {
-            MapKey key = map.withKey();
-            key.put(record, recordSink);
-            key.create();
-            return true;
-        }
-        return switchToSlaveCursor();
-    }
-
-    private boolean switchToSlaveCursor() {
-        record.of(slaveRecord);
-        nextMethod = nextSlave;
-        symbolCursor = slaveCursor;
-        return nextMethod.next();
-    }
-
-    @Override
     public void toTop() {
-        map.clear();
-        record.of(masterRecord);
-        nextMethod = nextMaster;
-        symbolCursor = masterCursor;
-        masterCursor.toTop();
-        slaveCursor.toTop();
+        toTop(false);
     }
 
     @Override
     public long size() {
         return -1;
+    }
+
+    private boolean nextMaster() {
+        if (masterCursor.hasNext()) {
+            return true;
+        }
+        return switchToSlaveCursor();
+    }
+
+    private boolean nextSlave() {
+        return slaveCursor.hasNext();
+    }
+
+    void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
+        this.masterCursor = masterCursor;
+        this.slaveCursor = slaveCursor;
+        this.masterRecord = masterCursor.getRecord();
+        this.slaveRecord = slaveCursor.getRecord();
+        this.record.of(masterCursor, slaveCursor);
+        this.circuitBreaker = executionContext.getCircuitBreaker();
+        toTop(true);
+    }
+
+    private boolean switchToSlaveCursor() {
+        record.ofSlave(slaveRecord);
+        nextMethod = nextSlave;
+        return slaveCursor.hasNext();
+    }
+
+    private void toTop(boolean initial) {
+        map.clear();
+        if (!initial) {
+            record.toTop();
+        }
+        record.ofMaster(masterRecord);
+        nextMethod = nextMaster;
+        masterCursor.toTop();
+        slaveCursor.toTop();
     }
 
     interface NextMethod {

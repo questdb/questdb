@@ -128,7 +128,7 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
             this.path = path;
             this.path.of(configuration.getRoot()).$();
             this.plimit = this.path.length();
-            this.record.of(staticReadingRecord);
+            this.record.ofMaster(staticReadingRecord);
             this.intValues[1] = PG_PUBLIC_OID; // relnamespace
             this.intValues[3] = 0; // relowner
             this.intValues[4] = 0; // OID
@@ -154,7 +154,7 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
                 return true;
             }
 
-            record.of(diskReadingRecord);
+            record.ofSlave(diskReadingRecord);
             if (findFileStruct == 0) {
                 findFileStruct = ff.findFirst(path.trimTo(plimit).$());
                 if (findFileStruct > 0) {
@@ -178,7 +178,7 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
                 findFileStruct = 0;
             }
             fixedRelPos = -1;
-            record.of(staticReadingRecord);
+            record.ofMaster(staticReadingRecord);
         }
 
         @Override

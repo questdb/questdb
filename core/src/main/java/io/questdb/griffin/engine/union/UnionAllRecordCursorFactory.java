@@ -45,7 +45,13 @@ public class UnionAllRecordCursorFactory implements RecordCursorFactory {
         this.metadata = metadata;
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
-        this.cursor = new UnionAllRecordCursor();
+        this.cursor = new UnionAllRecordCursor(metadata);
+    }
+
+    @Override
+    public void close() {
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
     }
 
     @Override
@@ -71,11 +77,5 @@ public class UnionAllRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
     }
 }

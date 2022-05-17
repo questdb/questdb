@@ -55,7 +55,14 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         this.map = MapFactory.createMap(configuration, metadata, valueTypes);
-        this.cursor = new UnionRecordCursor(map, recordSink);
+        this.cursor = new UnionRecordCursor(metadata, map, recordSink);
+    }
+
+    @Override
+    public void close() {
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(map);
     }
 
     @Override
@@ -82,12 +89,5 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(map);
     }
 }
