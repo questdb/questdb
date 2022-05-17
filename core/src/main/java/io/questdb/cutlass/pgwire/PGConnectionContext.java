@@ -28,8 +28,8 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
@@ -1979,9 +1979,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
                     final long nameLo = lo;
                     final long nameHi = getStringLength(lo, msgLimit, "malformed property name");
-                    lo = nameHi + 1;
-                    final long valueLo = lo;
+                    final long valueLo = nameHi + 1;
                     final long valueHi = getStringLength(valueLo, msgLimit, "malformed property value");
+                    lo = valueHi + 1;
 
                     // store user
                     dbcs.of(nameLo, nameHi);

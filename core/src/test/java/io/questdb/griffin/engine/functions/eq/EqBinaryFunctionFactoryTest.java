@@ -30,8 +30,6 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Files;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
-
 public class EqBinaryFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test

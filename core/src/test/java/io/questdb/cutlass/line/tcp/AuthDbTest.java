@@ -24,15 +24,15 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
+
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
 import java.util.Base64;
-
-import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Test;
 
 public class AuthDbTest {
     @Test

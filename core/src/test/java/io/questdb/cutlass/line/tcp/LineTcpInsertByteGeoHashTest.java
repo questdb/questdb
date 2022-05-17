@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
 import org.junit.Test;
 
 public class LineTcpInsertByteGeoHashTest extends LineTcpInsertGeoHashTest {

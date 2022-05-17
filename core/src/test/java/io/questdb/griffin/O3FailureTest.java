@@ -177,7 +177,7 @@ public class O3FailureTest extends AbstractO3Test {
     };
     private static final FilesFacade ffMkDirFailure = new FilesFacadeImpl() {
         @Override
-        public int mkdirs(LPSZ path, int mode) {
+        public int mkdirs(Path path, int mode) {
             if (!fixFailure.get() || (Chars.contains(path, "1970-01-06.14") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
@@ -931,7 +931,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(2);
         executeWithoutPool(O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new FilesFacadeImpl() {
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -945,7 +945,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(2);
         executeWithPool(0, O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new FilesFacadeImpl() {
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -1001,7 +1001,7 @@ public class O3FailureTest extends AbstractO3Test {
             boolean tooManyFiles = false;
 
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 return super.mkdirs(path, mode);
             }
 

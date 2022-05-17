@@ -24,10 +24,14 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolLookup;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 

@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 

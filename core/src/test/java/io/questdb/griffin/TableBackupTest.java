@@ -85,7 +85,7 @@ public class TableBackupTest {
             }
 
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 if (mkdirsErrno != -1 && --mkdirsErrnoCountDown < 1) {
                     nextErrno = mkdirsErrno;
                     mkdirsErrno = -1;

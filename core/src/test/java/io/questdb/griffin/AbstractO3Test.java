@@ -26,7 +26,10 @@ package io.questdb.griffin;
 
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;

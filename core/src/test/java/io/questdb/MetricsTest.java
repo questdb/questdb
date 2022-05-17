@@ -35,7 +35,7 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static org.hamcrest.CoreMatchers.*;
+import static org.hamcrest.CoreMatchers.hasItem;
 
 public class MetricsTest {
 
@@ -130,8 +130,7 @@ public class MetricsTest {
         @Override
         public Gauge newGauge(int memoryTag) {
             addMetricName("memory_tag_" + MemoryTag.nameOf(memoryTag));
-            Gauge gauge = delegate.newGauge(memoryTag);
-            return gauge;
+            return delegate.newGauge(memoryTag);
         }
 
         @Override
