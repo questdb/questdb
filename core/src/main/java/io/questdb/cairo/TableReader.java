@@ -823,61 +823,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                     openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                     final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
                     this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
-                }
-
-                return partitionSize;
-            }
-            LOG.error().$("open partition failed, partition does not exist on the disk. [path=").utf8(path.$()).I$();
-
-            if (PartitionBy.isPartitioned(getPartitionedBy())) {
-                CairoException exception = CairoException.instance(0).put("Partition '");
-                formatPartitionDirName(partitionIndex, exception.message);
-                TableUtils.txnPartitionConditionally(exception.message, partitionNameTxn);
-                exception.put("' does not exist in table '")
-                        .put(tableName)
-                        .put("' directory. Run [ALTER TABLE ").put(tableName).put(" DROP PARTITION LIST '");
-                formatPartitionDirName(partitionIndex, exception.message);
-                TableUtils.txnPartitionConditionally(exception.message, partitionNameTxn);
-                exception.put("'] to repair the table or restore the partition directory.");
-                throw exception;
-            } else {
-                throw CairoException.instance(0).put("Table '").put(tableName)
-                        .put("' data directory does not exist on the disk at ")
-                        .put(path)
-                        .put(". Restore data on disk or drop the table.");
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
-    private long openPartition0(int partitionIndex) {
-        if (txFile.getPartitionCount() < 2 && txFile.getTransientRowCount() == 0) {
-            return -1;
-        }
-
-        try {
-            final long partitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-            Path path = pathGenPartitioned(partitionIndex);
-            TableUtils.txnPartitionConditionally(path, partitionNameTxn);
-
-            if (ff.exists(path.$())) {
-                path.chop$();
-
-                final long partitionSize = txFile.getPartitionSize(partitionIndex);
-                if (partitionSize > -1L) {
-                    LOG.info()
-                            .$("open partition ").utf8(path.$())
-                            .$(" [rowCount=").$(partitionSize)
-                            .$(", partitionNameTxn=").$(partitionNameTxn)
-                            .$(", transientRowCount=").$(txFile.getTransientRowCount())
-                            .$(", partitionIndex=").$(partitionIndex)
-                            .$(", partitionCount=").$(partitionCount)
-                            .$(']').$();
-
-                    openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
-                    final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-                    this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                     final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
                     this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txPartitionNameTxn);
                     final long txPartitionColumnVersion = txFile.getPartitionColumnVersion(partitionIndex);
