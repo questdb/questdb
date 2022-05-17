@@ -25,10 +25,7 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
-import io.questdb.std.Sinkable;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 
 import java.util.Set;
 

@@ -279,7 +279,7 @@ public final class TableUtils {
         final long pTransitionIndex;
         final int size = 8 + masterColumnCount * 8;
 
-        long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
+        long index = pTransitionIndex = Unsafe.calloc(size, MemoryTag.NATIVE_TABLE_READER);
         Unsafe.getUnsafe().putInt(index, size);
         index += 8;
 
@@ -389,7 +389,7 @@ public final class TableUtils {
         if (address == 0) {
             return;
         }
-        Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(address, Unsafe.getUnsafe().getInt(address), MemoryTag.NATIVE_TABLE_READER);
     }
 
     public static long getColumnHash(MemoryR metaMem, int columnIndex) {
