@@ -190,6 +190,8 @@ public class WalWriter implements Closeable {
     private double commitIntervalFraction;
     private long commitIntervalDefault;
     private long commitInterval;
+    private long walDRowCounter;
+    private long waldPartitionCounter = -1;
 
     public WalWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
@@ -309,7 +311,7 @@ public class WalWriter implements Closeable {
             this.walDColumns = new ObjList<>(columnCount * 2);
             configureWalDColumnMemory();
 
-            openWalDPartition();
+            openNewWalDPartition();
             configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
             configureAppendPosition();
@@ -1517,6 +1519,15 @@ public class WalWriter implements Closeable {
         }
     }
 
+    private static void openWalDMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem) {
+        path.concat(META_FILE_NAME).$();
+        try {
+            metaMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WALD_WRITER);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     private static ColumnVersionWriter openColumnVersionFile(FilesFacade ff, Path path, int rootLen) {
         path.concat(COLUMN_VERSION_FILE_NAME).$();
         try {
@@ -1734,7 +1745,7 @@ public class WalWriter implements Closeable {
             copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
+                writeColumnEntry(i, false, ddlMem);
             }
 
             // add new column metadata to bottom of list
@@ -2055,7 +2066,7 @@ public class WalWriter implements Closeable {
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 if (i != columnIndex) {
-                    writeColumnEntry(i, false);
+                    writeColumnEntry(i, false, ddlMem);
                 } else {
                     ddlMem.putInt(getColumnType(metaMem, i));
                     long flags = META_FLAG_BIT_INDEXED;
@@ -2092,7 +2103,7 @@ public class WalWriter implements Closeable {
             copyVersionAndLagValues();
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
+                writeColumnEntry(i, false, ddlMem);
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -2578,20 +2589,24 @@ public class WalWriter implements Closeable {
         }
     }
 
-    private void openWalDPartition() {
+    private void openNewWalDPartition() {
+        waldPartitionCounter++;
         try {
-            walDPath.slash().concat("0");
-            if (ff.mkdirs(walDPath.slash$(), mkDirMode) != 0) {
-                throw CairoException.instance(ff.errno()).put("Cannot create WAL-D directory: ").put(walDPath);
-            }
+            walDPath.slash().put(waldPartitionCounter);
             int plen = walDPath.length();
-
+            if (ff.mkdirs(walDPath.slash$(), mkDirMode) != 0) {
+                throw CairoException.instance(ff.errno()).put("Cannot create WAL-D partition directory: ").put(walDPath);
+            }
+            walDPath.trimTo(plen);
             assert columnCount > 0;
-
-            for (int i = 0; i < columnCount; i++) {
-                if (metadata.getColumnType(i) > 0) {
-                    final CharSequence name = metadata.getColumnName(i);
-                    openWalDColumnFiles(name, i, plen);
+            try (MemoryMAR metaMem = Vm.getMARInstance()) {
+                openWalDMetaFile(ff, walDPath, plen, metaMem);
+                for (int i = 0; i < columnCount; i++) {
+                    if (metadata.getColumnType(i) > 0) {
+                        final CharSequence name = metadata.getColumnName(i);
+                        openWalDColumnFiles(name, i, plen);
+                        writeColumnEntry(i, false, metaMem);
+                    }
                 }
             }
             LOG.info().$("switched WAL-D partition [path='").$(walDPath).$('\'').I$();
@@ -2599,7 +2614,7 @@ public class WalWriter implements Closeable {
             distressed = true;
             throw e;
         } finally {
-            path.trimTo(walDRootLen);
+            walDPath.trimTo(walDRootLen);
         }
     }
 
@@ -2831,7 +2846,7 @@ public class WalWriter implements Closeable {
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, i == index);
+                writeColumnEntry(i, i == index, ddlMem);
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -3064,7 +3079,7 @@ public class WalWriter implements Closeable {
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false);
+                writeColumnEntry(i, false, ddlMem);
             }
 
             long nameOffset = getColumnNameOffset(columnCount);
@@ -3362,6 +3377,14 @@ public class WalWriter implements Closeable {
         }
     }
 
+     private void walDRowAppend(ObjList<Runnable> activeNullSetters) {
+        for (int i = 0; i < columnCount; i++) {
+            if (rowValueIsNotNull.getQuick(i) < masterRef) {
+                activeNullSetters.getQuick(i).run();
+            }
+        }
+    }
+
     private void rowAppend(ObjList<Runnable> activeNullSetters) {
         if ((masterRef & 1) != 0) {
             for (int i = 0; i < columnCount; i++) {
@@ -3371,6 +3394,12 @@ public class WalWriter implements Closeable {
             }
             masterRef++;
         }
+    }
+
+    void walDRowCancel() {
+        long newMasterRef = masterRef - 1;
+        walDRowValueIsNotNull.fill(0, columnCount, newMasterRef);
+        openNewWalDPartition();
     }
 
     void rowCancel() {
@@ -3724,13 +3753,13 @@ public class WalWriter implements Closeable {
         }
     }
 
-    private void writeColumnEntry(int i, boolean markDeleted) {
+    private void writeColumnEntry(int i, boolean markDeleted, MemoryMAR targetDdlMem) {
         int columnType = getColumnType(metaMem, i);
         // When column is deleted it's written to metadata with negative type
         if (markDeleted) {
             columnType = -Math.abs(columnType);
         }
-        ddlMem.putInt(columnType);
+        targetDdlMem.putInt(columnType);
 
         long flags = 0;
         if (isColumnIndexed(metaMem, i)) {
@@ -3740,10 +3769,10 @@ public class WalWriter implements Closeable {
         if (isSequential(metaMem, i)) {
             flags |= META_FLAG_BIT_SEQUENTIAL;
         }
-        ddlMem.putLong(flags);
-        ddlMem.putInt(getIndexBlockCapacity(metaMem, i));
-        ddlMem.putLong(getColumnHash(metaMem, i));
-        ddlMem.skip(8);
+        targetDdlMem.putLong(flags);
+        targetDdlMem.putInt(getIndexBlockCapacity(metaMem, i));
+        targetDdlMem.putLong(getColumnHash(metaMem, i));
+        targetDdlMem.skip(8);
     }
 
     private void writeRestoreMetaTodo(CharSequence columnName) {
@@ -3836,10 +3865,12 @@ public class WalWriter implements Closeable {
         @Override
         public void append() {
             rowAppend(activeNullSetters);
+            walDRowAppend(activeNullSetters);
         }
 
         @Override
         public void cancel() {
+            walDRowCancel();
             rowCancel();
         }
 

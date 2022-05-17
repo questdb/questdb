@@ -67,6 +67,8 @@ public final class TableUtils {
     public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
+
+    public static final String FILE_SUFFIX_WALD = ".wald";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final String DEFAULT_PARTITION_NAME = "default";
@@ -360,7 +362,7 @@ public final class TableUtils {
     }
 
     public static LPSZ walDFile(Path path, CharSequence columnName) {
-        path.concat(columnName).put(FILE_SUFFIX_D);
+        path.concat(columnName).put(FILE_SUFFIX_WALD);
         return path.$();
     }
 

@@ -57,36 +57,42 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertWalFileExist(String tableName, String columnName, int partition, Path path) {
-        int plen = path.length();
-        try {
-            path.concat(tableName).slash().concat("wal").slash().concat(String.valueOf(partition)).slash().concat(columnName + ".d").$();
-            assertPathExists(path);
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
     @Test
-    public void testAddingRow() {
+    public void cancelRowStartsANewPartition_for_now() {
         String tableName = "testtable";
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.INT)
                      .col("b", ColumnType.STRING)
         ) {
+            int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
+            path.trimTo(plen);
             try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
-                for (int i = 0; i < 100; i++) {
-                    WalWriter.Row row = walWriter.newRow();
-                    row.putByte(0, (byte) i);
-                    row.putStr(1, String.valueOf(i));
-                    row.append();
-                }
+                WalWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.cancel();
+
+                row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.append();
             }
             System.out.println("done");
+            assertWalFileExist(tableName, "a", 0, path);
+            assertWalFileExist(tableName, "a", 1, path);
         }
     }
+
+    private void assertWalFileExist(String tableName, String columnName, int partition, Path path) {
+        int plen = path.length();
+        try {
+            path.concat(tableName).slash().concat("wal").slash().concat(String.valueOf(partition)).slash().concat(columnName + ".wald").$();
+            assertPathExists(path);
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
 
     private static void assertPathExists(Path path) {
         if (!Files.exists(path)) {
