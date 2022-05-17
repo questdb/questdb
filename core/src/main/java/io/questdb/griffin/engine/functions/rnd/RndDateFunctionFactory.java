@@ -62,6 +62,11 @@ public class RndDateFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
         }

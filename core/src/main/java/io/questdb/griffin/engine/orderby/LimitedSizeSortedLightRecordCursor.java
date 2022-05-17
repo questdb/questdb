@@ -85,6 +85,11 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     }
 
     @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return base.newSymbolTable(columnIndex);
+    }
+
+    @Override
     public boolean hasNext() {
         if (rowsLeft-- > 0 && chainCursor.hasNext()) {
             base.recordAt(baseRecord, chainCursor.next());

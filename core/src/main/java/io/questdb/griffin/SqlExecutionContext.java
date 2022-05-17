@@ -98,4 +98,8 @@ public interface SqlExecutionContext extends Closeable {
     @Override
     default void close(){
     }
+
+    void setCloneSymbolTables(boolean cloneSymbolTables);
+
+    boolean getCloneSymbolTables();
 }

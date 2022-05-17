@@ -119,7 +119,12 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     @Override
     public StaticSymbolTable getSymbolTable(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
+        return reader.getSymbolTable(columnIndexes.getQuick(columnIndex));
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 
     public FwdTableReaderPageFrameCursor of(DataFrameCursor dataFrameCursor) {

@@ -90,5 +90,10 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
             symbols.add(Chars.toString(sink));
             return str;
         }
+
+        @Override
+        protected AbstractToSymbolCastFunction newFunc() {
+            return new Func(arg);
+        }
     }
 }

@@ -22,38 +22,41 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.bind;
+package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.engine.functions.BinFunction;
-import io.questdb.std.BinarySequence;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.Misc;
 
-public class BinBindVariable extends BinFunction implements ScalarFunction {
-    BinarySequence value;
+public abstract class AbstractJoinCursor implements NoRandomAccessRecordCursor {
+    protected final int columnSplit;
+    protected RecordCursor masterCursor;
+    protected RecordCursor slaveCursor;
 
-    public BinBindVariable(BinarySequence value) {
-        this.value = value;
+    public AbstractJoinCursor(int columnSplit) {
+        this.columnSplit = columnSplit;
     }
 
     @Override
-    public BinarySequence getBin(Record rec) {
-        return value;
+    public void close() {
+        masterCursor = Misc.free(masterCursor);
+        slaveCursor = Misc.free(slaveCursor);
     }
 
     @Override
-    public long getBinLen(Record rec) {
-        return value == null ? TableUtils.NULL_LEN : value.length();
+    public SymbolTable getSymbolTable(int columnIndex) {
+        if (columnIndex < columnSplit) {
+            return masterCursor.getSymbolTable(columnIndex);
+        }
+        return slaveCursor.getSymbolTable(columnIndex - columnSplit);
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return true;
+    public SymbolTable newSymbolTable(int columnIndex) {
+        if (columnIndex < columnSplit) {
+            return masterCursor.newSymbolTable(columnIndex);
+        }
+        return slaveCursor.newSymbolTable(columnIndex - columnSplit);
     }
 }

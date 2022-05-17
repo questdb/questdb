@@ -140,6 +140,11 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         }
 
         @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
+        }
+
+        @Override
         public boolean hasNext() {
             if (state == COMPUTE_NEXT) {
                 while (baseCursor.hasNext()) {

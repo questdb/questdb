@@ -48,4 +48,6 @@ public interface SymbolMapReader extends StaticSymbolTable {
      * @param count number of symbols to update symbol table to
      */
     void updateSymbolCount(int count);
+
+    StaticSymbolTable newSymbolTableView();
 }

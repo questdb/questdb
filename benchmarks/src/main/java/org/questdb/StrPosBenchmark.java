@@ -116,6 +116,11 @@ public class StrPosBenchmark {
             public char getChar(Record rec) {
                 return ',';
             }
+
+            @Override
+            public boolean isReadThreadSafe() {
+                return true;
+            }
         };
 
         strFunc = new StrPosFunctionFactory.Func(strInputFunc, substrStrInputFunc);

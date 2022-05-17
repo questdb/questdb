@@ -79,13 +79,18 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            rnd = executionContext.getRandom();
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
         public void toTop() {
             rnd.reset();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            rnd = executionContext.getRandom();
         }
     }
 }

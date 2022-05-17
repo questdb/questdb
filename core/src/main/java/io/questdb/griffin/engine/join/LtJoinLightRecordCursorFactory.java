@@ -106,15 +106,12 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
         return masterFactory.hasDescendingOrder();
     }
 
-    private class LtJoinLightRecordCursor implements NoRandomAccessRecordCursor {
+    private class LtJoinLightRecordCursor extends AbstractJoinCursor {
         private final OuterJoinRecord record;
         private final Map joinKeyMap;
-        private final int columnSplit;
         private final int masterTimestampIndex;
         private final int slaveTimestampIndex;
         private Record slaveRecord;
-        private RecordCursor masterCursor;
-        private RecordCursor slaveCursor;
         private Record masterRecord;
         private long slaveTimestamp = Long.MIN_VALUE;
         private long lastSlaveRowID = Long.MIN_VALUE;
@@ -126,30 +123,16 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
                 int masterTimestampIndex,
                 int slaveTimestampIndex
         ) {
+            super(columnSplit);
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.joinKeyMap = joinKeyMap;
-            this.columnSplit = columnSplit;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
         }
 
         @Override
-        public void close() {
-            masterCursor = Misc.free(masterCursor);
-            slaveCursor = Misc.free(slaveCursor);
-        }
-
-        @Override
         public Record getRecord() {
             return record;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex < columnSplit) {
-                return masterCursor.getSymbolTable(columnIndex);
-            }
-            return slaveCursor.getSymbolTable(columnIndex - columnSplit);
         }
 
         @Override
