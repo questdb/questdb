@@ -83,10 +83,40 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void ddlMetadataCreated() {
+        String tableName = "testtable";
+        try (Path path = new Path().of(configuration.getRoot());
+             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                     .col("a", ColumnType.INT)
+                     .col("b", ColumnType.STRING)
+        ) {
+            int plen = path.length();
+            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
+            path.trimTo(plen);
+            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+                WalWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.append();
+            }
+            assertMetadataFileExist(tableName, 0, path);
+        }
+    }
+
     private void assertWalFileExist(String tableName, String columnName, int partition, Path path) {
         int plen = path.length();
         try {
             path.concat(tableName).slash().concat("wal").slash().concat(String.valueOf(partition)).slash().concat(columnName + ".wald").$();
+            assertPathExists(path);
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    private void assertMetadataFileExist(String tableName, int partition, Path path) {
+        int plen = path.length();
+        try {
+            path.concat(tableName).slash().concat("wal").slash().concat(String.valueOf(partition)).slash().concat("_meta").$();
             assertPathExists(path);
         } finally {
             path.trimTo(plen);
