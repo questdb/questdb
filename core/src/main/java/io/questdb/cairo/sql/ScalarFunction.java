@@ -26,9 +26,6 @@ package io.questdb.cairo.sql;
 
 import io.questdb.std.str.CharSink;
 
-/**
- * TODO: add javadoc
- */
 public interface ScalarFunction extends Function {
     @Override
     default int getArrayLength() {

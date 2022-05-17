@@ -73,5 +73,10 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
             record.$();
             return true;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     }
 }

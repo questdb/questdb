@@ -81,5 +81,10 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
             }
             return true;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     }
 }

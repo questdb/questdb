@@ -114,5 +114,6 @@ public class PageFrameReduceTask implements Closeable {
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
         this.frameIndex = frameIndex;
+        rows.clear();
     }
 }

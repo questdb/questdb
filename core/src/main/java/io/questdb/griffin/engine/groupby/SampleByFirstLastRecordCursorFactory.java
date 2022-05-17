@@ -251,6 +251,11 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return pageFrameCursor.newSymbolTable(queryToFrameColumnMapping[columnIndex]);
+        }
+
+        @Override
         public boolean hasNext() {
             // This loop never returns last found sample by row.
             // The reason is that last row() value can be changed on next data frame pass.

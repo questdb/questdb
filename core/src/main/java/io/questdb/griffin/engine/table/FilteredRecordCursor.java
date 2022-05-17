@@ -56,6 +56,11 @@ class FilteredRecordCursor implements RecordCursor {
     }
 
     @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return base.newSymbolTable(columnIndex);
+    }
+
+    @Override
     public boolean hasNext() {
         while (base.hasNext()) {
             if (filter.getBool(record)) {

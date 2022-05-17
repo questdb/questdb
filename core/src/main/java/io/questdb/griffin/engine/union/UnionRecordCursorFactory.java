@@ -90,4 +90,9 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
+
+    @Override
+    public boolean fragmentedSymbolTables() {
+        return true;
+    }
 }

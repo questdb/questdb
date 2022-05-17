@@ -68,6 +68,11 @@ class SortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return base.newSymbolTable(columnIndex);
+    }
+
+    @Override
     public boolean hasNext() {
         if (chainCursor.hasNext()) {
             base.recordAt(baseRecord, chainCursor.next());

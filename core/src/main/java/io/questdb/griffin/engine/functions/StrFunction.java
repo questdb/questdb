@@ -161,4 +161,9 @@ public abstract class StrFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.STRING;
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }
