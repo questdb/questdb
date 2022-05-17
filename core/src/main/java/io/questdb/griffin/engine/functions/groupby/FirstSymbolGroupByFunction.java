@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupByFunction, UnaryFunction {
     private final SymbolFunction arg;
@@ -96,5 +97,12 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     @Override
     public CharSequence valueBOf(int key) {
         return arg.valueBOf(key);
+    }
+
+    @Override
+    public @Nullable SymbolTable newSymbolTable() {
+        // this implementation does not have its own symbol table
+        // it fully relies on the argument
+        return arg.newSymbolTable();
     }
 }

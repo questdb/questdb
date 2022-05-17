@@ -115,4 +115,9 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     public long getTimestamp(Record rec) {
         return max.longValue();
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }

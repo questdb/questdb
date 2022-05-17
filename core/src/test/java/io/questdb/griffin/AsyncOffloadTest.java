@@ -52,31 +52,36 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int ROW_COUNT = PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
 
-    private static final String queryNoLimit = "x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
+    private static final String queryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
     private static final String expectedNoLimit = "v\n" +
-            "3352215237270276085\n" +
             "3393210801760647293\n" +
             "3394168647660478011\n" +
-            "3446015290144635451\n" +
+            "3424747151763089683\n" +
+            "3433721896286859656\n" +
+            "3464609208866088600\n" +
+            "3513816850827798261\n" +
             "3518554007419864093\n" +
-            "3527911398466283309\n" +
-            "3614738589890112276\n" +
+            "3542505137180114151\n" +
             "3619114107112892010\n" +
+            "3669882909701240516\n" +
             "3705833798044144433\n" +
+            "3745605868208843008\n" +
             "3771494396743411509\n" +
-            "3792128300541831563\n" +
+            "3794031607724753525\n" +
             "3820631780839257855\n" +
+            "3944678179613436885\n" +
             "3958193676455060057\n" +
             "4014104627539596639\n" +
+            "4039070554630775695\n" +
             "4086802474270249591\n" +
             "4099611147050818391\n" +
-            "4107109535030235684\n" +
-            "4167328623064065836\n" +
-            "4238042693748641409\n";
+            "4160567228070722087\n" +
+            "4169687421984608700\n" +
+            "4238042693748641409\n" +
+            "4290477379978201771\n";
 
-    private static final String queryPositiveLimit = "x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
+    private static final String queryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
     private static final String expectedPositiveLimit = "v\n" +
-            "3614738589890112276\n" +
             "3394168647660478011\n" +
             "4086802474270249591\n" +
             "3958193676455060057\n" +
@@ -85,20 +90,21 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
             "4238042693748641409\n" +
             "3518554007419864093\n" +
             "4014104627539596639\n" +
-            "4167328623064065836\n";
-
-    private static final String queryNegativeLimit = "x where v > 3326086085493629941L and v < 4326086085493629941L limit -10";
-    private static final String expectedNegativeLimit = "v\n" +
-            "4167328623064065836\n" +
-            "3446015290144635451\n" +
             "3393210801760647293\n" +
-            "4099611147050818391\n" +
-            "4107109535030235684\n" +
-            "3527911398466283309\n" +
-            "3352215237270276085\n" +
-            "3820631780839257855\n" +
-            "3771494396743411509\n" +
-            "3792128300541831563\n";
+            "4099611147050818391\n";
+
+    private static final String queryNegativeLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit -10";
+    private static final String expectedNegativeLimit = "v\n" +
+            "4039070554630775695\n" +
+            "3424747151763089683\n" +
+            "4290477379978201771\n" +
+            "3794031607724753525\n" +
+            "3745605868208843008\n" +
+            "3464609208866088600\n" +
+            "3513816850827798261\n" +
+            "3542505137180114151\n" +
+            "4169687421984608700\n" +
+            "3433721896286859656\n";
 
     @BeforeClass
     public static void setUpStatic() {
@@ -176,6 +182,24 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         testParallelStress(queryNegativeLimit, expectedNegativeLimit, 4, 4, SqlJitMode.JIT_MODE_ENABLED);
     }
 
+    @Test
+    public void testParallelStressSingleThreadMultipleWorkersSymbolValueFilter() throws Exception {
+        testParallelStress(
+                "x where v > 3326086085493629941L and v < 4326086085493629941L and s ~ 'A' order by v",
+                "v\ts\n" +
+                        "3393210801760647293\tA\n" +
+                        "3433721896286859656\tA\n" +
+                        "3619114107112892010\tA\n" +
+                        "3669882909701240516\tA\n" +
+                        "3820631780839257855\tA\n" +
+                        "4039070554630775695\tA\n" +
+                        "4290477379978201771\tA\n",
+                4,
+                1,
+                SqlJitMode.JIT_MODE_DISABLED
+        );
+    }
+
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         AbstractCairoTest.jitMode = jitMode;
 
@@ -210,16 +234,24 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
         );
 
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    compiler.compile("create table x as (" +
-                                    "select rnd_long() v from long_sequence(" + ROW_COUNT + ")" +
+                    compiler.compile("create table x ( " +
+                                    "v long, " +
+                                    "s symbol capacity 4 cache " +
                                     ")",
                             sqlExecutionContext
                     );
+                    compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
+                            sqlExecutionContext
+                    );
 
+                    SqlCompiler[] compilers = new SqlCompiler[threadCount];
                     RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
 
                     for (int i = 0; i < threadCount; i++) {
-                        factories[i] = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+                        // Each factory should use a dedicated compiler instance, so that they don't
+                        // share the same reduce task local pool in the SqlCodeGenerator.
+                        compilers[i] = new SqlCompiler(engine);
+                        factories[i] = compilers[i].compile(query, sqlExecutionContext).getRecordCursorFactory();
                         Assert.assertEquals(jitMode != SqlJitMode.JIT_MODE_DISABLED, factories[i].usesCompiledFilter());
                     }
 
@@ -244,6 +276,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                     }
 
                     haltLatch.await();
+
+                    Misc.free(compilers);
                     Misc.free(factories);
 
                     Assert.assertEquals(0, errors.get());
@@ -304,7 +338,8 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                             factory.getMetadata(),
                             sink,
                             printer,
-                            rows
+                            rows,
+                            factory.fragmentedSymbolTables()
                     )
             ) {
                 return true;

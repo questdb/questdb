@@ -142,4 +142,9 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
         }
         return Double.NaN;
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }

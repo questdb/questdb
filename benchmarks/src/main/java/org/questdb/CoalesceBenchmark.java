@@ -65,6 +65,11 @@ public class CoalesceBenchmark {
             public long getLong(Record rec) {
                 return rec.getLong(0);
             }
+
+            @Override
+            public boolean isReadThreadSafe() {
+                return true;
+            }
         });
         constFunctions.add(new LongConstant(10L));
         records = new Record[N];

@@ -109,6 +109,11 @@ class IntersectRecordCursor implements RecordCursor {
     }
 
     @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return symbolCursor.newSymbolTable(columnIndex);
+    }
+
+    @Override
     public void toTop() {
         symbolCursor = masterCursor;
         masterCursor.toTop();

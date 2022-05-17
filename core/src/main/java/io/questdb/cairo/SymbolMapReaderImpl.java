@@ -25,9 +25,11 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -42,8 +44,8 @@ import static io.questdb.cairo.TableUtils.offsetFileName;
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private final ConcurrentBitmapIndexFwdReader indexReader = new ConcurrentBitmapIndexFwdReader();
-    private final MemoryMR charMem = Vm.getMRInstance();
-    private final MemoryMR offsetMem = Vm.getMRInstance();
+    private final MemoryCMR charMem = Vm.getCMRInstance();
+    private final MemoryCMR offsetMem = Vm.getCMRInstance();
     private final ObjList<String> cache = new ObjList<>();
     private int maxHash;
     private boolean cached;
@@ -217,6 +219,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return null;
     }
 
+    public StaticSymbolTable newSymbolTableView() {
+        return new SymbolTableView();
+    }
+
     private CharSequence cachedValue(int key) {
         String symbol = cache.getQuiet(key);
         return symbol != null ? symbol : fetchAndCache(key);
@@ -236,5 +242,62 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     private CharSequence uncachedValue2(int key) {
         return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+    }
+
+    private class SymbolTableView implements StaticSymbolTable {
+        private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
+        private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
+        private final MemoryCR.CharSequenceView csviewInternal = new MemoryCR.CharSequenceView();
+        private RowCursor rowCursor;
+
+        @Override
+        public boolean containsNullValue() {
+            return nullValue;
+        }
+
+        @Override
+        public int getSymbolCount() {
+            return symbolCount;
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            if (value != null) {
+                int hash = Hash.boundedHash(value, maxHash);
+                rowCursor = indexReader.initCursor(rowCursor, hash, 0, maxOffset - Long.BYTES);
+                while (rowCursor.hasNext()) {
+                    final long offsetOffset = rowCursor.next();
+                    if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset), csviewInternal))) {
+                        return SymbolMapWriter.offsetToKey(offsetOffset);
+                    }
+                }
+                return SymbolTable.VALUE_NOT_FOUND;
+            }
+            return SymbolTable.VALUE_IS_NULL;
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            if (key > -1 && key < symbolCount) {
+                return uncachedValue(key);
+            }
+            return null;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            if (key > -1 && key < symbolCount) {
+                return uncachedValue2(key);
+            }
+            return null;
+        }
+
+        private CharSequence uncachedValue(int key) {
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csview);
+        }
+
+        private CharSequence uncachedValue2(int key) {
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csview2);
+        }
     }
 }

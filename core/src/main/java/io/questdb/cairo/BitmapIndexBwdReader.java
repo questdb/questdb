@@ -59,7 +59,6 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
-
         assert minValue <= maxValue;
 
         if (key >= keyCount) {
@@ -120,7 +119,6 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
                 valueCount = 0;
                 return false;
-
             }
             return false;
         }

@@ -28,5 +28,5 @@ import io.questdb.cairo.sql.PageAddressCacheRecord;
 
 @FunctionalInterface
 public interface PageFrameReducer {
-    void reduce(PageAddressCacheRecord record, PageFrameReduceTask task);
+    void reduce(int workerId, PageAddressCacheRecord record, PageFrameReduceTask task);
 }

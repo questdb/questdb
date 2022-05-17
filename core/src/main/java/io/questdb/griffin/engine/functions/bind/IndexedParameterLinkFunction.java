@@ -25,8 +25,9 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
@@ -194,6 +195,18 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     @Override
     public boolean isRuntimeConstant() {
         return true;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        switch (type) {
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+            case ColumnType.LONG256:
+                return false;
+            default:
+                return true;
+        }
     }
 
     public int getVariableIndex() {

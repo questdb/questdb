@@ -200,6 +200,11 @@ public class LatestByRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
+        }
+
+        @Override
         public boolean hasNext() {
             if (rowIndexesPos == rowIndexes.size()) {
                 return false;

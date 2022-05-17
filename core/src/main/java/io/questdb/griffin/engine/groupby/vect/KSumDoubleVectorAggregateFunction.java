@@ -155,4 +155,9 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
         }
         return count > 0 ? sum : Double.NaN;
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }

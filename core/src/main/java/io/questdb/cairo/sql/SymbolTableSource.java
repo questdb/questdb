@@ -24,7 +24,9 @@
 
 package io.questdb.cairo.sql;
 
-@FunctionalInterface
 public interface SymbolTableSource {
+
     SymbolTable getSymbolTable(int columnIndex);
+
+    SymbolTable newSymbolTable(int columnIndex);
 }

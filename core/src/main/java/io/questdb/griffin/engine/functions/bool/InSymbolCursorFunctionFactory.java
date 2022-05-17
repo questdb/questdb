@@ -57,7 +57,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         final Record.CharSequenceFunction func = ColumnType.isString(zeroColumnType) ? Record.GET_STR : Record.GET_SYM;
 
-        if (symbolFunction.getStaticSymbolTable() != null) {
+        if (symbolFunction.isSymbolTableStatic()) {
             return new SymbolInCursorFunction(symbolFunction, cursorFunction, func);
         }
         return new StrInCursorFunction(symbolFunction, cursorFunction, func);
