@@ -5359,6 +5359,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleBy2() throws Exception {
+        assertQuery(
+                "select-group-by x, sum(y) sum from (select [x, y] from tab timestamp (timestamp)) sample by 2U",
+                "select x,sum(y) from tab sample by 2U",
+                modelOf("tab")
+                        .col("x", ColumnType.INT)
+                        .col("y", ColumnType.INT)
+                        .timestamp()
+        );
+    }
+
+    @Test
     public void testSampleByAliasedColumn() throws SqlException {
         assertQuery(
                 "select-group-by b, sum(a) sum, k, k k1 from (select [b, a, k] from x y timestamp (timestamp)) y sample by 3h",
