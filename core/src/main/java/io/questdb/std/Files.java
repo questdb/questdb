@@ -194,6 +194,7 @@ public final class Files {
             char c = path.charAt(i);
             if (c == File.separatorChar) {
 
+                // do not attempt to create '/' on linux or 'C:\' on Windows
                 if ((i == 0 && Os.type != Os.WINDOWS) || (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':')) {
                     continue;
                 }
