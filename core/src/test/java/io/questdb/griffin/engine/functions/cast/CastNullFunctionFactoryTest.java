@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.griffin.*;
+import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Assert;
 import org.junit.Test;
 

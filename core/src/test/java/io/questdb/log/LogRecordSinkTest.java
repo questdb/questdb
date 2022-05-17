@@ -24,7 +24,8 @@
 
 package io.questdb.log;
 
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;

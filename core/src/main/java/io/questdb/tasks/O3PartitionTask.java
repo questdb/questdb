@@ -28,7 +28,6 @@ import io.questdb.cairo.O3Basket;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 

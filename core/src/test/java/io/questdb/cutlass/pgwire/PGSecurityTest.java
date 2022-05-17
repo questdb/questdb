@@ -32,7 +32,6 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.postgresql.util.PSQLException;
 
-import java.io.IOException;
 import java.sql.Connection;
 import java.sql.Statement;
 
@@ -109,9 +108,7 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowCreateTable() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQueryDisallowed("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY");
-        });
+        assertMemoryLeak(() -> assertQueryDisallowed("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY"));
     }
 
     @Test
@@ -216,7 +213,7 @@ public class PGSecurityTest extends BasePGTest {
         try (
                 final PGWireServer ignored = createPGServer(READ_ONLY_CONF);
                 final Connection connection = getConnection(false, true);
-                final Statement statement = connection.createStatement();
+                final Statement statement = connection.createStatement()
         ) {
             statement.execute(query);
         }

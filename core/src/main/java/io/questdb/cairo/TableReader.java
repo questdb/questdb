@@ -74,7 +74,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int columnCountShl;
     private long rowCount;
     private long txn = TableUtils.INITIAL_TXN;
-    private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
+    private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private boolean txnAcquired = false;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
@@ -666,7 +666,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void freeTempMem() {
         if (tempMem8b != 0) {
-            Unsafe.free(tempMem8b, 8, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(tempMem8b, 8, MemoryTag.NATIVE_TABLE_READER);
             tempMem8b = 0;
         }
     }

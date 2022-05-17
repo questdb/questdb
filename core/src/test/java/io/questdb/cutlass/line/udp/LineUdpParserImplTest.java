@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
@@ -497,7 +496,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
             boolean called = false;
 
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 if (Chars.endsWith(path, "x" + Files.SEPARATOR)) {
                     called = true;
                     return -1;

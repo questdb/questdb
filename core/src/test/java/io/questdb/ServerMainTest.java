@@ -27,9 +27,6 @@ package io.questdb;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import org.hamcrest.MatcherAssert;
-
-import static org.hamcrest.CoreMatchers.*;
-
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -43,6 +40,8 @@ import java.net.URL;
 import java.nio.file.Paths;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+
+import static org.hamcrest.CoreMatchers.is;
 
 
 public class ServerMainTest {
