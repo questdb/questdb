@@ -33,7 +33,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.PriorityQueue;
-import java.util.concurrent.locks.LockSupport;
 
 public class WaitProcessor extends SynchronizedJob implements RescheduleContext, Closeable {
 
