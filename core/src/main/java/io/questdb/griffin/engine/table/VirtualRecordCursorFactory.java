@@ -91,4 +91,9 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     public boolean hasDescendingOrder() {
         return baseFactory.hasDescendingOrder();
     }
+
+    @Override
+    public boolean fragmentedSymbolTables() {
+        return baseFactory.fragmentedSymbolTables();
+    }
 }

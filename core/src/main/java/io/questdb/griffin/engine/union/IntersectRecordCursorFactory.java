@@ -90,4 +90,9 @@ public class IntersectRecordCursorFactory implements RecordCursorFactory {
         Misc.free(slaveFactory);
         Misc.free(map);
     }
+
+    @Override
+    public boolean fragmentedSymbolTables() {
+        return masterFactory.fragmentedSymbolTables();
+    }
 }

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.union;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.std.ObjList;
 
 public class DelegatingSymbolRecordImpl extends DelegatingRecordImpl {
@@ -63,6 +64,11 @@ public class DelegatingSymbolRecordImpl extends DelegatingRecordImpl {
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return delegateSymbolTables.getQuick(columnIndex);
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

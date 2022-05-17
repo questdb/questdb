@@ -40,7 +40,6 @@ class IntersectRecordCursor implements RecordCursor {
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
     private Record masterRecord;
-    private RecordCursor symbolCursor;
     private SqlExecutionCircuitBreaker circuitBreaker;
 
     public IntersectRecordCursor(Map map, RecordSink recordSink) {
@@ -105,17 +104,16 @@ class IntersectRecordCursor implements RecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return symbolCursor.getSymbolTable(columnIndex);
+        return masterCursor.getSymbolTable(columnIndex);
     }
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return symbolCursor.newSymbolTable(columnIndex);
+        return masterCursor.newSymbolTable(columnIndex);
     }
 
     @Override
     public void toTop() {
-        symbolCursor = masterCursor;
         masterCursor.toTop();
     }
 

@@ -274,6 +274,40 @@ public class UnionTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testFilteredUnionAll() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "CREATE TABLE x as " +
+                            "(SELECT " +
+                            " rnd_symbol('CAR', 'VAN', 'PLANE', NULL) t, " +
+                            " CAST(x%2 as int) i" +
+                            " FROM long_sequence(20) x)",
+                    sqlExecutionContext
+            );
+
+            compiler.compile(
+                    "CREATE TABLE y as " +
+                            "(SELECT " +
+                            " rnd_symbol('BUS', 'BIKE', NULL) t, " +
+                            " CAST(x%2 as int) i" +
+                            " FROM long_sequence(20) x)",
+                    sqlExecutionContext
+            );
+
+            assertQuery("t\ti\n" +
+                            "\t0\n" +
+                            "BIKE\t0\n" +
+                            "BUS\t0\n" +
+                            "CAR\t0\n" +
+                            "PLANE\t0\n" +
+                            "VAN\t0\n",
+                    "(x union y) where i = 0 order by t",
+                    null,
+                    true);
+        });
+    }
+
     //select distinct sym from a union all b
     @Test
     public void testUnionAllOfSymbol() throws Exception {

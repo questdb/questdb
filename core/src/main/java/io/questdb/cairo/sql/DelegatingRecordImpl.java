@@ -185,4 +185,8 @@ public class DelegatingRecordImpl implements Record {
 
     public void toTop() {
     }
+
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return currentCursor.newSymbolTable(columnIndex);
+    }
 }
