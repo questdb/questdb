@@ -55,7 +55,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3Test extends AbstractO3Test {
     private static final Log LOG = LogFactory.getLog(O3Test.class);
+    private static final long MICROS_IN_MINUTE = 60000000L;
     private static final long MICROS_IN_HOUR = 3600000000L;
+    private static final long MICROS_IN_DAY = 86400000000L;
     private static final long MILLENNIUM = 946684800000000L;  // 2020-01-01T00:00:00
 
     private final StringBuilder tstData = new StringBuilder();
@@ -927,8 +929,21 @@ public class O3Test extends AbstractO3Test {
         executeWithPool(0, O3Test::testWriterOpensUnmappedPage);
     }
 
-    private static long hoursAfterMillenniumTimestamp(long hours) {
+    private static long millenniumTimestamp(int hours) {
         return MILLENNIUM + (hours * MICROS_IN_HOUR);
+    }
+
+    private static long millenniumTimestamp(int hours, int minutes) {
+        return MILLENNIUM +
+                (hours * MICROS_IN_HOUR) +
+                (minutes * MICROS_IN_MINUTE);
+    }
+
+    private static long millenniumTimestamp(int days, int hours, int minutes) {
+        return MILLENNIUM +
+                (days * MICROS_IN_DAY) +
+                (hours * MICROS_IN_HOUR) +
+                (minutes * MICROS_IN_MINUTE);
     }
 
     /**
@@ -943,11 +958,11 @@ public class O3Test extends AbstractO3Test {
     ) throws SqlException {
         final String createTableSql = String.format(
                 "create table x as (" +
-                "    select" +
-                "        cast(x as int) i," +
-                "        to_timestamp('2000-01', 'yyyy-MM') + (x * %d) ts" +
-                "    from" +
-                "        long_sequence(%d)" +
+                "  select" +
+                "    cast(x as int) i," +
+                "    to_timestamp('2000-01', 'yyyy-MM') + ((x + 4) * %d) ts" +
+                "  from" +
+                "    long_sequence(%d)" +
                 ") timestamp(ts) partition by DAY",
                 MICROS_IN_HOUR,
                 rowCount);
@@ -961,21 +976,32 @@ public class O3Test extends AbstractO3Test {
     @Test
     public void testMetricsAppendOneRow() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
-            final long initRowCount = 12;
+            final long initRowCount = 8;
 
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
                     TableWriter.Row r = null;
 
-                    r = w.newRow(hoursAfterMillenniumTimestamp(13));
-                    r.putInt(0, 13);
+                    r = w.newRow(millenniumTimestamp(13));
+                    r.putInt(0, 9);
                     r.append();
                     w.commit();
             }
 
-            // printSqlResult(compiler, sqlExecutionContext, "x");
-            // System.err.printf("x: %s\n", sink.toString());
+            printSqlResult(compiler, sqlExecutionContext, "x");
+            final String expected = "i\tts\n" +
+                "1\t2000-01-01T05:00:00.000000Z\n" +
+                "2\t2000-01-01T06:00:00.000000Z\n" +
+                "3\t2000-01-01T07:00:00.000000Z\n" +
+                "4\t2000-01-01T08:00:00.000000Z\n" +
+                "5\t2000-01-01T09:00:00.000000Z\n" +
+                "6\t2000-01-01T10:00:00.000000Z\n" +
+                "7\t2000-01-01T11:00:00.000000Z\n" +
+                "8\t2000-01-01T12:00:00.000000Z\n" +
+                "9\t2000-01-01T13:00:00.000000Z\n";  // new row
+
+            TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
             assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
@@ -984,23 +1010,34 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void TestMetricsInsertOneRowBefore() throws Exception {
+    public void testMetricsInsertOneRowBefore() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
-            final long initRowCount = 12;
+            final long initRowCount = 8;
 
-            setupBasicTable(engine, compiler, sqlExecutionContext, 12);
+            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
                     TableWriter.Row r = null;
 
-                    r = w.newRow(hoursAfterMillenniumTimestamp(-1));
-                    r.putInt(0, -1);
+                    r = w.newRow(millenniumTimestamp(4));
+                    r.putInt(0, 0);
                     r.append();
                     w.commit();
             }
 
             printSqlResult(compiler, sqlExecutionContext, "x");
-            System.err.printf("x: %s\n", sink.toString());
+            final String expected = "i\tts\n" +
+                "0\t2000-01-01T04:00:00.000000Z\n" +  // new row
+                "1\t2000-01-01T05:00:00.000000Z\n" +
+                "2\t2000-01-01T06:00:00.000000Z\n" +
+                "3\t2000-01-01T07:00:00.000000Z\n" +
+                "4\t2000-01-01T08:00:00.000000Z\n" +
+                "5\t2000-01-01T09:00:00.000000Z\n" +
+                "6\t2000-01-01T10:00:00.000000Z\n" +
+                "7\t2000-01-01T11:00:00.000000Z\n" +
+                "8\t2000-01-01T12:00:00.000000Z\n";
+
+            TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
             assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
@@ -1009,6 +1046,127 @@ public class O3Test extends AbstractO3Test {
             assertEquals(initRowCount * 2 + 1, metrics.tableWriter().physicallyWrittenRows());
         });
     }
+
+    @Test
+    public void testMetricsInsertOneRowMiddle() throws Exception {
+        executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
+            final long initRowCount = 8;
+
+            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+
+            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+                    TableWriter.Row r = null;
+
+                    r = w.newRow(millenniumTimestamp(8, 30));
+                    r.putInt(0, 100);
+                    r.append();
+                    w.commit();
+            }
+
+            printSqlResult(compiler, sqlExecutionContext, "x");
+            final String expected = "i\tts\n" +
+                    "1\t2000-01-01T05:00:00.000000Z\n" +
+                    "2\t2000-01-01T06:00:00.000000Z\n" +
+                    "3\t2000-01-01T07:00:00.000000Z\n" +
+                    "4\t2000-01-01T08:00:00.000000Z\n" +
+                    "100\t2000-01-01T08:30:00.000000Z\n" +  // new row
+                    "5\t2000-01-01T09:00:00.000000Z\n" +
+                    "6\t2000-01-01T10:00:00.000000Z\n" +
+                    "7\t2000-01-01T11:00:00.000000Z\n" +
+                    "8\t2000-01-01T12:00:00.000000Z\n";
+
+            TestUtils.assertEquals(expected, sink);
+
+            Metrics metrics = engine.getMetrics();
+            assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
+
+            // There was a single partition which had to be re-written, along with the additional record.
+            assertEquals(initRowCount * 2 + 1, metrics.tableWriter().physicallyWrittenRows());
+        });
+    }
+
+    @Test
+    public void TestMetricsInsertRowsAfterEachPartition() throws Exception {
+        executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
+            final long initRowCount = 24;
+
+            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+
+            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+                    TableWriter.Row r = null;
+
+                    r = w.newRow(millenniumTimestamp(23, 30));
+                    r.putInt(0, 101);
+                    r.append();
+
+                //     r = w.newRow(millenniumTimestamp(23, 15));
+                //     r.putInt(0, 102);
+                //     r.append();
+
+                //     r = w.newRow(millenniumTimestamp(23, 45));
+                //     r.putInt(0, 103);
+                //     r.append();
+
+                    r = w.newRow(millenniumTimestamp(1, 04, 45));
+                    r.putInt(0, 201);
+                    r.append();
+
+                //     r = w.newRow(millenniumTimestamp(1, 04, 30));
+                //     r.putInt(0, 202);
+                //     r.append();
+
+                //     r = w.newRow(millenniumTimestamp(1, 04, 15));
+                //     r.putInt(0, 203);
+                    r.append();
+
+                    w.commit();
+            }
+
+            printSqlResult(compiler, sqlExecutionContext, "x");
+            final String expected = "i\tts\n" +
+                "1\t2000-01-01T05:00:00.000000Z\n" +
+                "2\t2000-01-01T06:00:00.000000Z\n" +
+                "3\t2000-01-01T07:00:00.000000Z\n" +
+                "4\t2000-01-01T08:00:00.000000Z\n" +
+                "5\t2000-01-01T09:00:00.000000Z\n" +
+                "6\t2000-01-01T10:00:00.000000Z\n" +
+                "7\t2000-01-01T11:00:00.000000Z\n" +
+                "8\t2000-01-01T12:00:00.000000Z\n" +
+                "9\t2000-01-01T13:00:00.000000Z\n" +
+                "10\t2000-01-01T14:00:00.000000Z\n" +
+                "11\t2000-01-01T15:00:00.000000Z\n" +
+                "12\t2000-01-01T16:00:00.000000Z\n" +
+                "13\t2000-01-01T17:00:00.000000Z\n" +
+                "14\t2000-01-01T18:00:00.000000Z\n" +
+                "15\t2000-01-01T19:00:00.000000Z\n" +
+                "16\t2000-01-01T20:00:00.000000Z\n" +
+                "17\t2000-01-01T21:00:00.000000Z\n" +
+                "18\t2000-01-01T22:00:00.000000Z\n" +
+                "19\t2000-01-01T23:00:00.000000Z\n" +
+                //"102\t2000-01-01T23:15:00.000000Z\n" +  // new row
+                "101\t2000-01-01T23:30:00.000000Z\n" +  // new row
+                //"103\t2000-01-01T23:45:00.000000Z\n" +  // new row
+                "20\t2000-01-02T00:00:00.000000Z\n" +
+                "21\t2000-01-02T01:00:00.000000Z\n" +
+                "22\t2000-01-02T02:00:00.000000Z\n" +
+                "23\t2000-01-02T03:00:00.000000Z\n" +
+                "24\t2000-01-02T04:00:00.000000Z\n" +
+                //"203\t2000-01-02T04:15:00.000000Z\n" +  // new row
+                //"202\t2000-01-02T04:30:00.000000Z\n" +  // new row
+                "201\t2000-01-02T04:45:00.000000Z\n";  // new row
+
+                System.err.printf("x: %s\n", sink.toString());
+                TestUtils.assertEquals(expected, sink);
+
+            Metrics metrics = engine.getMetrics();
+            assertEquals(initRowCount + 2, metrics.tableWriter().committedRows());
+
+            // No partitions had to be re-written: New records appended at the end of each.
+            assertEquals(initRowCount + 2, metrics.tableWriter().physicallyWrittenRows());
+        });
+    }
+
+    // TODO: [adam] Test that creates a partition ahead of existing data.
 
     private static void testWriterOpensCorrectTxnPartitionOnRestart0(
             CairoEngine engine,
