@@ -69,13 +69,13 @@ public interface CairoConfiguration {
 
     int getColumnIndexerQueueCapacity();
 
-    int getColumnVersionPurgeQueueCapacity();
+    int getColumnPurgeQueueCapacity();
 
-    int getColumnVersionTaskPoolCapacity();
+    int getColumnPurgeTaskPoolCapacity();
 
-    int getColumnVersionPurgeLookBackDays();
+    int getColumnPurgeLimitDays();
 
-    double getColumnVersionPurgeWaitExponent();
+    double getColumnPurgeTimeoutExponent();
 
     /**
      * Default commit lag in microseconds for new tables. This value
@@ -89,9 +89,9 @@ public interface CairoConfiguration {
 
     CharSequence getConfRoot(); // same as root/../conf
 
-    long getColumnVersionPurgeMaxTimeoutMicros();
+    long getColumnPurgeTimeout();
 
-    long getColumnVersionPurgeStartWaitTimeoutMicros();
+    long getColumnPurgeStartTimeoutMicros();
 
     CharSequence getSnapshotRoot(); // same as root/../snapshot
 

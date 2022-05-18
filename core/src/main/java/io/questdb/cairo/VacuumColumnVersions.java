@@ -33,7 +33,7 @@ import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.tasks.ColumnVersionPurgeTask;
+import io.questdb.tasks.ColumnPurgeTask;
 
 import java.io.Closeable;
 
@@ -45,7 +45,7 @@ public class VacuumColumnVersions implements Closeable {
     private static final int COLUMN_VERSION_LIST_CAPACITY = 8;
     private final static Log LOG = LogFactory.getLog(VacuumColumnVersions.class);
     private final CairoEngine engine;
-    private final ColumnVersionPurgeTask purgeTask = new ColumnVersionPurgeTask();
+    private final ColumnPurgeTask purgeTask = new ColumnPurgeTask();
     private final FilesFacade ff;
     private StringSink fileNameSink;
     private Path path2;
@@ -56,11 +56,11 @@ public class VacuumColumnVersions implements Closeable {
     private TableReader tableReader;
     private final FindVisitor visitTableFiles = this::visitTableFiles;
     private final FindVisitor visitTablePartition = this::visitTablePartition;
-    private ColumnVersionPurgeExecution purgeExecution;
+    private ColumnPurgeOperator purgeExecution;
 
     public VacuumColumnVersions(CairoEngine engine) {
         this.engine = engine;
-        this.purgeExecution = new ColumnVersionPurgeExecution(engine.getConfiguration());
+        this.purgeExecution = new ColumnPurgeOperator(engine.getConfiguration());
         this.tableFiles = new DirectLongList(COLUMN_VERSION_LIST_CAPACITY, MemoryTag.MMAP_UPDATE);
         this.ff = engine.getConfiguration().getFilesFacade();
     }
@@ -150,35 +150,35 @@ public class VacuumColumnVersions implements Closeable {
         }
     }
 
-    private void queueColumnVersionPurge(ColumnVersionPurgeTask purgeTask, CairoEngine engine) {
+    private void queueColumnVersionPurge(ColumnPurgeTask purgeTask, CairoEngine engine) {
         MessageBus messageBus = engine.getMessageBus();
         LOG.info().$("scheduling column version purge [table=").$(purgeTask.getTableName())
                 .$(", column=").$(purgeTask.getColumnName())
                 .I$();
 
-        Sequence pubSeq = messageBus.getColumnVersionPurgePubSeq();
+        Sequence pubSeq = messageBus.getColumnPurgePubSeq();
         while (true) {
             long cursor = pubSeq.next();
             if (cursor > -1L) {
-                ColumnVersionPurgeTask task = messageBus.getColumnVersionPurgeQueue().get(cursor);
+                ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
                 task.copyFrom(purgeTask);
                 pubSeq.done(cursor);
                 return;
             } else if (cursor == -1L) {
                 // Queue overflow
                 throw CairoException.instance(0).put("failed to schedule column version purge, queue is full. " +
-                                "Please retry and consider increasing ").put(PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_QUEUE_CAPACITY.getPropertyPath())
+                                "Please retry and consider increasing ").put(PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY.getPropertyPath())
                         .put(" configuration parameter");
             }
         }
     }
 
-    private boolean versionSetToDelete(ColumnVersionPurgeTask purgeTask, long partitionTs, long columnVersion) {
+    private boolean versionSetToDelete(ColumnPurgeTask purgeTask, long partitionTs, long columnVersion) {
         // Brute force for now
         LongList columnVersionToDelete = purgeTask.getUpdatedColumnInfo();
-        for (int i = 0, n = columnVersionToDelete.size(); i < n; i += ColumnVersionPurgeTask.BLOCK_SIZE) {
-            long cv = columnVersionToDelete.getQuick(i + ColumnVersionPurgeTask.OFFSET_COLUMN_VERSION);
-            long ts = columnVersionToDelete.getQuick(i + ColumnVersionPurgeTask.OFFSET_PARTITION_TIMESTAMP);
+        for (int i = 0, n = columnVersionToDelete.size(); i < n; i += ColumnPurgeTask.BLOCK_SIZE) {
+            long cv = columnVersionToDelete.getQuick(i + ColumnPurgeTask.OFFSET_COLUMN_VERSION);
+            long ts = columnVersionToDelete.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP);
 
             if (cv == columnVersion && ts == partitionTs) {
                 return true;

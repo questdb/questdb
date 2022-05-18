@@ -25,7 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnVersionPurgeJob;
+import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.std.*;
@@ -57,7 +57,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     @Test
     public void testVacuumPurgesColumnVersionsAfterColumnDrop() throws Exception {
         assertMemoryLeak(() -> {
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
@@ -92,7 +92,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     @Test
     public void testVacuumPurgesColumnVersionsAsync() throws Exception {
         assertMemoryLeak(() -> {
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
@@ -128,7 +128,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     @Test
     public void testVacuumSupportsWithO3InsertsUpdates() throws Exception {
         assertMemoryLeak(() -> {
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 String tableName = "testPurge1";
                 String[] partitions = update3ColumnsWithOpenReader(purgeJob, tableName);
 
@@ -147,7 +147,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
 
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
@@ -183,7 +183,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
 
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile(
                         "create table testPurge1 as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
@@ -259,7 +259,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (CairoException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(),
-                            "cairo.sql.column.version.purge.queue.capacity");
+                            "cairo.sql.column.purge.queue.capacity");
                     TestUtils.assertContains(ex.getFlyweightMessage(),
                             "failed to schedule column version purge, queue is full");
                 }
@@ -272,7 +272,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             currentMicros = 0;
 
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile(
                         "create table testPurge as" +
                                 " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
@@ -308,7 +308,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     @Test
     public void testVacuumWithInvalidFileNames() throws Exception {
         assertMemoryLeak(() -> {
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 String tableName = "testPurge2";
                 String[] partitions = update3ColumnsWithOpenReader(purgeJob, tableName);
 
@@ -338,7 +338,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     @Test
     public void testVacuumWithInvalidPartitionDirectoryNames() throws Exception {
         assertMemoryLeak(() -> {
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 String tableName = "testPurge3";
                 String[] partitions = update3ColumnsWithOpenReader(purgeJob, tableName);
 
@@ -385,8 +385,8 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     }
 
     @NotNull
-    private ColumnVersionPurgeJob createPurgeJob() throws SqlException {
-        return new ColumnVersionPurgeJob(engine, null);
+    private ColumnPurgeJob createPurgeJob() throws SqlException {
+        return new ColumnPurgeJob(engine, null);
     }
 
     private void executeUpdate(String query) throws SqlException {
@@ -399,7 +399,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
         }
     }
 
-    private void runPurgeJob(ColumnVersionPurgeJob purgeJob) {
+    private void runPurgeJob(ColumnPurgeJob purgeJob) {
         if (Os.type == Os.WINDOWS) {
             engine.releaseInactive();
         }
@@ -416,7 +416,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
         compile("VACUUM TABLE " + tableName);
     }
 
-    private String[] update3ColumnsWithOpenReader(ColumnVersionPurgeJob purgeJob, String tableName) throws SqlException {
+    private String[] update3ColumnsWithOpenReader(ColumnPurgeJob purgeJob, String tableName) throws SqlException {
         compile(
                 "create table " + tableName + " as" +
                         " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +

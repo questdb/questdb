@@ -27,7 +27,7 @@ package io.questdb.tasks;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 
-public class ColumnVersionPurgeTask implements Mutable {
+public class ColumnPurgeTask implements Mutable {
     public static final int BLOCK_SIZE = 4;
     public static final int OFFSET_COLUMN_VERSION = 0;
     public static final int OFFSET_PARTITION_TIMESTAMP = 1;
@@ -54,7 +54,7 @@ public class ColumnVersionPurgeTask implements Mutable {
         updatedColumnInfo.clear();
     }
 
-    public void copyFrom(ColumnVersionPurgeTask inTask) {
+    public void copyFrom(ColumnPurgeTask inTask) {
         this.tableName = inTask.tableName;
         this.columnName = inTask.columnName;
         this.tableId = inTask.tableId;

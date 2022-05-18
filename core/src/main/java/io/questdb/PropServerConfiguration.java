@@ -249,12 +249,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceTaskPoolCapacity;
     private final long writerFileOpenOpts;
     private final int queryCacheEventQueueCapacity;
-    private final int columnVersionPurgeQueueCapacity;
-    private final long columnVersionPurgeMaxTimeoutMicros;
-    private final double columnVersionPurgeWaitExponent;
+    private final int columnPurgeQueueCapacity;
+    private final long columnPurgeTimeout;
+    private final double columnPurgeTimeoutExponent;
     private final String systemTableNamePrefix;
-    private final int columnVersionCleanupLookBackDays;
-    private final long columnVersionPurgeStartWaitTimeoutMicros;
+    private final int columnPurgeLimitDays;
+    private final long columnPurgeStartTimeout;
     private final boolean sqlParallelFilterEnabled;
     private final int cairoPageFrameReduceShardCount;
     private int lineUdpDefaultPartitionBy;
@@ -393,7 +393,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean isStringAsTagSupported;
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
-    private final int columnVersionTaskPoolCapacity;
+    private final int columnPurgeTaskPoolCapacity;
 
     public PropServerConfiguration(
             String root,
@@ -706,12 +706,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * 1024 * 1024);
-            this.columnVersionPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_QUEUE_CAPACITY, 128);
-            this.columnVersionTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_TASK_POOL_CAPACITY, 256);
-            this.columnVersionPurgeMaxTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_TIMEOUT, 60_000_000L);
-            this.columnVersionPurgeStartWaitTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_START_TIMEOUT, 10_000);
-            this.columnVersionPurgeWaitExponent = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_TIMEOUT_EXPONENT, 10.0);
-            this.columnVersionCleanupLookBackDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_LOOK_BACK_DAYS, 31);
+            this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
+            this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
+            this.columnPurgeTimeout = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TIMEOUT, 60_000_000L);
+            this.columnPurgeStartTimeout = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_START_TIMEOUT, 10_000);
+            this.columnPurgeTimeoutExponent = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TIMEOUT_EXPONENT, 10.0);
+            this.columnPurgeLimitDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_LIMIT_DAYS, 31);
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
 
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64));
@@ -1834,23 +1834,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getColumnVersionPurgeQueueCapacity() {
-            return columnVersionPurgeQueueCapacity;
+        public int getColumnPurgeQueueCapacity() {
+            return columnPurgeQueueCapacity;
         }
 
         @Override
-        public int getColumnVersionTaskPoolCapacity() {
-            return columnVersionTaskPoolCapacity;
+        public int getColumnPurgeTaskPoolCapacity() {
+            return columnPurgeTaskPoolCapacity;
         }
 
         @Override
-        public int getColumnVersionPurgeLookBackDays() {
-            return columnVersionCleanupLookBackDays;
+        public int getColumnPurgeLimitDays() {
+            return columnPurgeLimitDays;
         }
 
         @Override
-        public double getColumnVersionPurgeWaitExponent() {
-            return columnVersionPurgeWaitExponent;
+        public double getColumnPurgeTimeoutExponent() {
+            return columnPurgeTimeoutExponent;
         }
 
         @Override
@@ -1869,13 +1869,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getColumnVersionPurgeMaxTimeoutMicros() {
-            return columnVersionPurgeMaxTimeoutMicros;
+        public long getColumnPurgeTimeout() {
+            return columnPurgeTimeout;
         }
 
         @Override
-        public long getColumnVersionPurgeStartWaitTimeoutMicros() {
-            return columnVersionPurgeStartWaitTimeoutMicros;
+        public long getColumnPurgeStartTimeoutMicros() {
+            return columnPurgeStartTimeout;
         }
 
         @Override

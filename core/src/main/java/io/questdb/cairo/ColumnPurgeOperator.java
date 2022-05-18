@@ -29,13 +29,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.ColumnVersionPurgeTask;
+import io.questdb.tasks.ColumnPurgeTask;
 
 import java.io.Closeable;
 import java.io.IOException;
 
-public class ColumnVersionPurgeExecution implements Closeable {
-    private static final Log LOG = LogFactory.getLog(ColumnVersionPurgeExecution.class);
+public class ColumnPurgeOperator implements Closeable {
+    private static final Log LOG = LogFactory.getLog(ColumnPurgeOperator.class);
     private final Path path = new Path();
     private final int pathRootLen;
     private final FilesFacade ff;
@@ -51,7 +51,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
     private long purgeLogPartitionTimestamp = Long.MAX_VALUE;
     private long purgeLogPartitionFd = -1L;
 
-    public ColumnVersionPurgeExecution(CairoConfiguration configuration, TableWriter purgeLogWriter, String updateCompleteColumnName) {
+    public ColumnPurgeOperator(CairoConfiguration configuration, TableWriter purgeLogWriter, String updateCompleteColumnName) {
         this.ff = configuration.getFilesFacade();
         this.purgeLogWriter = purgeLogWriter;
         this.updateCompleteColumnName = updateCompleteColumnName;
@@ -64,7 +64,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
         longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
     }
 
-    public ColumnVersionPurgeExecution(CairoConfiguration configuration) {
+    public ColumnPurgeOperator(CairoConfiguration configuration) {
         this.ff = configuration.getFilesFacade();
         this.purgeLogWriter = null;
         this.updateCompleteColumnName = null;
@@ -90,7 +90,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
         }
     }
 
-    public boolean tryCleanup(ColumnVersionPurgeTask task) {
+    public boolean tryCleanup(ColumnPurgeTask task) {
         try {
             boolean done = tryCleanup0(task, false);
             setCompleteTimestamp(completedRecordIds, microClock.getTicks());
@@ -102,7 +102,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
         }
     }
 
-    public boolean tryCleanup(ColumnVersionPurgeTask task, TableReader tableReader) {
+    public boolean tryCleanup(ColumnPurgeTask task, TableReader tableReader) {
         try {
             txReader = tableReader.getTxFile();
             txnScoreboard = tableReader.getTxnScoreboard();
@@ -114,7 +114,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
         }
     }
 
-    private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnVersionPurgeTask task) {
+    private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {
         long updateTxn = task.getUpdatedTxn();
         try {
             return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn);
@@ -162,7 +162,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
                 int partitionIndex = Rows.toPartitionIndex(recordId);
                 if (rec == 0) {
                     // Assumption is that all records belong to same partition
-                    // this is how the records are added to the table in ColumnVersionPurgeJob
+                    // this is how the records are added to the table in ColumnPurgeJob
                     // e.g. all records about the same column updated have identical timestamp
                     final long partitionTimestamp = purgeLogWriter.getPartitionTimestamp(partitionIndex);
                     if (purgeLogPartitionTimestamp != partitionTimestamp) {
@@ -223,7 +223,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
         TableUtils.txnPartitionConditionally(path, partitionTxnName);
     }
 
-    private boolean tryCleanup0(ColumnVersionPurgeTask task, boolean tableInitialized) {
+    private boolean tryCleanup0(ColumnPurgeTask task, boolean tableInitialized) {
         LOG.info().$("cleaning up column version [table=").$(task.getTableName())
                 .$(", column=").$(task.getColumnName())
                 .$(", tableId=").$(task.getTableId())
@@ -238,7 +238,7 @@ public class ColumnVersionPurgeExecution implements Closeable {
 
         try {
             completedRecordIds.clear();
-            for (int i = 0, n = updatedColumnInfo.size(); i < n; i += ColumnVersionPurgeTask.BLOCK_SIZE) {
+            for (int i = 0, n = updatedColumnInfo.size(); i < n; i += ColumnPurgeTask.BLOCK_SIZE) {
                 final long columnVersion = updatedColumnInfo.getQuick(i);
                 final long partitionTimestamp = updatedColumnInfo.getQuick(i + 1);
                 final long partitionTxnName = updatedColumnInfo.getQuick(i + 2);

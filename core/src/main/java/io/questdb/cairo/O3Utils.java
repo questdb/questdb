@@ -49,17 +49,17 @@ public class O3Utils {
     ) throws SqlException {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final int workerCount = workerPool.getWorkerCount();
-        final O3PurgeDiscoveryJob purgeDiscoveryJob = new O3PurgeDiscoveryJob(messageBus, workerPool.getWorkerCount());
-        final ColumnVersionPurgeJob columnVersionPurgeJob = new ColumnVersionPurgeJob(cairoEngine, functionFactoryCache);
+        final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(messageBus, workerPool.getWorkerCount());
+        final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine, functionFactoryCache);
 
         workerPool.assign(purgeDiscoveryJob);
-        workerPool.assign(columnVersionPurgeJob);
+        workerPool.assign(columnPurgeJob);
         workerPool.assign(new O3PartitionJob(messageBus));
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new O3CallbackJob(messageBus));
         workerPool.freeOnHalt(purgeDiscoveryJob);
-        workerPool.freeOnHalt(columnVersionPurgeJob);
+        workerPool.freeOnHalt(columnPurgeJob);
 
         final MicrosecondClock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
         final NanosecondClock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();

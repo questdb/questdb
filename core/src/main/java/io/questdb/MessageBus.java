@@ -33,11 +33,11 @@ import java.io.Closeable;
 
 public interface MessageBus extends Closeable {
 
-    Sequence getColumnVersionPurgePubSeq();
+    Sequence getColumnPurgePubSeq();
 
-    RingQueue<ColumnVersionPurgeTask> getColumnVersionPurgeQueue();
+    RingQueue<ColumnPurgeTask> getColumnPurgeQueue();
 
-    Sequence getColumnVersionPurgeSubSeq();
+    Sequence getColumnPurgeSubSeq();
 
     CairoConfiguration getConfiguration();
 
@@ -79,7 +79,7 @@ public interface MessageBus extends Closeable {
 
     MPSequence getO3PurgeDiscoveryPubSeq();
 
-    RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue();
+    RingQueue<O3PartitionPurgeTask> getO3PurgeDiscoveryQueue();
 
     MCSequence getO3PurgeDiscoverySubSeq();
 

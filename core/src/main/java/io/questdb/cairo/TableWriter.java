@@ -3483,7 +3483,7 @@ public class TableWriter implements Closeable {
 
     private void o3ProcessPartitionRemoveCandidates0(int n) {
         boolean anyReadersBeforeCommittedTxn = checkScoreboardHasReadersBeforeLastCommittedTxn();
-        // This flag will determine to schedule O3PurgeDiscoveryJob at the end or all done already.
+        // This flag will determine to schedule O3PartitionPurgeJob at the end or all done already.
         boolean scheduleAsyncPurge = anyReadersBeforeCommittedTxn;
 
         if (!anyReadersBeforeCommittedTxn) {
@@ -3517,7 +3517,7 @@ public class TableWriter implements Closeable {
 
         if (scheduleAsyncPurge) {
             // Any more complicated case involve looking at what folders are present on disk before removing
-            // do it async in O3PurgeDiscoveryJob
+            // do it async in O3PartitionPurgeJob
             if (schedulePurgeO3Partitions(messageBus, tableName, partitionBy)) {
                 LOG.info().$("scheduled to purge partitions").$(", table=").$(tableName).$(']').$();
             } else {

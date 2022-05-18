@@ -32,11 +32,11 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.ColumnVersionPurgeTask;
+import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 
-public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
+public class ColumnPurgeJobTest extends AbstractGriffinTest {
     private int iteration = 1;
 
     @Before
@@ -49,7 +49,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     @Test
     public void testManyUpdatesInserts() throws Exception {
         assertMemoryLeak(() -> {
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up_part_o3_many as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
@@ -139,12 +139,12 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     public void testPurge() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = 0;
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
-                ColumnVersionPurgeTask task = createTask("tbl_name", "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                ColumnPurgeTask task = createTask("tbl_name", "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
                 task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialDate("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
-                ColumnVersionPurgeTask task2 = createTask("tbl_name2", "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
+                ColumnPurgeTask task2 = createTask("tbl_name2", "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
                 appendTaskToQueue(task2);
 
                 purgeJob.run(0);
@@ -182,7 +182,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                 }
             };
 
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up_part as" +
                         " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
@@ -227,7 +227,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     public void testPurgeHandlesLogPartitionChange() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = Timestamps.DAY_MICROS * 30;
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up_part_o3 as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
@@ -254,7 +254,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
             }
 
             currentMicros = Timestamps.DAY_MICROS * 32;
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 try (TableReader ignored = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "up_part_o3")) {
                     executeUpdate("UPDATE up_part_o3 SET x = 100, str='abcd', sym2='EE' WHERE ts >= '1970-01-03'");
                 }
@@ -325,7 +325,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                 }
             };
 
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up_part as" +
                         " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
@@ -389,7 +389,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     public void testPurgeRespectsOpenReaderDailyPartitioned() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = 0;
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up_part as" +
                         " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
@@ -445,7 +445,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     @Test
     public void testPurgeRespectsOpenReaderNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up as" +
                         " (select timestamp_sequence(0, 1000000) ts," +
                         " x," +
@@ -490,7 +490,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     @Test
     public void testPurgeRespectsTableRecreate() throws Exception {
         assertMemoryLeak(() -> {
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up as" +
                         " (select timestamp_sequence(0, 1000000) ts," +
                         " x," +
@@ -537,7 +537,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     @Test
     public void testPurgeRespectsTableTruncates() throws Exception {
         assertMemoryLeak(() -> {
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table testPurgeRespectsTableTruncates as" +
                         " (select timestamp_sequence(0, 1000000) ts," +
                         " x," +
@@ -584,7 +584,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     public void testPurgeRetriesAfterRestart() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = 0;
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up_part_o3 as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
@@ -610,7 +610,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
                 }
             }
 
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 try (Path path = new Path()) {
                     String[] partitions = new String[]{"1970-01-03.1", "1970-01-04.1", "1970-01-05"};
                     assertFilesExist(partitions, path, "up_part_o3", "", true);
@@ -654,7 +654,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     public void testPurgeTaskRecycle() throws Exception {
         columnVersionTaskPoolCapacity = 1;
         assertMemoryLeak(() -> {
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up_part_o3_many as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
@@ -690,7 +690,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     public void testPurgeWithOutOfOrderUpdate() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = 0;
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 compiler.compile("create table up_part_o3 as" +
                         " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
@@ -761,12 +761,12 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     public void testSavesDataToPurgeLogTable() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = 0;
-            try (ColumnVersionPurgeJob purgeJob = createPurgeJob()) {
-                ColumnVersionPurgeTask task = createTask("tbl_name", "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                ColumnPurgeTask task = createTask("tbl_name", "col", 1, ColumnType.INT, 43, 11, "2022-03-29", -1);
                 task.appendColumnInfo(-1, IntervalUtils.parseFloorPartialDate("2022-04-05"), 2);
                 appendTaskToQueue(task);
 
-                ColumnVersionPurgeTask task2 = createTask("tbl_name2", "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
+                ColumnPurgeTask task2 = createTask("tbl_name2", "col2", 2, ColumnType.SYMBOL, 33, -1, "2022-02-13", 3);
                 appendTaskToQueue(task2);
 
                 purgeJob.run(0);
@@ -784,13 +784,13 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
         });
     }
 
-    private void appendTaskToQueue(ColumnVersionPurgeTask task) {
+    private void appendTaskToQueue(ColumnPurgeTask task) {
         long cursor = -1L;
-        Sequence pubSeq = engine.getMessageBus().getColumnVersionPurgePubSeq();
+        Sequence pubSeq = engine.getMessageBus().getColumnPurgePubSeq();
         while (cursor < 0) {
             cursor = pubSeq.next();
             if (cursor > -1L) {
-                ColumnVersionPurgeTask queueTask = engine.getMessageBus().getColumnVersionPurgeQueue().get(cursor);
+                ColumnPurgeTask queueTask = engine.getMessageBus().getColumnPurgeQueue().get(cursor);
                 queueTask.copyFrom(task);
                 pubSeq.done(cursor);
             }
@@ -825,11 +825,11 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
     }
 
     @NotNull
-    private ColumnVersionPurgeJob createPurgeJob() throws SqlException {
-        return new ColumnVersionPurgeJob(engine, null);
+    private ColumnPurgeJob createPurgeJob() throws SqlException {
+        return new ColumnPurgeJob(engine, null);
     }
 
-    private ColumnVersionPurgeTask createTask(
+    private ColumnPurgeTask createTask(
             String tblName,
             String colName,
             int tableId,
@@ -839,7 +839,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
             String partitionTs,
             long partitionNameTxn
     ) throws NumericException {
-        ColumnVersionPurgeTask tsk = new ColumnVersionPurgeTask();
+        ColumnPurgeTask tsk = new ColumnPurgeTask();
         tsk.of(tblName, colName, tableId, 0, columnType, PartitionBy.NONE, updateTxn, new LongList());
         tsk.appendColumnInfo(columnVersion, IntervalUtils.parseFloorPartialDate(partitionTs), partitionNameTxn);
         return tsk;
@@ -855,7 +855,7 @@ public class ColumnVersionPurgeJobTest extends AbstractGriffinTest {
         }
     }
 
-    private void runPurgeJob(ColumnVersionPurgeJob purgeJob) {
+    private void runPurgeJob(ColumnPurgeJob purgeJob) {
         if (Os.type == Os.WINDOWS) {
             engine.releaseInactive();
         }

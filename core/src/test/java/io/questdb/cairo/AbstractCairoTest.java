@@ -273,12 +273,12 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public double getColumnVersionPurgeWaitExponent() {
+            public double getColumnPurgeTimeoutExponent() {
                 return columnVersionPurgeWaitExponent > 0 ? columnVersionPurgeWaitExponent : 2.0;
             }
 
             @Override
-            public long getColumnVersionPurgeStartWaitTimeoutMicros() {
+            public long getColumnPurgeStartTimeoutMicros() {
                 return columnVersionPurgeStartWaitTimeoutMicros > 0 ? columnVersionPurgeStartWaitTimeoutMicros : 10;
             }
 
@@ -298,8 +298,8 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public int getColumnVersionPurgeQueueCapacity() {
-                return columnVersionPurgeQueueCapacity < 0 ? super.getColumnVersionPurgeQueueCapacity() : columnVersionPurgeQueueCapacity;
+            public int getColumnPurgeQueueCapacity() {
+                return columnVersionPurgeQueueCapacity < 0 ? super.getColumnPurgeQueueCapacity() : columnVersionPurgeQueueCapacity;
             }
 
             @Override
@@ -308,8 +308,8 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public int getColumnVersionTaskPoolCapacity() {
-                return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnVersionTaskPoolCapacity();
+            public int getColumnPurgeTaskPoolCapacity() {
+                return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnPurgeTaskPoolCapacity();
             }
         };
         engine = new CairoEngine(configuration, metrics);

@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.ColumnVersionPurgeJob;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.pool.PoolListener;

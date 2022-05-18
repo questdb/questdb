@@ -119,22 +119,22 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getColumnVersionPurgeQueueCapacity() {
+    public int getColumnPurgeQueueCapacity() {
         return 64;
     }
 
     @Override
-    public int getColumnVersionTaskPoolCapacity() {
-        return getColumnVersionPurgeQueueCapacity();
+    public int getColumnPurgeTaskPoolCapacity() {
+        return getColumnPurgeQueueCapacity();
     }
 
     @Override
-    public int getColumnVersionPurgeLookBackDays() {
+    public int getColumnPurgeLimitDays() {
         return 7;
     }
 
     @Override
-    public double getColumnVersionPurgeWaitExponent() {
+    public double getColumnPurgeTimeoutExponent() {
         return 2.0;
     }
 
@@ -154,12 +154,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getColumnVersionPurgeMaxTimeoutMicros() {
+    public long getColumnPurgeTimeout() {
         return 60_000_000;
     }
 
     @Override
-    public long getColumnVersionPurgeStartWaitTimeoutMicros() {
+    public long getColumnPurgeStartTimeoutMicros() {
         return 10_000;
     }
 

@@ -37,7 +37,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.O3PurgeDiscoveryTask;
+import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
@@ -678,7 +678,7 @@ public final class TableUtils {
         while (true) {
             long cursor = seq.next();
             if (cursor > -1) {
-                O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
+                O3PartitionPurgeTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
                 task.of(tableName, partitionBy);
                 seq.done(cursor);
                 return true;

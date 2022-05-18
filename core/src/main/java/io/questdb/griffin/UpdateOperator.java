@@ -38,7 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.ColumnVersionPurgeTask;
+import io.questdb.tasks.ColumnPurgeTask;
 
 import java.io.Closeable;
 
@@ -682,11 +682,11 @@ public class UpdateOperator implements Closeable {
             long updatedTxn,
             LongList columnVersions
     ) {
-        Sequence pubSeq = messageBus.getColumnVersionPurgePubSeq();
+        Sequence pubSeq = messageBus.getColumnPurgePubSeq();
         while (true) {
             long cursor = pubSeq.next();
             if (cursor > -1L) {
-                ColumnVersionPurgeTask task = messageBus.getColumnVersionPurgeQueue().get(cursor);
+                ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
                 task.of(tableName, columnName, tableId, tableTruncateVersion, columnType, partitionBy, updatedTxn, columnVersions);
                 pubSeq.done(cursor);
                 return;

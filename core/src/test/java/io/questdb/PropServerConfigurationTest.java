@@ -309,11 +309,11 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getMiscAppendPageSize());
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
-        Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnVersionPurgeQueueCapacity());
-        Assert.assertEquals(31, configuration.getCairoConfiguration().getColumnVersionPurgeLookBackDays());
-        Assert.assertEquals(10.0, configuration.getCairoConfiguration().getColumnVersionPurgeWaitExponent(), 0.00001);
-        Assert.assertEquals(60000000, configuration.getCairoConfiguration().getColumnVersionPurgeMaxTimeoutMicros());
-        Assert.assertEquals(10000, configuration.getCairoConfiguration().getColumnVersionPurgeStartWaitTimeoutMicros());
+        Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
+        Assert.assertEquals(31, configuration.getCairoConfiguration().getColumnPurgeLimitDays());
+        Assert.assertEquals(10.0, configuration.getCairoConfiguration().getColumnPurgeTimeoutExponent(), 0.00001);
+        Assert.assertEquals(60000000, configuration.getCairoConfiguration().getColumnPurgeTimeout());
+        Assert.assertEquals(10000, configuration.getCairoConfiguration().getColumnPurgeStartTimeoutMicros());
 
         // Pg wire
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
@@ -328,7 +328,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
         Assert.assertEquals(8, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
 
-        Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnVersionPurgeQueueCapacity());
+        Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
     }
 
     @Test
@@ -821,11 +821,11 @@ public class PropServerConfigurationTest {
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
 
-            Assert.assertEquals(512, configuration.getCairoConfiguration().getColumnVersionPurgeQueueCapacity());
-            Assert.assertEquals(14, configuration.getCairoConfiguration().getColumnVersionPurgeLookBackDays());
-            Assert.assertEquals(5.0, configuration.getCairoConfiguration().getColumnVersionPurgeWaitExponent(), 0.00001);
-            Assert.assertEquals(30000000, configuration.getCairoConfiguration().getColumnVersionPurgeMaxTimeoutMicros());
-            Assert.assertEquals(30000, configuration.getCairoConfiguration().getColumnVersionPurgeStartWaitTimeoutMicros());
+            Assert.assertEquals(512, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
+            Assert.assertEquals(14, configuration.getCairoConfiguration().getColumnPurgeLimitDays());
+            Assert.assertEquals(5.0, configuration.getCairoConfiguration().getColumnPurgeTimeoutExponent(), 0.00001);
+            Assert.assertEquals(30000000, configuration.getCairoConfiguration().getColumnPurgeTimeout());
+            Assert.assertEquals(30000, configuration.getCairoConfiguration().getColumnPurgeStartTimeoutMicros());
 
             // Pg wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());
