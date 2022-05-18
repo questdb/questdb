@@ -115,6 +115,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             CharSequence cs = getArg().getStr(rec);
             return cs != null && matcher.reset(cs).matches();
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
     }
 
     private static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
@@ -158,6 +163,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                 lastPattern = null;
                 matcher = null;
             }
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 }

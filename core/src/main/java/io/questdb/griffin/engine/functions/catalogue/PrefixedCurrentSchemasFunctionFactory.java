@@ -77,5 +77,10 @@ public class PrefixedCurrentSchemasFunctionFactory implements FunctionFactory {
         public boolean isConstant() {
             return true;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     }
 }

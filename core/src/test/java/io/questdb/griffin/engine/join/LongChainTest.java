@@ -24,15 +24,14 @@
 
 package io.questdb.griffin.engine.join;
 
-import org.junit.Assert;
-import org.junit.Test;
-
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class LongChainTest {
     @SuppressWarnings("unused")

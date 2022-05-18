@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -375,6 +375,11 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return parent.getSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return parent.newSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
         }
 
         private class RostiRecord implements Record {

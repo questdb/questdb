@@ -321,6 +321,11 @@ public class RecordTreeChain implements Closeable, Mutable {
         }
 
         @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return base.newSymbolTable(columnIndex);
+        }
+
+        @Override
         public boolean hasNext() {
             if (recordChain.hasNext()) {
                 return true;

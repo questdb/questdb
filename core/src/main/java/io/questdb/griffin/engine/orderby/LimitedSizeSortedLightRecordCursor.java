@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 
@@ -82,6 +81,11 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return base.getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return base.newSymbolTable(columnIndex);
     }
 
     @Override

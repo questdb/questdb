@@ -76,4 +76,8 @@ public class CountGroupByFunction extends LongFunction implements GroupByFunctio
         return false;
     }
 
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
 }

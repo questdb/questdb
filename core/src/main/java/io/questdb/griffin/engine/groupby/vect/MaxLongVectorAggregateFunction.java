@@ -115,4 +115,9 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
     public long getLong(Record rec) {
         return max.longValue();
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }

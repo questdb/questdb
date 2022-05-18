@@ -30,8 +30,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.IntLongPriorityQueue;
 import io.questdb.std.ObjList;
 
-import java.util.concurrent.TimeUnit;
-
 import static io.questdb.cairo.ColumnType.*;
 
 public class TableData {
@@ -56,8 +54,8 @@ public class TableData {
         readyLatch.countDown();
     }
 
-    public boolean await(long micros) {
-        return readyLatch.await(TimeUnit.MICROSECONDS.toNanos(micros));
+    public void await() {
+        readyLatch.await();
     }
 
     public synchronized int size() {

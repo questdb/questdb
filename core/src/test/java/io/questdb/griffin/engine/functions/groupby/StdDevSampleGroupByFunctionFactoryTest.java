@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.griffin.SqlException;
 import org.junit.Test;
 
 public class StdDevSampleGroupByFunctionFactoryTest extends AbstractGriffinTest {

@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -98,6 +99,11 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     @Override
     public SymbolMapReader getSymbolTable(int columnIndex) {
         return reader.getSymbolMapReader(columnIndex);
+    }
+
+    @Override
+    public StaticSymbolTable newSymbolTable(int columnIndex) {
+        return reader.newSymbolTable(columnIndex);
     }
 
     public void of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {

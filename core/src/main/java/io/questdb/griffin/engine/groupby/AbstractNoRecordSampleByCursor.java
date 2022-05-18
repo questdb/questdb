@@ -25,14 +25,12 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -78,6 +76,11 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return (SymbolTable) recordFunctions.getQuick(columnIndex);
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return ((SymbolFunction) recordFunctions.getQuick(columnIndex)).newSymbolTable();
     }
 
     @Override
@@ -222,6 +225,11 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         @Override
         public long getTimestamp(Record rec) {
             return sampleLocalEpoch - tzOffset;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
     }
 }
