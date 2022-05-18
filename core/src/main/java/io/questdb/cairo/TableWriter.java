@@ -579,6 +579,10 @@ public class TableWriter implements Closeable {
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
     }
 
+    public void addPhysicallyWrittenRows(long rows) {
+        metrics.tableWriter().addPhysicallyWrittenRows(rows);
+    }
+
     public int attachPartition(long timestamp) {
         // Partitioned table must have a timestamp
         // SQL compiler will check that table is partitioned
@@ -5422,9 +5426,5 @@ public class TableWriter implements Closeable {
         IGNORED_FILES.add(META_FILE_NAME);
         IGNORED_FILES.add(TXN_FILE_NAME);
         IGNORED_FILES.add(TODO_FILE_NAME);
-    }
-
-    public void addPhysicallyWrittenRows(long rows) {
-        metrics.tableWriter().addPhysicallyWrittenRows(rows);
     }
 }

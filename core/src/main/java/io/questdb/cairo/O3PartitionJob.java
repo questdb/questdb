@@ -747,11 +747,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
-        
+
         tableWriter.addPhysicallyWrittenRows(
-            O3OpenColumnJob.isOpenColumnModeForAppend(openColumnMode)
-                ? srcOooBatchRowSize
-                : srcDataMax + srcOooBatchRowSize);
+                O3OpenColumnJob.isOpenColumnModeForAppend(openColumnMode)
+                        ? srcOooBatchRowSize
+                        : srcDataMax + srcOooBatchRowSize);
 
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
 

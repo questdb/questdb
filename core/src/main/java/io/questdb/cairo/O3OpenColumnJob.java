@@ -53,17 +53,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         super(messageBus.getO3OpenColumnQueue(), messageBus.getO3OpenColumnSubSeq());
     }
 
-    public static boolean isOpenColumnModeForAppend(int openColumnMode) {
-        switch (openColumnMode) {
-            case OPEN_MID_PARTITION_FOR_APPEND:
-            case OPEN_LAST_PARTITION_FOR_APPEND:
-            case OPEN_NEW_PARTITION_FOR_APPEND:
-                return true;
-            default:
-                return false;
-        }
-    }
-
     public static void appendLastPartition(
             Path pathToPartition,
             int plen,
@@ -170,6 +159,17 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         columnNameTxn
                 );
                 break;
+        }
+    }
+
+    public static boolean isOpenColumnModeForAppend(int openColumnMode) {
+        switch (openColumnMode) {
+            case OPEN_MID_PARTITION_FOR_APPEND:
+            case OPEN_LAST_PARTITION_FOR_APPEND:
+            case OPEN_NEW_PARTITION_FOR_APPEND:
+                return true;
+            default:
+                return false;
         }
     }
 
