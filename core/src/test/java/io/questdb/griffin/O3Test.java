@@ -1085,13 +1085,10 @@ public class O3Test extends AbstractO3Test {
     }
 
     @Test
-    public void TestMetricsInsertRowsAfterEachPartition() throws Exception {
+    public void testMetricsInsertRowsAfterEachPartition() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 24;
-
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
-            printSqlResult(compiler, sqlExecutionContext, "x");
-            System.err.println(sink);
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
                     TableWriter.Row r = null;
@@ -1166,9 +1163,98 @@ public class O3Test extends AbstractO3Test {
         });
     }
 
-    // TODO: [adam] Test that creates a partition ahead of existing data.
+    @Test
+    public void testMetricsInsertRowsBeforePartition() throws Exception {
+        executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
+            final long initRowCount = 2;
+            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
 
-    // TODO: [adam] Test inserting into an "empty" partition with data both before and after it.
+            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+                TableWriter.Row r = null;
+
+                r = w.newRow(millenniumTimestamp(-1));
+                r.putInt(0, -1);
+                r.append();
+
+                w.commit();
+            }
+
+            printSqlResult(compiler, sqlExecutionContext, "x");
+            final String expected = "i\tts\n" +
+                "-1\t1999-12-31T23:00:00.000000Z\n" +  // new row
+                "1\t2000-01-01T05:00:00.000000Z\n" +
+                "2\t2000-01-01T06:00:00.000000Z\n";
+
+            TestUtils.assertEquals(expected, sink);
+
+            Metrics metrics = engine.getMetrics();
+            assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
+
+            // Appended to earlier partition.
+            assertEquals(initRowCount + 1, metrics.tableWriter().physicallyWrittenRows());
+        });
+    }
+
+
+    @Test
+    public void testMetricsInsertMiddleEmptyPartition() throws Exception {
+        executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
+            final long initRowCount = 2;
+            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+
+            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+                TableWriter.Row r = null;
+
+                r = w.newRow(millenniumTimestamp(2, 0, 0));
+                r.putInt(0, 4);
+                r.append();
+
+                w.commit();
+            }
+
+            {
+                printSqlResult(compiler, sqlExecutionContext, "x");
+                final String expected = "i\tts\n" +
+                    "1\t2000-01-01T05:00:00.000000Z\n" +
+                    "2\t2000-01-01T06:00:00.000000Z\n" +
+                    "4\t2000-01-03T00:00:00.000000Z\n";  // new row
+    
+                TestUtils.assertEquals(expected, sink);
+            }
+
+            Metrics metrics = engine.getMetrics();
+            assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
+
+            // Appended to last partition.
+            assertEquals(initRowCount + 1, metrics.tableWriter().physicallyWrittenRows());
+
+            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+                TableWriter.Row r = null;
+
+                r = w.newRow(millenniumTimestamp(1, 0, 0));
+                r.putInt(0, 3);
+                r.append();
+
+                w.commit();
+            }
+
+            {
+                printSqlResult(compiler, sqlExecutionContext, "x");
+                final String expected = "i\tts\n" +
+                    "1\t2000-01-01T05:00:00.000000Z\n" +
+                    "2\t2000-01-01T06:00:00.000000Z\n" +
+                    "3\t2000-01-02T00:00:00.000000Z\n" +  // new row
+                    "4\t2000-01-03T00:00:00.000000Z\n";
+    
+                TestUtils.assertEquals(expected, sink);
+            }
+
+            assertEquals(initRowCount + 2, metrics.tableWriter().committedRows());
+
+            // Created new partition that didn't previously exist in between the other two.
+            assertEquals(initRowCount + 2, metrics.tableWriter().physicallyWrittenRows());
+        });
+    }
 
     private static void testWriterOpensCorrectTxnPartitionOnRestart0(
             CairoEngine engine,

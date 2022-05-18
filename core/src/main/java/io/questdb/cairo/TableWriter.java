@@ -1947,7 +1947,7 @@ public class TableWriter implements Closeable {
             metrics.tableWriter().addCommittedRows(rowsAdded);
             if (!o3) {
                 // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
-                metrics.addPhysicallyWrittenRows(rowsAdded);
+                addPhysicallyWrittenRows(rowsAdded);
             }
         }
     }
