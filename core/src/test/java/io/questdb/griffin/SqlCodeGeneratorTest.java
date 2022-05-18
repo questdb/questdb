@@ -641,7 +641,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "C\n";
 
         assertQuery(expected,
-                "select distinct pair from prices",
+                "select distinct pair from prices order by pair",
                 "create table prices as " +
                         "(" +
                         " SELECT \n" +
@@ -6739,18 +6739,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testSelectDistinct() throws Exception {
         final String expected = "a\n" +
                 "0\n" +
-                "8\n" +
-                "3\n" +
                 "1\n" +
-                "9\n" +
                 "2\n" +
-                "6\n" +
+                "3\n" +
                 "4\n" +
+                "5\n" +
+                "6\n" +
                 "7\n" +
-                "5\n";
+                "8\n" +
+                "9\n";
 
         assertQuery(expected,
-                "select distinct a from x",
+                "select distinct a from x order by a",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -6764,69 +6764,73 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " abs(rnd_int())%10 a" +
                         " from long_sequence(1000000)" +
                         ") ",
-                expected, true);
+                expected,
+                true,
+                false,
+                true
+        );
     }
 
     @Test
     public void testSelectDistinctSymbol() throws Exception {
         final String expected = "a\n" +
-                "EHNRX\n" +
+                "\n" +
                 "BHFOW\n" +
-                "QULOF\n" +
-                "RUEDR\n" +
-                "SZSRY\n" +
-                "YYQE\n" +
-                "IBBTGP\n" +
-                "TJWC\n" +
-                "ZSXU\n" +
                 "CCXZ\n" +
+                "DZJMY\n" +
+                "EHNRX\n" +
+                "FBVTMH\n" +
+                "GETJ\n" +
+                "IBBTGP\n" +
                 "KGHVUV\n" +
-                "SWHYRX\n" +
+                "OOZZ\n" +
                 "OUOJS\n" +
                 "PDXYSB\n" +
-                "OOZZ\n" +
-                "WFFYUD\n" +
-                "DZJMY\n" +
-                "GETJ\n" +
-                "FBVTMH\n" +
+                "QULOF\n" +
+                "RUEDR\n" +
+                "SWHYRX\n" +
+                "SZSRY\n" +
+                "TJWC\n" +
                 "UICW\n" +
-                "\n";
+                "WFFYUD\n" +
+                "YYQE\n" +
+                "ZSXU\n";
 
         final String expected2 = "a\n" +
-                "EHNRX\n" +
+                "\n" +
                 "BHFOW\n" +
-                "QULOF\n" +
-                "RUEDR\n" +
-                "SZSRY\n" +
-                "YYQE\n" +
-                "IBBTGP\n" +
-                "TJWC\n" +
-                "ZSXU\n" +
                 "CCXZ\n" +
+                "CJFT\n" +
+                "DZJMY\n" +
+                "EHNRX\n" +
+                "FBVTMH\n" +
+                "GETJ\n" +
+                "HLDN\n" +
+                "IBBTGP\n" +
+                "IIB\n" +
+                "ILQP\n" +
                 "KGHVUV\n" +
-                "SWHYRX\n" +
+                "NDMRS\n" +
+                "OOZZ\n" +
                 "OUOJS\n" +
                 "PDXYSB\n" +
-                "OOZZ\n" +
-                "WFFYUD\n" +
-                "DZJMY\n" +
-                "GETJ\n" +
-                "FBVTMH\n" +
-                "UICW\n" +
-                "SSCL\n" +
-                "HLDN\n" +
-                "IIB\n" +
+                "QULOF\n" +
                 "ROGHY\n" +
-                "CJFT\n" +
-                "WNX\n" +
-                "VZKE\n" +
-                "NDMRS\n" +
+                "RUEDR\n" +
+                "SSCL\n" +
                 "SVNVD\n" +
-                "ILQP\n" +
-                "\n";
+                "SWHYRX\n" +
+                "SZSRY\n" +
+                "TJWC\n" +
+                "UICW\n" +
+                "VZKE\n" +
+                "WFFYUD\n" +
+                "WNX\n" +
+                "YYQE\n" +
+                "ZSXU\n";
 
         assertQuery(expected,
-                "select distinct a from x",
+                "select distinct a from x order by a",
                 "create table x as " +
                         "(" +
                         "select" +

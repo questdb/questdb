@@ -25,7 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -34,11 +34,11 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
     public void testNotSelectDeleted() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances (cust_id int, balance_ccy symbol, balance double, inactive boolean, timestamp timestamp) timestamp(timestamp);", sqlExecutionContext);
-            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'USD', 1500.00, 6000000001);", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'EUR', 650.50, 6000000002);", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'USD', 900.75, 6000000003);", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'EUR', 880.20, 6000000004);", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006);", sqlExecutionContext).getInsertStatement());
+            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'USD', 1500.00, 6000000001);", sqlExecutionContext).getInsertOperation());
+            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (1, 'EUR', 650.50, 6000000002);", sqlExecutionContext).getInsertOperation());
+            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'USD', 900.75, 6000000003);", sqlExecutionContext).getInsertOperation());
+            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, balance, timestamp) values (2, 'EUR', 880.20, 6000000004);", sqlExecutionContext).getInsertOperation());
+            execInsert(compiler.compile("insert into balances (cust_id, balance_ccy, inactive, timestamp) values (1, 'USD', true, 6000000006);", sqlExecutionContext).getInsertOperation());
 
             assertSql(
                     "(select * from balances where cust_id=1 latest on timestamp partition by balance_ccy) where not inactive;",
@@ -52,11 +52,11 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
     public void testNotSelectDeletedByLimit() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table state_table(time timestamp, id int, state symbol) timestamp(time);", sqlExecutionContext);
-            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertStatement());
-            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'ON');", sqlExecutionContext).getInsertStatement());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertOperation());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertOperation());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertOperation());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'OFF');", sqlExecutionContext).getInsertOperation());
+            execInsert(compiler.compile("insert into state_table values(systimestamp(), 12345, 'ON');", sqlExecutionContext).getInsertOperation());
             TestUtils.assertSql(
                     compiler,
                     sqlExecutionContext,
@@ -68,7 +68,7 @@ public class SimulatedDeleteTest extends AbstractGriffinTest {
         });
     }
 
-    private static void execInsert(InsertStatement statement) throws SqlException {
+    private static void execInsert(InsertOperation statement) throws SqlException {
         try (InsertMethod m = statement.createMethod(sqlExecutionContext)) {
             m.execute();
             m.commit();

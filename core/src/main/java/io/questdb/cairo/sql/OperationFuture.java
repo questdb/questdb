@@ -22,11 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin;
+package io.questdb.cairo.sql;
+
+import io.questdb.griffin.SqlException;
 
 import java.io.Closeable;
 
-public interface QueryFuture extends Closeable {
+public interface OperationFuture extends Closeable {
     int QUERY_NO_RESPONSE = 0;
     int QUERY_STARTED = 1;
     int QUERY_COMPLETE = 2;
@@ -39,7 +41,7 @@ public interface QueryFuture extends Closeable {
     void await() throws SqlException;
 
     /***
-     * Waits for completion within specified timeout. Can be called multiple times on the same QueryFuture instance.
+     * Waits for completion within specified timeout. Can be called multiple times on the same OperationFuture instance.
      * @param timeout - microseconds timeout
      * @return
      *  - QUERY_NO_RESPONSE if no writer response received
@@ -48,6 +50,8 @@ public interface QueryFuture extends Closeable {
      * @throws SqlException when query execution fails
      */
     int await(long timeout) throws SqlException;
+
+    long getInstanceId();
 
     /***
      * True if operation completed, false otherwise
@@ -59,28 +63,15 @@ public interface QueryFuture extends Closeable {
     int getStatus();
 
     /***
+     * Returns the number of rows affected by the command run asynchronously
+     * @return
+     *  - number of rows changed
+     */
+    long getAffectedRowsCount();
+
+    /***
      * In case of async execution close must be called to remove sequence
      */
     @Override
     void close();
-
-    QueryFuture DONE = new QueryFuture() {
-        @Override
-        public void await() {
-        }
-
-        @Override
-        public int await(long timeout) {
-            return QUERY_COMPLETE;
-        }
-
-        @Override
-        public int getStatus() {
-            return QUERY_COMPLETE;
-        }
-
-        @Override
-        public void close() {
-        }
-    };
 }

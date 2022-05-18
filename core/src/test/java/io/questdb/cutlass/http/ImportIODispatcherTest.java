@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -404,41 +404,39 @@ public class ImportIODispatcherTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
-                    new SendAndReceiveRequestBuilder().executeMany(executor -> {
-                        executor.execute(ValidImportRequest1.replace("STRING", "SYMBOL"),
-                                ValidImportResponse1.replace("STRING", "SYMBOL"));
+                .run((engine) -> new SendAndReceiveRequestBuilder().executeMany(executor -> {
+                    executor.execute(ValidImportRequest1.replace("STRING", "SYMBOL"),
+                            ValidImportResponse1.replace("STRING", "SYMBOL"));
 
-                        executor.executeWithStandardHeaders("GET /query?query=select+*+from+trips HTTP/1.1\r\n",
-                                "050c\r\n" +
-                                        "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"},{\"name\":\"DropOff_datetime\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"B00008\",\"2017-02-01T00:30:00.000000Z\",null],[\"B00008\",\"2017-02-01T00:40:00.000000Z\",null],[\"B00009\",\"2017-02-01T00:50:00.000000Z\",null],[\"B00013\",\"2017-02-01T00:51:00.000000Z\",null],[\"B00013\",\"2017-02-01T01:41:00.000000Z\",null],[\"B00013\",\"2017-02-01T02:00:00.000000Z\",null],[\"B00013\",\"2017-02-01T03:53:00.000000Z\",null],[\"B00013\",\"2017-02-01T04:44:00.000000Z\",null],[\"B00013\",\"2017-02-01T05:05:00.000000Z\",null],[\"B00013\",\"2017-02-01T06:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T07:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T08:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T09:46:00.000000Z\",null],[\"B00014\",\"2017-02-01T10:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:26:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:55:00.000000Z\",null],[\"B00014\",\"2017-02-01T13:47:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:05:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:58:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:33:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:45:00.000000Z\",null]],\"count\":24}\r\n" +
-                                        "00\r\n" +
-                                        "\r\n");
+                    executor.executeWithStandardHeaders("GET /query?query=select+*+from+trips HTTP/1.1\r\n",
+                            "050c\r\n" +
+                                    "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"SYMBOL\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"},{\"name\":\"DropOff_datetime\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"B00008\",\"2017-02-01T00:30:00.000000Z\",null],[\"B00008\",\"2017-02-01T00:40:00.000000Z\",null],[\"B00009\",\"2017-02-01T00:50:00.000000Z\",null],[\"B00013\",\"2017-02-01T00:51:00.000000Z\",null],[\"B00013\",\"2017-02-01T01:41:00.000000Z\",null],[\"B00013\",\"2017-02-01T02:00:00.000000Z\",null],[\"B00013\",\"2017-02-01T03:53:00.000000Z\",null],[\"B00013\",\"2017-02-01T04:44:00.000000Z\",null],[\"B00013\",\"2017-02-01T05:05:00.000000Z\",null],[\"B00013\",\"2017-02-01T06:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T07:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T08:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T09:46:00.000000Z\",null],[\"B00014\",\"2017-02-01T10:54:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T11:45:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:26:00.000000Z\",null],[\"B00014\",\"2017-02-01T12:55:00.000000Z\",null],[\"B00014\",\"2017-02-01T13:47:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:05:00.000000Z\",null],[\"B00014\",\"2017-02-01T14:58:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:33:00.000000Z\",null],[\"B00014\",\"2017-02-01T15:45:00.000000Z\",null]],\"count\":24}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n");
 
-                        executor.executeWithStandardHeaders("GET /query?query=drop+table+trips HTTP/1.1\r\n",
-                                "0d\r\n" +
-                                        "{\"ddl\":\"OK\"}\n" +
-                                        "\r\n" +
-                                        "00\r\n" +
-                                        "\r\n");
+                    executor.executeWithStandardHeaders("GET /query?query=drop+table+trips HTTP/1.1\r\n",
+                            "0d\r\n" +
+                                    "{\"ddl\":\"OK\"}\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n");
 
-                        String request2 = ValidImportRequest2
-                                .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime&overwrite=true HTTP");
+                    String request2 = ValidImportRequest2
+                            .replace("POST /upload?name=trips HTTP", "POST /upload?name=trips&timestamp=Pickup_DateTime&overwrite=true HTTP");
 
-                        executor.execute(request2, ValidImportResponse2);
+                    executor.execute(request2, ValidImportResponse2);
 
-                        // This will try to hit same execution plan as the first SELECT query
-                        // but because table metadata changes, old query plan is not valid anymore
-                        // and produces NPE if used
-                        executor.executeWithStandardHeaders(
-                                "GET /query?query=select+*+from+trips HTTP/1.1\r\n",
-                                "0630\r\n" +
-                                        "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"STRING\"},{\"name\":\"Col2\",\"type\":\"STRING\"},{\"name\":\"Col3\",\"type\":\"STRING\"},{\"name\":\"Col4\",\"type\":\"STRING\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[\"B00008\",null,null,null,\"2017-02-01T00:30:00.000000Z\"],[\"B00008\",null,null,null,\"2017-02-01T00:40:00.000000Z\"],[\"B00009\",null,null,null,\"2017-02-01T00:50:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T00:51:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T01:41:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T02:00:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T03:53:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T04:44:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T05:05:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T06:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T07:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T08:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T09:46:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T10:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:26:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:55:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T13:47:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:05:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:58:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:33:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:45:00.000000Z\"]],\"count\":24}\r\n" +
-                                        "00\r\n" +
-                                        "\r\n"
-                        );
-                    });
-                });
+                    // This will try to hit same execution plan as the first SELECT query
+                    // but because table metadata changes, old query plan is not valid anymore
+                    // and produces NPE if used
+                    executor.executeWithStandardHeaders(
+                            "GET /query?query=select+*+from+trips HTTP/1.1\r\n",
+                            "0630\r\n" +
+                                    "{\"query\":\"select * from trips\",\"columns\":[{\"name\":\"Col1\",\"type\":\"STRING\"},{\"name\":\"Col2\",\"type\":\"STRING\"},{\"name\":\"Col3\",\"type\":\"STRING\"},{\"name\":\"Col4\",\"type\":\"STRING\"},{\"name\":\"Pickup_DateTime\",\"type\":\"TIMESTAMP\"}],\"dataset\":[[\"B00008\",null,null,null,\"2017-02-01T00:30:00.000000Z\"],[\"B00008\",null,null,null,\"2017-02-01T00:40:00.000000Z\"],[\"B00009\",null,null,null,\"2017-02-01T00:50:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T00:51:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T01:41:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T02:00:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T03:53:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T04:44:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T05:05:00.000000Z\"],[\"B00013\",null,null,null,\"2017-02-01T06:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T07:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T08:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T09:46:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T10:54:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T11:45:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:26:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T12:55:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T13:47:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:05:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T14:58:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:33:00.000000Z\"],[\"B00014\",null,null,null,\"2017-02-01T15:45:00.000000Z\"]],\"count\":24}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+                }));
     }
 
     @Test
@@ -893,8 +891,8 @@ public class ImportIODispatcherTest {
                     CompiledQuery compiledQuery = compiler.compile("insert into trips values (" +
                             "'2021-07-20T00:01:00', 'ABC', 'DEF'" +
                             ")", sqlExecutionContext);
-                    final InsertStatement insertStatement = compiledQuery.getInsertStatement();
-                    try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
+                    final InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                    try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
                         insertMethod.execute();
                         insertMethod.commit();
                     }

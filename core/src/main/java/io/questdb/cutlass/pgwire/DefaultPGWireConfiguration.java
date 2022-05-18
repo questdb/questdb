@@ -127,6 +127,21 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public boolean isUpdateCacheEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getUpdateCacheBlockCount() {
+        return 8;
+    }
+
+    @Override
+    public int getUpdateCacheRowCount() {
+        return 8;
+    }
+
+    @Override
     public int getMaxBlobSizeOnQuery() {
         // BLOBs must fit inside send buffer together with other column values
         return 512 * 1024;

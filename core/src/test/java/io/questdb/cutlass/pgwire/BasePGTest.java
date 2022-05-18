@@ -124,6 +124,18 @@ public class BasePGTest extends AbstractGriffinTest {
         }
     }
 
+    protected Connection getConnection(boolean simple, boolean binary, long statementTimeoutMs) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
+        properties.setProperty("sslmode", "disable");
+        properties.setProperty("binaryTransfer", Boolean.toString(binary));
+        properties.setProperty("preferQueryMode", simple ? Mode.Simple.value : Mode.Extended.value);
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        properties.setProperty("options", "-c statement_timeout=" + statementTimeoutMs);
+        return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
+    }
+
     protected Connection getConnection(Mode mode, boolean binary, int prepareThreshold) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");

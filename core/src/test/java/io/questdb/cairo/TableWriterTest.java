@@ -33,8 +33,8 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.griffin.AlterStatement;
-import io.questdb.griffin.AlterStatementBuilder;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -112,17 +112,17 @@ public class TableWriterTest extends AbstractCairoTest {
             Thread addColumnsThread = new Thread(() -> {
                 try {
                     TestUtils.await(barrier);
-                    AlterStatementBuilder alterStatementBuilder = new AlterStatementBuilder();
+                    AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
                     for (int i = 0; i < totalColAddCount; i++) {
-                        alterStatementBuilder.clear();
+                        alterOperationBuilder.clear();
                         String columnName = "col" + i;
-                        alterStatementBuilder
+                        alterOperationBuilder
                                 .ofAddColumn(0, tableName, tableId)
                                 .ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
-                        AlterStatement alterStatement = alterStatementBuilder.build();
-                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, "test", alterStatement)) {
+                        AlterOperation alterOperation = alterOperationBuilder.build();
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, alterOperation)) {
                             if (writer != null) {
-                                writer.processCommandAsync(alterStatement);
+                                writer.publishAsyncWriterCommand(alterOperation);
                             }
                         }
                         columnsAdded.incrementAndGet();

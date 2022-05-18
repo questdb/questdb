@@ -31,19 +31,17 @@ import io.questdb.griffin.SqlExecutionContext;
 
 import java.io.Closeable;
 
-public interface InsertStatement extends Closeable {
-    @Override
-    void close();
-
+public interface InsertOperation extends Closeable {
     InsertMethod createMethod(SqlExecutionContext executionContext) throws SqlException;
 
     InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException;
 
-    long getStructureVersion();
-
     CharSequence getTableName();
 
-    void detachWriter();
-
     void addInsertRow(InsertRowImpl row);
+
+    OperationFuture execute(SqlExecutionContext sqlExecutionContext) throws SqlException;
+
+    default void close() {
+    }
 }

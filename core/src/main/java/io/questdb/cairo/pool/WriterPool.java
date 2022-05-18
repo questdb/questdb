@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
@@ -37,7 +38,6 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -136,15 +136,19 @@ public class WriterPool extends AbstractPool {
     /**
      * Returns writer from the pool or sends writer command
      *
-     * @param tableName   name of the table
-     * @param lockReason  reason for the action
-     * @param writeAction lambda to write to TableWriterTask
+     * @param tableName          name of the table
+     * @param lockReason         reason for the action
+     * @param asyncWriterCommand command to write to TableWriterTask
      * @return null if command is published or TableWriter instance if writer is available
      */
-    public TableWriter getOrPublishCommand(CharSequence tableName, String lockReason, WriteToQueue<TableWriterTask> writeAction) {
+    public TableWriter getWriterOrPublishCommand(
+            CharSequence tableName,
+            String lockReason,
+            @NotNull AsyncWriterCommand asyncWriterCommand
+    ) {
         while (true) {
             try {
-                return getWriterEntry(tableName, lockReason, writeAction);
+                return getWriterEntry(tableName, lockReason, asyncWriterCommand);
             } catch (EntryUnavailableException ex) {
                 // means retry in this context
             }
@@ -270,7 +274,7 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private void addCommandToWriterQueue(Entry e, WriteToQueue<TableWriterTask> writeAction, long thread) {
+    private void addCommandToWriterQueue(Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
         TableWriter writer;
         while ((writer = e.writer) == null && e.owner != UNALLOCATED) {
             Os.pause();
@@ -279,7 +283,7 @@ public class WriterPool extends AbstractPool {
             // Retry from very beginning
             throw EntryUnavailableException.instance("please retry");
         }
-        writer.processCommandAsync(writeAction);
+        writer.publishAsyncWriterCommand(asyncWriterCommand);
 
         // Make sure writer does not go to the pool with command in the queue
         // Wait until writer is either in the pool or out
@@ -431,7 +435,11 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private TableWriter getWriterEntry(CharSequence tableName, CharSequence lockReason, WriteToQueue<TableWriterTask> writeAction) {
+    private TableWriter getWriterEntry(
+            CharSequence tableName,
+            CharSequence lockReason,
+            @Nullable AsyncWriterCommand asyncWriterCommand
+    ) {
         assert null != lockReason;
         checkClosed();
 
@@ -480,12 +488,18 @@ public class WriterPool extends AbstractPool {
                         throw e.ex;
                     }
                 }
-                if (writeAction != null) {
-                    addCommandToWriterQueue(e, writeAction, thread);
+                if (asyncWriterCommand != null) {
+                    addCommandToWriterQueue(e, asyncWriterCommand, thread);
                     return null;
                 }
-                LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(", thread=").$(thread).I$();
-                throw EntryUnavailableException.instance(reinterpretOwnershipReason(e.ownershipReason));
+
+                CharSequence reason = reinterpretOwnershipReason(e.ownershipReason);
+                LOG.info().$("busy [table=`").utf8(tableName)
+                        .$("`, owner=").$(owner)
+                        .$(", thread=").$(thread)
+                        .$(", reason=").$(reason)
+                        .I$();
+                throw EntryUnavailableException.instance(reason);
             }
         }
     }

@@ -98,6 +98,19 @@ public class LatestByTest extends AbstractGriffinTest {
     @Test
     public void testLatestBySymbolManyDistinctValues() throws Exception {
         assertMemoryLeak(() -> {
+
+            compile("create table t as (" +
+                    "select " +
+                    "x, " +
+                    "rnd_symbol(10000, 1, 15, 1000) s, " +
+                    "timestamp_sequence(0, 1000*1000L) ts " +
+                    "from long_sequence(1000000)" +
+                    ") timestamp(ts) Partition by DAY");
+
+            String distinctSymbols = selectDistinctSym("t", 500, "s");
+
+            engine.releaseInactive();
+
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
@@ -110,14 +123,6 @@ public class LatestByTest extends AbstractGriffinTest {
                 }
             };
 
-            compile("create table t as (" +
-                    "select " +
-                    "x, " +
-                    "rnd_symbol(10000, 1, 15, 1000) s, " +
-                    "timestamp_sequence(0, 1000*1000L) ts " +
-                    "from long_sequence(1000000)" +
-                    ") timestamp(ts) Partition by DAY");
-
             assertQuery("min\tmax\n" +
                             "1970-01-11T15:33:16.000000Z\t1970-01-12T13:46:39.000000Z\n",
                     "select min(ts), max(ts) from (select ts, x, s from t latest on ts partition by s)",
@@ -126,11 +131,11 @@ public class LatestByTest extends AbstractGriffinTest {
                     true);
 
             assertQuery("min\tmax\n" +
-                            "1970-01-11T20:55:39.000000Z\t1970-01-12T13:46:34.000000Z\n",
+                            "1970-01-11T16:57:53.000000Z\t1970-01-12T13:46:05.000000Z\n",
                     "select min(ts), max(ts) from (" +
                             "select ts, x, s " +
                             "from t " +
-                            "where s in (" + selectDistinctSym("t", 500, "s") + ") " +
+                            "where s in (" + distinctSymbols + ") " +
                             "latest on ts partition by s" +
                             ")",
                     null,
@@ -364,7 +369,7 @@ public class LatestByTest extends AbstractGriffinTest {
 
     private String selectDistinctSym(String table, int count, String columnName) throws SqlException {
         StringSink sink = new StringSink();
-        try (RecordCursorFactory factory = compiler.compile("select distinct " + columnName + " from " + table + " limit " + count, sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = compiler.compile("select distinct " + columnName + " from " + table + " order by " + columnName + " limit " + count, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 final Record record = cursor.getRecord();
                 int i = 0;

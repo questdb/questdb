@@ -341,25 +341,35 @@ public enum PropertyKey {
     TELEMETRY_ENABLED("telemetry.enabled"),
     TELEMETRY_DISABLE_COMPLETELY("telemetry.disable.completely"),
     TELEMETRY_QUEUE_CAPACITY("telemetry.queue.capacity"),
-    TELEMETRY_HIDE_TABLES("telemetry.hide.tables");
+    TELEMETRY_HIDE_TABLES("telemetry.hide.tables"),
+    PG_UPDATE_CACHE_ENABLED("pg.update.cache.enabled"),
+    PG_UPDATE_CACHE_BLOCK_COUNT("pg.update.cache.block.count"),
+    PG_UPDATE_CACHE_ROW_COUNT("pg.update.cache.row.count"),
+    CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY("cairo.sql.column.purge.queue.capacity"),
+    CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY("cairo.sql.column.purge.task.pool.capacity"),
+    CAIRO_SQL_COLUMN_PURGE_TIMEOUT("cairo.sql.column.purge.timeout"),
+    CAIRO_SQL_COLUMN_PURGE_START_TIMEOUT("cairo.sql.column.purge.start.timeout"),
+    CAIRO_SQL_COLUMN_PURGE_TIMEOUT_EXPONENT("cairo.sql.column.purge.timeout.exponent"),
+    CAIRO_SQL_COLUMN_PURGE_LIMIT_DAYS("cairo.sql.column.purge.limit.days"),
+    CAIRO_SQL_SYSTEM_TABLE_PREFIX("cairo.system.table.prefix");
 
-    private final String propertyPath;
     private static final Map<String, PropertyKey> nameMapping;
+    private final String propertyPath;
 
     PropertyKey(String propertyPath) {
         this.propertyPath = propertyPath;
     }
 
-    static {
-        nameMapping = Arrays.stream(PropertyKey.values()).collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
+    public static Optional<PropertyKey> getByString(String name) {
+        return Optional.ofNullable(nameMapping.get(name));
     }
 
     public String getPropertyPath() {
         return propertyPath;
     }
 
-    public static Optional<PropertyKey> getByString(String name) {
-        return Optional.ofNullable(nameMapping.get(name));
+    static {
+        nameMapping = Arrays.stream(PropertyKey.values()).collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
     }
 
 }

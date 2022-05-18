@@ -29,11 +29,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
-import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
+import io.questdb.test.tools.TestUtils;
 
 public class RecordCursorPrinter {
     protected final char delimiter;
@@ -83,7 +80,7 @@ public class RecordCursorPrinter {
 
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
-            printColumn(record, metadata, i, sink);
+            TestUtils.printColumn(record, metadata, i, sink, printTypes);
             sink.put('\n');
         }
     }
@@ -107,94 +104,12 @@ public class RecordCursorPrinter {
             if (i > 0) {
                 sink.put(delimiter);
             }
-            printColumn(r, m, i, sink);
+            TestUtils.printColumn(r, m, i, sink, printTypes);
         }
     }
 
     public RecordCursorPrinter withTypes(boolean enabled) {
         this.printTypes = enabled;
         return this;
-    }
-
-    protected void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
-        final int columnType = m.getColumnType(i);
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.DATE:
-                DateFormatUtils.appendDateTime(sink, r.getDate(i));
-                break;
-            case ColumnType.TIMESTAMP:
-                TimestampFormatUtils.appendDateTimeUSec(sink, r.getTimestamp(i));
-                break;
-            case ColumnType.DOUBLE:
-                sink.put(r.getDouble(i), Numbers.MAX_SCALE);
-                break;
-            case ColumnType.FLOAT:
-                sink.put(r.getFloat(i), 4);
-                break;
-            case ColumnType.INT:
-                sink.put(r.getInt(i));
-                break;
-            case ColumnType.NULL:
-                sink.put("null");
-                break;
-            case ColumnType.STRING:
-                r.getStr(i, sink);
-                break;
-            case ColumnType.SYMBOL:
-                sink.put(r.getSym(i));
-                break;
-            case ColumnType.SHORT:
-                sink.put(r.getShort(i));
-                break;
-            case ColumnType.CHAR:
-                char c = r.getChar(i);
-                if (c > 0) {
-                    sink.put(c);
-                }
-                break;
-            case ColumnType.LONG:
-                sink.put(r.getLong(i));
-                break;
-            case ColumnType.GEOBYTE:
-                putGeoHash(r.getGeoByte(i), ColumnType.getGeoHashBits(columnType), sink);
-                break;
-            case ColumnType.GEOSHORT:
-                putGeoHash(r.getGeoShort(i), ColumnType.getGeoHashBits(columnType), sink);
-                break;
-            case ColumnType.GEOINT:
-                putGeoHash(r.getGeoInt(i), ColumnType.getGeoHashBits(columnType), sink);
-                break;
-            case ColumnType.GEOLONG:
-                putGeoHash(r.getGeoLong(i), ColumnType.getGeoHashBits(columnType), sink);
-                break;
-            case ColumnType.BYTE:
-                sink.put(r.getByte(i));
-                break;
-            case ColumnType.BOOLEAN:
-                sink.put(r.getBool(i));
-                break;
-            case ColumnType.BINARY:
-                Chars.toSink(r.getBin(i), sink);
-                break;
-            case ColumnType.LONG256:
-                r.getLong256(i, sink);
-                break;
-            default:
-                break;
-        }
-        if (printTypes) {
-            sink.put(':').put(ColumnType.nameOf(columnType));
-        }
-    }
-
-    private void putGeoHash(long hash, int bits, CharSink sink) {
-        if (hash == GeoHashes.NULL) {
-            return;
-        }
-        if (bits % 5 == 0) {
-            GeoHashes.appendCharsUnsafe(hash, bits / 5, sink);
-        } else {
-            GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
-        }
     }
 }

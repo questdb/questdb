@@ -186,7 +186,7 @@ public class TableUpdateDetails implements Closeable {
 
     public void tick() {
         if (writer != null) {
-            writer.tick(false);
+            writer.tick();
         }
     }
 
@@ -229,7 +229,7 @@ public class TableUpdateDetails implements Closeable {
         if (rowsSinceCommit < writer.getMetadata().getMaxUncommittedRows()) {
             if ((rowsSinceCommit & writerTickRowsCountMod) == 0) {
                 // Tick without commit. Some tick commands may force writer to commit though.
-                writer.tick(false);
+                writer.tick();
             }
             return;
         }
@@ -249,7 +249,7 @@ public class TableUpdateDetails implements Closeable {
         }
 
         // Tick after commit.
-        writer.tick(false);
+        writer.tick();
     }
 
     ThreadLocalDetails getThreadLocalDetails(int workerId) {

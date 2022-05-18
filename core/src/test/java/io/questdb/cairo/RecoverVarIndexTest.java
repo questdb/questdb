@@ -138,7 +138,11 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                 RecoverVarIndex::rebuildAll);
 
         engine.releaseAllWriters();
-        compiler.compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext).execute(null).await();
+        compiler
+                .compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext)
+                .getInsertOperation()
+                .execute(sqlExecutionContext)
+                .await();
         int sym1D = countByFullScanWhereValueD();
         Assert.assertEquals(1, sym1D);
     }
@@ -350,7 +354,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             for (String sql : createTableSql.split(";")) {
                 compiler.compile(sql, sqlExecutionContext).execute(null).await();
             }
-            compiler.compile("create table copytbl as (select * from xxx)", sqlExecutionContext).execute(null).await();
+            compiler.compile("create table copytbl as (select * from xxx)", sqlExecutionContext);
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();

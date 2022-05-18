@@ -77,6 +77,11 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     }
 
     @Override
+    public boolean isUsingIndex() {
+        return true;
+    }
+
+    @Override
     public Function getFunction() {
         return symbolFunction;
     }
