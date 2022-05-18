@@ -120,7 +120,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDddlMetadataReadable_simple() {
+    public void testDddlMetadataReadable() {
         String tableName = "testtable";
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
@@ -134,23 +134,29 @@ public class WalWriterTest extends AbstractGriffinTest {
                 WalWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
+                walWriter.newRow().cancel(); // new partition
+                row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.append();
             }
-            try {
-                toMetadataPath(tableName, 0, path);
-                TableReaderMetadata readerMetadata = new TableReaderMetadata(configuration.getFilesFacade(), path);
-                assertEquals(2, readerMetadata.getColumnCount());
-                assertEquals(ColumnType.BYTE, readerMetadata.getColumnType(0));
-                assertEquals("a", readerMetadata.getColumnName(0));
-                assertEquals(ColumnType.STRING, readerMetadata.getColumnType(1));
-                assertEquals("b", readerMetadata.getColumnName(1));
-            } finally {
-                path.trimTo(plen);
-            }
+            assertMetadataFileCreated(model, 0, path);
+            assertMetadataFileCreated(model, 1, path);
+        }
+    }
+
+    private void assertMetadataFileCreated(TableModel model, long partition, Path path) {
+        int plen = path.length();
+        try {
+            toMetadataPath(model.getTableName(), partition, path);
+            TableReaderMetadata readerMetadata = new TableReaderMetadata(configuration.getFilesFacade(), path);
+            assertMetadataMatchesModel(model, readerMetadata);
+        } finally {
+            path.trimTo(plen);
         }
     }
 
     @Test
-    public void ddlMetadataCreated() {
+    public void testddlMetadataCreated() {
         String tableName = "testtable";
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
@@ -166,6 +172,51 @@ public class WalWriterTest extends AbstractGriffinTest {
                 row.append();
             }
             assertMetadataFileExist(tableName, 0, path);
+        }
+    }
+
+    @Test
+    public void testDdlMetadataForNewPartitionReadable() {
+        String tableName = "testtable";
+        try (Path path = new Path().of(configuration.getRoot());
+             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                     .col("a", ColumnType.BYTE)
+                     .col("b", ColumnType.STRING)
+        ) {
+            int plen = path.length();
+            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
+            path.trimTo(plen);
+            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+                WalWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.append();
+            }
+            assertMetadataFileExist(tableName, 0, path);
+        }
+    }
+
+    @Test
+    public void ddlMetadataCreatedForNewPartition() {
+        String tableName = "testtable";
+        try (Path path = new Path().of(configuration.getRoot());
+             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                     .col("a", ColumnType.BYTE)
+                     .col("b", ColumnType.STRING)
+        ) {
+            int plen = path.length();
+            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
+            path.trimTo(plen);
+            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+                WalWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.append();
+                walWriter.newRow().cancel(); // force new partition
+                row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.append();
+            }
+            assertMetadataFileExist(tableName, 0, path);
+            assertMetadataFileExist(tableName, 1, path);
         }
     }
 
@@ -189,7 +240,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private void toMetadataPath(String tableName, int partition, Path path) {
+    private void toMetadataPath(CharSequence tableName, long partition, Path path) {
         path.concat(tableName).slash()
                 .concat("wal").slash()
                 .concat(String.valueOf(partition)).slash()
@@ -200,6 +251,17 @@ public class WalWriterTest extends AbstractGriffinTest {
     private static void assertPathExists(Path path) {
         if (!Files.exists(path)) {
             throw new AssertionError("Path " + path + " does not exists!");
+        }
+    }
+
+    private static void assertMetadataMatchesModel(TableModel model, TableReaderMetadata metadata) {
+        // todo: assert on more properties - symbol column configuration, etc
+        int columnCount = model.getColumnCount();
+        assertEquals(columnCount, metadata.getColumnCount());
+        assertEquals(model.getPartitionBy(), metadata.getPartitionBy());
+        for (int i = 0; i < columnCount; i++) {
+            assertEquals(model.getColumnType(i), metadata.getColumnType(i));
+            assertEquals(model.getColumnName(i), metadata.getColumnName(i));
         }
     }
 }
