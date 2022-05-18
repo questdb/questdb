@@ -163,21 +163,10 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         for (TableSql tableSql : updatesSql) {
             try {
                 if (!doneTables.contains(tableSql.tableName)) {
-                    long timeoutMicros = 180_000_000;
-                    long prev = testMicrosClock.getTicks();
                     final TableData table = tables.get(tableSql.tableName);
-                    while (true) {
-                        if (!table.await(timeoutMicros)) {
-                            Assert.fail("Timed out on waiting for the data to be ingested");
-                            break;
-                        }
-                        if (checkTableAllRowsReceived(table)) {
-                             break;
-                        }
-                        long current = testMicrosClock.getTicks();
-                        timeoutMicros -= current - prev;
-                        prev = current;
-                    }
+                    do {
+                        table.await();
+                    } while (!checkTableAllRowsReceived(table));
                     doneTables.add(tableSql.tableName);
                 }
 
