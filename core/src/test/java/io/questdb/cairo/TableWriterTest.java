@@ -66,7 +66,6 @@ public class TableWriterTest extends AbstractCairoTest {
         ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(2);
-            AtomicInteger done = new AtomicInteger();
             AtomicInteger columnsAdded = new AtomicInteger();
             AtomicInteger insertCount = new AtomicInteger();
             int totalColAddCount = 1000;
@@ -105,8 +104,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         } catch (Throwable e) {
                             exceptions.add(e);
                             LOG.error().$(e).$();
-                        } finally {
-                            done.incrementAndGet();
+                            throw e;
                         }
                     }
             });
@@ -132,6 +130,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     exceptions.add(e);
                     LOG.error().$(e).$();
+                    throw e;
                 }
             });
             writeDataThread.start();
