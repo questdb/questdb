@@ -1223,7 +1223,7 @@ public class O3Test extends AbstractO3Test {
             Metrics metrics = engine.getMetrics();
             Assert.assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
 
-            // Appended to last partition.
+            // Appended to new partition.
             Assert.assertEquals(initRowCount + 1, metrics.tableWriter().physicallyWrittenRows());
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
