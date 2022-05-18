@@ -3878,18 +3878,27 @@ public class WalWriter implements Closeable {
         public void putBin(int columnIndex, long address, long len) {
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(address, len));
             setRowValueNotNull(columnIndex);
+
+            getSecondaryWalDColumn(columnIndex).putLong(getPrimaryWalDColumn(columnIndex).putBin(address, len));
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putBin(int columnIndex, BinarySequence sequence) {
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(sequence));
             setRowValueNotNull(columnIndex);
+
+            getSecondaryWalDColumn(columnIndex).putLong(getPrimaryWalDColumn(columnIndex).putBin(sequence));
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putBool(int columnIndex, boolean value) {
             getPrimaryColumn(columnIndex).putBool(value);
             setRowValueNotNull(columnIndex);
+
+            getPrimaryWalDColumn(columnIndex).putBool(value);
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
@@ -3905,6 +3914,9 @@ public class WalWriter implements Closeable {
         public void putChar(int columnIndex, char value) {
             getPrimaryColumn(columnIndex).putChar(value);
             setRowValueNotNull(columnIndex);
+
+            getPrimaryWalDColumn(columnIndex).putChar(value);
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
@@ -3917,12 +3929,18 @@ public class WalWriter implements Closeable {
         public void putDouble(int columnIndex, double value) {
             getPrimaryColumn(columnIndex).putDouble(value);
             setRowValueNotNull(columnIndex);
+
+            getPrimaryWalDColumn(columnIndex).putDouble(value);
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putFloat(int columnIndex, float value) {
             getPrimaryColumn(columnIndex).putFloat(value);
             setRowValueNotNull(columnIndex);
+
+            getPrimaryWalDColumn(columnIndex).putFloat(value);
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
@@ -3968,42 +3986,63 @@ public class WalWriter implements Closeable {
         public void putInt(int columnIndex, int value) {
             getPrimaryColumn(columnIndex).putInt(value);
             setRowValueNotNull(columnIndex);
+
+            getPrimaryWalDColumn(columnIndex).putInt(value);
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putLong(int columnIndex, long value) {
             getPrimaryColumn(columnIndex).putLong(value);
             setRowValueNotNull(columnIndex);
+
+            getPrimaryWalDColumn(columnIndex).putLong(value);
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putLong256(int columnIndex, long l0, long l1, long l2, long l3) {
             getPrimaryColumn(columnIndex).putLong256(l0, l1, l2, l3);
             setRowValueNotNull(columnIndex);
+
+            getPrimaryWalDColumn(columnIndex).putLong256(l1, l2, l2, l3);
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putLong256(int columnIndex, Long256 value) {
             getPrimaryColumn(columnIndex).putLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3());
             setRowValueNotNull(columnIndex);
+
+            getPrimaryWalDColumn(columnIndex).putLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3());
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putLong256(int columnIndex, CharSequence hexString) {
             getPrimaryColumn(columnIndex).putLong256(hexString);
             setRowValueNotNull(columnIndex);
+
+            getPrimaryWalDColumn(columnIndex).putLong256(hexString);
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end) {
             getPrimaryColumn(columnIndex).putLong256(hexString, start, end);
             setRowValueNotNull(columnIndex);
+
+            getPrimaryWalDColumn(columnIndex).putLong256(hexString, start, end);
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putShort(int columnIndex, short value) {
             getPrimaryColumn(columnIndex).putShort(value);
             setRowValueNotNull(columnIndex);
+
+            getPrimaryWalDColumn(columnIndex).putShort(value);
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
@@ -4019,12 +4058,18 @@ public class WalWriter implements Closeable {
         public void putStr(int columnIndex, char value) {
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value));
             setRowValueNotNull(columnIndex);
+
+            getSecondaryWalDColumn(columnIndex).putLong(getPrimaryWalDColumn(columnIndex).putStr(value));
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putStr(int columnIndex, CharSequence value, int pos, int len) {
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value, pos, len));
             setRowValueNotNull(columnIndex);
+
+            getSecondaryWalDColumn(columnIndex).putLong(getPrimaryWalDColumn(columnIndex).putStr(value, pos, len));
+            setWalDRowValueNotNull(columnIndex);
         }
 
         @Override
@@ -4072,21 +4117,27 @@ public class WalWriter implements Closeable {
 
         private void putGeoHash0(int index, long value, int type) {
             final MemoryA primaryColumn = getPrimaryColumn(index);
+            final MemoryA walDPrimaryColumn = getPrimaryWalDColumn(index);
             switch (ColumnType.tagOf(type)) {
                 case ColumnType.GEOBYTE:
                     primaryColumn.putByte((byte) value);
+                    walDPrimaryColumn.putByte((byte) value);
                     break;
                 case ColumnType.GEOSHORT:
                     primaryColumn.putShort((short) value);
+                    walDPrimaryColumn.putShort((short) value);
                     break;
                 case ColumnType.GEOINT:
                     primaryColumn.putInt((int) value);
+                    walDPrimaryColumn.putInt((int) value);
                     break;
                 default:
                     primaryColumn.putLong(value);
+                    walDPrimaryColumn.putLong(value);
                     break;
             }
             setRowValueNotNull(index);
+            setWalDRowValueNotNull(index);
         }
     }
 
