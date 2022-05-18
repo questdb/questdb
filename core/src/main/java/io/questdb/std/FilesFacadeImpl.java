@@ -174,12 +174,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int mkdir(LPSZ path, int mode) {
+    public int mkdir(Path path, int mode) {
         return Files.mkdir(path, mode);
     }
 
     @Override
-    public int mkdirs(LPSZ path, int mode) {
+    public int mkdirs(Path path, int mode) {
         return Files.mkdirs(path, mode);
     }
 
@@ -288,4 +288,26 @@ public class FilesFacadeImpl implements FilesFacade {
         }
     }
 
+    public void walk(Path path, FindVisitor func) {
+        int len = path.length();
+        long p = findFirst(path);
+        if (p > 0) {
+            try {
+                do {
+                    long name = findName(p);
+                    if (Files.notDots(name)) {
+                        int type = findType(p);
+                        path.trimTo(len);
+                        if (type == Files.DT_FILE) {
+                            func.onFind(name, type);
+                        } else {
+                            walk(path.concat(name).$(), func);
+                        }
+                    }
+                } while (findNext(p) > 0);
+            } finally {
+                findClose(p);
+            }
+        }
+    }
 }

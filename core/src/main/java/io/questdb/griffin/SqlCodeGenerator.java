@@ -27,8 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -122,7 +122,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final IntList groupByFunctionPositions = new IntList();
     private final LongList prefixes = new LongList();
     private final ObjectPool<ExpressionNode> expressionNodePool;
-    private final WeakAutoClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
+    private final WeakClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
 
@@ -143,8 +143,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         jitIRMem.putByte((byte) 0);
         jitIRMem.truncate();
         this.expressionNodePool = expressionNodePool;
-        this.reduceTaskPool = new WeakAutoClosableObjectPool<>(
-                (p) -> new PageFrameReduceTask(configuration),
+        this.reduceTaskPool = new WeakClosableObjectPool<>(
+                () -> new PageFrameReduceTask(configuration),
                 configuration.getPageFrameReduceTaskPoolCapacity()
         );
     }
@@ -156,7 +156,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Override
     public void close() {
-        jitIRMem.close();
+        Misc.free(jitIRMem);
         Misc.free(reduceTaskPool);
     }
 
@@ -755,52 +755,56 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         final boolean enableParallelFilter = configuration.isSqlParallelFilterEnabled();
-        final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
-        if (enableParallelFilter && useJit) {
-            final boolean optimize = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
-            if (optimize) {
-                try {
-                    int jitOptions;
-                    final ObjList<Function> bindVarFunctions = new ObjList<>();
-                    try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
-                        final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
-                        jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
-                        jitOptions = jitIRSerializer.serialize(filter, forceScalar, enableJitDebug, enableJitNullChecks);
+        if (enableParallelFilter && factory.supportPageFrameCursor()) {
+            ObjList<Function> perWorkerFilters = preparePerWorkerFilters(factory.getMetadata(), executionContext, filter, f);
+
+            final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
+            if (useJit) {
+                final boolean optimize = factory.supportPageFrameCursor() && JitUtil.isJitSupported();
+                if (optimize) {
+                    try {
+                        int jitOptions;
+                        final ObjList<Function> bindVarFunctions = new ObjList<>();
+                        try (PageFrameCursor cursor = factory.getPageFrameCursor(executionContext, ORDER_ANY)) {
+                            final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
+                            jitIRSerializer.of(jitIRMem, executionContext, factory.getMetadata(), cursor, bindVarFunctions);
+                            jitOptions = jitIRSerializer.serialize(filter, forceScalar, enableJitDebug, enableJitNullChecks);
+                        }
+
+                        final CompiledFilter jitFilter = new CompiledFilter();
+                        jitFilter.compile(jitIRMem, jitOptions);
+
+                        final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                        final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+
+                        LOG.info()
+                                .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
+                                .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
+                        return new AsyncJitFilteredRecordCursorFactory(
+                                configuration,
+                                executionContext.getMessageBus(),
+                                factory,
+                                bindVarFunctions,
+                                f,
+                                perWorkerFilters,
+                                jitFilter,
+                                reduceTaskPool,
+                                limitLoFunction,
+                                limitLoPos
+                        );
+                    } catch (SqlException | LimitOverflowException ex) {
+                        LOG.debug()
+                                .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
+                                .$(", ex=").$(ex.getFlyweightMessage())
+                                .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
+                    } finally {
+                        jitIRSerializer.clear();
+                        jitIRMem.truncate();
                     }
-
-                    final CompiledFilter jitFilter = new CompiledFilter();
-                    jitFilter.compile(jitIRMem, jitOptions);
-
-                    final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
-                    final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
-
-                    LOG.info()
-                            .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
-                            .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
-                    return new AsyncJitFilteredRecordCursorFactory(
-                            configuration,
-                            executionContext.getMessageBus(),
-                            factory,
-                            bindVarFunctions,
-                            f,
-                            jitFilter,
-                            reduceTaskPool,
-                            limitLoFunction,
-                            limitLoPos
-                    );
-                } catch (SqlException | LimitOverflowException ex) {
-                    LOG.debug()
-                            .$("JIT cannot be applied to (sub)query [tableName=").utf8(model.getName())
-                            .$(", ex=").$(ex.getFlyweightMessage())
-                            .$(", fd=").$(executionContext.getRequestFd()).$(']').$();
-                } finally {
-                    jitIRSerializer.clear();
-                    jitIRMem.truncate();
                 }
             }
-        }
 
-        if (enableParallelFilter && factory.supportPageFrameCursor()) {
+            // Use Java filter.
             final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
             final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
             return new AsyncFilteredRecordCursorFactory(
@@ -809,11 +813,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     factory,
                     f,
                     reduceTaskPool,
+                    perWorkerFilters,
                     limitLoFunction,
                     limitLoPos
             );
         }
         return new FilteredRecordCursorFactory(factory, f);
+    }
+
+    private ObjList<Function> preparePerWorkerFilters(
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            ExpressionNode filter,
+            Function filterFunction
+    ) throws SqlException {
+        if (!filterFunction.isReadThreadSafe()) {
+            ObjList<Function> perWorkerFilters = new ObjList<>();
+            for (int i = 0, c = executionContext.getWorkerCount(); i < c; i++) {
+                final Function perWorkerFilter = compileFilter(filter, metadata, executionContext);
+                perWorkerFilters.extendAndSet(i, perWorkerFilter);
+            }
+            return perWorkerFilters;
+        }
+        return null;
     }
 
     private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
@@ -1022,12 +1044,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ExpressionNode filter = slaveModel.getPostJoinWhereClause();
                 if (filter != null) {
                     if (configuration.isSqlParallelFilterEnabled() && master.supportPageFrameCursor()) {
+                        final Function f = functionParser.parseFunction(filter, master.getMetadata(), executionContext);
+                        ObjList<Function> perWorkerFilters = preparePerWorkerFilters(master.getMetadata(), executionContext, filter, f);
                         master = new AsyncFilteredRecordCursorFactory(
                                 configuration,
                                 executionContext.getMessageBus(),
                                 master,
-                                functionParser.parseFunction(filter, master.getMetadata(), executionContext),
+                                f,
                                 reduceTaskPool,
+                                perWorkerFilters,
                                 null,
                                 0
                         );
@@ -2596,7 +2621,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             && virtualMetadata.getTimestampIndex() == -1
             ) {
                 final Function timestampFunction = FunctionParser.createColumn(
-                        0, timestampColumn, metadata
+                        0,
+                        timestampColumn,
+                        metadata,
+                        executionContext
                 );
                 functions.add(timestampFunction);
 

@@ -28,10 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Rosti;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 
 import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.atomic.LongAdder;
@@ -58,16 +55,16 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
             distinctFunc = Rosti::keyedIntDistinct;
             keyValueFunc = Rosti::keyedIntSumLongLong;
         }
-        counts = Unsafe.malloc(workerCount * 8L, MemoryTag.NATIVE_DEFAULT);
+        counts = Unsafe.malloc((long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_DEFAULT);
         this.workerCount = workerCount;
     }
 
     @Override
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
-            final double value = Vect.avgLongAcc(address, addressSize / Long.BYTES, counts + workerId * 8L);
+            final double value = Vect.avgLongAcc(address, addressSize / Long.BYTES, counts + (long) workerId * Misc.CACHE_LINE_SIZE);
             if (value == value) {
-                final long count = Unsafe.getUnsafe().getLong(counts + workerId * 8L);
+                final long count = Unsafe.getUnsafe().getLong(counts + (long) workerId * Misc.CACHE_LINE_SIZE);
                 // we have to include "weight" of this avg value in the formula,
                 // which calculates final result
                 sum.add(value * count);
@@ -132,7 +129,7 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     @Override
     public void close() {
         if (counts != 0) {
-            Unsafe.free(counts, workerCount * 8L, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(counts, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_DEFAULT);
             counts = 0;
         }
         super.close();
@@ -145,5 +142,10 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
             return sum.sum() / count;
         }
         return Double.NaN;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 }

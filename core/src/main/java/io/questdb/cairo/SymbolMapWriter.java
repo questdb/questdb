@@ -37,7 +37,8 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.charFileName;
+import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapWriter implements Closeable, MapWriter {
     public static final int HEADER_SIZE = 64;

@@ -131,5 +131,10 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
     }
 }

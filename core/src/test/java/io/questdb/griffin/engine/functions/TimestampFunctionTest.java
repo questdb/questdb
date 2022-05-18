@@ -39,6 +39,11 @@ public class TimestampFunctionTest {
         public long getTimestamp(Record rec) {
             return 145000L;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     };
 
     @Test(expected = UnsupportedOperationException.class)
@@ -121,6 +126,11 @@ public class TimestampFunctionTest {
 
             @Override
             public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            }
+
+            @Override
+            public boolean isReadThreadSafe() {
+                return true;
             }
         };
         Assert.assertEquals(Numbers.LONG_NaN, function.getDate(null));

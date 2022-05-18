@@ -51,6 +51,11 @@ public class FloatColumn extends FloatFunction implements ScalarFunction {
         return rec.getFloat(columnIndex);
     }
 
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {

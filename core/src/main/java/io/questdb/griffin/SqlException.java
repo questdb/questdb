@@ -27,9 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Sinkable;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.ThreadLocal;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
 

@@ -57,5 +57,10 @@ public class SysdateFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             return clock.getTicks();
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     }
 }

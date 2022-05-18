@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
@@ -2911,6 +2911,10 @@ public class SqlCompiler implements Closeable {
         //used by copier
         @SuppressWarnings("unused")
         static void checkDoubleBounds(double value, double min, double max, int fromType, int toType, int toColumnIndex) throws SqlException {
+            if (toType == ColumnType.FLOAT && Double.isInfinite(value)) {
+                // infinity in double should be able to be cast to float, since they have the same mathematical meaning
+                return;
+            }
             if (value < min || value > max) {
                 throw SqlException.inconvertibleValue(toColumnIndex, value, fromType, toType);
             }

@@ -42,18 +42,20 @@ public class TestMatchFunctionFactory implements FunctionFactory {
     private static final AtomicInteger topCounter = new AtomicInteger();
     private static final AtomicInteger closeCount = new AtomicInteger();
 
-    public static boolean assertAPI() {
-        return openCounter.get() > 0 && topCounter.get() > 0 && closeCount.get() == 1;
-    }
-
-    public static boolean isClosed() {
-        return closeCount.get() == 1;
+    public static boolean assertAPI(SqlExecutionContext executionContext) {
+        return openCounter.get() > 0 && openCounter.get() >= closeCount.get() && topCounter.get() > 0
+                // consider both single-threaded and parallel filter cases
+                && (closeCount.get() == 1 || closeCount.get() == executionContext.getWorkerCount() + 1);
     }
 
     public static void clear() {
         openCounter.set(0);
         topCounter.set(0);
         closeCount.set(0);
+    }
+
+    public static boolean isClosed() {
+        return closeCount.get() == 1;
     }
 
     @Override
@@ -79,12 +81,12 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) {
-            openCounter.incrementAndGet();
+        public boolean isConstant() {
+            return false;
         }
 
         @Override
-        public boolean isConstant() {
+        public boolean isReadThreadSafe() {
             return false;
         }
 
@@ -92,6 +94,11 @@ public class TestMatchFunctionFactory implements FunctionFactory {
         public void toTop() {
             assert openCounter.get() > 0;
             topCounter.incrementAndGet();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) {
+            openCounter.incrementAndGet();
         }
     }
 }

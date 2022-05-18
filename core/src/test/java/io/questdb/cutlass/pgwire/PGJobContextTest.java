@@ -2835,6 +2835,84 @@ nodejs code:
     }
 
     @Test
+    public void testInsertDoubleTableWithTypeSuffix() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (val double)");
+                statement.execute();
+
+                // mimics the behavior of Python drivers
+                // which will set NaN and Inf into string with ::float suffix
+                final PreparedStatement insert = connection.prepareStatement("insert into x values " +
+                        "('NaN'::float)," +
+                        "('Infinity'::float)," +
+                        "('-Infinity'::float)," +
+                        "('1.234567890123'::float)");
+                insert.execute();
+
+                final String expectedAbleToInsertToDoubleTable = "val[DOUBLE]\n" +
+                        "null\n" +
+                        "Infinity\n" +
+                        "-Infinity\n" +
+                        "1.234567890123\n";
+                try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedAbleToInsertToDoubleTable, sink, resultSet);
+                }
+
+                final String expectedInsertWithoutLosingPrecision = "val[DOUBLE]\n" +
+                        "1.234567890123\n";
+                try (ResultSet resultSet = connection.prepareStatement("select * from x where val = cast('1.234567890123' as double)").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedInsertWithoutLosingPrecision, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertFloatTableWithTypeSuffix() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (val float)");
+                statement.execute();
+
+                // mimics the behavior of Python drivers
+                // which will set NaN and Inf into string with ::float suffix
+                final PreparedStatement insert = connection.prepareStatement("insert into x values " +
+                        "('NaN'::float)," +
+                        "('Infinity'::float)," +
+                        "('-Infinity'::float)," +
+                        "('1.234567890123'::float)");  // should be first cast info double, then cast to float on insert
+                insert.execute();
+
+                final String expectedAbleToInsertToFloatTable = "val[REAL]\n" +
+                        "null\n" +
+                        "Infinity\n" +
+                        "-Infinity\n" +
+                        "1.235\n";
+                try (ResultSet resultSet = connection.prepareStatement("select * from x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedAbleToInsertToFloatTable, sink, resultSet);
+                }
+
+                final String expectedInsertWithLosingPrecision = "val[REAL]\n" +
+                        "1.235\n";
+                try (ResultSet resultSet = connection.prepareStatement("select * from x where val = 1.23456788063").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedInsertWithLosingPrecision, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testIntAndLongParametersWithFormatCountGreaterThanValueCount() throws Exception {
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +

@@ -44,7 +44,8 @@ public class AbsIntFunctionFactory implements FunctionFactory {
     public Function newInstance(
             int position, ObjList<Function> args,
             IntList argPositions, CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext) {
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new AbsIntFunction(args.getQuick(0));
     }
 

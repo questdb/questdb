@@ -28,8 +28,8 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.*;
@@ -124,9 +124,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final Path path = new Path();
     private final IntList bindVariableTypes = new IntList();
     private final IntList selectColumnTypes = new IntList();
-    private final WeakObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
-    private final WeakObjectPool<Portal> namedPortalPool;
-    private final WeakAutoClosableObjectPool<TypesAndInsert> typesAndInsertPool;
+    private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
+    private final WeakMutableObjectPool<Portal> namedPortalPool;
+    private final WeakSelfReturningObjectPool<TypesAndInsert> typesAndInsertPool;
     private final DateLocale locale;
     private final CharSequenceObjHashMap<TableWriter> pendingWriters;
     private final DirectCharSink utf8Sink;
@@ -180,7 +180,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
     private NamedStatementWrapper wrapper;
     private AssociativeCache<TypesAndSelect> typesAndSelectCache;
-    private WeakAutoClosableObjectPool<TypesAndSelect> typesAndSelectPool;
+    private WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool;
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
     private boolean sendParameterDescription;
@@ -212,14 +212,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.locale = configuration.getDefaultDateLocale();
         this.sqlExecutionContext = sqlExecutionContext;
         this.sqlExecutionContext.setRandom(this.rnd = configuration.getRandom());
-        this.namedStatementWrapperPool = new WeakObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 16
-        this.namedPortalPool = new WeakObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 16
+        this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
+        this.namedPortalPool = new WeakMutableObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 32
         this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.pendingWriters = new CharSequenceObjHashMap<>(configuration.getPendingWritersCacheSize());
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
-        this.typesAndInsertPool = new WeakAutoClosableObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 32
+        this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 64
         final boolean enableInsertCache = configuration.isInsertCacheEnabled();
         final int blockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8
         final int rowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1; // 8
@@ -360,7 +360,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     public void handleClientOperation(
             @Transient SqlCompiler compiler,
             @Transient AssociativeCache<TypesAndSelect> selectAndTypesCache,
-            @Transient WeakAutoClosableObjectPool<TypesAndSelect> selectAndTypesPool,
+            @Transient WeakSelfReturningObjectPool<TypesAndSelect> selectAndTypesPool,
             int operation
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, PeerIsSlowToWriteException, BadProtocolException {
 
@@ -1979,9 +1979,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
 
                     final long nameLo = lo;
                     final long nameHi = getStringLength(lo, msgLimit, "malformed property name");
-                    lo = nameHi + 1;
-                    final long valueLo = lo;
+                    final long valueLo = nameHi + 1;
                     final long valueHi = getStringLength(valueLo, msgLimit, "malformed property value");
+                    lo = valueHi + 1;
 
                     // store user
                     dbcs.of(nameLo, nameHi);

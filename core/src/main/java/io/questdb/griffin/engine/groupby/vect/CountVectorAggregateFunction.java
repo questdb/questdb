@@ -93,6 +93,11 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
         return count.sum();
     }
 
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
     @FunctionalInterface
     private interface CountFunc {
         void count(long pRosti, long pKeys, long count, int valueOffset);

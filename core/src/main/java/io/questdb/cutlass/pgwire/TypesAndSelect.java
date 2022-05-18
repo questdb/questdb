@@ -27,12 +27,12 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Misc;
-import io.questdb.std.WeakAutoClosableObjectPool;
+import io.questdb.std.WeakSelfReturningObjectPool;
 
 public class TypesAndSelect extends AbstractTypeContainer<TypesAndSelect> {
     private RecordCursorFactory factory;
 
-    public TypesAndSelect(WeakAutoClosableObjectPool<TypesAndSelect> parentPool) {
+    public TypesAndSelect(WeakSelfReturningObjectPool<TypesAndSelect> parentPool) {
         super(parentPool);
     }
 

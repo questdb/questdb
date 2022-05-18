@@ -33,6 +33,11 @@ public class ByteFunctionTest {
         public byte getByte(Record rec) {
             return 0;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     };
 
     @Test(expected = UnsupportedOperationException.class)

@@ -65,7 +65,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testAddColumnConcurrentWithDataUpdates() throws Throwable {
         ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
         assertMemoryLeak(() -> {
-            CyclicBarrier start = new CyclicBarrier(2);
+            CyclicBarrier barrier = new CyclicBarrier(2);
             AtomicInteger done = new AtomicInteger();
             AtomicInteger columnsAdded = new AtomicInteger();
             AtomicInteger insertCount = new AtomicInteger();
@@ -92,8 +92,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // Write data in a loop getting writer in and out of pool
             Thread writeDataThread = new Thread(() -> {
-                try {
-                    start.await();
+                    TestUtils.await(barrier);
                     int i = 0;
                     while (columnsAdded.get() < totalColAddCount && exceptions.size() == 0) {
                         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
@@ -110,14 +109,11 @@ public class TableWriterTest extends AbstractCairoTest {
                             done.incrementAndGet();
                         }
                     }
-                } catch (Exception ex) {
-                    Assert.fail();
-                }
             });
 
             Thread addColumnsThread = new Thread(() -> {
                 try {
-                    start.await();
+                    TestUtils.await(barrier);
                     AlterStatementBuilder alterStatementBuilder = new AlterStatementBuilder();
                     for (int i = 0; i < totalColAddCount; i++) {
                         alterStatementBuilder.clear();
@@ -144,10 +140,6 @@ public class TableWriterTest extends AbstractCairoTest {
             writeDataThread.join();
             addColumnsThread.join();
 
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
-            }
-
             if (exceptions.size() != 0) {
                 for (Throwable ex : exceptions) {
                     ex.printStackTrace();
@@ -155,6 +147,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.fail();
             }
             Assert.assertTrue(insertCount.get() > 0);
+
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
+            }
+
             LOG.infoW().$("total reload count ").$(insertCount.get()).$();
         });
     }
@@ -1250,7 +1247,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotCreatePartitionDir() throws Exception {
         testConstructor(new FilesFacadeImpl() {
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 if (Chars.endsWith(path, "default" + Files.SEPARATOR)) {
                     return -1;
                 }

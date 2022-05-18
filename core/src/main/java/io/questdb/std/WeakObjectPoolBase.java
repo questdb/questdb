@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-import java.io.Closeable;
 import java.util.ArrayDeque;
 
 /**
@@ -41,7 +40,7 @@ import java.util.ArrayDeque;
  * pools until we run out of memory. Hence we limit the maximum number of
  * objects a pool can hold.
  */
-abstract class WeakObjectPoolBase<T> implements Closeable {
+abstract class WeakObjectPoolBase<T> {
     // package private for testing
     final ArrayDeque<T> cache = new ArrayDeque<>();
 
@@ -53,31 +52,27 @@ abstract class WeakObjectPoolBase<T> implements Closeable {
         this.maxSize = 2 * initSize;
     }
 
-    @Override
-    public void close() {
-        while (cache.size() > 0) {
-            Misc.free(cache.pop());
-        }
-    }
-
     public T pop() {
         final T obj = cache.poll();
         return obj == null ? newInstance() : obj;
     }
 
-    public boolean push(T obj) {
+    boolean push(T obj) {
         assert obj != null;
         if (cache.size() < maxSize) {
             clear(obj);
             cache.push(obj);
             return true;
         } else {
-            Misc.free(obj);
+            close(obj);
             return false;
         }
     }
 
     void clear(T obj) {
+    }
+
+    void close(T obj) {
     }
 
     final void fill() {

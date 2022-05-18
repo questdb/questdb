@@ -27,7 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.WriterSource;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.WriterOutOfDateException;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 

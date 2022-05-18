@@ -33,7 +33,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -90,7 +89,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         assertFailure(
                 new FilesFacadeImpl() {
                     @Override
-                    public int mkdirs(LPSZ path1, int mode) {
+                    public int mkdirs(Path path1, int mode) {
                         return -1;
                     }
                 },
@@ -1681,9 +1680,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCompileStatementsBatch() throws Exception {
         String query = "SELECT pg_advisory_unlock_all(); CLOSE ALL;";
 
-        assertMemoryLeak(()-> {
-            compiler.compileBatch(query, sqlExecutionContext, null);
-        });
+        assertMemoryLeak(()-> compiler.compileBatch(query, sqlExecutionContext, null));
     }
 
     @Test
