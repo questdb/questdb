@@ -46,8 +46,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TestName;
 
-import static org.junit.Assert.assertEquals;
-
 import java.net.URISyntaxException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -968,8 +966,8 @@ public class O3Test extends AbstractO3Test {
         compiler.compile(createTableSql, sqlExecutionContext);
 
         Metrics metrics = engine.getMetrics();
-        assertEquals(rowCount, metrics.tableWriter().committedRows());
-        assertEquals(rowCount, metrics.tableWriter().physicallyWrittenRows());
+        Assert.assertEquals(rowCount, metrics.tableWriter().committedRows());
+        Assert.assertEquals(rowCount, metrics.tableWriter().physicallyWrittenRows());
     }
 
     @Test
@@ -1003,8 +1001,8 @@ public class O3Test extends AbstractO3Test {
             TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
-            assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
-            assertEquals(initRowCount + 1, metrics.tableWriter().physicallyWrittenRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().physicallyWrittenRows());
         });
     }
 
@@ -1039,10 +1037,10 @@ public class O3Test extends AbstractO3Test {
             TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
-            assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
 
             // There was a single partition which had to be re-written, along with the additional record.
-            assertEquals(initRowCount * 2 + 1, metrics.tableWriter().physicallyWrittenRows());
+            Assert.assertEquals(initRowCount * 2 + 1, metrics.tableWriter().physicallyWrittenRows());
         });
     }
 
@@ -1077,10 +1075,10 @@ public class O3Test extends AbstractO3Test {
             TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
-            assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
 
             // There was a single partition which had to be re-written, along with the additional record.
-            assertEquals(initRowCount * 2 + 1, metrics.tableWriter().physicallyWrittenRows());
+            Assert.assertEquals(initRowCount * 2 + 1, metrics.tableWriter().physicallyWrittenRows());
         });
     }
 
@@ -1156,10 +1154,10 @@ public class O3Test extends AbstractO3Test {
             TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
-            assertEquals(initRowCount + 6, metrics.tableWriter().committedRows());
+            Assert.assertEquals(initRowCount + 6, metrics.tableWriter().committedRows());
 
             // No partitions had to be re-written: New records appended at the end of each.
-            assertEquals(initRowCount + 6, metrics.tableWriter().physicallyWrittenRows());
+            Assert.assertEquals(initRowCount + 6, metrics.tableWriter().physicallyWrittenRows());
         });
     }
 
@@ -1188,10 +1186,10 @@ public class O3Test extends AbstractO3Test {
             TestUtils.assertEquals(expected, sink);
 
             Metrics metrics = engine.getMetrics();
-            assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
 
             // Appended to earlier partition.
-            assertEquals(initRowCount + 1, metrics.tableWriter().physicallyWrittenRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().physicallyWrittenRows());
         });
     }
 
@@ -1223,10 +1221,10 @@ public class O3Test extends AbstractO3Test {
             }
 
             Metrics metrics = engine.getMetrics();
-            assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().committedRows());
 
             // Appended to last partition.
-            assertEquals(initRowCount + 1, metrics.tableWriter().physicallyWrittenRows());
+            Assert.assertEquals(initRowCount + 1, metrics.tableWriter().physicallyWrittenRows());
 
             try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
                 TableWriter.Row r = null;
@@ -1249,10 +1247,10 @@ public class O3Test extends AbstractO3Test {
                 TestUtils.assertEquals(expected, sink);
             }
 
-            assertEquals(initRowCount + 2, metrics.tableWriter().committedRows());
+            Assert.assertEquals(initRowCount + 2, metrics.tableWriter().committedRows());
 
             // Created new partition that didn't previously exist in between the other two.
-            assertEquals(initRowCount + 2, metrics.tableWriter().physicallyWrittenRows());
+            Assert.assertEquals(initRowCount + 2, metrics.tableWriter().physicallyWrittenRows());
         });
     }
 

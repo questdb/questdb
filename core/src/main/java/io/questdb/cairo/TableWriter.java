@@ -43,9 +43,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -2928,8 +2926,6 @@ public class TableWriter implements Closeable {
         }
 
         metrics.tableWriter().incrementO3Commits();
-
-        System.err.printf("TableWriter::o3Commit (Z)\n");
 
         return false;
     }
