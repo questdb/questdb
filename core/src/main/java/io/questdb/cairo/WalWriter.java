@@ -797,6 +797,10 @@ public class WalWriter implements Closeable {
         return (masterRef - committedMasterRef) >> 1;
     }
 
+    public long getCurrentWalDPartitionRowCount() {
+        return walDRowCounter;
+    }
+
     public boolean inTransaction() {
         return txWriter != null && txWriter.inTransaction();
     }
@@ -2591,6 +2595,7 @@ public class WalWriter implements Closeable {
 
     private void openNewWalDPartition() {
         waldPartitionCounter++;
+        walDRowCounter = 0;
         try {
             walDPath.slash().put(waldPartitionCounter);
             int plen = walDPath.length();
@@ -3383,6 +3388,7 @@ public class WalWriter implements Closeable {
                 activeNullSetters.getQuick(i).run();
             }
         }
+        walDRowCounter++;
     }
 
     private void rowAppend(ObjList<Runnable> activeNullSetters) {

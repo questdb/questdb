@@ -30,6 +30,8 @@ import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
+
 public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
@@ -37,7 +39,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         String tableName = "testtable";
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                     .col("a", ColumnType.INT)
+                     .col("a", ColumnType.BYTE)
                      .col("b", ColumnType.STRING)
         ) {
             int plen = path.length();
@@ -51,9 +53,43 @@ public class WalWriterTest extends AbstractGriffinTest {
                     row.append();
                 }
             }
-            System.out.println("done");
             assertWalFileExist(tableName, "a", 0, path);
             assertWalFileExist(tableName, "b", 0, path);
+        }
+    }
+
+    @Test
+    public void testRowCount_simple() {
+        String tableName = "testtable";
+        try (Path path = new Path().of(configuration.getRoot());
+             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                     .col("a", ColumnType.BYTE)
+                     .col("b", ColumnType.STRING)
+                     .col("c", ColumnType.INT)
+        ) {
+            int plen = path.length();
+            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
+            path.trimTo(plen);
+            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+                for (int i = 0; i < 100; i++) {
+                    WalWriter.Row row = walWriter.newRow();
+                    row.putByte(0, (byte) i);
+                    row.putStr(1, String.valueOf(i));
+                    row.putInt(2, 42);
+                    row.append();
+                }
+                assertEquals(100, walWriter.getCurrentWalDPartitionRowCount());
+                walWriter.newRow().cancel(); // force a new WAL-D partition
+                assertEquals(0, walWriter.getCurrentWalDPartitionRowCount());
+                for (int i = 0; i < 50; i++) {
+                    WalWriter.Row row = walWriter.newRow();
+                    row.putByte(0, (byte) i);
+                    row.putStr(1, String.valueOf(i));
+                    row.putInt(2, 42);
+                    row.append();
+                }
+                assertEquals(50, walWriter.getCurrentWalDPartitionRowCount());
+            }
         }
     }
 
@@ -62,7 +98,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         String tableName = "testtable";
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                     .col("a", ColumnType.INT)
+                     .col("a", ColumnType.BYTE)
                      .col("b", ColumnType.STRING)
         ) {
             int plen = path.length();
@@ -77,7 +113,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                 row.putByte(0, (byte) 1);
                 row.append();
             }
-            System.out.println("done");
             assertWalFileExist(tableName, "a", 0, path);
             assertWalFileExist(tableName, "a", 1, path);
         }
@@ -88,7 +123,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         String tableName = "testtable";
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                     .col("a", ColumnType.INT)
+                     .col("a", ColumnType.BYTE)
                      .col("b", ColumnType.STRING)
         ) {
             int plen = path.length();
