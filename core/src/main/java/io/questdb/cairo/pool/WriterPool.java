@@ -71,6 +71,7 @@ public class WriterPool extends AbstractPool {
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
+    private static final long QUEUE_PROCESSING = -2L;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
     private final Path path = new Path();
@@ -269,16 +270,33 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private void addCommandToWriterQueue(Entry e, WriteToQueue<TableWriterTask> writeAction) {
+    private void addCommandToWriterQueue(Entry e, WriteToQueue<TableWriterTask> writeAction, long thread) {
         TableWriter writer;
         while ((writer = e.writer) == null && e.owner != UNALLOCATED) {
             Os.pause();
         }
         if (writer == null) {
-            // Can be anything e.g. writer evicted from the pool, retry from very beginning
+            // Retry from very beginning
             throw EntryUnavailableException.instance("please retry");
         }
         writer.processCommandAsync(writeAction);
+
+        // Make sure writer does not go to the pool with command in the queue
+        // Wait until writer is either in the pool or out
+        while (e.owner == QUEUE_PROCESSING) {
+            Os.pause();
+        }
+
+        // If the writer is suddenly in the pool, lock it and call tick to process command queue
+        if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+            // Writer became available straight after setting items in the queue.
+            // Don't leave it unprocessed
+            try {
+                writer.tick(true);
+            } finally {
+                Unsafe.cas(e, ENTRY_OWNER, thread, UNALLOCATED);
+            }
+        }
     }
 
     private void assertLockReason(CharSequence lockReason) {
@@ -339,10 +357,10 @@ public class WriterPool extends AbstractPool {
             // order of conditions important
             if ((deadline > e.lastReleaseTime && e.owner == UNALLOCATED)) {
                 // looks like this writer is unallocated and can be released
-                // Lock with negative 2-based owner thread id to indicate it's that next
+                // Lock with negative 3-based owner thread id to indicate it's that next
                 // allocating thread can wait until the entry is released.
-                // Avoid negative thread id clashing with UNALLOCATED value
-                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, -thread - 2)) {
+                // Avoid negative thread id clashing with UNALLOCATED and QUEUE_PROCESSING values
+                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, -thread - 3)) {
                     // lock successful
                     closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);
                     iterator.remove();
@@ -463,7 +481,7 @@ public class WriterPool extends AbstractPool {
                     }
                 }
                 if (writeAction != null) {
-                    addCommandToWriterQueue(e, writeAction);
+                    addCommandToWriterQueue(e, writeAction, thread);
                     return null;
                 }
                 LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(", thread=").$(thread).I$();
@@ -508,7 +526,11 @@ public class WriterPool extends AbstractPool {
         final CharSequence name = e.writer.getTableName();
         try {
             e.writer.rollback();
-            // We can apply structure changing ALTER TABLE before writer returns to the pool
+
+            if (e.owner != UNALLOCATED) {
+                e.owner = QUEUE_PROCESSING;
+            }
+            // We can apply structure changes with ALTER TABLE and do UPDATE(s) before the writer returned to the pool
             e.writer.tick(true);
         } catch (Throwable ex) {
             // We are here because of a systemic issues of some kind
