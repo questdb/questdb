@@ -99,11 +99,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         while (doneLatch.getCount() == 0) {
             final boolean allFramesReduced = reduceCounter.get() == dispatchStartFrameIndex;
-            // we were asked to steal work from the reduce queue and beyond, as much as we can
+            // We were asked to steal work from the reduce queue and beyond, as much as we can.
             if (PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, record, circuitBreaker)) {
                 long cursor = collectSubSeq.next();
                 if (cursor > -1) {
-                    // discard collect items
+                    // Discard collect items.
                     final PageFrameReduceTask tsk = reduceQueue.get(cursor);
                     if (tsk.getFrameSequence() == this) {
                         tsk.collected(true);
@@ -123,7 +123,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             }
         }
 
-        assert reduceCounter.get() == dispatchStartFrameIndex;
+        // It could be the case that one of the workers reduced a page frame, then marked the task as done,
+        // but haven't incremented reduce counter yet. In this case, we wait for the desired counter value.
+        while (reduceCounter.get() != dispatchStartFrameIndex) {
+            Os.pause();
+        }
     }
 
     public void clear() {
