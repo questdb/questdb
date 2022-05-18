@@ -1371,7 +1371,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     fut.await();
                 }
                 rowCount = fut.getAffectedRowsCount();
-            } catch (TimeoutSqlException ex) {
+            } catch (SqlTimeoutException ex) {
                 // After timeout, TableWriter can still use the UpdateCommand and Execution Context
                 if (op.isWriterClosePending()) {
                     freeUpdateCommand(op);

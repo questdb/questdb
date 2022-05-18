@@ -26,11 +26,11 @@ package io.questdb.griffin;
 
 import io.questdb.std.ThreadLocal;
 
-public class TimeoutSqlException extends SqlException {
-    private static final ThreadLocal<TimeoutSqlException> tlException = new ThreadLocal<>(TimeoutSqlException::new);
+public class SqlTimeoutException extends SqlException {
+    private static final ThreadLocal<SqlTimeoutException> tlException = new ThreadLocal<>(SqlTimeoutException::new);
 
-    public static TimeoutSqlException timeout(CharSequence message) {
-        TimeoutSqlException ex = tlException.get();
+    public static SqlTimeoutException timeout(CharSequence message) {
+        SqlTimeoutException ex = tlException.get();
         ex.put(message);
         return ex;
     }

@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.TimeoutSqlException;
+import io.questdb.griffin.SqlTimeoutException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.FanOut;
@@ -73,7 +73,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
         }
         if (status != QUERY_COMPLETE) {
-            throw TimeoutSqlException.timeout("Timeout expired on waiting for the async command execution result [instance=").put(correlationId).put(']');
+            throw SqlTimeoutException.timeout("Timeout expired on waiting for the async command execution result [instance=").put(correlationId).put(']');
         }
     }
 

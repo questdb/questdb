@@ -61,8 +61,8 @@ import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.StatusCode.*;
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.tasks.TableWriterTask.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
+import static io.questdb.tasks.TableWriterTask.*;
 
 public class TableWriter implements Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
@@ -832,7 +832,7 @@ public class TableWriter implements Closeable {
     }
 
     public int getSymbolIndexNoTransientCountUpdate(int columnIndex, CharSequence symValue) {
-        return symbolMapWriters.getQuick(columnIndex).put(symValue, SymbolValueCountCollector.NOP);
+        return symbolMapWriters.getQuick(columnIndex).put(symValue, SymbolValueCountCollector.NOOP);
     }
 
     public String getTableName() {
@@ -3824,8 +3824,8 @@ public class TableWriter implements Closeable {
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
 
         try {
-            mem1.of(ff, dFile(
-                            path.trimTo(pathTrimToLen), name, columnNameTxn),
+            mem1.of(ff,
+                    dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
                     configuration.getDataAppendPageSize(),
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,

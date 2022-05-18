@@ -471,7 +471,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 throw EntryUnavailableException.instance("wait for update query");
             } else {
                 state.freeAsyncOperation();
-                throw TimeoutSqlException.timeout("Query timeout. Please add HTTP header 'Statement-Timeout' with timeout in ms");
+                throw SqlTimeoutException.timeout("Query timeout. Please add HTTP header 'Statement-Timeout' with timeout in ms");
             }
         } else {
             // Done

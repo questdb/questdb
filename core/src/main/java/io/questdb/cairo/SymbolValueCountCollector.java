@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 @FunctionalInterface
 public interface SymbolValueCountCollector {
-    SymbolValueCountCollector NOP = (symbolIndexInTxWriter, count) -> {
+    SymbolValueCountCollector NOOP = (symbolIndexInTxWriter, count) -> {
     };
 
     void collectValueCount(int symbolIndexInTxWriter, int count);

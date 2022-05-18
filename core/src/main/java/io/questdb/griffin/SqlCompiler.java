@@ -2489,7 +2489,7 @@ public class SqlCompiler implements Closeable {
             if (!updateToDataCursorFactory.supportsUpdateRowId(tableName)) {
                 // in theory this should never happen because all valid UPDATE statements should result in
                 // a query plan with real row ids but better to check to prevent data corruption
-                throw SqlException.$(updateQueryModel.getModelPosition(), "Invalid execution plan for UPDATE statement");
+                throw SqlException.$(updateQueryModel.getModelPosition(), "Unsupported SQL complexity for the UPDATE statement");
             }
 
             // Check that updateDataFactoryMetadata match types of table to be updated exactly
@@ -2504,8 +2504,7 @@ public class SqlCompiler implements Closeable {
                     if (!ColumnType.isSymbol(tableColumnType) || virtualColumnType != ColumnType.STRING) {
                         // get column position
                         ExpressionNode setRhs = updateQueryModel.getNestedModel().getColumns().getQuick(i).getAst();
-                        int position = setRhs.position;
-                        throw SqlException.inconvertibleTypes(position, virtualColumnType, "", tableColumnType, updateColumnName);
+                        throw SqlException.inconvertibleTypes(setRhs.position, virtualColumnType, "", tableColumnType, updateColumnName);
                     }
                 }
             }
