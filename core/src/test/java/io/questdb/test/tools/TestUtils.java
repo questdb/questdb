@@ -25,8 +25,8 @@
 package io.questdb.test.tools;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -954,16 +954,8 @@ public final class TestUtils {
                     throw error;
                 }
             }
-            try {
-                Thread.sleep(nextSleepingTimeMillis);
-                nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                long elapsedTimeMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
-                throw new AssertionError("Interrupted before timeout. Expected timeout"
-                        + TimeUnit.SECONDS.toMillis(timeoutSeconds) + " ms. Elapsed time: " + elapsedTimeMillis
-                        +" ms. ");
-            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
         }
     }
 

@@ -1247,7 +1247,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotCreatePartitionDir() throws Exception {
         testConstructor(new FilesFacadeImpl() {
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 if (Chars.endsWith(path, "default" + Files.SEPARATOR)) {
                     return -1;
                 }

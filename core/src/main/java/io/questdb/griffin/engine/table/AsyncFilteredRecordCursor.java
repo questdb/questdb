@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;

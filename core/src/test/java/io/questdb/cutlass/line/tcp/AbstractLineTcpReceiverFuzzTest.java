@@ -152,22 +152,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     void assertTable(TableData table) {
-        // timeout is 180 seconds
-        long timeoutMicros = 180_000_000;
-        long prev = testMicrosClock.getTicks();
         boolean checked = false;
         while (!checked) {
-            if (table.await(timeoutMicros)) {
-                checked = checkTable(table);
-                if (!checked) {
-                    long current = testMicrosClock.getTicks();
-                    timeoutMicros -= current - prev;
-                    prev = current;
-                }
-            } else {
-                Assert.fail("Timed out on waiting for the data to be ingested");
-                break;
-            }
+            table.await();
+            checked = checkTable(table);
         }
     }
 

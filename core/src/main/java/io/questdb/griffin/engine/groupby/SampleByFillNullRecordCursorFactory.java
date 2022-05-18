@@ -24,7 +24,10 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;

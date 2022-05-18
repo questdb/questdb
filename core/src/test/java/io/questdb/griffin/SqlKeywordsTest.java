@@ -27,7 +27,8 @@ package io.questdb.griffin;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.griffin.SqlKeywords.*;
+import static io.questdb.griffin.SqlKeywords.isLinearKeyword;
+import static io.questdb.griffin.SqlKeywords.isPrevKeyword;
 
 public class SqlKeywordsTest {
 
