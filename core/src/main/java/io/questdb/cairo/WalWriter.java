@@ -1746,7 +1746,7 @@ public class WalWriter implements Closeable {
             ddlMem.putInt(columnCount + 1);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
+            copyVersionAndLagValues(ddlMem, true);
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 writeColumnEntry(i, false, ddlMem);
@@ -2066,7 +2066,7 @@ public class WalWriter implements Closeable {
             ddlMem.putInt(columnCount);
             ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
             ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
+            copyVersionAndLagValues(ddlMem, true);
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
                 if (i != columnIndex) {
@@ -2099,23 +2099,7 @@ public class WalWriter implements Closeable {
     private long copyMetadataAndUpdateVersion() {
         try {
             int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
-            int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-
-            ddlMem.putInt(columnCount);
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
-            ddlMem.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
-            copyVersionAndLagValues();
-            ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
-            for (int i = 0; i < columnCount; i++) {
-                writeColumnEntry(i, false, ddlMem);
-            }
-
-            long nameOffset = getColumnNameOffset(columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                CharSequence columnName = metaMem.getStr(nameOffset);
-                ddlMem.putStr(columnName);
-                nameOffset += Vm.getStorageLength(columnName);
-            }
+            long nameOffset = copyMetadataTo(ddlMem, true);
             this.metaSwapIndex = index;
             return nameOffset;
         } finally {
@@ -2123,13 +2107,40 @@ public class WalWriter implements Closeable {
         }
     }
 
-    private void copyVersionAndLagValues() {
-        ddlMem.putInt(ColumnType.VERSION);
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
-        ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
-        ddlMem.putLong(metaMem.getLong(META_OFFSET_COMMIT_LAG));
-        ddlMem.putLong(txWriter.getStructureVersion() + 1);
-        metadata.setStructureVersion(txWriter.getStructureVersion() + 1);
+    private long copyMetadataTo(MemoryMAR target, boolean updateVersion) {
+        int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+
+        target.putInt(columnCount);
+        target.putInt(metaMem.getInt(META_OFFSET_PARTITION_BY));
+        target.putInt(metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX));
+        copyVersionAndLagValues(target, updateVersion);
+        target.jumpTo(META_OFFSET_COLUMN_TYPES);
+        for (int i = 0; i < columnCount; i++) {
+            writeColumnEntry(i, false, target);
+        }
+
+        long nameOffset = getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            CharSequence columnName = metaMem.getStr(nameOffset);
+            target.putStr(columnName);
+            nameOffset += Vm.getStorageLength(columnName);
+        }
+        return nameOffset;
+    }
+
+    private void copyVersionAndLagValues(MemoryMAR target, boolean updateVersion) {
+        target.putInt(ColumnType.VERSION);
+        target.putInt(metaMem.getInt(META_OFFSET_TABLE_ID));
+        target.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
+        target.putLong(metaMem.getLong(META_OFFSET_COMMIT_LAG));
+        long structureVersion = txWriter.getStructureVersion();
+        if (updateVersion) {
+            structureVersion++;
+        }
+        target.putLong(structureVersion);
+        if (updateVersion) {
+            metadata.setStructureVersion(structureVersion);
+        }
     }
 
     /**
@@ -2606,12 +2617,12 @@ public class WalWriter implements Closeable {
             assert columnCount > 0;
             try (MemoryMAR metaMem = Vm.getMARInstance()) {
                 openWalDMetaFile(ff, walDPath, plen, metaMem);
-                for (int i = 0; i < columnCount; i++) {
-                    if (metadata.getColumnType(i) > 0) {
-                        final CharSequence name = metadata.getColumnName(i);
-                        openWalDColumnFiles(name, i, plen);
-                        writeColumnEntry(i, false, metaMem);
-                    }
+                copyMetadataTo(metaMem, false);
+            }
+            for (int i = 0; i < columnCount; i++) {
+                if (metadata.getColumnType(i) > 0) {
+                    final CharSequence name = metadata.getColumnName(i);
+                    openWalDColumnFiles(name, i, plen);
                 }
             }
             LOG.info().$("switched WAL-D partition [path='").$(walDPath).$('\'').I$();
@@ -2847,7 +2858,7 @@ public class WalWriter implements Closeable {
             } else {
                 ddlMem.putInt(timestampIndex);
             }
-            copyVersionAndLagValues();
+            copyVersionAndLagValues(ddlMem, true);
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {
@@ -3080,7 +3091,7 @@ public class WalWriter implements Closeable {
             ddlMem.putInt(columnCount);
             ddlMem.putInt(partitionBy);
             ddlMem.putInt(timestampIndex);
-            copyVersionAndLagValues();
+            copyVersionAndLagValues(ddlMem, true);
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < columnCount; i++) {

@@ -31,6 +31,7 @@ import io.questdb.std.str.Path;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class WalWriterTest extends AbstractGriffinTest {
 
@@ -119,6 +120,36 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDddlMetadataReadable_simple() {
+        String tableName = "testtable";
+        try (Path path = new Path().of(configuration.getRoot());
+             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                     .col("a", ColumnType.BYTE)
+                     .col("b", ColumnType.STRING)
+        ) {
+            int plen = path.length();
+            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
+            path.trimTo(plen);
+            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+                WalWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.append();
+            }
+            try {
+                toMetadataPath(tableName, 0, path);
+                TableReaderMetadata readerMetadata = new TableReaderMetadata(configuration.getFilesFacade(), path);
+                assertEquals(2, readerMetadata.getColumnCount());
+                assertEquals(ColumnType.BYTE, readerMetadata.getColumnType(0));
+                assertEquals("a", readerMetadata.getColumnName(0));
+                assertEquals(ColumnType.STRING, readerMetadata.getColumnType(1));
+                assertEquals("b", readerMetadata.getColumnName(1));
+            } finally {
+                path.trimTo(plen);
+            }
+        }
+    }
+
+    @Test
     public void ddlMetadataCreated() {
         String tableName = "testtable";
         try (Path path = new Path().of(configuration.getRoot());
@@ -151,11 +182,18 @@ public class WalWriterTest extends AbstractGriffinTest {
     private void assertMetadataFileExist(String tableName, int partition, Path path) {
         int plen = path.length();
         try {
-            path.concat(tableName).slash().concat("wal").slash().concat(String.valueOf(partition)).slash().concat("_meta").$();
+            toMetadataPath(tableName, partition, path);
             assertPathExists(path);
         } finally {
             path.trimTo(plen);
         }
+    }
+
+    private void toMetadataPath(String tableName, int partition, Path path) {
+        path.concat(tableName).slash()
+                .concat("wal").slash()
+                .concat(String.valueOf(partition)).slash()
+                .concat("_meta").$();
     }
 
 
