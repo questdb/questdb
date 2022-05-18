@@ -309,7 +309,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getMiscAppendPageSize());
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
-        Assert.assertEquals(1024, configuration.getCairoConfiguration().getColumnVersionPurgeQueueCapacity());
+        Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnVersionPurgeQueueCapacity());
         Assert.assertEquals(31, configuration.getCairoConfiguration().getColumnVersionPurgeLookBackDays());
         Assert.assertEquals(10.0, configuration.getCairoConfiguration().getColumnVersionPurgeWaitExponent(), 0.00001);
         Assert.assertEquals(60000000, configuration.getCairoConfiguration().getColumnVersionPurgeMaxTimeoutMicros());
@@ -328,7 +328,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
         Assert.assertEquals(8, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
 
-        Assert.assertEquals(1024, configuration.getCairoConfiguration().getColumnVersionPurgeQueueCapacity());
+        Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnVersionPurgeQueueCapacity());
     }
 
     @Test

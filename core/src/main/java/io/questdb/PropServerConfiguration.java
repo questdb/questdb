@@ -706,7 +706,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * 1024 * 1024);
-            this.columnVersionPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_QUEUE_CAPACITY, 1024);
+            this.columnVersionPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_QUEUE_CAPACITY, 128);
             this.columnVersionTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_TASK_POOL_CAPACITY, 256);
             this.columnVersionPurgeMaxTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_TIMEOUT, 60_000_000L);
             this.columnVersionPurgeStartWaitTimeoutMicros = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_VERSION_PURGE_START_TIMEOUT, 10_000);
