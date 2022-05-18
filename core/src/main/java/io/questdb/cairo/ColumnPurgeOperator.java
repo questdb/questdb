@@ -92,7 +92,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     public boolean purge(ColumnPurgeTask task) {
         try {
-            boolean done = purge0(task, false);
+            boolean done = purge0(task, true);
             setCompletionTimestamp(completedRecordIds, microClock.getTicks());
             return done;
         } catch (Throwable ex) {
@@ -106,7 +106,7 @@ public class ColumnPurgeOperator implements Closeable {
         try {
             txReader = tableReader.getTxFile();
             txnScoreboard = tableReader.getTxnScoreboard();
-            return purge0(task, true);
+            return purge0(task, false);
         } catch (Throwable ex) {
             // Can be some IO exception
             LOG.error().$("could not purge").$(ex).$();
@@ -150,6 +150,143 @@ public class ColumnPurgeOperator implements Closeable {
             ff.close(purgeLogPartitionFd);
             purgeLogPartitionFd = -1L;
         }
+    }
+
+    private boolean openScoreboardAndTxn(ColumnPurgeTask task) {
+        txnScoreboard.ofRO(path.trimTo(pathTableLen));
+
+        int tableId = readTableId(path);
+        if (tableId != task.getTableId()) {
+            LOG.info().$("cannot purge orphan table [path=").$(path.trimTo(pathTableLen)).I$();
+            return true;
+        }
+
+        txReader.ofRO(path.trimTo(pathTableLen), task.getPartitionBy());
+        txReader.unsafeLoadAll();
+        if (txReader.getTruncateVersion() != task.getTruncateVersion()) {
+            LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean purge0(ColumnPurgeTask task, final boolean useLocalScoreboard) {
+
+        LOG.info().$("purging [table=").$(task.getTableName())
+                .$(", column=").$(task.getColumnName())
+                .$(", tableId=").$(task.getTableId())
+                .I$();
+
+        setTablePath(task.getTableName());
+
+        final LongList updatedColumnInfo = task.getUpdatedColumnInfo();
+        long minUnlockedTxnRangeStarts = Long.MAX_VALUE;
+        boolean allDone = true;
+        boolean setupScoreboard = useLocalScoreboard;
+
+        try {
+            completedRecordIds.clear();
+            for (int i = 0, n = updatedColumnInfo.size(); i < n; i += ColumnPurgeTask.BLOCK_SIZE) {
+                final long columnVersion = updatedColumnInfo.getQuick(i);
+                final long partitionTimestamp = updatedColumnInfo.getQuick(i + 1);
+                final long partitionTxnName = updatedColumnInfo.getQuick(i + 2);
+                final long updateRecordId = updatedColumnInfo.getQuick(i + 3);
+
+                setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+                int pathTrimToPartition = path.length();
+
+                TableUtils.dFile(path, task.getColumnName(), columnVersion);
+
+                // perform existence check ahead of trying to remove files
+
+                if (!ff.exists(path)) {
+                    if (ColumnType.isVariableLength(task.getColumnType())) {
+                        path.trimTo(pathTrimToPartition);
+                        TableUtils.iFile(path, task.getColumnName(), columnVersion);
+                        if (!ff.exists(path)) {
+                            completedRecordIds.add(updateRecordId);
+                            continue;
+                        }
+                    } else {
+                        // Files already deleted, move to the next partition
+                        completedRecordIds.add(updateRecordId);
+                        continue;
+                    }
+                }
+
+                if (setupScoreboard) {
+                    // Setup scoreboard lazily because columns we're purging
+                    // may not exist, including the entire table. Setting up
+                    // scoreboard ahead of checking file existence would fail in those
+                    // cases.
+                    if (openScoreboardAndTxn(task)) {
+                        // current table state precludes us from purging its columns
+                        // nothing to do here
+                        return true;
+                    }
+                    // we would have mutated the path by checking state of the table
+                    // we will have to re-setup that
+                    setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+                    TableUtils.dFile(path, task.getColumnName(), columnVersion);
+                    setupScoreboard = false;
+                }
+
+                if (columnVersion < minUnlockedTxnRangeStarts) {
+                    if (checkScoreboardHasReadersBeforeUpdate(columnVersion, task)) {
+                        // Reader lock still exists
+                        allDone = false;
+                        LOG.debug().$("cannot purge, version is in use [path=").$(path).I$();
+                        continue;
+                    } else {
+                        minUnlockedTxnRangeStarts = columnVersion;
+                    }
+                }
+
+                LOG.info().$("purging [path=").$(path).I$();
+
+                // No readers looking at the column version, files can be deleted
+                if (couldNotRemove(ff, path)) {
+                    allDone = false;
+                    continue;
+                }
+
+                if (ColumnType.isVariableLength(task.getColumnType())) {
+                    path.trimTo(pathTrimToPartition);
+                    TableUtils.iFile(path, task.getColumnName(), columnVersion);
+
+                    if (couldNotRemove(ff, path)) {
+                        allDone = false;
+                        continue;
+                    }
+                }
+
+                // Check if it's symbol, try remove .k and .v files in the partition
+                if (ColumnType.isSymbol(task.getColumnType())) {
+                    path.trimTo(pathTrimToPartition);
+                    BitmapIndexUtils.keyFileName(path, task.getColumnName(), columnVersion);
+                    if (couldNotRemove(ff, path)) {
+                        allDone = false;
+                        continue;
+                    }
+
+                    path.trimTo(pathTrimToPartition);
+                    BitmapIndexUtils.valueFileName(path, task.getColumnName(), columnVersion);
+                    if (couldNotRemove(ff, path)) {
+                        allDone = false;
+                        continue;
+                    }
+                }
+                completedRecordIds.add(updateRecordId);
+            }
+        } finally {
+            if (useLocalScoreboard) {
+                txnScoreboard.close();
+                txReader.close();
+            }
+        }
+
+        return allDone;
     }
 
     private int readTableId(Path path) {
@@ -237,128 +374,5 @@ public class ColumnPurgeOperator implements Closeable {
         path.trimTo(pathTableLen);
         TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
         TableUtils.txnPartitionConditionally(path, partitionTxnName);
-    }
-
-    private boolean purge0(ColumnPurgeTask task, boolean tableInitialized) {
-
-        LOG.info().$("purging [table=").$(task.getTableName())
-                .$(", column=").$(task.getColumnName())
-                .$(", tableId=").$(task.getTableId())
-                .I$();
-
-        setTablePath(task.getTableName());
-
-        final LongList updatedColumnInfo = task.getUpdatedColumnInfo();
-        long minUnlockedTxnRangeStarts = Long.MAX_VALUE;
-        boolean allDone = true;
-        boolean tableCleanupNeeded = !tableInitialized;
-
-        try {
-            completedRecordIds.clear();
-            for (int i = 0, n = updatedColumnInfo.size(); i < n; i += ColumnPurgeTask.BLOCK_SIZE) {
-                final long columnVersion = updatedColumnInfo.getQuick(i);
-                final long partitionTimestamp = updatedColumnInfo.getQuick(i + 1);
-                final long partitionTxnName = updatedColumnInfo.getQuick(i + 2);
-                final long updateRecordId = updatedColumnInfo.getQuick(i + 3);
-
-                setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
-                int pathTrimToPartition = path.length();
-
-                TableUtils.dFile(path, task.getColumnName(), columnVersion);
-
-                if (!ff.exists(path)) {
-                    if (ColumnType.isVariableLength(task.getColumnType())) {
-                        path.trimTo(pathTrimToPartition);
-                        TableUtils.iFile(path, task.getColumnName(), columnVersion);
-                        if (!ff.exists(path)) {
-                            completedRecordIds.add(updateRecordId);
-                            continue;
-                        }
-                    } else {
-                        // Files already deleted, move to the next partition
-                        completedRecordIds.add(updateRecordId);
-                        continue;
-                    }
-                }
-
-                // Check that there are no readers before updateTxn
-                if (!tableInitialized) {
-                    txnScoreboard.ofRO(path.trimTo(pathTableLen));
-
-                    int tableId = readTableId(path);
-                    if (tableId != task.getTableId()) {
-                        LOG.info().$("cannot purge orphan table [path=").$(path.trimTo(pathTableLen)).I$();
-                        return true;
-                    }
-
-                    txReader.ofRO(path.trimTo(pathTableLen), task.getPartitionBy());
-                    txReader.unsafeLoadAll();
-                    if (txReader.getTruncateVersion() != task.getTruncateVersion()) {
-                        LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();
-                        return true;
-                    }
-
-                    // Re-set up path to .d file
-                    setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
-                    TableUtils.dFile(path, task.getColumnName(), columnVersion);
-
-                    tableInitialized = true;
-                }
-
-                if (columnVersion < minUnlockedTxnRangeStarts) {
-                    if (checkScoreboardHasReadersBeforeUpdate(columnVersion, task)) {
-                        // Reader lock still exists
-                        allDone = false;
-                        LOG.debug().$("cannot purge, version is in use [path=").$(path).I$();
-                        continue;
-                    } else {
-                        minUnlockedTxnRangeStarts = columnVersion;
-                    }
-                }
-
-                LOG.info().$("purging [path=").$(path).I$();
-
-                // No readers looking at the column version, files can be deleted
-                if (couldNotRemove(ff, path)) {
-                    allDone = false;
-                    continue;
-                }
-
-                if (ColumnType.isVariableLength(task.getColumnType())) {
-                    path.trimTo(pathTrimToPartition);
-                    TableUtils.iFile(path, task.getColumnName(), columnVersion);
-
-                    if (couldNotRemove(ff, path)) {
-                        allDone = false;
-                        continue;
-                    }
-                }
-
-                // Check if it's symbol, try remove .k and .v files in the partition
-                if (ColumnType.isSymbol(task.getColumnType())) {
-                    path.trimTo(pathTrimToPartition);
-                    BitmapIndexUtils.keyFileName(path, task.getColumnName(), columnVersion);
-                    if (couldNotRemove(ff, path)) {
-                        allDone = false;
-                        continue;
-                    }
-
-                    path.trimTo(pathTrimToPartition);
-                    BitmapIndexUtils.valueFileName(path, task.getColumnName(), columnVersion);
-                    if (couldNotRemove(ff, path)) {
-                        allDone = false;
-                        continue;
-                    }
-                }
-                completedRecordIds.add(updateRecordId);
-            }
-        } finally {
-            if (tableCleanupNeeded) {
-                txnScoreboard.clear();
-                txReader.clear();
-            }
-        }
-
-        return allDone;
     }
 }
