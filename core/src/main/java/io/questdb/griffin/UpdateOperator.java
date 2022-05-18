@@ -146,9 +146,7 @@ public class UpdateOperator implements Closeable {
                     if (rowId < lastRowId) {
                         // We're assuming, but not enforcing the fact that
                         // factory produces rows in incrementing order.
-                        throw CairoException.instance(0).put(
-                                "Update statement generated invalid plan. " +
-                                        "Rows are not returned in order.");
+                        throw CairoException.instance(0).put("Update statement generated invalid query plan. Rows are not returned in order.");
                     }
                     lastRowId = rowId;
 
@@ -247,7 +245,7 @@ public class UpdateOperator implements Closeable {
             tableWriter.rollbackUpdate();
             throw e;
         } catch (Throwable th) {
-            LOG.error().$("UPDATE failed: ").$(th).$();
+            LOG.error().$("could not update").$(th).$();
             tableWriter.rollbackUpdate();
             throw th;
         } finally {
@@ -404,13 +402,10 @@ public class UpdateOperator implements Closeable {
                     );
                     break;
                 case ColumnType.STRING:
-                    CharSequence str = masterRecord.getStr(i);
-                    dstFixMem.putLong(dstVarMem.putStr(str));
+                    dstFixMem.putLong(dstVarMem.putStr(masterRecord.getStr(i)));
                     break;
                 case ColumnType.BINARY:
-                    BinarySequence binValue = masterRecord.getBin(i);
-                    long binOffset = dstVarMem.putBin(binValue);
-                    dstFixMem.putLong(binOffset);
+                    dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));
                     break;
                 default:
                     throw SqlException.$(0, "Column type ")
@@ -692,7 +687,7 @@ public class UpdateOperator implements Closeable {
                 return;
             } else if (cursor == -1L) {
                 // Queue overflow
-                LOG.error().$("failed to schedule column version purge, queue is full. Please run 'VACUUM TABLE \"").$(tableName)
+                LOG.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$(tableName)
                         .$("\"' [columnName=").$(columnName)
                         .$(", lastTxn=").$(updatedTxn)
                         .I$();
@@ -776,11 +771,12 @@ public class UpdateOperator implements Closeable {
                         updatedTxn,
                         cleanupColumnVersionsAsync
                 );
-                LOG.info().$("updated column cleanup scheduled [table=").$(tableWriter.getTableName())
+                LOG.info().$("column purge scheduled [table=").$(tableWriter.getTableName())
                         .$(", column=").$(columnName)
-                        .$(", updateTxn=").$(updatedTxn).I$();
+                        .$(", updateTxn=").$(updatedTxn)
+                        .I$();
             } else {
-                LOG.info().$("updated column version cleaned [table=").$(tableWriter.getTableName())
+                LOG.info().$("columns purged locally [table=").$(tableWriter.getTableName())
                         .$(", column=").$(columnName)
                         .$(", newColumnVersion=").$(updatedTxn - 1).I$();
             }

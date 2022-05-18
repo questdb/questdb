@@ -41,11 +41,11 @@ public class ColumnPurgeOperator implements Closeable {
     private final FilesFacade ff;
     private final TableWriter purgeLogWriter;
     private final String updateCompleteColumnName;
-    private TxnScoreboard txnScoreboard;
-    private TxReader txReader;
     private final LongList completedRecordIds = new LongList();
     private final MicrosecondClock microClock;
     private final int updateCompleteColumnWriterIndex;
+    private TxnScoreboard txnScoreboard;
+    private TxReader txReader;
     private long longBytes;
     private int pathTableLen;
     private long purgeLogPartitionTimestamp = Long.MAX_VALUE;
@@ -83,35 +83,51 @@ public class ColumnPurgeOperator implements Closeable {
             Unsafe.free(longBytes, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             longBytes = 0;
         }
-        closeCleanupLogCompleteFile();
+        closePurgeLogCompleteFile();
         path.close();
         if (txnScoreboard != null) {
             txnScoreboard.close();
         }
     }
 
-    public boolean tryCleanup(ColumnPurgeTask task) {
+    public boolean purge(ColumnPurgeTask task) {
         try {
-            boolean done = tryCleanup0(task, false);
-            setCompleteTimestamp(completedRecordIds, microClock.getTicks());
+            boolean done = purge0(task, false);
+            setCompletionTimestamp(completedRecordIds, microClock.getTicks());
             return done;
         } catch (Throwable ex) {
             // Can be some IO exception
-            LOG.error().$("failed to clean column versions. ").$(ex).$();
+            LOG.error().$("could not purge").$(ex).$();
             return false;
         }
     }
 
-    public boolean tryCleanup(ColumnPurgeTask task, TableReader tableReader) {
+    public boolean purge(ColumnPurgeTask task, TableReader tableReader) {
         try {
             txReader = tableReader.getTxFile();
             txnScoreboard = tableReader.getTxnScoreboard();
-            return tryCleanup0(task, true);
+            return purge0(task, true);
         } catch (Throwable ex) {
             // Can be some IO exception
-            LOG.error().$("failed to clean column versions. ").$(ex).$();
+            LOG.error().$("could not purge").$(ex).$();
             return false;
         }
+    }
+
+    private static boolean couldNotRemove(FilesFacade ff, Path path) {
+        if (ff.remove(path)) {
+            return false;
+        }
+
+        final int errno = ff.errno();
+
+        if (ff.exists(path)) {
+            LOG.info().$("cannot delete file, will retry [path=").$(path).$(", errno=").$(errno).I$();
+            return true;
+        }
+
+        // file did not exist, we don't care of the error
+        return false;
     }
 
     private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {
@@ -119,8 +135,8 @@ public class ColumnPurgeOperator implements Closeable {
         try {
             return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn);
         } catch (CairoException ex) {
-            // Scoreboard can be over allocated, don't stall cleanup because of that, re-schedule another run instead
-            LOG.error().$("cannot lock last txn in scoreboard, column version purge will be retried [table=")
+            // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
+            LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
                     .$(task.getTableName())
                     .$(", txn=").$(updateTxn)
                     .$(", error=").$(ex.getFlyweightMessage())
@@ -129,7 +145,7 @@ public class ColumnPurgeOperator implements Closeable {
         }
     }
 
-    private void closeCleanupLogCompleteFile() {
+    private void closePurgeLogCompleteFile() {
         if (purgeLogPartitionFd != -1L) {
             ff.close(purgeLogPartitionFd);
             purgeLogPartitionFd = -1L;
@@ -152,7 +168,28 @@ public class ColumnPurgeOperator implements Closeable {
         }
     }
 
-    private void setCompleteTimestamp(LongList completedRecordIds, long timeMicro) {
+    private void reopenPurgeLogPartition(int partitionIndex, long partitionTimestamp) {
+        path.trimTo(pathRootLen);
+        path.concat(purgeLogWriter.getTableName());
+        long partitionNameTxn = purgeLogWriter.getPartitionNameTxn(partitionIndex);
+        TableUtils.setPathForPartition(
+                path,
+                purgeLogWriter.getPartitionBy(),
+                partitionTimestamp,
+                false
+        );
+        TableUtils.txnPartitionConditionally(path, partitionNameTxn);
+        TableUtils.dFile(
+                path,
+                updateCompleteColumnName,
+                purgeLogWriter.getColumnNameTxn(partitionTimestamp, updateCompleteColumnWriterIndex)
+        );
+        closePurgeLogCompleteFile();
+        purgeLogPartitionFd = TableUtils.openRW(ff, path.$(), LOG, purgeLogWriter.getConfiguration().getWriterFileOpenOpts());
+        purgeLogPartitionTimestamp = partitionTimestamp;
+    }
+
+    private void setCompletionTimestamp(LongList completedRecordIds, long timeMicro) {
         // This is in-place update for known record ids of completed column in column version cleanup log table
         try {
             long fileSize = -1;
@@ -173,13 +210,13 @@ public class ColumnPurgeOperator implements Closeable {
                 long rowId = Rows.toLocalRowID(recordId);
                 long offset = rowId * Long.BYTES;
                 if (offset + Long.BYTES > fileSize) {
-                    LOG.error().$("update column version cleanup failed [writeOffset=").$(offset)
+                    LOG.error().$("could not purge [writeOffset=").$(offset)
                             .$(", fileSize=").$(fileSize)
                             .$(", path=").$(path).I$();
                     return;
                 }
                 if (ff.write(purgeLogPartitionFd, longBytes, Long.BYTES, rowId * Long.BYTES) != Long.BYTES) {
-                    LOG.error().$("update column version cleanup failed [errno=").$(ff.errno())
+                    LOG.error().$("could not purge [errno=").$(ff.errno())
                             .$(", writeOffset=").$(offset)
                             .$(", fileSize=").$(fileSize)
                             .$(", path=").$(path).I$();
@@ -187,29 +224,8 @@ public class ColumnPurgeOperator implements Closeable {
                 }
             }
         } catch (CairoException ex) {
-            LOG.error().$("failed to update column_versions_purge_log table with complete time. ").$((Throwable) ex).$();
+            LOG.error().$("could not update completion timestamp").$((Throwable) ex).$();
         }
-    }
-
-    private void reopenPurgeLogPartition(int partitionIndex, long partitionTimestamp) {
-        path.trimTo(pathRootLen);
-        path.concat(purgeLogWriter.getTableName());
-        long partitionNameTxn = purgeLogWriter.getPartitionNameTxn(partitionIndex);
-        TableUtils.setPathForPartition(
-                path,
-                purgeLogWriter.getPartitionBy(),
-                partitionTimestamp,
-                false
-        );
-        TableUtils.txnPartitionConditionally(path, partitionNameTxn);
-        TableUtils.dFile(
-                path,
-                updateCompleteColumnName,
-                purgeLogWriter.getColumnNameTxn(partitionTimestamp, updateCompleteColumnWriterIndex)
-        );
-        closeCleanupLogCompleteFile();
-        purgeLogPartitionFd = TableUtils.openRW(ff, path.$(), LOG, purgeLogWriter.getConfiguration().getWriterFileOpenOpts());
-        purgeLogPartitionTimestamp = partitionTimestamp;
     }
 
     private void setTablePath(String tableName) {
@@ -223,8 +239,9 @@ public class ColumnPurgeOperator implements Closeable {
         TableUtils.txnPartitionConditionally(path, partitionTxnName);
     }
 
-    private boolean tryCleanup0(ColumnPurgeTask task, boolean tableInitialized) {
-        LOG.info().$("cleaning up column version [table=").$(task.getTableName())
+    private boolean purge0(ColumnPurgeTask task, boolean tableInitialized) {
+
+        LOG.info().$("purging [table=").$(task.getTableName())
                 .$(", column=").$(task.getColumnName())
                 .$(", tableId=").$(task.getTableId())
                 .I$();
@@ -270,14 +287,14 @@ public class ColumnPurgeOperator implements Closeable {
 
                     int tableId = readTableId(path);
                     if (tableId != task.getTableId()) {
-                        LOG.info().$("column version will not be deleted, detected table dropped [path=").$(path.trimTo(pathTableLen)).I$();
+                        LOG.info().$("cannot purge orphan table [path=").$(path.trimTo(pathTableLen)).I$();
                         return true;
                     }
 
                     txReader.ofRO(path.trimTo(pathTableLen), task.getPartitionBy());
                     txReader.unsafeLoadAll();
-                    if ((int) txReader.getTruncateVersion() != task.getTruncateVersion()) {
-                        LOG.info().$("column version will not be deleted, detected table truncated [path=").$(path.trimTo(pathTableLen)).I$();
+                    if (txReader.getTruncateVersion() != task.getTruncateVersion()) {
+                        LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();
                         return true;
                     }
 
@@ -292,14 +309,14 @@ public class ColumnPurgeOperator implements Closeable {
                     if (checkScoreboardHasReadersBeforeUpdate(columnVersion, task)) {
                         // Reader lock still exists
                         allDone = false;
-                        LOG.debug().$("column version locked in scoreboard, will not be deleted [path=").$(path).I$();
+                        LOG.debug().$("cannot purge, version is in use [path=").$(path).I$();
                         continue;
                     } else {
                         minUnlockedTxnRangeStarts = columnVersion;
                     }
                 }
 
-                LOG.info().$("column version to be deleted [path=").$(path).I$();
+                LOG.info().$("purging [path=").$(path).I$();
 
                 // No readers looking at the column version, files can be deleted
                 if (couldNotRemove(ff, path)) {
@@ -343,21 +360,5 @@ public class ColumnPurgeOperator implements Closeable {
         }
 
         return allDone;
-    }
-
-    private static boolean couldNotRemove(FilesFacade ff, Path path) {
-        if (ff.remove(path)) {
-            return false;
-        }
-
-        final int errno = ff.errno();
-
-        if (ff.exists(path)) {
-            LOG.info().$("cannot delete file, will retry [path=").$(path).$(", errno=").$(errno).I$();
-            return true;
-        }
-
-        // file did not exist, we don't care of the error
-        return false;
     }
 }

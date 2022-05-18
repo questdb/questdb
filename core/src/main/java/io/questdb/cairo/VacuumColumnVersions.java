@@ -104,7 +104,7 @@ public class VacuumColumnVersions implements Closeable {
         int columnIndex = -1;
         int writerIndex = -1;
         int tableId = reader.getMetadata().getId();
-        int truncateVersion = (int) reader.getTxFile().getTruncateVersion();
+        long truncateVersion = reader.getTxFile().getTruncateVersion();
         TableReaderMetadata metadata = reader.getMetadata();
         long updateTxn = reader.getTxn();
         ColumnVersionReader columnVersionReader = reader.getColumnVersionReader();
@@ -115,7 +115,7 @@ public class VacuumColumnVersions implements Closeable {
                 int newReaderIndex = (int) tableFiles.get(i);
                 if (columnIndex != newReaderIndex) {
                     if (columnIndex != -1 && purgeTask.getUpdatedColumnInfo().size() > 0) {
-                        if (!purgeExecution.tryCleanup(purgeTask, tableReader)) {
+                        if (!purgeExecution.purge(purgeTask, tableReader)) {
                             queueColumnVersionPurge(purgeTask, engine);
                         }
                         purgeTask.clear();
@@ -143,7 +143,7 @@ public class VacuumColumnVersions implements Closeable {
         }
 
         if (purgeTask.getUpdatedColumnInfo().size() > 0) {
-            if (!purgeExecution.tryCleanup(purgeTask, tableReader)) {
+            if (!purgeExecution.purge(purgeTask, tableReader)) {
                 queueColumnVersionPurge(purgeTask, engine);
             }
             purgeTask.clear();

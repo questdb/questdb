@@ -93,7 +93,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         "table_name symbol, " + // 1
                         "column_name symbol, " + // 2
                         "table_id int, " + // 3
-                        "truncate_version int, " + // 4
+                        "truncate_version long, " + // 4
                         "columnType int, " + // 5
                         "table_partition_by int, " + // 6
                         "updated_txn long, " + // 7
@@ -136,7 +136,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         task.nextRunTimestamp = currentTime + task.waitToRun;
     }
 
-    private boolean cleanup() {
+    private boolean purge() {
         boolean useful = false;
         final long now = clock.getTicks() + 1;
         while (retryQueue.size() > 0) {
@@ -144,7 +144,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             if (nextTask.nextRunTimestamp < now) {
                 retryQueue.poll();
                 useful = true;
-                if (!columnPurgeOperator.tryCleanup(nextTask)) {
+                if (!columnPurgeOperator.purge(nextTask)) {
                     // Re-queue
                     calculateNextTimestamp(nextTask, now);
                     retryQueue.add(nextTask);
@@ -229,7 +229,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             String tableName = Chars.toString(rec.getSym(TABLE_NAME_COLUMN));
                             String columnName = Chars.toString(rec.getSym(COLUMN_NAME_COLUMN));
                             int tableId = rec.getInt(TABLE_ID_COLUMN);
-                            int truncateVersion = rec.getInt(TABLE_TRUNCATE_VERSION);
+                            long truncateVersion = rec.getLong(TABLE_TRUNCATE_VERSION);
                             int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
                             int partitionBY = rec.getInt(PARTITION_BY_COLUMN);
                             long updatedTxn = rec.getLong(UPDATED_TXN_COLUMN);
@@ -276,7 +276,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
         try {
             boolean useful = processInQueue();
-            boolean cleanupUseful = cleanup();
+            boolean cleanupUseful = purge();
             if (cleanupUseful) {
                 LOG.debug().$("cleaned column version, outstanding tasks: ").$(retryQueue.size()).$();
             }
@@ -308,7 +308,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     row.putSym(TABLE_NAME_COLUMN, cleanTask.getTableName());
                     row.putSym(COLUMN_NAME_COLUMN, cleanTask.getColumnName());
                     row.putInt(TABLE_ID_COLUMN, cleanTask.getTableId());
-                    row.putInt(TABLE_TRUNCATE_VERSION, cleanTask.getTruncateVersion());
+                    row.putLong(TABLE_TRUNCATE_VERSION, cleanTask.getTruncateVersion());
                     row.putInt(COLUMN_TYPE_COLUMN, cleanTask.getColumnType());
                     row.putInt(PARTITION_BY_COLUMN, cleanTask.getPartitionBy());
                     row.putLong(UPDATED_TXN_COLUMN, cleanTask.getUpdatedTxn());
@@ -343,7 +343,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 String tableName,
                 CharSequence columnName,
                 int tableId,
-                int truncateVersion,
+                long truncateVersion,
                 int columnType,
                 int partitionBy,
                 long lastTxn,

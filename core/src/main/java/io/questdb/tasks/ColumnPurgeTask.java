@@ -39,7 +39,7 @@ public class ColumnPurgeTask implements Mutable {
     private int partitionBy;
     private long updatedTxn;
     private int columnType;
-    private int truncateVersion;
+    private long truncateVersion;
 
     public void appendColumnInfo(long columnVersion, long partitionTimestamp, long partitionNameTxn) {
         updatedColumnInfo.add(columnVersion, partitionTimestamp, partitionNameTxn, 0L);
@@ -86,7 +86,7 @@ public class ColumnPurgeTask implements Mutable {
         return tableName;
     }
 
-    public int getTruncateVersion() {
+    public long getTruncateVersion() {
         return truncateVersion;
     }
 
@@ -102,7 +102,7 @@ public class ColumnPurgeTask implements Mutable {
             String tableName,
             CharSequence columnName,
             int tableId,
-            int truncateVersion,
+            long truncateVersion,
             int columnType,
             int partitionBy,
             long lastTxn
