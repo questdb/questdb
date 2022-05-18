@@ -310,10 +310,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
-        Assert.assertEquals(31, configuration.getCairoConfiguration().getColumnPurgeLimitDays());
-        Assert.assertEquals(10.0, configuration.getCairoConfiguration().getColumnPurgeTimeoutExponent(), 0.00001);
-        Assert.assertEquals(60000000, configuration.getCairoConfiguration().getColumnPurgeTimeout());
-        Assert.assertEquals(10000, configuration.getCairoConfiguration().getColumnPurgeStartTimeoutMicros());
+        Assert.assertEquals(31, configuration.getCairoConfiguration().getColumnPurgeRetryLimitDays());
+        Assert.assertEquals(10.0, configuration.getCairoConfiguration().getColumnPurgeRetryDelayMultiplier(), 0.00001);
+        Assert.assertEquals(60000000, configuration.getCairoConfiguration().getColumnPurgeRetryDelayLimit());
+        Assert.assertEquals(10000, configuration.getCairoConfiguration().getColumnPurgeRetryDelay());
 
         // Pg wire
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
@@ -822,10 +822,10 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
 
             Assert.assertEquals(512, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
-            Assert.assertEquals(14, configuration.getCairoConfiguration().getColumnPurgeLimitDays());
-            Assert.assertEquals(5.0, configuration.getCairoConfiguration().getColumnPurgeTimeoutExponent(), 0.00001);
-            Assert.assertEquals(30000000, configuration.getCairoConfiguration().getColumnPurgeTimeout());
-            Assert.assertEquals(30000, configuration.getCairoConfiguration().getColumnPurgeStartTimeoutMicros());
+            Assert.assertEquals(14, configuration.getCairoConfiguration().getColumnPurgeRetryLimitDays());
+            Assert.assertEquals(5.0, configuration.getCairoConfiguration().getColumnPurgeRetryDelayMultiplier(), 0.00001);
+            Assert.assertEquals(30000000, configuration.getCairoConfiguration().getColumnPurgeRetryDelayLimit());
+            Assert.assertEquals(30000, configuration.getCairoConfiguration().getColumnPurgeRetryDelay());
 
             // Pg wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());

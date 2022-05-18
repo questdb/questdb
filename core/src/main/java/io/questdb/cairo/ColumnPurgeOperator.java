@@ -131,7 +131,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {
-        long updateTxn = task.getUpdatedTxn();
+        long updateTxn = task.getUpdateTxn();
         try {
             return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn);
         } catch (CairoException ex) {

@@ -43,7 +43,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     public void setUpUpdates() {
         iteration = 1;
         currentMicros = 0;
-        columnVersionPurgeStartWaitTimeoutMicros = 1;
+        columnPurgeRetryDelay = 1;
     }
 
     @Test

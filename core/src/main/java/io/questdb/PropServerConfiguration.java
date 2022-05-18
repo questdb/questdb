@@ -250,11 +250,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerFileOpenOpts;
     private final int queryCacheEventQueueCapacity;
     private final int columnPurgeQueueCapacity;
-    private final long columnPurgeTimeout;
-    private final double columnPurgeTimeoutExponent;
+    private final long columnPurgeRetryDelayLimit;
+    private final double columnPurgeRetryDelayMultiplier;
     private final String systemTableNamePrefix;
-    private final int columnPurgeLimitDays;
-    private final long columnPurgeStartTimeout;
+    private final int columnPurgeRetryLimitDays;
+    private final long columnPurgeRetryDelay;
     private final boolean sqlParallelFilterEnabled;
     private final int cairoPageFrameReduceShardCount;
     private int lineUdpDefaultPartitionBy;
@@ -708,10 +708,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * 1024 * 1024);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
-            this.columnPurgeTimeout = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TIMEOUT, 60_000_000L);
-            this.columnPurgeStartTimeout = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_START_TIMEOUT, 10_000);
-            this.columnPurgeTimeoutExponent = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TIMEOUT_EXPONENT, 10.0);
-            this.columnPurgeLimitDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_LIMIT_DAYS, 31);
+            this.columnPurgeRetryDelayLimit = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 60_000_000L);
+            this.columnPurgeRetryDelay = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
+            this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 10.0);
+            this.columnPurgeRetryLimitDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_LIMIT_DAYS, 31);
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
 
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64));
@@ -1844,13 +1844,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getColumnPurgeLimitDays() {
-            return columnPurgeLimitDays;
+        public int getColumnPurgeRetryLimitDays() {
+            return columnPurgeRetryLimitDays;
         }
 
         @Override
-        public double getColumnPurgeTimeoutExponent() {
-            return columnPurgeTimeoutExponent;
+        public double getColumnPurgeRetryDelayMultiplier() {
+            return columnPurgeRetryDelayMultiplier;
         }
 
         @Override
@@ -1869,13 +1869,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getColumnPurgeTimeout() {
-            return columnPurgeTimeout;
+        public long getColumnPurgeRetryDelayLimit() {
+            return columnPurgeRetryDelayLimit;
         }
 
         @Override
-        public long getColumnPurgeStartTimeoutMicros() {
-            return columnPurgeStartTimeout;
+        public long getColumnPurgeRetryDelay() {
+            return columnPurgeRetryDelay;
         }
 
         @Override

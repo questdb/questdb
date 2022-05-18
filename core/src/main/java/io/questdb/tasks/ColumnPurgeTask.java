@@ -37,7 +37,7 @@ public class ColumnPurgeTask implements Mutable {
     private String tableName;
     private int tableId;
     private int partitionBy;
-    private long updatedTxn;
+    private long updateTxn;
     private int columnType;
     private long truncateVersion;
 
@@ -59,7 +59,7 @@ public class ColumnPurgeTask implements Mutable {
         this.columnName = inTask.columnName;
         this.tableId = inTask.tableId;
         this.partitionBy = inTask.partitionBy;
-        this.updatedTxn = inTask.updatedTxn;
+        this.updateTxn = inTask.updateTxn;
         this.columnType = inTask.columnType;
         this.truncateVersion = inTask.truncateVersion;
         this.updatedColumnInfo.clear();
@@ -94,8 +94,8 @@ public class ColumnPurgeTask implements Mutable {
         return updatedColumnInfo;
     }
 
-    public long getUpdatedTxn() {
-        return updatedTxn;
+    public long getUpdateTxn() {
+        return updateTxn;
     }
 
     public void of(
@@ -105,14 +105,14 @@ public class ColumnPurgeTask implements Mutable {
             long truncateVersion,
             int columnType,
             int partitionBy,
-            long lastTxn
+            long updateTxn
     ) {
         this.tableName = tableName;
         this.columnName = columnName;
         this.tableId = tableId;
         this.columnType = columnType;
         this.partitionBy = partitionBy;
-        this.updatedTxn = lastTxn;
+        this.updateTxn = updateTxn;
         this.truncateVersion = truncateVersion;
         this.updatedColumnInfo.clear();
     }
@@ -124,10 +124,10 @@ public class ColumnPurgeTask implements Mutable {
             int truncateVersion,
             int columnType,
             int partitionBy,
-            long lastTxn,
+            long updateTxn,
             LongList columnVersions
     ) {
-        of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, lastTxn);
+        of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
         this.updatedColumnInfo.add(columnVersions);
     }
 }
