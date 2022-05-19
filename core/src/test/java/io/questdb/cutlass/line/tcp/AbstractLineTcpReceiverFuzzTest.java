@@ -38,6 +38,7 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -302,11 +303,9 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     @Override
     protected WorkerPoolConfiguration getWorkerPoolConfiguration() {
         return new WorkerPoolConfiguration() {
-            private final int[] affinity = {-1, -1, -1, -1};
-
             @Override
             public int[] getWorkerAffinity() {
-                return affinity;
+                return TestUtils.getWorkerAffinity(getWorkerCount());
             }
 
             @Override

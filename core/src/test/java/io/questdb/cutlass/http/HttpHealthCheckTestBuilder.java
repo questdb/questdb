@@ -34,9 +34,9 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.junit.rules.TemporaryFolder;
 
-import java.util.Arrays;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -52,8 +52,6 @@ public class HttpHealthCheckTestBuilder {
 
     public void run(HttpClientCode code) throws Exception {
         final int workerCount = 1;
-        final int[] workerAffinity = new int[workerCount];
-        Arrays.fill(workerAffinity, -1);
 
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
@@ -69,7 +67,7 @@ public class HttpHealthCheckTestBuilder {
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return workerAffinity;
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override

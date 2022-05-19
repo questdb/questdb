@@ -3573,7 +3573,7 @@ public class O3FailureTest extends AbstractO3Test {
             WorkerPool pool1 = new WorkerPool(new WorkerPoolAwareConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -3617,7 +3617,7 @@ public class O3FailureTest extends AbstractO3Test {
             final WorkerPool pool2 = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override

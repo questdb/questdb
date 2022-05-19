@@ -26,11 +26,11 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -62,10 +62,12 @@ import org.postgresql.util.PSQLException;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.sql.Date;
 import java.sql.*;
 import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.GregorianCalendar;
+import java.util.List;
+import java.util.Properties;
+import java.util.TimeZone;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -4054,7 +4056,7 @@ nodejs code:
             try (
                     final PGWireServer ignored = createPGServer(2);
                     final Connection connection = getConnection(false, false);
-                    final Statement statement = connection.createStatement();
+                    final Statement statement = connection.createStatement()
             ) {
                 statement.execute("create table tab(ts timestamp, value double)");
                 try (PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")) {
@@ -4151,7 +4153,7 @@ nodejs code:
             final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1, -1, -1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -6182,8 +6184,6 @@ create table tab as (
     }
 
     private PGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
-        final int[] affinity = new int[2];
-        Arrays.fill(affinity, -1);
         int workerCount = 2;
 
         final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
@@ -6194,7 +6194,7 @@ create table tab as (
 
             @Override
             public int[] getWorkerAffinity() {
-                return affinity;
+                return TestUtils.getWorkerAffinity(getWorkerCount());
             }
 
             @Override
@@ -6710,8 +6710,6 @@ create table tab as (
 
     private void testAddColumnBusyWriter(boolean alterRequestReturnSuccess, SOCountDownLatch queryStartedCountDownLatch) throws SQLException, InterruptedException, BrokenBarrierException, SqlException {
         AtomicLong errors = new AtomicLong();
-        final int[] affinity = new int[2];
-        Arrays.fill(affinity, -1);
         int workerCount = 2;
 
         final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
@@ -6722,7 +6720,7 @@ create table tab as (
 
             @Override
             public int[] getWorkerAffinity() {
-                return affinity;
+                return TestUtils.getWorkerAffinity(getWorkerCount());
             }
 
             @Override

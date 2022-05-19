@@ -203,16 +203,11 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
         AbstractCairoTest.jitMode = jitMode;
 
-        final int[] affinity = new int[workerCount];
-        for (int i = 0; i < workerCount; i++) {
-            affinity[i] = -1;
-        }
-
         WorkerPool pool = new WorkerPool(
                 new WorkerPoolAwareConfiguration() {
                     @Override
                     public int[] getWorkerAffinity() {
-                        return affinity;
+                        return TestUtils.getWorkerAffinity(getWorkerCount());
                     }
 
                     @Override

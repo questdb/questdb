@@ -59,18 +59,17 @@ public class EmbeddedApiTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
         final Log log = LogFactory.getLog("testConcurrentSQLExec");
 
+        int workerCount = 2;
         TestUtils.assertMemoryLeak(() -> {
             WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{
-                            -1, -1
-                    };
+                    return TestUtils.getWorkerAffinity(workerCount);
                 }
 
                 @Override
                 public int getWorkerCount() {
-                    return 2;
+                    return workerCount;
                 }
 
                 @Override

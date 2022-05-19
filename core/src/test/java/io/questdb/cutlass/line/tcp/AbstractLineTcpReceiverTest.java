@@ -176,11 +176,9 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
 
     protected WorkerPoolConfiguration getWorkerPoolConfiguration() {
         return new WorkerPoolConfiguration() {
-            private final int[] affinity = {-1};
-
             @Override
             public int[] getWorkerAffinity() {
-                return affinity;
+                return TestUtils.getWorkerAffinity(getWorkerCount());
             }
 
             @Override

@@ -1382,18 +1382,19 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
+            final int workerCount = 2;
             try (MyWorkScheduler workScheduler = new MyWorkScheduler(pubSeq, subSeq)) {
                 final WorkerPool workerPool;
                 if (subSeq != null) {
                     workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                         @Override
                         public int[] getWorkerAffinity() {
-                            return new int[]{-1, -1};
+                            return TestUtils.getWorkerAffinity(workerCount);
                         }
 
                         @Override
                         public int getWorkerCount() {
-                            return 2;
+                            return workerCount;
                         }
 
                         @Override
@@ -1522,16 +1523,17 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
             }
 
+            final int workerCount = 2;
             try (final MyWorkScheduler workScheduler = new MyWorkScheduler()) {
                 final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                     @Override
                     public int[] getWorkerAffinity() {
-                        return new int[]{-1, -1};
+                        return TestUtils.getWorkerAffinity(workerCount);
                     }
 
                     @Override
                     public int getWorkerCount() {
-                        return 2;
+                        return workerCount;
                     }
 
                     @Override

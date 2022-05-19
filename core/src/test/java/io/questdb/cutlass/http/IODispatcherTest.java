@@ -1722,7 +1722,7 @@ public class IODispatcherTest {
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1, -1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -2196,7 +2196,7 @@ public class IODispatcherTest {
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -2818,7 +2818,7 @@ public class IODispatcherTest {
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -3975,7 +3975,7 @@ public class IODispatcherTest {
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -4182,7 +4182,7 @@ public class IODispatcherTest {
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -4272,7 +4272,7 @@ public class IODispatcherTest {
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -4379,7 +4379,7 @@ public class IODispatcherTest {
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -5266,7 +5266,7 @@ public class IODispatcherTest {
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -5436,7 +5436,7 @@ public class IODispatcherTest {
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -5604,7 +5604,7 @@ public class IODispatcherTest {
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override

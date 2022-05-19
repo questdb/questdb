@@ -34,9 +34,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.metrics.Scrapable;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.test.tools.TestUtils;
 import org.junit.rules.TemporaryFolder;
-
-import java.util.Arrays;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -57,9 +56,6 @@ public class HttpMinTestBuilder {
     }
 
     public void run(HttpQueryTestBuilder.HttpClientCode code) throws Exception {
-        final int[] workerAffinity = new int[1];
-        Arrays.fill(workerAffinity, -1);
-
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
@@ -69,12 +65,12 @@ public class HttpMinTestBuilder {
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return workerAffinity;
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
                 public int getWorkerCount() {
-                    return workerAffinity.length;
+                    return 1;
                 }
 
                 @Override
