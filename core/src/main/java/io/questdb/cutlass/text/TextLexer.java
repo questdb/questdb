@@ -24,8 +24,6 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cutlass.text.types.TypeAdapter;
-import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -38,7 +36,6 @@ public class TextLexer implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(TextLexer.class);
     private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
     private final ObjectPool<DirectByteCharSequence> csPool;
-    private final TextMetadataDetector metadataDetector;
     private final int lineRollBufLimit;
     private CharSequence tableName;
     private boolean ignoreEolOnce;
@@ -64,34 +61,18 @@ public class TextLexer implements Closeable, Mutable {
     private long fieldHi;
     private boolean skipLinesWithExtraValues;
 
-    public TextLexer(TextConfiguration textConfiguration, TypeManager typeManager) {
-        this.metadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
+    public TextLexer(TextConfiguration textConfiguration) {
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, textConfiguration.getTextLexerStringPoolCapacity());
         this.lineRollBufLen = textConfiguration.getRollBufferSize();
         this.lineRollBufLimit = textConfiguration.getRollBufferLimit();
         this.lineRollBufPtr = Unsafe.malloc(lineRollBufLen, MemoryTag.NATIVE_DEFAULT);
     }
 
-    public void analyseStructure(
-            long lo,
-            long hi,
-            int lineCountLimit,
-            boolean forceHeader,
-            ObjList<CharSequence> names,
-            ObjList<TypeAdapter> types
-    ) {
-        metadataDetector.of(names, types, forceHeader);
-        parse(lo, hi, lineCountLimit, metadataDetector);
-        metadataDetector.evaluateResults(lineCount, errorCount);
-        restart(isHeaderDetected());
-    }
-
     @Override
-    public final void clear() {
+    public void clear() {
         restart(false);
         this.fields.clear();
         this.csPool.clear();
-        this.metadataDetector.clear();
         errorCount = 0;
         fieldMax = -1;
     }
@@ -102,7 +83,6 @@ public class TextLexer implements Closeable, Mutable {
             Unsafe.free(lineRollBufPtr, lineRollBufLen, MemoryTag.NATIVE_DEFAULT);
             lineRollBufPtr = 0;
         }
-        metadataDetector.close();
     }
 
     public long getErrorCount() {
@@ -212,14 +192,6 @@ public class TextLexer implements Closeable, Mutable {
         }
     }
 
-    ObjList<CharSequence> getColumnNames() {
-        return metadataDetector.getColumnNames();
-    }
-
-    ObjList<TypeAdapter> getColumnTypes() {
-        return metadataDetector.getColumnTypes();
-    }
-
     private boolean growRollBuf(int requiredLength, boolean updateFields) {
         if (requiredLength > lineRollBufLimit) {
             LOG.info()
@@ -260,10 +232,6 @@ public class TextLexer implements Closeable, Mutable {
         eol = true;
         fieldIndex = 0;
         ignoreEolOnce = false;
-    }
-
-    boolean isHeaderDetected() {
-        return metadataDetector.isHeader();
     }
 
     private void onColumnDelimiter(long lo) {
@@ -382,7 +350,6 @@ public class TextLexer implements Closeable, Mutable {
 
     void setTableName(CharSequence tableName) {
         this.tableName = tableName;
-        this.metadataDetector.setTableName(tableName);
     }
 
     private void shift(long d) {
