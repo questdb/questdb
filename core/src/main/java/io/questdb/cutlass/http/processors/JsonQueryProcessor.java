@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -37,6 +38,7 @@ import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.*;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -64,8 +66,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final NanosecondClock nanosecondClock;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final Metrics metrics;
-    private final long alterStartTimeout;
-    private final long alterStartFullTimeoutNs;
+    private final long asyncWriterStartTimeout;
+    private final long asyncWriterFullTimeoutNs;
 
     @TestOnly
     public JsonQueryProcessor(
@@ -97,6 +99,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
         this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
+        this.queryExecutors.extendAndSet(CompiledQuery.UPDATE, this::executeUpdate);
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
         this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
@@ -118,8 +121,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration());
         this.metrics = engine.getMetrics();
-        this.alterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
-        this.alterStartFullTimeoutNs = engine.getConfiguration().getWriterAsyncCommandMaxTimeout() * 1000;
+        this.asyncWriterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
+        this.asyncWriterFullTimeoutNs = engine.getConfiguration().getWriterAsyncCommandMaxTimeout() * 1000;
     }
 
     @Override
@@ -131,25 +134,30 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     public void execute0(JsonQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
 
-        QueryFuture continueExecution = state.getContinueExecution();
+        OperationFuture fut = state.getOperationFuture();
         final HttpConnectionContext context = state.getHttpConnectionContext();
 
-        if (continueExecution == null) {
+        if (fut == null) {
             metrics.jsonQuery().markStart();
             state.startExecutionTimer();
             // do not set random for new request to avoid copying random from previous request into next one
             // the only time we need to copy random from state is when we resume request execution
             sqlExecutionContext.with(context.getCairoSecurityContext(), null, null, context.getFd(), circuitBreaker.of(context.getFd()));
+            if (state.getStatementTimeoutNs() > 0L) {
+                circuitBreaker.setMaxTime(state.getStatementTimeoutNs() / 1000L);
+            } else {
+                circuitBreaker.resetMaxTimeToDefault();
+            }
             state.info().$("exec [q='").utf8(state.getQuery()).$("']").$();
         }
 
-        final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
         try {
-            if (continueExecution != null) {
-                retryQueryExecution(state, continueExecution);
+            if (fut != null) {
+                retryQueryExecution(state, fut);
                 return;
             }
 
+            final RecordCursorFactory factory = QueryCache.getInstance().poll(state.getQuery());
             if (factory != null) {
                 try {
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, Telemetry.ORIGIN_HTTP_JSON);
@@ -184,18 +192,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private void retryQueryExecution(JsonQueryProcessorState state, QueryFuture continueExecution) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
-        if (continueExecution.await(0) != QueryFuture.QUERY_COMPLETE) {
-            if (state.getExecutionTime() < alterStartFullTimeoutNs) {
-                throw EntryUnavailableException.instance("retry alter table wait");
-            } else {
-                state.setContinueExecution(Misc.free(continueExecution));
-                throw SqlException.$(0, "Timeout on waiting ALTER table to finish execution");
-            }
-        } else {
-            state.setContinueExecution(Misc.free(continueExecution));
-            sendConfirmation(state, configuration.getKeepAliveHeader());
-        }
+    private static void sendUpdateConfirmation(JsonQueryProcessorState state, CharSequence keepAliveHeader, long updateRecords) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpConnectionContext context = state.getHttpConnectionContext();
+        final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
+        header(socket, keepAliveHeader, 200);
+        socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put(',').putQuoted("updated").put(':').put(updateRecords).put('}').put('\n');
+        socket.sendChunk(true);
+        readyForNextRequest(context);
     }
 
     @Override
@@ -307,14 +310,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         sendConfirmation(state, keepAliveHeader);
     }
 
-    protected static void sendConfirmation(
-            JsonQueryProcessorState state,
-            CompiledQuery cq,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        sendConfirmation(state, keepAliveHeader);
-    }
-
     private static void sendConfirmation(JsonQueryProcessorState state, CharSequence keepAliveHeader) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponseSocket socket = context.getChunkedResponseSocket();
@@ -322,6 +317,28 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}').put('\n');
         socket.sendChunk(true);
         readyForNextRequest(context);
+    }
+
+    private void compileQuery(JsonQueryProcessorState state) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
+        boolean recompileStale = true;
+        do {
+            try {
+                final long nanos = nanosecondClock.getTicks();
+                final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+                sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_HTTP_JSON);
+                state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
+                state.setQueryType(cc.getType());
+                queryExecutors.getQuick(cc.getType()).execute(
+                        state,
+                        cc,
+                        configuration.getKeepAliveHeader()
+                );
+                recompileStale = false;
+            } catch (ReaderOutOfDateException e) {
+                LOG.info().$(e.getFlyweightMessage()).$();
+                // will recompile
+            }
+        } while (recompileStale);
     }
 
     static void sendException(
@@ -351,16 +368,27 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         );
     }
 
-    private void compileQuery(JsonQueryProcessorState state) throws SqlException, PeerDisconnectedException, PeerIsSlowToReadException {
-        final long nanos = nanosecondClock.getTicks();
-        final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
-        sqlExecutionContext.storeTelemetry(cc.getType(), Telemetry.ORIGIN_HTTP_JSON);
-        state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
-        queryExecutors.getQuick(cc.getType()).execute(
-                state,
-                cc,
-                configuration.getKeepAliveHeader()
-        );
+    private void executeAlterTable(
+            JsonQueryProcessorState state,
+            CompiledQuery cq,
+            CharSequence keepAliveHeader
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
+        OperationFuture fut = null;
+        try {
+            fut = cq.execute(state.getEventSubSequence());
+            int waitResult = fut.await(getAsyncWriterStartTimeout(state));
+            if (waitResult != OperationFuture.QUERY_COMPLETE) {
+                state.setOperationFuture(null, fut); // Alter operation does not need to be disposable
+                fut = null;
+                throw EntryUnavailableException.instance("retry alter table wait");
+            }
+        } finally {
+            if (fut != null) {
+                fut.close();
+            }
+        }
+        metrics.jsonQuery().markComplete();
+        sendConfirmation(state, keepAliveHeader);
     }
 
     private void executeCachedSelect(
@@ -390,50 +418,90 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         socket.shutdownWrite();
     }
 
-    private void executeAlterTable(
+    private void executeUpdate(
             JsonQueryProcessorState state,
-            CompiledQuery cc,
+            CompiledQuery cq,
             CharSequence keepAliveHeader
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
-        QueryFuture queryFuture = null;
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+        UpdateOperation op = cq.getOperation();
+        op.start();
+        op.withContext(sqlExecutionContext);
+        circuitBreaker.resetTimer();
+        OperationFuture fut = null;
+        boolean isAsyncWait = false;
         try {
-            queryFuture = cc.execute(state.getEventSubSequence());
-            int waitResult = queryFuture.await(alterStartTimeout);
-            if (waitResult == QueryFuture.QUERY_NO_RESPONSE) {
-                throw SqlException.$(0, "Timeout expired on waiting for the ALTER TABLE execution start");
-            } else if (waitResult == QueryFuture.QUERY_STARTED) {
-                state.setContinueExecution(queryFuture);
-                queryFuture = null;
-                throw EntryUnavailableException.instance("retry alter table wait");
+            fut = cq.getDispatcher().execute(op, sqlExecutionContext, state.getEventSubSequence());
+            int waitResult = fut.await(getAsyncWriterStartTimeout(state));
+            if (waitResult != OperationFuture.QUERY_COMPLETE) {
+                isAsyncWait = true;
+                state.setOperationFuture(op, fut);
+                throw EntryUnavailableException.instance("retry update table wait");
             }
+            // All good, finished update
+            final long updatedCount = fut.getAffectedRowsCount();
+            metrics.jsonQuery().markComplete();
+            sendUpdateConfirmation(state, keepAliveHeader, updatedCount);
         } finally {
-            if (queryFuture != null) {
-                queryFuture.close();
+            if (!isAsyncWait && fut != null) {
+                fut.close();
+                op.close();
             }
         }
-        metrics.jsonQuery().markComplete();
-        sendConfirmation(state, cc, keepAliveHeader);
+    }
+
+    private long getAsyncWriterStartTimeout(JsonQueryProcessorState state) {
+        return Math.min(asyncWriterStartTimeout, state.getStatementTimeoutNs() / 1000L);
+    }
+
+    private void retryQueryExecution(JsonQueryProcessorState state, OperationFuture fut) throws SqlException, PeerIsSlowToReadException, PeerDisconnectedException {
+        final int waitResult;
+        try {
+            waitResult = fut.await(0);
+        } catch (ReaderOutOfDateException e) {
+            state.freeAsyncOperation();
+            compileQuery(state);
+            return;
+        }
+
+        if (waitResult != OperationFuture.QUERY_COMPLETE) {
+            long maxWait = state.getStatementTimeoutNs() > 0 ? state.getStatementTimeoutNs() : asyncWriterFullTimeoutNs;
+            if (state.getExecutionTime() < maxWait) {
+                // Schedule a retry
+                state.info().$("waiting for update query [instance=").$(fut.getInstanceId()).I$();
+                throw EntryUnavailableException.instance("wait for update query");
+            } else {
+                state.freeAsyncOperation();
+                throw SqlTimeoutException.timeout("Query timeout. Please add HTTP header 'Statement-Timeout' with timeout in ms");
+            }
+        } else {
+            // Done
+            state.freeAsyncOperation();
+            if (state.getQueryType() == CompiledQuery.UPDATE) {
+                sendUpdateConfirmation(state, configuration.getKeepAliveHeader(), fut.getAffectedRowsCount());
+            } else {
+                // Alter, sends ddl:OK
+                sendConfirmation(state, configuration.getKeepAliveHeader());
+            }
+        }
     }
 
     private void executeInsert(
             JsonQueryProcessorState state,
-            CompiledQuery cc,
+            CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        try (QueryFuture execution = cc.execute(state.getEventSubSequence())) {
-            execution.await();
-        }
+        cq.getInsertOperation().execute(sqlExecutionContext).await();
         metrics.jsonQuery().markComplete();
-        sendConfirmation(state, cc, keepAliveHeader);
+        sendConfirmation(state, keepAliveHeader);
     }
 
     private void executeNewSelect(
             JsonQueryProcessorState state,
-            CompiledQuery cc,
+            CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         state.logExecuteNew();
-        final RecordCursorFactory factory = cc.getRecordCursorFactory();
+        final RecordCursorFactory factory = cq.getRecordCursorFactory();
         executeSelect(
                 state,
                 factory,

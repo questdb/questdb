@@ -22,49 +22,75 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.update;
+package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.std.Misc;
+import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.tasks.TableWriterTask;
 
-import java.io.Closeable;
+public abstract class AbstractOperation implements AsyncWriterCommand {
+    private int cmdType;
+    private String cmdName;
+    private int tableId;
+    private long tableVersion;
+    private long correlationId;
 
-public class UpdateStatement implements Closeable {
-    private final String tableName;
-    private final int tableId;
-    private final long tableVersion;
-    private RecordCursorFactory updateToDataCursorFactory;
+    String tableName;
+    int tableNamePosition;
 
-    public UpdateStatement(
+    void init(
+            int cmdType,
+            String cmdName,
             String tableName,
             int tableId,
             long tableVersion,
-            RecordCursorFactory updateToCursorFactory
+            int tableNamePosition
     ) {
+        this.cmdType = cmdType;
+        this.cmdName = cmdName;
         this.tableName = tableName;
         this.tableId = tableId;
         this.tableVersion = tableVersion;
-        this.updateToDataCursorFactory = updateToCursorFactory;
+        this.tableNamePosition = tableNamePosition;
     }
 
     @Override
-    public void close() {
-        updateToDataCursorFactory = Misc.free(updateToDataCursorFactory);
-    }
-
     public int getTableId() {
         return tableId;
     }
 
-    public CharSequence getTableName() {
-        return tableName;
-    }
-
+    @Override
     public long getTableVersion() {
         return tableVersion;
     }
 
-    public RecordCursorFactory getUpdateToDataCursorFactory() {
-        return updateToDataCursorFactory;
+    @Override
+    public String getTableName() {
+        return tableName;
+    }
+
+    @Override
+    public String getCommandName() {
+        return cmdName;
+    }
+
+    @Override
+    public int getTableNamePosition() {
+        return tableNamePosition;
+    }
+
+    @Override
+    public long getCorrelationId() {
+        return correlationId;
+    }
+
+    @Override
+    public void setCommandCorrelationId(long correlationId) {
+        this.correlationId = correlationId;
+    }
+
+    @Override
+    public void serialize(TableWriterTask task) {
+        task.of(cmdType, tableId, tableName);
+        task.setInstance(correlationId);
     }
 }

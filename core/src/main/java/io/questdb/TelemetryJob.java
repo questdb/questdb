@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.*;
@@ -209,8 +210,8 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
                     "ALTER TABLE " + configTableName + " ADD COLUMN " + columnDetails,
                     executionContext
             );
-            try (QueryFuture execution = cc.execute(tempSequence)) {
-                execution.await();
+            try (OperationFuture fut = cc.execute(tempSequence)) {
+                fut.await();
             }
         } catch (SqlException ex) {
             LOG.info().$("Failed to alter telemetry table [table=").$(configTableName).$(",error=").$(ex.getFlyweightMessage()).I$();

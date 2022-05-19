@@ -37,7 +37,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.O3PurgeDiscoveryTask;
+import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
@@ -678,7 +678,7 @@ public final class TableUtils {
         while (true) {
             long cursor = seq.next();
             if (cursor > -1) {
-                O3PurgeDiscoveryTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
+                O3PartitionPurgeTask task = messageBus.getO3PurgeDiscoveryQueue().get(cursor);
                 task.of(tableName, partitionBy);
                 seq.done(cursor);
                 return true;
@@ -1002,16 +1002,47 @@ public final class TableUtils {
         }
     }
 
-    static boolean isEntryToBeProcessed(long address, int index) {
-        if (Unsafe.getUnsafe().getByte(address + index) == -1) {
-            return false;
-        }
-        Unsafe.getUnsafe().putByte(address + index, (byte) -1);
-        return true;
-    }
-
     public interface FailureCloseable {
         void close(long prevSize);
     }
 
+    public static void setNull(int columnType, long addr, long count) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
+                Vect.memset(addr, count, 0);
+                break;
+            case ColumnType.CHAR:
+            case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
+                Vect.setMemoryShort(addr, (short) 0, count);
+                break;
+            case ColumnType.INT:
+            case ColumnType.GEOINT:
+                Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
+                break;
+            case ColumnType.FLOAT:
+                Vect.setMemoryFloat(addr, Float.NaN, count);
+                break;
+            case ColumnType.SYMBOL:
+                Vect.setMemoryInt(addr, -1, count);
+                break;
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.GEOLONG:
+                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);
+                break;
+            case ColumnType.DOUBLE:
+                Vect.setMemoryDouble(addr, Double.NaN, count);
+                break;
+            case ColumnType.LONG256:
+                // Long256 is null when all 4 longs are NaNs
+                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
+                break;
+            default:
+                break;
+        }
+    }
 }

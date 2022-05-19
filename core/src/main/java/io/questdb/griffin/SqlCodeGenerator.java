@@ -42,9 +42,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.groupby.*;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.*;
@@ -728,7 +726,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    public RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         return generateQuery(model, executionContext, true);
     }
 
@@ -2204,14 +2202,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         QueryModel twoDeepNested;
         ExpressionNode tableNameEn;
+
         if (
                 model.getColumns().size() == 1
                         && model.getNestedModel() != null
                         && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
                         && (twoDeepNested = model.getNestedModel().getNestedModel()) != null
-                        && twoDeepNested.getWhereClause() == null
                         && twoDeepNested.getLatestBy().size() == 0
                         && (tableNameEn = twoDeepNested.getTableName()) != null
+                        && twoDeepNested.getWhereClause() == null
         ) {
             CharSequence tableName = tableNameEn.token;
             try (TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName)) {
@@ -2219,17 +2218,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 TableReaderMetadata readerMetadata = reader.getMetadata();
                 int columnIndex = readerMetadata.getColumnIndex(columnName);
                 int columnType = readerMetadata.getColumnType(columnIndex);
-                if (readerMetadata.getVersion() >= 416 && ColumnType.isSymbol(columnType)) {
-                    final GenericRecordMetadata distinctSymbolMetadata = new GenericRecordMetadata();
-                    distinctSymbolMetadata.add(BaseRecordMetadata.copyOf(readerMetadata, columnIndex));
-                    return new DistinctSymbolRecordCursorFactory(
-                            engine,
-                            distinctSymbolMetadata,
-                            Chars.toString(tableName),
-                            columnIndex,
-                            reader.getMetadata().getId(),
-                            reader.getVersion()
-                    );
+
+                final GenericRecordMetadata distinctColumnMetadata = new GenericRecordMetadata();
+                distinctColumnMetadata.add(BaseRecordMetadata.copyOf(readerMetadata, columnIndex));
+                if (ColumnType.isSymbol(columnType) || columnType == ColumnType.INT) {
+
+                    final RecordCursorFactory factory = generateSubQuery(model.getNestedModel(), executionContext);
+
+                    if (factory.supportPageFrameCursor()) {
+                        return new DistinctKeyRecordCursorFactory(
+                                engine.getConfiguration(),
+                                factory,
+                                distinctColumnMetadata,
+                                arrayColumnTypes,
+                                tempVaf,
+                                executionContext.getWorkerCount(),
+                                tempSymbolSkewIndexes
+
+                        );
+                    } else {
+                        // Shouldn't really happen, we cannot recompile below, QueryModel is changed during compilation
+                        Misc.free(factory);
+                        throw CairoException.instance(0).put("Optimization error, incorrect path chosen, please contact support.");
+                    }
                 }
             }
         }
@@ -2589,18 +2600,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 functions.add(function);
 
-                if (function instanceof SymbolFunction && columnType == ColumnType.SYMBOL) {
-                    virtualMetadata.add(
-                            new TableColumnMetadata(
-                                    Chars.toString(column.getAlias()),
-                                    configuration.getRandom().nextLong(),
-                                    function.getType(),
-                                    false,
-                                    0,
-                                    ((SymbolFunction) function).isSymbolTableStatic(),
-                                    function.getMetadata()
-                            )
-                    );
+                if (columnType == ColumnType.SYMBOL) {
+                    if (function instanceof SymbolFunction) {
+                        virtualMetadata.add(
+                                new TableColumnMetadata(
+                                        Chars.toString(column.getAlias()),
+                                        configuration.getRandom().nextLong(),
+                                        function.getType(),
+                                        false,
+                                        0,
+                                        ((SymbolFunction) function).isSymbolTableStatic(),
+                                        function.getMetadata()
+                                )
+                        );
+                    } else if (function instanceof NullConstant) {
+                        virtualMetadata.add(
+                                new TableColumnMetadata(
+                                        Chars.toString(column.getAlias()),
+                                        configuration.getRandom().nextLong(),
+                                        ColumnType.SYMBOL,
+                                        false,
+                                        0,
+                                        false,
+                                        function.getMetadata()
+                                )
+                        );
+                        // Replace with symbol null constant
+                        functions.setQuick(functions.size() - 1, SymbolConstant.NULL);
+                    }
                 } else {
                     virtualMetadata.add(
                             new TableColumnMetadata(
