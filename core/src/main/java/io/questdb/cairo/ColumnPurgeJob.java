@@ -51,21 +51,21 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final int TABLE_TRUNCATE_VERSION = 4;
     private static final int COLUMN_TYPE_COLUMN = 5;
     private static final int PARTITION_BY_COLUMN = 6;
-    private static final int UPDATED_TXN_COLUMN = 7;
+    private static final int UPDATE_TXN_COLUMN = 7;
     private static final int COLUMN_VERSION_COLUMN = 8;
     private static final int PARTITION_TIMESTAMP_COLUMN = 9;
     private static final int PARTITION_NAME_COLUMN = 10;
     private static final int MAX_ERRORS = 11;
     private final String tableName;
-    private final int columnPurgeLimitDays;
+    private final int columnPurgeRetryLimitDays;
     private final RingQueue<ColumnPurgeTask> inQueue;
     private final Sequence inSubSequence;
     private final MicrosecondClock clock;
     private final PriorityQueue<ColumnPurgeRetryTask> retryQueue;
     private final WeakMutableObjectPool<ColumnPurgeRetryTask> taskPool;
-    private final long maxWaitCapMicro;
-    private final long startWaitMicro;
-    private final double exponentialWaitMultiplier;
+    private final long retryDelayLimit;
+    private final long retryDelay;
+    private final double retryDelayMultiplier;
     private ColumnPurgeOperator columnPurgeOperator;
     private SqlExecutionContextImpl sqlExecutionContext;
     private TableWriter writer;
@@ -80,10 +80,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         this.tableName = configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
         this.taskPool = new WeakMutableObjectPool<>(ColumnPurgeRetryTask::new, configuration.getColumnPurgeTaskPoolCapacity());
         this.retryQueue = new PriorityQueue<>(configuration.getColumnPurgeQueueCapacity(), ColumnPurgeJob::compareRetryTasks);
-        this.maxWaitCapMicro = configuration.getColumnPurgeTimeout();
-        this.startWaitMicro = configuration.getColumnPurgeStartTimeoutMicros();
-        this.exponentialWaitMultiplier = configuration.getColumnPurgeTimeoutExponent();
-        this.columnPurgeLimitDays = configuration.getColumnPurgeLimitDays();
+        this.retryDelayLimit = configuration.getColumnPurgeRetryDelayLimit();
+        this.retryDelay = configuration.getColumnPurgeRetryDelay();
+        this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
+        this.columnPurgeRetryLimitDays = configuration.getColumnPurgeRetryLimitDays();
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
@@ -132,8 +132,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private void calculateNextTimestamp(ColumnPurgeRetryTask task, long currentTime) {
-        task.waitToRun = Math.min(maxWaitCapMicro, (long) (task.waitToRun * exponentialWaitMultiplier));
-        task.nextRunTimestamp = currentTime + task.waitToRun;
+        task.retryDelay = Math.min(retryDelayLimit, (long) (task.retryDelay * retryDelayMultiplier));
+        task.nextRunTimestamp = currentTime + task.retryDelay;
     }
 
     private boolean purge() {
@@ -190,7 +190,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
             ColumnPurgeTask queueTask = inQueue.get(cursor);
             ColumnPurgeRetryTask purgeTaskRun = taskPool.pop();
-            purgeTaskRun.copyFrom(queueTask, startWaitMicro, microTime + startWaitMicro);
+            purgeTaskRun.copyFrom(queueTask, retryDelay, microTime + retryDelay);
             purgeTaskRun.timestamp = microTime++;
             inSubSequence.done(cursor);
 
@@ -206,7 +206,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private void putTasksFromTableToQueue() {
         try {
             CompiledQuery reloadQuery = sqlCompiler.compile(
-                    "SELECT * FROM \"" + tableName + "\" WHERE ts > dateadd('d', -" + columnPurgeLimitDays + ", now()) and completed = null",
+                    "SELECT * FROM \"" + tableName + "\" WHERE ts > dateadd('d', -" + columnPurgeRetryLimitDays + ", now()) and completed = null",
                     sqlExecutionContext
             );
 
@@ -232,7 +232,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             long truncateVersion = rec.getLong(TABLE_TRUNCATE_VERSION);
                             int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
                             int partitionBY = rec.getInt(PARTITION_BY_COLUMN);
-                            long updatedTxn = rec.getLong(UPDATED_TXN_COLUMN);
+                            long updateTxn = rec.getLong(UPDATE_TXN_COLUMN);
                             taskRun.of(
                                     tableName,
                                     columnName,
@@ -240,8 +240,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                                     truncateVersion,
                                     columnType,
                                     partitionBY,
-                                    updatedTxn,
-                                    startWaitMicro,
+                                    updateTxn,
+                                    retryDelay,
                                     microTime
                             );
                         }
@@ -311,7 +311,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     row.putLong(TABLE_TRUNCATE_VERSION, cleanTask.getTruncateVersion());
                     row.putInt(COLUMN_TYPE_COLUMN, cleanTask.getColumnType());
                     row.putInt(PARTITION_BY_COLUMN, cleanTask.getPartitionBy());
-                    row.putLong(UPDATED_TXN_COLUMN, cleanTask.getUpdatedTxn());
+                    row.putLong(UPDATE_TXN_COLUMN, cleanTask.getUpdateTxn());
                     row.putLong(COLUMN_VERSION_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_COLUMN_VERSION));
                     row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP));
                     row.putLong(PARTITION_NAME_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN));
@@ -331,10 +331,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     static class ColumnPurgeRetryTask extends ColumnPurgeTask implements Mutable {
         public long nextRunTimestamp;
         public long timestamp;
-        public long waitToRun;
+        public long retryDelay;
 
-        public void copyFrom(ColumnPurgeTask inTask, long waitToRun, long nextRunTimestamp) {
-            this.waitToRun = waitToRun;
+        public void copyFrom(ColumnPurgeTask inTask, long retryDelay, long nextRunTimestamp) {
+            this.retryDelay = retryDelay;
             this.nextRunTimestamp = nextRunTimestamp;
             super.copyFrom(inTask);
         }
@@ -346,12 +346,12 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                 long truncateVersion,
                 int columnType,
                 int partitionBy,
-                long lastTxn,
-                long waitToRun,
+                long updateTxn,
+                long retryDelay,
                 long microTime
         ) {
-            super.of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, lastTxn);
-            this.waitToRun = waitToRun;
+            super.of(tableName, columnName, tableId, truncateVersion, columnType, partitionBy, updateTxn);
+            this.retryDelay = retryDelay;
             nextRunTimestamp = microTime;
         }
     }

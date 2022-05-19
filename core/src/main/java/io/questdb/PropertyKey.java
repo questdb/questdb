@@ -347,10 +347,10 @@ public enum PropertyKey {
     PG_UPDATE_CACHE_ROW_COUNT("pg.update.cache.row.count"),
     CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY("cairo.sql.column.purge.queue.capacity"),
     CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY("cairo.sql.column.purge.task.pool.capacity"),
-    CAIRO_SQL_COLUMN_PURGE_TIMEOUT("cairo.sql.column.purge.timeout"),
-    CAIRO_SQL_COLUMN_PURGE_START_TIMEOUT("cairo.sql.column.purge.start.timeout"),
-    CAIRO_SQL_COLUMN_PURGE_TIMEOUT_EXPONENT("cairo.sql.column.purge.timeout.exponent"),
-    CAIRO_SQL_COLUMN_PURGE_LIMIT_DAYS("cairo.sql.column.purge.limit.days"),
+    CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT("cairo.sql.column.purge.retry.delay.limit"),
+    CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY("cairo.sql.column.purge.retry.delay"),
+    CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER("cairo.sql.column.purge.retry.delay.multiplier"),
+    CAIRO_SQL_COLUMN_PURGE_RETRY_LIMIT_DAYS("cairo.sql.column.purge.retry.limit.days"),
     CAIRO_SQL_SYSTEM_TABLE_PREFIX("cairo.system.table.prefix");
 
     private static final Map<String, PropertyKey> nameMapping;

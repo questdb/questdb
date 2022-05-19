@@ -674,7 +674,7 @@ public class UpdateOperator implements Closeable {
             int tableTruncateVersion,
             int columnType,
             int partitionBy,
-            long updatedTxn,
+            long updateTxn,
             LongList columnVersions
     ) {
         Sequence pubSeq = messageBus.getColumnPurgePubSeq();
@@ -682,14 +682,14 @@ public class UpdateOperator implements Closeable {
             long cursor = pubSeq.next();
             if (cursor > -1L) {
                 ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
-                task.of(tableName, columnName, tableId, tableTruncateVersion, columnType, partitionBy, updatedTxn, columnVersions);
+                task.of(tableName, columnName, tableId, tableTruncateVersion, columnType, partitionBy, updateTxn, columnVersions);
                 pubSeq.done(cursor);
                 return;
             } else if (cursor == -1L) {
                 // Queue overflow
                 LOG.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$(tableName)
                         .$("\"' [columnName=").$(columnName)
-                        .$(", lastTxn=").$(updatedTxn)
+                        .$(", updateTxn=").$(updateTxn)
                         .I$();
                 return;
             }
@@ -703,7 +703,7 @@ public class UpdateOperator implements Closeable {
         int pathTrimToLen = path.length();
         path.concat(tableWriter.getTableName());
         int pathTableLen = path.length();
-        long updatedTxn = tableWriter.getTxn();
+        long updateTxn = tableWriter.getTxn();
 
         // Process updated column by column, one at the time
         for (int updatedCol = 0, nn = updateColumnIndexes.size(); updatedCol < nn; updatedCol++) {
@@ -768,17 +768,17 @@ public class UpdateOperator implements Closeable {
                         (int) tableWriter.getTruncateVersion(),
                         columnType,
                         tableWriter.getPartitionBy(),
-                        updatedTxn,
+                        updateTxn,
                         cleanupColumnVersionsAsync
                 );
                 LOG.info().$("column purge scheduled [table=").$(tableWriter.getTableName())
                         .$(", column=").$(columnName)
-                        .$(", updateTxn=").$(updatedTxn)
+                        .$(", updateTxn=").$(updateTxn)
                         .I$();
             } else {
                 LOG.info().$("columns purged locally [table=").$(tableWriter.getTableName())
                         .$(", column=").$(columnName)
-                        .$(", newColumnVersion=").$(updatedTxn - 1).I$();
+                        .$(", newColumnVersion=").$(updateTxn - 1).I$();
             }
         }
 

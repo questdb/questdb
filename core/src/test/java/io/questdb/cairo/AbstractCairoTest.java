@@ -99,8 +99,8 @@ public class AbstractCairoTest {
     private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
-    protected static double columnVersionPurgeWaitExponent = -1;
-    protected static long columnVersionPurgeStartWaitTimeoutMicros = -1;
+    protected static double columnPurgeRetryDelayMultiplier = -1;
+    protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
 
     @Rule
@@ -273,13 +273,13 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public double getColumnPurgeTimeoutExponent() {
-                return columnVersionPurgeWaitExponent > 0 ? columnVersionPurgeWaitExponent : 2.0;
+            public double getColumnPurgeRetryDelayMultiplier() {
+                return columnPurgeRetryDelayMultiplier > 0 ? columnPurgeRetryDelayMultiplier : 2.0;
             }
 
             @Override
-            public long getColumnPurgeStartTimeoutMicros() {
-                return columnVersionPurgeStartWaitTimeoutMicros > 0 ? columnVersionPurgeStartWaitTimeoutMicros : 10;
+            public long getColumnPurgeRetryDelay() {
+                return columnPurgeRetryDelay > 0 ? columnPurgeRetryDelay : 10;
             }
 
             @Override
@@ -362,7 +362,7 @@ public class AbstractCairoTest {
         queryCacheEventQueueCapacity = -1;
         pageFrameReduceShardCount = -1;
         pageFrameReduceQueueCapacity = -1;
-        columnVersionPurgeWaitExponent = -1;
+        columnPurgeRetryDelayMultiplier = -1;
         columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
     }
