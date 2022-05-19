@@ -36,7 +36,7 @@ public class O3MetricsTest extends AbstractO3Test {
     private static final long MILLENNIUM = 946684800000000L;  // 2020-01-01T00:00:00
 
     @Test
-    public void testMetricsAppendOneRow() throws Exception {
+    public void testAppendOneRow() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 8;
 
@@ -72,7 +72,7 @@ public class O3MetricsTest extends AbstractO3Test {
     }
 
     @Test
-    public void testMetricsInsertMiddleEmptyPartition() throws Exception {
+    public void testInsertMiddleEmptyPartition() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 2;
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
@@ -132,7 +132,7 @@ public class O3MetricsTest extends AbstractO3Test {
     }
 
     @Test
-    public void testMetricsInsertOneRowBefore() throws Exception {
+    public void testInsertOneRowBefore() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 8;
 
@@ -170,7 +170,7 @@ public class O3MetricsTest extends AbstractO3Test {
     }
 
     @Test
-    public void testMetricsInsertOneRowMiddle() throws Exception {
+    public void testInsertOneRowMiddle() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 8;
 
@@ -208,7 +208,7 @@ public class O3MetricsTest extends AbstractO3Test {
     }
 
     @Test
-    public void testMetricsInsertRowsAfterEachPartition() throws Exception {
+    public void testInsertRowsAfterEachPartition() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 24;
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
@@ -287,7 +287,7 @@ public class O3MetricsTest extends AbstractO3Test {
     }
 
     @Test
-    public void testMetricsInsertRowsBeforePartition() throws Exception {
+    public void testInsertRowsBeforePartition() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 2;
             setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
@@ -315,6 +315,99 @@ public class O3MetricsTest extends AbstractO3Test {
 
             // Appended to earlier partition.
             Assert.assertEquals(initRowCount + 1, metrics.tableWriter().physicallyWrittenRows());
+        });
+    }
+
+    @Test
+    public void testWithCommitLag() throws Exception {
+        executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
+            final long initRowCount = 2;
+            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+
+            Metrics metrics = engine.getMetrics();
+
+            long rowCount = initRowCount;
+            long expectedPhysicallyWritten = initRowCount;
+            Assert.assertEquals(expectedPhysicallyWritten, metrics.tableWriter().physicallyWrittenRows());
+
+            try (TableWriter w = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "testing")) {
+                TableWriter.Row r = w.newRow(millenniumTimestamp(0));
+                r.putInt(0, 100);
+                r.append();
+
+                r = w.newRow(millenniumTimestamp(7));
+                r.putInt(0, 200);
+                r.append();
+
+                r = w.newRow(millenniumTimestamp(8));
+                r.putInt(0, 300);
+                r.append();
+
+                w.commitWithLag(30 * MICROS_IN_MINUTE);
+
+                {
+                    printSqlResult(compiler, sqlExecutionContext, "x");
+                    final String expected = "i\tts\n" +
+                            "100\t2000-01-01T00:00:00.000000Z\n" +  // new row
+                            "1\t2000-01-01T05:00:00.000000Z\n" +
+                            "2\t2000-01-01T06:00:00.000000Z\n" +
+                            "200\t2000-01-01T07:00:00.000000Z\n";  // new row
+                    // "300\t2000-01-01T08:00:00.000000Z\n"  // skipped due to lag.
+                    TestUtils.assertEquals(expected, sink);
+                }
+
+                Assert.assertEquals(rowCount + 2, metrics.tableWriter().committedRows());
+
+                // Partition rewritten with two new records.
+                expectedPhysicallyWritten += rowCount + 2;
+                Assert.assertEquals(expectedPhysicallyWritten, metrics.tableWriter().physicallyWrittenRows());
+
+                rowCount += 2;
+
+                r = w.newRow(millenniumTimestamp(7, 45));
+                r.putInt(0, 400);
+                r.append();
+                w.commitWithLag(10 * MICROS_IN_MINUTE);
+
+                {
+                    printSqlResult(compiler, sqlExecutionContext, "x");
+                    final String expected = "i\tts\n" +
+                            "100\t2000-01-01T00:00:00.000000Z\n" +
+                            "1\t2000-01-01T05:00:00.000000Z\n" +
+                            "2\t2000-01-01T06:00:00.000000Z\n" +
+                            "200\t2000-01-01T07:00:00.000000Z\n" +
+                            "400\t2000-01-01T07:45:00.000000Z\n";  // skipped due to lag.
+                    // "300\t2000-01-01T08:00:00.000000Z\n"  // skipped due to lag.
+                    TestUtils.assertEquals(expected, sink);
+                }
+
+                // Appends one row.
+                Assert.assertEquals(rowCount + 1, metrics.tableWriter().committedRows());
+                ++expectedPhysicallyWritten;
+                Assert.assertEquals(expectedPhysicallyWritten, metrics.tableWriter().physicallyWrittenRows());
+                ++rowCount;
+
+                w.commit();
+
+                {
+                    printSqlResult(compiler, sqlExecutionContext, "x");
+                    final String expected = "i\tts\n" +
+                            "100\t2000-01-01T00:00:00.000000Z\n" +
+                            "1\t2000-01-01T05:00:00.000000Z\n" +
+                            "2\t2000-01-01T06:00:00.000000Z\n" +
+                            "200\t2000-01-01T07:00:00.000000Z\n" +
+                            "400\t2000-01-01T07:45:00.000000Z\n" +
+                            "300\t2000-01-01T08:00:00.000000Z\n"; // new row
+                    TestUtils.assertEquals(expected, sink);
+                }
+
+                Assert.assertEquals(rowCount + 1, metrics.tableWriter().committedRows());
+                ++expectedPhysicallyWritten;
+                Assert.assertEquals(expectedPhysicallyWritten, metrics.tableWriter().physicallyWrittenRows());
+
+                ++rowCount;
+
+            }
         });
     }
 
