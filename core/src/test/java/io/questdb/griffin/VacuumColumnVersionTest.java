@@ -50,7 +50,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
     public void setUpUpdates() {
         iteration = 1;
         currentMicros = 0;
-        columnVersionPurgeStartWaitTimeoutMicros = 1;
+        columnPurgeRetryDelay = 1;
         columnVersionPurgeQueueCapacity = 2;
     }
 

@@ -129,12 +129,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getColumnPurgeLimitDays() {
+    public int getColumnPurgeRetryLimitDays() {
         return 7;
     }
 
     @Override
-    public double getColumnPurgeTimeoutExponent() {
+    public double getColumnPurgeRetryDelayMultiplier() {
         return 2.0;
     }
 
@@ -154,12 +154,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getColumnPurgeTimeout() {
+    public long getColumnPurgeRetryDelayLimit() {
         return 60_000_000;
     }
 
     @Override
-    public long getColumnPurgeStartTimeoutMicros() {
+    public long getColumnPurgeRetryDelay() {
         return 10_000;
     }
 
