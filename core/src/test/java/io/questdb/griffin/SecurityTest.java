@@ -30,7 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
 import io.questdb.cairo.sql.InsertMethod;
-import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -108,6 +108,11 @@ public class SecurityTest extends AbstractGriffinTest {
             }
 
             @Override
+            public boolean checkIfTripped() {
+                return false;
+            }
+
+            @Override
             public boolean checkIfTripped(long executionStartTimeUs, long fd) {
                 return false;
             }
@@ -149,7 +154,7 @@ public class SecurityTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'EUR', 140.6)", sqlExecutionContext);
-            InsertStatement insertStatement = cq.getInsertStatement();
+            InsertOperation insertStatement = cq.getInsertOperation();
             try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
                 method.execute();
                 method.commit();
@@ -316,8 +321,8 @@ public class SecurityTest extends AbstractGriffinTest {
             assertQuery("count\n0\n", "select count() from balances", null, false, true);
 
             CompiledQuery cq = compiler.compile("insert into balances values (1, 'EUR', 140.6)", sqlExecutionContext);
-            InsertStatement insertStatement = cq.getInsertStatement();
-            try (InsertMethod method = insertStatement.createMethod(sqlExecutionContext)) {
+            InsertOperation insertOperation = cq.getInsertOperation();
+            try (InsertMethod method = insertOperation.createMethod(sqlExecutionContext)) {
                 method.execute();
                 method.commit();
             }
@@ -325,8 +330,8 @@ public class SecurityTest extends AbstractGriffinTest {
 
             try {
                 cq = compiler.compile("insert into balances values (2, 'ZAR', 140.6)", readOnlyExecutionContext);
-                insertStatement = cq.getInsertStatement();
-                try (InsertMethod method = insertStatement.createMethod(readOnlyExecutionContext)) {
+                insertOperation = cq.getInsertOperation();
+                try (InsertMethod method = insertOperation.createMethod(readOnlyExecutionContext)) {
                     method.execute();
                     method.commit();
                 }

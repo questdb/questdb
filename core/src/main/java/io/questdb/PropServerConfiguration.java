@@ -248,6 +248,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoPageFrameReduceColumnListCapacity;
     private final int cairoPageFrameReduceTaskPoolCapacity;
     private final long writerFileOpenOpts;
+    private final int queryCacheEventQueueCapacity;
+    private final int columnPurgeQueueCapacity;
+    private final long columnPurgeTimeout;
+    private final double columnPurgeTimeoutExponent;
+    private final String systemTableNamePrefix;
+    private final int columnPurgeLimitDays;
+    private final long columnPurgeStartTimeout;
     private final boolean sqlParallelFilterEnabled;
     private final int cairoPageFrameReduceShardCount;
     private int lineUdpDefaultPartitionBy;
@@ -295,7 +302,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetBindPort;
     private int lineUdpBindIPV4Address;
     private int lineUdpPort;
-    private final int queryCacheEventQueueCapacity;
     private int jsonQueryFloatScale;
     private int jsonQueryDoubleScale;
     private int jsonQueryConnectionCheckFrequency;
@@ -335,6 +341,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgInsertCacheBlockCount;
     private int pgInsertCacheRowCount;
     private int pgInsertPoolCapacity;
+    private boolean pgUpdateCacheEnabled;
+    private int pgUpdateCacheBlockCount;
+    private int pgUpdateCacheRowCount;
     private int pgNamedStatementCacheCapacity;
     private int pgNamesStatementPoolCapacity;
     private int pgPendingWritersCacheCapacity;
@@ -384,6 +393,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean isStringAsTagSupported;
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
+    private final int columnPurgeTaskPoolCapacity;
 
     public PropServerConfiguration(
             String root,
@@ -634,6 +644,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 8);
                 this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 8);
                 this.pgInsertPoolCapacity = getInt(properties, env, PropertyKey.PG_INSERT_POOL_CAPACITY, 64);
+                this.pgUpdateCacheEnabled = getBoolean(properties, env, PropertyKey.PG_UPDATE_CACHE_ENABLED, true);
+                this.pgUpdateCacheBlockCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT, 8);
+                this.pgUpdateCacheRowCount = getInt(properties, env, PropertyKey.PG_UPDATE_CACHE_ROW_COUNT, 8);
                 this.pgNamedStatementCacheCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_CACHE_CAPACITY, 32);
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
@@ -693,6 +706,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * 1024 * 1024);
+            this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
+            this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
+            this.columnPurgeTimeout = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TIMEOUT, 60_000_000L);
+            this.columnPurgeStartTimeout = getLong(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_START_TIMEOUT, 10_000);
+            this.columnPurgeTimeoutExponent = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TIMEOUT_EXPONENT, 10.0);
+            this.columnPurgeLimitDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_LIMIT_DAYS, 31);
+            this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
 
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64));
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
@@ -949,7 +969,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         return null;
     }
 
-    public static ValidationResult validate(Properties properties) {
+    static ValidationResult validate(Properties properties) {
         // Settings that used to be valid but no longer are.
         Map<String, String> obsolete = new HashMap<>();
 
@@ -1759,11 +1779,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
-        public boolean enableDevelopmentUpdates() {
-            return false;
-        }
-
-        @Override
         public boolean enableTestFactories() {
             return false;
         }
@@ -1819,6 +1834,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getColumnPurgeQueueCapacity() {
+            return columnPurgeQueueCapacity;
+        }
+
+        @Override
+        public int getColumnPurgeTaskPoolCapacity() {
+            return columnPurgeTaskPoolCapacity;
+        }
+
+        @Override
+        public int getColumnPurgeLimitDays() {
+            return columnPurgeLimitDays;
+        }
+
+        @Override
+        public double getColumnPurgeTimeoutExponent() {
+            return columnPurgeTimeoutExponent;
+        }
+
+        @Override
         public long getCommitLag() {
             return commitLag;
         }
@@ -1834,6 +1869,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getColumnPurgeTimeout() {
+            return columnPurgeTimeout;
+        }
+
+        @Override
+        public long getColumnPurgeStartTimeoutMicros() {
+            return columnPurgeStartTimeout;
+        }
+
+        @Override
         public CharSequence getSnapshotRoot() {
             return snapshotRoot;
         }
@@ -1841,6 +1886,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getSnapshotInstanceId() {
             return snapshotInstanceId;
+        }
+
+        @Override
+        public CharSequence getSystemTableNamePrefix() {
+            return systemTableNamePrefix;
         }
 
         @Override
@@ -3048,6 +3098,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInsertPoolCapacity() {
             return pgInsertPoolCapacity;
+        }
+
+        @Override
+        public boolean isUpdateCacheEnabled() {
+            return pgUpdateCacheEnabled;
+        }
+
+        @Override
+        public int getUpdateCacheBlockCount() {
+            return pgUpdateCacheBlockCount;
+        }
+
+        @Override
+        public int getUpdateCacheRowCount() {
+            return pgUpdateCacheRowCount;
         }
 
         @Override

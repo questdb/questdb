@@ -64,11 +64,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean enableDevelopmentUpdates() {
-        return false;
-    }
-
-    @Override
     public boolean enableTestFactories() {
         return true;
     }
@@ -124,6 +119,26 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getColumnPurgeQueueCapacity() {
+        return 64;
+    }
+
+    @Override
+    public int getColumnPurgeTaskPoolCapacity() {
+        return getColumnPurgeQueueCapacity();
+    }
+
+    @Override
+    public int getColumnPurgeLimitDays() {
+        return 7;
+    }
+
+    @Override
+    public double getColumnPurgeTimeoutExponent() {
+        return 2.0;
+    }
+
+    @Override
     public long getCommitLag() {
         return 0;
     }
@@ -139,6 +154,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getColumnPurgeTimeout() {
+        return 60_000_000;
+    }
+
+    @Override
+    public long getColumnPurgeStartTimeoutMicros() {
+        return 10_000;
+    }
+
+    @Override
     public CharSequence getSnapshotRoot() {
         return snapshotRoot;
     }
@@ -146,6 +171,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public CharSequence getSnapshotInstanceId() {
         return "";
+    }
+
+    @Override
+    public CharSequence getSystemTableNamePrefix() {
+        return "__sys";
     }
 
     @Override

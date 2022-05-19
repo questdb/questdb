@@ -125,18 +125,6 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         return dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_DESC;
     }
 
-    @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        cursor.of(dataFrameCursor, executionContext);
-        if (filter != null) {
-            filter.init(cursor, executionContext);
-        }
-        return cursor;
-    }
-
     protected PageFrameCursor initFwdPageFrameCursor(
             SqlExecutionContext executionContext,
             DataFrameCursor dataFrameCursor
@@ -167,5 +155,17 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             );
         }
         return bwdPageFrameCursor.of(dataFrameCursor);
+    }
+
+    @Override
+    protected RecordCursor getCursorInstance(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        cursor.of(dataFrameCursor, executionContext);
+        if (filter != null) {
+            filter.init(cursor, executionContext);
+        }
+        return cursor;
     }
 }

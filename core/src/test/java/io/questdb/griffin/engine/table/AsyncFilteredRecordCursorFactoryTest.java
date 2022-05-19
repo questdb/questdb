@@ -536,7 +536,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
 
             O3Utils.setupWorkerPool(
                     pool,
-                    messageBus,
+                    engine,
+                    null,
                     null
             );
             pool.start(null);

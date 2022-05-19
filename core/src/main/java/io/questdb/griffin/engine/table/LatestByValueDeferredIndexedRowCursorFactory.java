@@ -73,4 +73,9 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     public boolean isEntity() {
         return false;
     }
+
+    @Override
+    public boolean isUsingIndex() {
+        return true;
+    }
 }

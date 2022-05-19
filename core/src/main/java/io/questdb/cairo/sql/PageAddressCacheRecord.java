@@ -185,10 +185,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
 
     @Override
     public long getUpdateRowId() {
-        if (cursor != null) {
-            return cursor.getUpdateRowId(rowIndex);
-        }
-        return -1L;
+        return pageAddressCache.toTableRowID(frameIndex, rowIndex);
     }
 
     @Override

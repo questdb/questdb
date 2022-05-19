@@ -33,8 +33,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
+@Ignore
 public class KeyedAggregationTest extends AbstractGriffinTest {
 
     @Test

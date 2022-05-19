@@ -4455,7 +4455,8 @@ public class IODispatcherTest {
 
                 O3Utils.setupWorkerPool(
                         workerPool,
-                        engine.getMessageBus(),
+                        engine,
+                        null,
                         null
                 );
 
@@ -7243,6 +7244,7 @@ public class IODispatcherTest {
                         try {
                             requester.execute(requests[index][0], requests[index][1]);
                         } catch (Throwable e) {
+                            e.printStackTrace();
                             System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
                             throw e;
                         }

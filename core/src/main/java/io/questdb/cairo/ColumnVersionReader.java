@@ -197,10 +197,10 @@ public class ColumnVersionReader implements Closeable, Mutable {
     }
 
     private static void readUnsafe(long offset, long areaSize, LongList cachedList, MemoryR mem) {
-        mem.extend(offset + areaSize);
+        long lim = offset + areaSize;
+        mem.extend(lim);
         int i = 0;
         long p = offset;
-        long lim = offset + areaSize;
 
         assert areaSize % BLOCK_SIZE_BYTES == 0;
 
