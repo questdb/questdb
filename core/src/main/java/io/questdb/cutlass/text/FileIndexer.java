@@ -26,7 +26,10 @@ package io.questdb.cutlass.text;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -36,6 +39,7 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
@@ -61,14 +65,15 @@ public class FileIndexer implements Closeable, Mutable {
     private static final int DEFAULT_MIN_CHUNK_SIZE = 300 * 1024 * 1024;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
 
-    //holds result of first phase - boundary scanning 
+    //holds result of first phase - boundary scanning
     //count of quotes, even new lines, odd new lines, offset to first even newline, offset to first odd newline
     private final LongList chunkStats = new LongList();
 
-    //holds input for scond phase - indexing: offset and start line number for each chunk 
+    //holds input for scond phase - indexing: offset and start line number for each chunk
     private final LongList indexChunkStats = new LongList();
 
-    private final ObjList<FileSplitter> splitters = new ObjList<>();
+    private final ObjList<TaskContext> contextObjList = new ObjList<>();
+
     private final FilesFacade ff;
 
     private final Path inputFilePath = new Path();
@@ -88,10 +93,16 @@ public class FileIndexer implements Closeable, Mutable {
     private CharSequence inputFileName;
 
     private final StringSink partitionNameSink = new StringSink();
-    private final DirectLongList openFileDescriptors = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT);
-    private final DirectLongList mergeIndexes = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT);
+    private final ObjList<CharSequence> partitionNames = new ObjList<>();
+
+    private final DirectCharSink utf8Sink;
+    private final TypeManager typeManager;
+    private final TextMetadataDetector textMetadataDetector;
+    private final TextMetadataParser textMetadataParser;
+    private final SqlExecutionContext sqlExecutionContext;
 
     public FileIndexer(SqlExecutionContext sqlExecutionContext) {
+        this.sqlExecutionContext = sqlExecutionContext;
         MessageBus bus = sqlExecutionContext.getMessageBus();
         this.queue = bus.getTextImportQueue();
         this.pubSeq = bus.getTextImportPubSeq();
@@ -99,15 +110,22 @@ public class FileIndexer implements Closeable, Mutable {
 
         CairoConfiguration cfg = sqlExecutionContext.getCairoEngine().getConfiguration();
         this.workerCount = sqlExecutionContext.getWorkerCount();
-        for (int i = 0; i < workerCount; i++) {
-            splitters.add(new FileSplitter(cfg));
-        }
 
         this.ff = cfg.getFilesFacade();
 
         this.inputRoot = cfg.getInputRoot();
         this.inputWorkRoot = cfg.getInputWorkRoot();
         this.dirMode = cfg.getMkDirMode();
+
+        final TextConfiguration textConfiguration = cfg.getTextConfiguration();
+        this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
+        this.typeManager = new TypeManager(textConfiguration, utf8Sink);
+        this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
+        this.textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
+
+        for (int i = 0; i < workerCount; i++) {
+            contextObjList.add(new TaskContext(sqlExecutionContext, textMetadataParser, typeManager));
+        }
     }
 
     @Override
@@ -115,20 +133,69 @@ public class FileIndexer implements Closeable, Mutable {
         doneLatch.reset();
         chunkStats.clear();
         indexChunkStats.clear();
+        partitionNames.clear();
+        partitionNameSink.clear();
+        utf8Sink.clear();
+        typeManager.clear();
+        textMetadataDetector.clear();
+        textMetadataParser.clear();
 
-        for (int i = 0; i < splitters.size(); i++) {
-            splitters.get(i).clear();
+        for (int i = 0; i < contextObjList.size(); i++) {
+            contextObjList.get(i).clear();
         }
     }
 
     @Override
     public void close() throws IOException {
         clear();
-        Misc.freeObjList(splitters);
-        inputFilePath.close();
-        openFileDescriptors.close();
-        mergeIndexes.close();
-        tmpPath.close();
+        Misc.freeObjList(contextObjList);
+        this.inputFilePath.close();
+        this.tmpPath.close();
+        this.utf8Sink.close();
+        this.textMetadataDetector.close();
+        this.textMetadataParser.close();
+    }
+
+    public void collectPartitionNames() {
+        partitionNames.clear();
+        tmpPath.of(inputWorkRoot).concat(inputFileName).slash$();
+        ff.iterateDir(tmpPath, (partitionName, partitionType) -> {
+            if (Files.isDir(partitionName, partitionType, partitionNameSink)) {
+                partitionNames.add(partitionNameSink.toString());
+            }
+        });
+    }
+
+    public void mergePartitionIndexes() throws TextException {
+        LOG.info().$("Started index merge").$();
+
+        collectPartitionNames();
+
+        final int partitionCount = partitionNames.size();
+        final int chunkSize = (partitionCount + workerCount - 1) / workerCount;
+        final int taskCount = (partitionCount + chunkSize - 1) / chunkSize;
+
+        int queuedCount = 0;
+        doneLatch.reset();
+        for (int i = 0; i < taskCount; ++i) {
+            final TaskContext context = contextObjList.get(i);
+            final int lo = i * chunkSize;
+            final int hi = Integer.min(lo + chunkSize, partitionCount);
+
+            final long seq = pubSeq.next();
+            if (seq < 0) {
+                context.mergeIndexStage(i, lo, hi, partitionNames);
+            } else {
+                queue.get(seq).of(doneLatch, TextImportTask.PHASE_INDEX_MERGE, context, 5 * i, lo, hi, partitionNames);
+                pubSeq.done(seq);
+                queuedCount++;
+            }
+        }
+
+        // process our own queue (this should fix deadlock with 1 worker configuration)
+        waitForWorkers(queuedCount);
+
+        LOG.info().$("Finished index merge").$();
     }
 
     public void of(CharSequence inputFileName, int partitionBy, byte columnDelimiter, int timestampIndex, DateFormat format, boolean ignoreHeader) {
@@ -137,56 +204,15 @@ public class FileIndexer implements Closeable, Mutable {
         this.inputFileName = inputFileName;
         inputFilePath.of(inputRoot).slash().concat(inputFileName).$();
 
-        for (int i = 0; i < splitters.size(); i++) {
-            FileSplitter splitter = splitters.get(i);
-            splitter.of(inputFileName, i, partitionBy, columnDelimiter, timestampIndex, format, ignoreHeader);
+        for (int i = 0; i < contextObjList.size(); i++) {
+            TaskContext context = contextObjList.get(i);
+            context.of(inputFileName, i, partitionBy, columnDelimiter, timestampIndex, format, ignoreHeader);
 
             //TODO: what to do with ignoreHeader?
             if (ignoreHeader) {
                 ignoreHeader = false;//only first splitter will process file with header
             }
         }
-    }
-
-    public void mergePartitionIndexes() {
-        int queuedCount = 0;
-        doneLatch.reset();
-
-        LOG.info().$("Started index merge").$();
-        tmpPath.of(inputWorkRoot).concat(inputFileName).slash$();
-        int rootLen = tmpPath.length();
-        long partition = ff.findFirst(tmpPath);
-        if (partition > 0) {
-            try {
-                do {
-                    // partition loop
-                    long partitionName = ff.findName(partition);
-                    long partitionType = ff.findType(partition);
-                    if (Files.isDir(partitionName, partitionType, partitionNameSink)) {
-                        final long seq = pubSeq.next();
-                        if (seq < 0) {
-                            tmpPath.trimTo(rootLen);
-                            tmpPath.concat(partitionNameSink);
-                            FileSplitter.mergePartitionIndex(ff, tmpPath, openFileDescriptors, mergeIndexes);
-                        } else {
-                            TextImportTask task = queue.get(seq);
-                            Path partitionPath = task.getPath();
-                            partitionPath.of(inputWorkRoot).concat(inputFileName).concat(partitionNameSink);
-                            queue.get(seq).of(ff, doneLatch, TextImportTask.PHASE_INDEX_MERGE);
-                            pubSeq.done(seq);
-                            queuedCount++;
-                        }
-                    }
-                } while (ff.findNext(partition) > 0);
-            } finally {
-                ff.findClose(partition);
-            }
-        }
-
-        // process our own queue (this should fix deadlock with 1 worker configuration)
-        waitForWorkers(queuedCount);
-
-        LOG.info().$("Finished index merge").$();
     }
 
     //TODO: we'll' need to lock dir or acquire table lock to make sure there are no two parallel user-issued imports of the same file
@@ -207,6 +233,69 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         LOG.info().$("created import dir ").$(workDirPath).$();
+    }
+
+    public void parseStructure() throws TextException, SqlException {
+        TaskContext ctx = contextObjList.get(0);
+        TextLoaderBase loader = ctx.getLoader();
+        boolean forceHeaders = true;
+        int textAnalysisMaxLines = 10;
+        final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
+
+        int len = configuration.getSqlCopyBufferSize();
+        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            tmpPath.of(inputRoot).concat(inputFileName).$();
+            long fd = ff.openRO(tmpPath);
+            try {
+                if (fd == -1) {
+                    throw SqlException.$(0, "could not open file [errno=").put(Os.errno()).put(", path=").put(tmpPath).put(']');
+                }
+                long n = ff.read(fd, buf, len, 0);
+                if (n > 0) {
+                    loader.setDelimiter((byte) ',');
+                    loader.setSkipRowsWithExtraValues(false);
+                    textMetadataDetector.of(textMetadataParser.getColumnNames(), textMetadataParser.getColumnTypes(), forceHeaders);
+                    loader.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
+                    textMetadataDetector.evaluateResults(loader.getParsedLineCount(), loader.getErrorLineCount());
+                    loader.restart(textMetadataDetector.isHeader());
+
+//                    loader.configureDestination();
+//                    loader.prepareTable(cairoSecurityContext, textMetadataParser.getColumnNames(), textMetadataParser.getColumnTypes(), path, typeManager);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
+        }
+
+    }
+
+    public void process() throws SqlException, TextException {
+        long fd = ff.openRO(inputFilePath);
+        if (fd < 0) {
+            throw CairoException.instance(ff.errno()).put("Can't open input file").put(inputFilePath);
+        }
+
+        try {
+            final long fileLength = ff.length(fd);
+            if (fileLength < 1) {
+                LOG.info().$("Ignoring file because it's empty. Path=").$(inputFilePath).$();
+                return;
+            }
+
+            findChunkBoundaries(fd);
+            indexChunks();
+            mergePartitionIndexes();
+            //TODO: import phase
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    public void setMinChunkSize(int minChunkSize) {
+        this.minChunkSize = minChunkSize;
     }
 
     //returns list with N chunk boundaries
@@ -241,16 +330,15 @@ public class FileIndexer implements Closeable, Mutable {
         chunkStats.zero(0);
 
         for (int i = 0; i < chunks; i++) {
-            FileSplitter splitter = splitters.get(i);
-
+            TaskContext context = contextObjList.get(i);
             final long chunkLo = i * chunkSize;
             final long chunkHi = Long.min(chunkLo + chunkSize, fileLength);
 
             final long seq = pubSeq.next();
             if (seq < 0) {
-                splitter.countQuotes(chunkLo, chunkHi, chunkStats, 5 * i);
+                context.countQuotesStage(5 * i, chunkLo, chunkHi, chunkStats);
             } else {
-                queue.get(seq).of(5 * i, splitter, chunkLo, chunkHi, -1, chunkStats, doneLatch, TextImportTask.PHASE_BOUNDARY_CHECK);
+                queue.get(seq).of(doneLatch, TextImportTask.PHASE_BOUNDARY_CHECK, context, 5 * i, chunkLo, chunkHi, -1, chunkStats);
                 pubSeq.done(seq);
                 queuedCount++;
             }
@@ -264,18 +352,34 @@ public class FileIndexer implements Closeable, Mutable {
         return indexChunkStats;
     }
 
-    private void waitForWorkers(int queuedCount) {
-        // process our own queue (this should fix deadlock with 1 worker configuration)
-        while (doneLatch.getCount() > -queuedCount) {
-            long seq = subSeq.next();
-            if (seq > -1) {
-                queue.get(seq).run();
-                subSeq.done(seq);
+    void indexChunks() throws SqlException {
+        int queuedCount = 0;
+        doneLatch.reset();
+
+        LOG.info().$("Started indexing file=").$(inputFilePath).$();
+
+        createWorkDir();
+
+        for (int i = 0, n = indexChunkStats.size() - 2; i < n; i += 2) {
+            TaskContext context = contextObjList.get(i / 2);
+            final long chunkLo = indexChunkStats.get(i);
+            final long lineNumber = indexChunkStats.get(i + 1);
+            final long chunkHi = indexChunkStats.get(i + 2);
+
+            final long seq = pubSeq.next();
+            if (seq < 0) {
+                context.buildIndexStage(5 * i, chunkLo, chunkHi, lineNumber);
+            } else {//TODO: maybe could re-use chunkStats to store number of rows found in each chunk
+                queue.get(seq).of(doneLatch, TextImportTask.PHASE_INDEXING, context, i / 2, chunkLo, chunkHi, lineNumber, chunkStats);
+                pubSeq.done(seq);
+                queuedCount++;
             }
         }
 
-        doneLatch.await(queuedCount);
-        doneLatch.reset();
+        // process our own queue (this should fix deadlock with 1 worker configuration)
+        waitForWorkers(queuedCount);
+
+        LOG.info().$("Finished indexing file=").$(inputFilePath).$();
     }
 
     private void processChunkStats(long fileLength, int chunks) {
@@ -291,7 +395,7 @@ public class FileIndexer implements Closeable, Mutable {
 
         for (int i = 1; i < chunks; i++) {
             long startPos;
-            if ((quotes & 1) == 1) { // if number of quotes is odd then use odd starter 
+            if ((quotes & 1) == 1) { // if number of quotes is odd then use odd starter
                 startPos = chunkStats.get(5 * i + 4);
                 lines = chunkStats.get(5 * i + 2);
             } else {
@@ -312,64 +416,86 @@ public class FileIndexer implements Closeable, Mutable {
 
         if (indexChunkStats.get(indexChunkStats.size() - 2) < fileLength) {
             indexChunkStats.add(fileLength);
-            indexChunkStats.add(totalLines);//doesn't matter  
+            indexChunkStats.add(totalLines);//doesn't matter
         }
     }
 
-    void indexChunks() throws SqlException {
-        int queuedCount = 0;
-        doneLatch.reset();
-
-        LOG.info().$("Started indexing file=").$(inputFilePath).$();
-
-        createWorkDir();
-
-        for (int i = 0, n = indexChunkStats.size() - 2; i < n; i += 2) {
-            final long chunkLo = indexChunkStats.get(i);
-            final long lineNumber = indexChunkStats.get(i + 1);
-            final long chunkHi = indexChunkStats.get(i + 2);
-
-            FileSplitter splitter = splitters.get(i / 2);
-
-            final long seq = pubSeq.next();
-            if (seq < 0) {
-                splitter.index(chunkLo, chunkHi, lineNumber);
-            } else {//TODO: maybe could re-use chunkStats to store number of rows found in each chunk  
-                queue.get(seq).of(i / 2, splitter, chunkLo, chunkHi, lineNumber, indexChunkStats, doneLatch, TextImportTask.PHASE_INDEXING);
-                pubSeq.done(seq);
-                queuedCount++;
-            }
-        }
-
+    private void waitForWorkers(int queuedCount) {
         // process our own queue (this should fix deadlock with 1 worker configuration)
-        waitForWorkers(queuedCount);
-
-        LOG.info().$("Finished indexing file=").$(inputFilePath).$();
-    }
-
-    public void setMinChunkSize(int minChunkSize) {
-        this.minChunkSize = minChunkSize;
-    }
-
-    public void process() throws SqlException {
-        long fd = ff.openRO(inputFilePath);
-        if (fd < 0) {
-            throw CairoException.instance(ff.errno()).put("Can't open input file").put(inputFilePath);
+        while (doneLatch.getCount() > -queuedCount) {
+            long seq = subSeq.next();
+            if (seq > -1) {
+                queue.get(seq).run();
+                subSeq.done(seq);
+            }
         }
 
-        try {
-            final long fileLength = ff.length(fd);
-            if (fileLength < 1) {
-                LOG.info().$("Ignoring file because it's empty. Path=").$(inputFilePath).$();
-                return;
-            }
+        doneLatch.await(queuedCount);
+        doneLatch.reset();
+    }
 
-            findChunkBoundaries(fd);
-            indexChunks();
-            mergePartitionIndexes();
-            //TODO: import phase
-        } finally {
-            ff.close(fd);
+    public class TaskContext implements Closeable, Mutable {
+        private final DirectLongList mergeIndexes = new DirectLongList(64, MemoryTag.NATIVE_LONG_LIST);
+        private final Path path = new Path();
+        private final FileSplitter splitter;
+        private final TextLoaderBase loader;
+        private final CairoSecurityContext securityContext;
+        private final TextMetadataParser metadataParser;
+        private final TypeManager typeManager;
+
+        public TaskContext(SqlExecutionContext sqlExecutionContext, TextMetadataParser metadataParser, TypeManager typeManager) {
+            this.securityContext = sqlExecutionContext.getCairoSecurityContext();
+            this.metadataParser = metadataParser;
+            this.typeManager = typeManager;
+            final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
+            splitter = new FileSplitter(cairoEngine.getConfiguration());
+            loader = new TextLoaderBase(cairoEngine);
+        }
+
+        public void buildIndexStage(int index, long lo, long hi, long lineNumber) throws SqlException {
+            splitter.index(lo, hi, lineNumber);
+        }
+
+        @Override
+        public void clear() {
+            mergeIndexes.clear();
+            splitter.clear();
+            loader.clear();
+        }
+
+        @Override
+        public void close() throws IOException {
+            mergeIndexes.close();
+            path.close();
+            splitter.close();
+            loader.close();
+        }
+
+        public void countQuotesStage(int index, long lo, long hi, final LongList chunkStats) throws SqlException {
+            splitter.countQuotes(lo, hi, chunkStats, index);
+        }
+
+        public TextLoaderBase getLoader() {
+            return loader;
+        }
+
+        public FileSplitter getSplitter() {
+            return splitter;
+        }
+
+        public void mergeIndexStage(int index, long lo, long hi, final ObjList<CharSequence> partitionNames) throws TextException {
+            path.of(inputWorkRoot).concat(inputFileName);
+            for (long i = lo; i < hi; i++) {
+                final CharSequence name = partitionNames.get((int) i);
+                path.concat(name);
+                FileSplitter.mergePartitionIndex(ff, path, mergeIndexes);
+                loader.configureDestination(inputFileName, true, true, 0, 0, null);
+                loader.prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), path, typeManager);
+            }
+        }
+
+        public void of(CharSequence inputFileName, int index, int partitionBy, byte columnDelimiter, int timestampIndex, DateFormat format, boolean ignoreHeader) {
+            splitter.of(inputFileName, index, partitionBy, columnDelimiter, timestampIndex, format, ignoreHeader);
         }
     }
 }

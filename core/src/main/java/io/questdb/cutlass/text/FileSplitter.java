@@ -732,11 +732,8 @@ public class FileSplitter implements Closeable, Mutable {
 
     public static void mergePartitionIndex(final FilesFacade ff,
                                            final Path partitionPath,
-                                           final DirectLongList openFileDescriptors,
                                            final DirectLongList mergeIndexes) {
 
-        openFileDescriptors.resetCapacity();
-        openFileDescriptors.clear();
         mergeIndexes.resetCapacity();
         mergeIndexes.clear();
 
@@ -754,21 +751,14 @@ public class FileSplitter implements Closeable, Mutable {
                     if (chunkType == Files.DT_FILE) {
                         partitionPath.trimTo(partitionLen);
                         partitionPath.concat(chunkName).$();
-                        try {
-                            final long fd = TableUtils.openRO(ff, partitionPath, LOG);
-                            final long size = ff.length(fd);
-                            final long address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
+                        final long fd = TableUtils.openRO(ff, partitionPath, LOG);
+                        final long size = ff.length(fd);
+                        final long address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
+                        ff.close(fd);
 
-                            openFileDescriptors.add(fd);
-                            mergeIndexes.add(address);
-                            mergeIndexes.add(size / INDEX_ENTRY_SIZE);
-                            mergedIndexSize += size;
-                        } catch (Exception e) {
-                            for (long i = 0, sz = openFileDescriptors.size(); i < sz; i++) {
-                                ff.close(openFileDescriptors.get(i));
-                            }
-                            throw e;
-                        }
+                        mergeIndexes.add(address);
+                        mergeIndexes.add(size / INDEX_ENTRY_SIZE);
+                        mergedIndexSize += size;
                     }
                 } while (ff.findNext(chunk) > 0);
             } finally {
@@ -783,22 +773,19 @@ public class FileSplitter implements Closeable, Mutable {
             partitionPath.concat(INDEX_FILE_NAME).$();
             fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
             address = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
+            ff.close(fd);
+
             final int indexesCount = (int) mergeIndexes.size() / 2;
             final long merged = Vect.mergeLongIndexesAscExt(mergeIndexes.getAddress(), indexesCount, address);
             assert merged == address;
         } finally {
-            if (fd != -1) {
-                ff.fsync(fd);
-                ff.close(fd);
-            }
             if (address != -1) {
                 ff.munmap(address, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
             }
-            for (long i = 0, sz = openFileDescriptors.size(); i < sz; i++) {
+            for (long i = 0, sz = mergeIndexes.size() / 2; i < sz; i++) {
                 final long addr = mergeIndexes.get(2 * i);
                 final long size = mergeIndexes.get(2 * i + 1) * INDEX_ENTRY_SIZE;
                 ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
-                ff.close(openFileDescriptors.get(i));
             }
             //todo: remove all index chunks
         }

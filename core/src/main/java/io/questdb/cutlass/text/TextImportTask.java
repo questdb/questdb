@@ -26,95 +26,75 @@ package io.questdb.cutlass.text;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.CountDownLatchSPI;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.str.Path;
+import io.questdb.std.ObjList;
 
-import java.io.Closeable;
-import java.io.IOException;
-
-public class TextImportTask implements Closeable {
+public class TextImportTask {
 
     public static final byte PHASE_BOUNDARY_CHECK = 1;
     public static final byte PHASE_INDEXING = 2;
     public static final byte PHASE_INDEX_MERGE = 3;
 
-    private int index;
-
-    private FileSplitter splitter;
-
-    private long chunkLo;
-    private long chunkHi;
-    private long lineNumber;
-    private LongList stats;
     private CountDownLatchSPI doneLatch;
     private byte phase;
-    private final DirectLongList openFileDescriptors = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT);
-    private final DirectLongList mergeIndexes = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT);
-    private final Path path = new Path();
-    private FilesFacade ff;
-
-    @Override
-    public void close() throws IOException {
-        openFileDescriptors.close();
-        mergeIndexes.close();
-        path.close();
-    }
-
-    public Path getPath() {
-        return path;
-    }
+    private FileIndexer.TaskContext context;
+    private int index;
+    private long lo;
+    private long hi;
+    private long lineNumber;
+    private LongList chunkStats;
+    private ObjList<CharSequence> partitionNames;
 
     public void of(
-            FilesFacade ff,
             CountDownLatchSPI doneLatch,
-            byte phase
-    ) {
-        this.ff = ff;
-        this.doneLatch = doneLatch;
-        this.phase = phase;
-        resetCapacity();
-    }
-
-    public void resetCapacity() {
-        openFileDescriptors.resetCapacity();
-        mergeIndexes.resetCapacity();
-    }
-
-    public void of(
+            byte phase,
+            FileIndexer.TaskContext context,
             int index,
-            FileSplitter splitter,
-            long chunkLo,
-            long chunkHi,
+            long lo,
+            long hi,
             long lineNumber,
-            LongList stats,
-            CountDownLatchSPI doneLatch,
-            byte phase
+            LongList chunkStats
     ) {
-        this.index = index;
-        this.splitter = splitter;
-        this.chunkLo = chunkLo;
-        this.chunkHi = chunkHi;
-        this.lineNumber = lineNumber;
-        this.stats = stats;
         this.doneLatch = doneLatch;
         this.phase = phase;
+        this.context = context;
+        this.index = index;
+        this.lo = lo;
+        this.hi = hi;
+        this.lineNumber = lineNumber;
+        this.chunkStats = chunkStats;
+    }
+
+    public void of(
+            CountDownLatchSPI doneLatch,
+            byte phase,
+            FileIndexer.TaskContext context,
+            int index,
+            long lo,
+            long hi,
+            ObjList<CharSequence> partitionNames
+    ) {
+        this.doneLatch = doneLatch;
+        this.phase = phase;
+        this.context = context;
+        this.index = index;
+        this.lo = lo;
+        this.hi = hi;
+        this.partitionNames = partitionNames;
     }
 
     public boolean run() {
         try {
             if (phase == PHASE_BOUNDARY_CHECK) {
-                splitter.countQuotes(chunkLo, chunkHi, stats, index);
+                context.countQuotesStage(index, lo, hi, chunkStats);
             } else if (phase == PHASE_INDEXING) {
-                splitter.index(chunkLo, chunkHi, lineNumber);
+                context.buildIndexStage(index, lo, hi, lineNumber);
             } else if (phase == PHASE_INDEX_MERGE) {
-                FileSplitter.mergePartitionIndex(ff, path, openFileDescriptors, mergeIndexes);
+                context.mergeIndexStage(index, lo, hi, partitionNames);
             } else {
                 throw new RuntimeException("Unexpected phase " + phase);
             }
-        } catch (SqlException e) {
+        } catch (SqlException | TextException e) {
             e.printStackTrace();//TODO: how can we react to job failing 
         }
 

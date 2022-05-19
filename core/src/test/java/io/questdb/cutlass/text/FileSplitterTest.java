@@ -6,7 +6,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.vm.*;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cairo.vm.MemoryCMRImpl;
+import io.questdb.cairo.vm.MemoryPMARImpl;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.*;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
@@ -20,7 +23,8 @@ import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
-import java.io.*;
+import java.io.File;
+import java.io.IOException;
 import java.util.*;
 
 /**
@@ -430,6 +434,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
                 DateFormat dateFormat = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.SSSZ");
                 indexer.setMinChunkSize(10);
                 indexer.of("test-import.csv", PartitionBy.YEAR, (byte) ',', 4, dateFormat, true);
+                indexer.parseStructure();
                 indexer.process();
             }
         });
