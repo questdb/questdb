@@ -319,11 +319,15 @@ public class ObjList<T> implements Mutable, Sinkable {
             for (int i = 0, n = pos; i < n; i++) {
                 Object lhs = this.getQuick(i);
                 if (lhs == null) {
-                    return that.getQuick(i) == null;
-                } else if (lhs.equals(that.getQuick(i))) {
-                    return true;
+                    if (that.getQuick(i) != null) {
+                        return false;
+                    }
+                } else if (!lhs.equals(that.getQuick(i))) {
+                    return false;
                 }
             }
+
+            return true;
         }
         return false;
     }

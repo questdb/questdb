@@ -410,11 +410,15 @@ public class LongList implements Mutable, LongVec {
             for (int i = 0, n = pos; i < n; i++) {
                 long lhs = this.getQuick(i);
                 if (lhs == noEntryValue) {
-                    return that.getQuick(i) == noEntryValue;
-                } else if (lhs == that.getQuick(i)) {
-                    return true;
+                    if (that.getQuick(i) != noEntryValue) {
+                        return false;
+                    }
+                } else if (lhs != that.getQuick(i)) {
+                    return false;
                 }
             }
+
+            return true;
         }
         return false;
     }

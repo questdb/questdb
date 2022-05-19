@@ -47,6 +47,7 @@ public class TextImportTask implements Closeable {
 
     private long chunkLo;
     private long chunkHi;
+    private long lineNumber;
     private LongList stats;
     private CountDownLatchSPI doneLatch;
     private byte phase;
@@ -87,6 +88,7 @@ public class TextImportTask implements Closeable {
             FileSplitter splitter,
             long chunkLo,
             long chunkHi,
+            long lineNumber,
             LongList stats,
             CountDownLatchSPI doneLatch,
             byte phase
@@ -95,6 +97,7 @@ public class TextImportTask implements Closeable {
         this.splitter = splitter;
         this.chunkLo = chunkLo;
         this.chunkHi = chunkHi;
+        this.lineNumber = lineNumber;
         this.stats = stats;
         this.doneLatch = doneLatch;
         this.phase = phase;
@@ -105,7 +108,7 @@ public class TextImportTask implements Closeable {
             if (phase == PHASE_BOUNDARY_CHECK) {
                 splitter.countQuotes(chunkLo, chunkHi, stats, index);
             } else if (phase == PHASE_INDEXING) {
-                splitter.index(chunkLo, chunkHi, index);
+                splitter.index(chunkLo, chunkHi, lineNumber);
             } else if (phase == PHASE_INDEX_MERGE) {
                 FileSplitter.mergePartitionIndex(ff, path, openFileDescriptors, mergeIndexes);
             } else {

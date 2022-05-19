@@ -61,7 +61,13 @@ public class FileIndexer implements Closeable, Mutable {
     private static final int DEFAULT_MIN_CHUNK_SIZE = 300 * 1024 * 1024;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
 
+    //holds result of first phase - boundary scanning 
+    //count of quotes, even new lines, odd new lines, offset to first even newline, offset to first odd newline
     private final LongList chunkStats = new LongList();
+
+    //holds input for scond phase - indexing: offset and start line number for each chunk 
+    private final LongList indexChunkStats = new LongList();
+
     private final ObjList<FileSplitter> splitters = new ObjList<>();
     private final FilesFacade ff;
 
@@ -80,8 +86,6 @@ public class FileIndexer implements Closeable, Mutable {
 
     //name of file to process in inputRoot dir
     private CharSequence inputFileName;
-
-    private final int bufferLength;
 
     private final StringSink partitionNameSink = new StringSink();
     private final DirectLongList openFileDescriptors = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT);
@@ -104,14 +108,13 @@ public class FileIndexer implements Closeable, Mutable {
         this.inputRoot = cfg.getInputRoot();
         this.inputWorkRoot = cfg.getInputWorkRoot();
         this.dirMode = cfg.getMkDirMode();
-
-        this.bufferLength = sqlExecutionContext.getCairoEngine().getConfiguration().getSqlCopyBufferSize();
     }
 
     @Override
     public void clear() {
         doneLatch.reset();
         chunkStats.clear();
+        indexChunkStats.clear();
 
         for (int i = 0; i < splitters.size(); i++) {
             splitters.get(i).clear();
@@ -181,16 +184,7 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         // process our own queue (this should fix deadlock with 1 worker configuration)
-        while (doneLatch.getCount() > -queuedCount) {
-            long seq = subSeq.next();
-            if (seq > -1) {
-                queue.get(seq).run();
-                subSeq.done(seq);
-            }
-        }
-
-        doneLatch.await(queuedCount);//TODO: add timeout ?
-        doneLatch.reset();
+        waitForWorkers(queuedCount);
 
         LOG.info().$("Finished index merge").$();
     }
@@ -227,6 +221,15 @@ public class FileIndexer implements Closeable, Mutable {
 
         assert (workerCount > 0 && minChunkSize > 0);
 
+        if (workerCount == 1) {
+            indexChunkStats.setPos(0);
+            indexChunkStats.add(0);
+            indexChunkStats.add(0);
+            indexChunkStats.add(fileLength);
+            indexChunkStats.add(0);
+            return indexChunkStats;
+        }
+
         long chunkSize = fileLength / workerCount;
         chunkSize = Math.max(minChunkSize, chunkSize);
         final int chunks = (int) (fileLength / chunkSize);
@@ -234,7 +237,6 @@ public class FileIndexer implements Closeable, Mutable {
         int queuedCount = 0;
         doneLatch.reset();
 
-        //count of quotes, even new lines, odd new lines, offset to first even newline, offset to first odd newline
         chunkStats.setPos(chunks * 5);
         chunkStats.zero(0);
 
@@ -248,14 +250,22 @@ public class FileIndexer implements Closeable, Mutable {
             if (seq < 0) {
                 splitter.countQuotes(chunkLo, chunkHi, chunkStats, 5 * i);
             } else {
-                queue.get(seq).of(5 * i, splitter, chunkLo, chunkHi, chunkStats, doneLatch, TextImportTask.PHASE_BOUNDARY_CHECK);
+                queue.get(seq).of(5 * i, splitter, chunkLo, chunkHi, -1, chunkStats, doneLatch, TextImportTask.PHASE_BOUNDARY_CHECK);
                 pubSeq.done(seq);
                 queuedCount++;
             }
         }
 
-        // process our own queue
-        // this should fix deadlock with 1 worker configuration
+        waitForWorkers(queuedCount);
+        processChunkStats(fileLength, chunks);
+
+        LOG.info().$("Finished checking boundaries in file=").$(inputFilePath).$();
+
+        return indexChunkStats;
+    }
+
+    private void waitForWorkers(int queuedCount) {
+        // process our own queue (this should fix deadlock with 1 worker configuration)
         while (doneLatch.getCount() > -queuedCount) {
             long seq = subSeq.next();
             if (seq > -1) {
@@ -265,39 +275,45 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         doneLatch.await(queuedCount);
-        queuedCount = 0;
         doneLatch.reset();
-
-        processChunkStats(fileLength, chunks);
-
-        LOG.info().$("Finished checking boundaries in file=").$(inputFilePath).$();
-
-        return chunkStats;
     }
 
     private void processChunkStats(long fileLength, int chunks) {
         long quotes = chunkStats.get(0);
-        chunkStats.set(0, 0);
-        int actualChunks = 1;
+
+        indexChunkStats.setPos(0);
+        //set first chunk offset and line number
+        indexChunkStats.add(0);
+        indexChunkStats.add(0);
+
+        long lines;
+        long totalLines = chunks > 0 ? chunkStats.get(1) + 1 : 1;
 
         for (int i = 1; i < chunks; i++) {
             long startPos;
             if ((quotes & 1) == 1) { // if number of quotes is odd then use odd starter 
                 startPos = chunkStats.get(5 * i + 4);
+                lines = chunkStats.get(5 * i + 2);
             } else {
                 startPos = chunkStats.get(5 * i + 3);
+                lines = chunkStats.get(5 * i + 1);
             }
 
             //if whole chunk  belongs to huge quoted string or contains one very long line
             //then it should be ignored here and merged with previous chunk
             if (startPos > -1) {
-                chunkStats.set(actualChunks++, startPos);
+                indexChunkStats.add(startPos);
+                indexChunkStats.add(totalLines);
             }
 
             quotes += chunkStats.get(5 * i);
+            totalLines += lines;
         }
-        chunkStats.setPos(actualChunks);
-        chunkStats.add(fileLength);
+
+        if (indexChunkStats.get(indexChunkStats.size() - 2) < fileLength) {
+            indexChunkStats.add(fileLength);
+            indexChunkStats.add(totalLines);//doesn't matter  
+        }
     }
 
     void indexChunks() throws SqlException {
@@ -308,51 +324,31 @@ public class FileIndexer implements Closeable, Mutable {
 
         createWorkDir();
 
-        for (int i = 0, n = chunkStats.size() - 1; i < n; i++) {
-            final long chunkLo = chunkStats.get(i);
-            final long chunkHi = chunkStats.get(i + 1);
+        for (int i = 0, n = indexChunkStats.size() - 2; i < n; i += 2) {
+            final long chunkLo = indexChunkStats.get(i);
+            final long lineNumber = indexChunkStats.get(i + 1);
+            final long chunkHi = indexChunkStats.get(i + 2);
 
-            FileSplitter splitter = splitters.get(i);
+            FileSplitter splitter = splitters.get(i / 2);
 
             final long seq = pubSeq.next();
             if (seq < 0) {
-                splitter.index(chunkLo, chunkHi, 5 * i);
+                splitter.index(chunkLo, chunkHi, lineNumber);
             } else {//TODO: maybe could re-use chunkStats to store number of rows found in each chunk  
-                queue.get(seq).of(5 * i, splitter, chunkLo, chunkHi, chunkStats, doneLatch, TextImportTask.PHASE_INDEXING);
+                queue.get(seq).of(i / 2, splitter, chunkLo, chunkHi, lineNumber, indexChunkStats, doneLatch, TextImportTask.PHASE_INDEXING);
                 pubSeq.done(seq);
                 queuedCount++;
             }
         }
 
         // process our own queue (this should fix deadlock with 1 worker configuration)
-        while (doneLatch.getCount() > -queuedCount) {
-            long seq = subSeq.next();
-            if (seq > -1) {
-                queue.get(seq).run();
-                subSeq.done(seq);
-            }
-        }
-
-        doneLatch.await(queuedCount);//TODO: add timeout ?
-        doneLatch.reset();
+        waitForWorkers(queuedCount);
 
         LOG.info().$("Finished indexing file=").$(inputFilePath).$();
     }
 
     public void setMinChunkSize(int minChunkSize) {
         this.minChunkSize = minChunkSize;
-    }
-
-    Path getInputFilePath() {
-        return inputFilePath;
-    }
-
-    FilesFacade getFf() {
-        return ff;
-    }
-
-    int getBufferLength() {
-        return bufferLength;
     }
 
     public void process() throws SqlException {

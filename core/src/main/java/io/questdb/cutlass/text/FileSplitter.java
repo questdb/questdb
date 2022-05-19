@@ -483,6 +483,7 @@ public class FileSplitter implements Closeable, Mutable {
             if (c == columnDelimiter) {
                 onColumnDelimiter(lo, ptr);
             } else if (c == '"') {
+                checkEol(lo);
                 onQuote();
             } else if (c == '\n' || c == '\r') {
                 onLineEnd(ptr);
@@ -541,7 +542,7 @@ public class FileSplitter implements Closeable, Mutable {
         if (fieldIndex == timestampIndex && !header) {
             if (lastQuotePos > -1) {
                 timestampField.of(this.fieldLo, lastQuotePos - 1);
-                lastQuotePos = -1;
+                //lastQuotePos = -1;
             } else {
                 timestampField.of(this.fieldLo, this.fieldHi - 1);
             }
@@ -552,6 +553,8 @@ public class FileSplitter implements Closeable, Mutable {
                 clearRollBuffer(ptr);
             }
         }
+
+        lastQuotePos = -1;
 
         this.fieldLo = this.fieldHi;
     }
@@ -576,7 +579,7 @@ public class FileSplitter implements Closeable, Mutable {
         this.lastLineStart = this.fieldLo - lo;
     }
 
-    public void index(long chunkLo, long chunkHi, int chunkIndex) throws SqlException {
+    public void index(long chunkLo, long chunkHi, long lineNumber) throws SqlException {
         assert chunkHi > 0;
         assert chunkLo >= 0 && chunkLo < chunkHi;
 
@@ -585,6 +588,9 @@ public class FileSplitter implements Closeable, Mutable {
 
         this.offset = chunkLo;
         long read;
+
+        this.lastLineStart = 0;
+        this.lineCount = lineNumber;
 
         try {
             do {
@@ -606,7 +612,8 @@ public class FileSplitter implements Closeable, Mutable {
             closeOutputFiles();
         }
 
-        LOG.info().$("Finished indexing chunk [no=").$(chunkIndex / 5).$(", lines=").$(lineCount).$(']').$();
+        LOG.info().$("Finished indexing chunk [start=").$(chunkLo).$(",end=").$(chunkHi)
+                .$(",lines=").$(lineCount - lineNumber).$(",errors=").$(errorCount).$(']').$();
     }
 
     void openInputFile() {
