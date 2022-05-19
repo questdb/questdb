@@ -106,6 +106,7 @@ public class SqlCompiler implements Closeable {
     private final TextLoader textLoader;
     private final FilesFacade ff;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
+    private final IndexBuilder rebuildIndex = new IndexBuilder();
 
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
@@ -158,7 +159,7 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor compileRollback = this::compileRollback;
         final KeywordBasedExecutor truncateTables = this::truncateTables;
         final KeywordBasedExecutor alterTable = this::alterTable;
-        final KeywordBasedExecutor repairTables = this::repairTables;
+        final KeywordBasedExecutor reindexTable = this::reindexTable;
         final KeywordBasedExecutor dropTable = this::dropTable;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor sqlShow = this::sqlShow;
@@ -169,8 +170,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("TRUNCATE", truncateTables);
         keywordBasedExecutors.put("alter", alterTable);
         keywordBasedExecutors.put("ALTER", alterTable);
-        keywordBasedExecutors.put("repair", repairTables);
-        keywordBasedExecutors.put("REPAIR", repairTables);
+        keywordBasedExecutors.put("reindex", reindexTable);
+        keywordBasedExecutors.put("REINDEX", reindexTable);
         keywordBasedExecutors.put("set", compileSet);
         keywordBasedExecutors.put("SET", compileSet);
         keywordBasedExecutors.put("begin", compileBegin);
@@ -909,6 +910,7 @@ public class SqlCompiler implements Closeable {
         Misc.free(path);
         Misc.free(renamePath);
         Misc.free(textLoader);
+        Misc.free(rebuildIndex);
     }
 
     @NotNull
@@ -2527,27 +2529,66 @@ public class SqlCompiler implements Closeable {
         return false;
     }
 
-    private CompiledQuery repairTables(SqlExecutionContext executionContext) throws SqlException {
+    private CompiledQuery reindexTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !isTableKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
+            throw SqlException.$(lexer.lastTokenPosition(), "TABLE expected");
         }
 
-        do {
-            tok = SqlUtil.fetchNext(lexer);
+        tok = SqlUtil.fetchNext(lexer);
 
-            if (tok == null || Chars.equals(tok, ',')) {
-                throw SqlException.$(lexer.getPosition(), "table name expected");
+        if (tok == null || Chars.equals(tok, ',')) {
+            throw SqlException.$(lexer.getPosition(), "table name expected");
+        }
+
+        if (Chars.isQuoted(tok)) {
+            tok = GenericLexer.unquote(tok);
+        }
+        tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+        CharSequence tableName = tok;
+        rebuildIndex.of(path.of(configuration.getRoot()).concat(tableName), configuration);
+
+        tok = SqlUtil.fetchNext(lexer);
+        CharSequence columnName = null;
+
+        if (tok != null && SqlKeywords.isColumnKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+            if (Chars.isQuoted(tok)) {
+                tok = GenericLexer.unquote(tok);
             }
+            if (tok == null || TableUtils.isValidColumnName(tok)) {
+                columnName = GenericLexer.immutableOf(tok);
+                tok = SqlUtil.fetchNext(lexer);
+            }
+        }
+
+        CharSequence partition = null;
+        if (tok != null && SqlKeywords.isPartitionKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
 
             if (Chars.isQuoted(tok)) {
                 tok = GenericLexer.unquote(tok);
             }
-            tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+            partition = tok;
             tok = SqlUtil.fetchNext(lexer);
+        }
 
-        } while (tok != null && Chars.equals(tok, ','));
+        if (tok == null || !isLockKeyword(tok)) {
+            throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !isExclusiveKeyword(tok)) {
+            throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.getPosition(), "EOF expected");
+        }
+
+        rebuildIndex.rebuildPartitionColumn(partition, columnName);
         return compiledQuery.ofRepair();
     }
 
