@@ -32,7 +32,6 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -73,7 +72,6 @@ public class WriterPool extends AbstractPool {
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
-    private final Path path = new Path();
     private final MicrosecondClock clock;
     private final CharSequence root;
     @NotNull
@@ -246,7 +244,8 @@ public class WriterPool extends AbstractPool {
 
                 if (e.lockFd != -1) {
                     ff.close(e.lockFd);
-                    TableUtils.lockName(path.of(root).concat(name));
+                    Path path = Path.getThreadLocal(root).concat(name);
+                    TableUtils.lockName(path);
                     if (!ff.remove(path)) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
@@ -316,7 +315,6 @@ public class WriterPool extends AbstractPool {
     @Override
     protected void closePool() {
         super.closePool();
-        Misc.free(path);
         LOG.info().$("closed").$();
     }
 
@@ -474,7 +472,8 @@ public class WriterPool extends AbstractPool {
 
     private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, CharSequence lockReason) {
         assertLockReason(lockReason);
-        TableUtils.lockName(path.of(root).concat(tableName));
+        Path path = Path.getThreadLocal(root).concat(tableName);
+        TableUtils.lockName(path);
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
             LOG.error().$("could not lock [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
