@@ -107,7 +107,7 @@ public class SqlCompiler implements Closeable {
     private final FilesFacade ff;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final IndexBuilder rebuildIndex = new IndexBuilder();
-
+    private final VacuumColumnVersions vacuumColumnVersions;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
@@ -115,7 +115,6 @@ public class SqlCompiler implements Closeable {
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
-    private final VacuumColumnVersions vacuumColumnVersions;
 
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
@@ -159,6 +158,7 @@ public class SqlCompiler implements Closeable {
         final KeywordBasedExecutor compileRollback = this::compileRollback;
         final KeywordBasedExecutor truncateTables = this::truncateTables;
         final KeywordBasedExecutor alterTable = this::alterTable;
+        final KeywordBasedExecutor repairTables = this::repairTables;
         final KeywordBasedExecutor reindexTable = this::reindexTable;
         final KeywordBasedExecutor dropTable = this::dropTable;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
@@ -170,6 +170,8 @@ public class SqlCompiler implements Closeable {
         keywordBasedExecutors.put("TRUNCATE", truncateTables);
         keywordBasedExecutors.put("alter", alterTable);
         keywordBasedExecutors.put("ALTER", alterTable);
+        keywordBasedExecutors.put("repair", repairTables);
+        keywordBasedExecutors.put("REPAIR", repairTables);
         keywordBasedExecutors.put("reindex", reindexTable);
         keywordBasedExecutors.put("REINDEX", reindexTable);
         keywordBasedExecutors.put("set", compileSet);
@@ -2517,18 +2519,6 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private boolean removeTableDirectory(CreateTableModel model) {
-        int errno;
-        if ((errno = engine.removeDirectory(path, model.getName().token)) == 0) {
-            return true;
-        }
-        LOG.error()
-                .$("could not clean up after create table failure [path=").$(path)
-                .$(", errno=").$(errno)
-                .$(']').$();
-        return false;
-    }
-
     private CompiledQuery reindexTable(SqlExecutionContext executionContext) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
@@ -2589,6 +2579,42 @@ public class SqlCompiler implements Closeable {
         }
 
         rebuildIndex.rebuildPartitionColumn(partition, columnName);
+        return compiledQuery.ofRepair();
+    }
+
+    private boolean removeTableDirectory(CreateTableModel model) {
+        int errno;
+        if ((errno = engine.removeDirectory(path, model.getName().token)) == 0) {
+            return true;
+        }
+        LOG.error()
+                .$("could not clean up after create table failure [path=").$(path)
+                .$(", errno=").$(errno)
+                .$(']').$();
+        return false;
+    }
+
+    private CompiledQuery repairTables(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok;
+        tok = SqlUtil.fetchNext(lexer);
+        if (tok == null || !isTableKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'table' expected");
+        }
+
+        do {
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (tok == null || Chars.equals(tok, ',')) {
+                throw SqlException.$(lexer.getPosition(), "table name expected");
+            }
+
+            if (Chars.isQuoted(tok)) {
+                tok = GenericLexer.unquote(tok);
+            }
+            tableExistsOrFail(lexer.lastTokenPosition(), tok, executionContext);
+            tok = SqlUtil.fetchNext(lexer);
+
+        } while (tok != null && Chars.equals(tok, ','));
         return compiledQuery.ofRepair();
     }
 
