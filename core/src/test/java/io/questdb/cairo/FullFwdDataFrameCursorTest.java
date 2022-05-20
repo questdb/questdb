@@ -1382,26 +1382,10 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
             };
 
-            final int workerCount = 2;
             try (MyWorkScheduler workScheduler = new MyWorkScheduler(pubSeq, subSeq)) {
                 final WorkerPool workerPool;
                 if (subSeq != null) {
-                    workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                        @Override
-                        public int[] getWorkerAffinity() {
-                            return TestUtils.getWorkerAffinity(workerCount);
-                        }
-
-                        @Override
-                        public int getWorkerCount() {
-                            return workerCount;
-                        }
-
-                        @Override
-                        public boolean haltOnError() {
-                            return false;
-                        }
-                    }, metrics);
+                    workerPool = new TestWorkerPool(2, metrics);
                     workerPool.assign(new ColumnIndexerJob(workScheduler));
                     workerPool.start(LOG);
                 } else {
@@ -1523,24 +1507,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 timestamp = sg.appendABC(AbstractCairoTest.configuration, rnd, N, timestamp, increment);
             }
 
-            final int workerCount = 2;
             try (final MyWorkScheduler workScheduler = new MyWorkScheduler()) {
-                final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public int[] getWorkerAffinity() {
-                        return TestUtils.getWorkerAffinity(workerCount);
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return workerCount;
-                    }
-
-                    @Override
-                    public boolean haltOnError() {
-                        return false;
-                    }
-                }, metrics);
+                WorkerPool workerPool = new TestWorkerPool(2, metrics);
                 workerPool.assign(new ColumnIndexerJob(workScheduler));
 
                 try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler, metrics)) {

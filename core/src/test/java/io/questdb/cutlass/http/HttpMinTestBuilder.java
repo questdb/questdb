@@ -32,9 +32,8 @@ import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Scrapable;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.test.tools.TestUtils;
 import org.junit.rules.TemporaryFolder;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -62,22 +61,7 @@ public class HttpMinTestBuilder {
                     .withBaseDir(temp.getRoot().getAbsolutePath())
                     .build();
 
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return TestUtils.getWorkerAffinity(getWorkerCount());
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            final WorkerPool workerPool = new TestWorkerPool(1);
 
             DefaultCairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(baseDir);
 

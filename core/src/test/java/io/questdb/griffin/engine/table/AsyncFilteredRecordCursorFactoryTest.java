@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -513,22 +512,9 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
     private void withPool(CustomisableRunnable runnable) throws Exception {
         int workerCount = 4;
         assertMemoryLeak(() -> {
-            WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return TestUtils.getWorkerAffinity(workerCount);
-                }
 
-                @Override
-                public int getWorkerCount() {
-                    return workerCount;
-                }
+            WorkerPool pool = new TestWorkerPool(workerCount);
 
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
             pool.assignCleaner(Path.CLEANER);
 
             O3Utils.setupWorkerPool(
@@ -562,22 +548,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
         final Rnd rnd = new Rnd();
 
         assertMemoryLeak(() -> {
-            final WorkerPool sharedPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return TestUtils.getWorkerAffinity(sharedPoolWorkerCount);
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return sharedPoolWorkerCount;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            final WorkerPool sharedPool = new TestWorkerPool(sharedPoolWorkerCount);
 
             sharedPool.assignCleaner(Path.CLEANER);
 
@@ -589,22 +560,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
             );
             sharedPool.start(null);
 
-            final WorkerPool stealingPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return TestUtils.getWorkerAffinity(getWorkerCount());
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return stealingPoolWorkerCount;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            final WorkerPool stealingPool = new TestWorkerPool(stealingPoolWorkerCount);
 
             stealingPool.assignCleaner(Path.CLEANER);
 
@@ -789,7 +745,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
 
-            // !!! This call is the problematic one !!!
             compiler.compile("insert into x select rnd_symbol('C','D') s, timestamp_sequence(1000000000, 100000) from long_sequence(100)", sqlExecutionContext);
 
             // Verify that all symbol tables (original and views) are refreshed to include the new symbols.

@@ -33,12 +33,10 @@ import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -301,23 +299,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     @Override
-    protected WorkerPoolConfiguration getWorkerPoolConfiguration() {
-        return new WorkerPoolConfiguration() {
-            @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(getWorkerCount());
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 4;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return true;
-            }
-        };
+    protected int getWorkerCount() {
+        return 4;
     }
 
     void initFuzzParameters(int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,

@@ -32,8 +32,8 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
@@ -54,7 +54,7 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected static final int WAIT_ILP_TABLE_RELEASE = 0x2;
     protected static final int WAIT_ALTER_TABLE_RELEASE = 0x4;
     private final static Log LOG = LogFactory.getLog(AbstractLineTcpReceiverTest.class);
-    protected final WorkerPool sharedWorkerPool = new WorkerPool(getWorkerPoolConfiguration(), metrics);
+    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(getWorkerCount(), metrics);
     protected final int bindPort = 9002; // Don't clash with other tests since they may run in parallel
     private final ThreadLocal<Socket> tlSocket = new ThreadLocal<>();
     private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
@@ -174,23 +174,8 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         return socket;
     }
 
-    protected WorkerPoolConfiguration getWorkerPoolConfiguration() {
-        return new WorkerPoolConfiguration() {
-            @Override
-            public int[] getWorkerAffinity() {
-                return TestUtils.getWorkerAffinity(getWorkerCount());
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 1;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return true;
-            }
-        };
+    protected int getWorkerCount() {
+        return 1;
     }
 
     protected void runInContext(LineTcpServerAwareContext r) throws Exception {
