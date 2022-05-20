@@ -24,6 +24,7 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
@@ -670,11 +671,12 @@ public final class TestUtils {
     public static void execute(
             @Nullable WorkerPool pool,
             CustomisableRunnable runnable,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            Metrics metrics
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
-                final CairoEngine engine = new CairoEngine(configuration);
+                final CairoEngine engine = new CairoEngine(configuration, metrics);
                 final SqlCompiler compiler = new SqlCompiler(engine);
                 final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
         ) {
@@ -694,6 +696,14 @@ public final class TestUtils {
             Assert.assertEquals(0, engine.getBusyWriterCount());
             Assert.assertEquals(0, engine.getBusyReaderCount());
         }
+    }
+
+    public static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runner,
+            CairoConfiguration configuration
+    ) throws Exception {
+        execute(pool, runner, configuration, Metrics.disabled());
     }
 
     @NotNull
