@@ -165,6 +165,17 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         }
     }
 
+    public static boolean isOpenColumnModeForAppend(int openColumnMode) {
+        switch (openColumnMode) {
+            case OPEN_MID_PARTITION_FOR_APPEND:
+            case OPEN_LAST_PARTITION_FOR_APPEND:
+            case OPEN_NEW_PARTITION_FOR_APPEND:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     public static void openColumn(O3OpenColumnTask task, long cursor, Sequence subSeq) {
         final int openColumnMode = task.getOpenColumnMode();
         final Path pathToTable = task.getPathToTable();

@@ -344,6 +344,10 @@ public class AbstractO3Test {
         executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root)));
     }
 
+    protected static void executeVanillaWithMetrics(CustomisableRunnable code) throws Exception {
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), Metrics.enabled()));
+    }
+
     static void assertO3DataConsistency(
             final CairoEngine engine,
             final SqlCompiler compiler,

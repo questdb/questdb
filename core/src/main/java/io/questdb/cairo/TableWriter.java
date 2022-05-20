@@ -585,6 +585,10 @@ public class TableWriter implements Closeable {
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
     }
 
+    public void addPhysicallyWrittenRows(long rows) {
+        metrics.tableWriter().addPhysicallyWrittenRows(rows);
+    }
+
     public int attachPartition(long timestamp) {
         // Partitioned table must have a timestamp
         // SQL compiler will check that table is partitioned
@@ -1978,7 +1982,6 @@ public class TableWriter implements Closeable {
      * @param commitLag  if > 0 then do a partial commit, leaving the rows within the lag in a new uncommitted transaction
      */
     private void commit(int commitMode, long commitLag) {
-
         checkDistressed();
 
         if (o3InError) {
@@ -1991,7 +1994,8 @@ public class TableWriter implements Closeable {
         }
 
         if (inTransaction()) {
-            if (hasO3() && o3Commit(commitLag)) {
+            final boolean o3 = hasO3();
+            if (o3 && o3Commit(commitLag)) {
                 // Bookmark masterRef to track how many rows is in uncommitted state
                 this.committedMasterRef = masterRef;
                 return;
@@ -2015,6 +2019,10 @@ public class TableWriter implements Closeable {
 
             metrics.tableWriter().incrementCommits();
             metrics.tableWriter().addCommittedRows(rowsAdded);
+            if (!o3) {
+                // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
+                addPhysicallyWrittenRows(rowsAdded);
+            }
         }
     }
 
@@ -2694,6 +2702,8 @@ public class TableWriter implements Closeable {
                 long prevTransientRowCount = transientRowCount;
 
                 resizeColumnTopSink(o3TimestampMin, o3TimestampMax);
+
+                // One loop iteration per partition.
                 while (srcOoo < srcOooMax) {
                     try {
                         final long srcOooLo = srcOoo;
@@ -2714,7 +2724,10 @@ public class TableWriter implements Closeable {
                         }
 
                         final long partitionTimestamp = partitionFloorMethod.floor(o3Timestamp);
+
+                        // This partition is the last partition.
                         final boolean last = partitionTimestamp == lastPartitionTimestamp;
+
                         srcOoo = srcOooHi + 1;
 
                         final long srcDataMax;
@@ -2732,8 +2745,14 @@ public class TableWriter implements Closeable {
                             srcNameTxn = -1;
                         }
 
+                        // We're appending onto the last partition.
                         final boolean append = last && (srcDataMax == 0 || o3Timestamp >= maxTimestamp);
-                        final long partitionSize = srcDataMax + srcOooHi - srcOooLo + 1;
+
+                        // Number of rows to insert from the O3 segment into this partition.
+                        final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
+
+                        // Final partition size after current insertions.
+                        final long partitionSize = srcDataMax + srcOooBatchRowSize;
 
                         LOG.debug().
                                 $("o3 partition task [table=").$(tableName)
@@ -2860,6 +2879,8 @@ public class TableWriter implements Closeable {
                                     throw e;
                                 }
                             }
+
+                            addPhysicallyWrittenRows(srcOooBatchRowSize);
                         } else {
                             if (flattenTimestamp) {
                                 Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
