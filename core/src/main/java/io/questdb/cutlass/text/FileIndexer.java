@@ -25,10 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.*;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -168,7 +165,6 @@ public class FileIndexer implements Closeable, Mutable {
 
     public void mergePartitionIndexes() throws TextException {
         LOG.info().$("Started index merge").$();
-
         collectPartitionNames();
 
         final int partitionCount = partitionNames.size();
@@ -186,7 +182,7 @@ public class FileIndexer implements Closeable, Mutable {
             if (seq < 0) {
                 context.mergeIndexStage(i, lo, hi, partitionNames);
             } else {
-                queue.get(seq).of(doneLatch, TextImportTask.PHASE_INDEX_MERGE, context, 5 * i, lo, hi, partitionNames);
+                queue.get(seq).of(doneLatch, TextImportTask.PHASE_INDEX_MERGE, context, i, lo, hi, partitionNames);
                 pubSeq.done(seq);
                 queuedCount++;
             }
@@ -259,9 +255,6 @@ public class FileIndexer implements Closeable, Mutable {
                     loader.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
                     textMetadataDetector.evaluateResults(loader.getParsedLineCount(), loader.getErrorLineCount());
                     loader.restart(textMetadataDetector.isHeader());
-
-//                    loader.configureDestination();
-//                    loader.prepareTable(cairoSecurityContext, textMetadataParser.getColumnNames(), textMetadataParser.getColumnTypes(), path, typeManager);
                 }
             } finally {
                 ff.close(fd);
@@ -483,14 +476,99 @@ public class FileIndexer implements Closeable, Mutable {
             return splitter;
         }
 
+        public void importPartitionData(long address, long size) {
+            int len = 4094;
+            long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+            try {
+                path.of(inputRoot).concat(inputFileName).$();
+                long fd = ff.openRO(path);
+                try {
+                    final long count = size / (2 * Long.BYTES);
+                    for (long i = 0; i < count; i++) {
+                        final long offset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
+                        long n = ff.read(fd, buf, len, offset);
+                        if (n > 0) {
+                            loader.parse(buf, buf + n, 1);
+                        }
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            } finally {
+                Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
+            }
+
+        }
+
         public void mergeIndexStage(int index, long lo, long hi, final ObjList<CharSequence> partitionNames) throws TextException {
-            path.of(inputWorkRoot).concat(inputFileName);
             for (long i = lo; i < hi; i++) {
                 final CharSequence name = partitionNames.get((int) i);
-                path.concat(name);
-                FileSplitter.mergePartitionIndex(ff, path, mergeIndexes);
-                loader.configureDestination(inputFileName, true, true, 0, 0, null);
+                loader.closeWriter();
+                loader.configureDestination(name, true, true, 0, PartitionBy.MONTH, null);
                 loader.prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), path, typeManager);
+                loader.restart(false);
+                path.of(inputWorkRoot).concat(inputFileName).concat(name);
+                mergePartitionIndex(ff, path, mergeIndexes);
+                loader.wrapUp();
+            }
+        }
+
+        public void mergePartitionIndex(final FilesFacade ff,
+                                        final Path partitionPath,
+                                        final DirectLongList mergeIndexes) {
+
+            mergeIndexes.resetCapacity();
+            mergeIndexes.clear();
+
+            partitionPath.slash$();
+            int partitionLen = partitionPath.length();
+
+            long mergedIndexSize = 0;
+            long chunk = ff.findFirst(partitionPath);
+            if (chunk > 0) {
+                try {
+                    do {
+                        // chunk loop
+                        long chunkName = ff.findName(chunk);
+                        long chunkType = ff.findType(chunk);
+                        if (chunkType == Files.DT_FILE) {
+                            partitionPath.trimTo(partitionLen);
+                            partitionPath.concat(chunkName).$();
+                            final long fd = TableUtils.openRO(ff, partitionPath, LOG);
+                            final long size = ff.length(fd);
+                            final long address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
+                            ff.close(fd);
+
+                            mergeIndexes.add(address);
+                            mergeIndexes.add(size / FileSplitter.INDEX_ENTRY_SIZE);
+                            mergedIndexSize += size;
+                        }
+                    } while (ff.findNext(chunk) > 0);
+                } finally {
+                    ff.findClose(chunk);
+                }
+            }
+
+            long address = -1;
+            try {
+                final int indexesCount = (int) mergeIndexes.size() / 2;
+                partitionPath.trimTo(partitionLen);
+                partitionPath.concat(FileSplitter.INDEX_FILE_NAME).$();
+                final long fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
+                address = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
+                ff.close(fd);
+                final long merged = Vect.mergeLongIndexesAscExt(mergeIndexes.getAddress(), indexesCount, address);
+                importPartitionData(merged, mergedIndexSize);
+            } finally {
+                if (address != -1) {
+                    ff.munmap(address, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
+                }
+                for (long i = 0, sz = mergeIndexes.size() / 2; i < sz; i++) {
+                    final long addr = mergeIndexes.get(2 * i);
+                    final long size = mergeIndexes.get(2 * i + 1) * FileSplitter.INDEX_ENTRY_SIZE;
+                    ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
+                }
+                //todo: remove all index chunks
             }
         }
 

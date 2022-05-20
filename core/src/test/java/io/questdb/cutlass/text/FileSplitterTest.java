@@ -42,9 +42,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
     public void before() throws IOException {
         rnd.reset();
         inputRoot = new File(".").getAbsolutePath();
-        if (inputWorkRoot == null) {
-            inputWorkRoot = temp.newFolder("imports" + System.currentTimeMillis()).getAbsolutePath();
-        }
+        inputWorkRoot = temp.newFolder("imports" + System.currentTimeMillis()).getAbsolutePath();
     }
 
     @Test
@@ -431,9 +429,9 @@ public class FileSplitterTest extends AbstractGriffinTest {
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
             inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
-                DateFormat dateFormat = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.SSSZ");
+                DateFormat dateFormat = new TimestampFormatCompiler().compile("yyyy-MM-ddTHH:mm:ss.SSSSSSZ");
                 indexer.setMinChunkSize(10);
-                indexer.of("test-import.csv", PartitionBy.YEAR, (byte) ',', 4, dateFormat, true);
+                indexer.of("test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', 1, dateFormat, true);
                 indexer.parseStructure();
                 indexer.process();
             }
