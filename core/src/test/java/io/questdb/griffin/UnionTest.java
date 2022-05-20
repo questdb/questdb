@@ -55,6 +55,36 @@ public class UnionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUnionSymbolAndString() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table table1 as \n" +
+                    "(\n" +
+                    "  select cast(x as symbol) as sym1 \n" +
+                    "  from long_sequence(3)\n" +
+                    ")");
+            compile("create table table3 as \n" +
+                    "(\n" +
+                    "  select cast(x+2 as string) as str3\n" +
+                    "  from long_sequence(3)\n" +
+                    ")");
+
+            assertQuery(
+                    "sym1\n" +
+                            "1\n" +
+                            "2\n" +
+                            "3\n" +
+                            "4\n" +
+                            "5\n",
+                    "select sym1 from table1 \n" +
+                            "union\n" +
+                            "select str3 from table3",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testExceptOfLiterals() throws Exception {
         assertMemoryLeak(() -> {
             final String expected1 = "2020-04-21\t1\n" +

@@ -109,8 +109,8 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
                     that.getColumnName(i),
                     that.getColumnHash(i),
                     ColumnType.isSymbol(columnType) ? ColumnType.STRING : columnType,
-                    that.isColumnIndexed(i),
-                    that.getIndexValueBlockCapacity(i),
+                    false,
+                    0,
                     false,
                     GenericRecordMetadata.copyOf(that.getMetadata(i))
             ));

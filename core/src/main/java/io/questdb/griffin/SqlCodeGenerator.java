@@ -27,8 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -3248,16 +3248,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final boolean stringSymbolMismatch = validateSetColumnTypes(model, masterFactory, slaveFactory);
         entityColumnFilter.of(masterFactory.getMetadata().getColumnCount());
+        RecordMetadata resultMetadata = calculateSetMetadata(masterFactory.getMetadata(), convertSymbolsToStrings || stringSymbolMismatch);
         final RecordSink recordSink = RecordSinkFactory.getInstance(
                 asm,
-                masterFactory.getMetadata(),
+                resultMetadata,
                 entityColumnFilter,
                 true
         );
         valueTypes.clear();
         RecordCursorFactory unionFactory = constructor.create(
                 configuration,
-                calculateSetMetadata(masterFactory.getMetadata(), convertSymbolsToStrings || stringSymbolMismatch),
+                resultMetadata,
                 masterFactory,
                 slaveFactory,
                 recordSink,
