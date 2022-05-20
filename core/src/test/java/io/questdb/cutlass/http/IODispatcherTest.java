@@ -348,7 +348,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -1762,7 +1762,7 @@ public class IODispatcherTest {
                         return "/upload";
                     }
                 });
-
+                workerPool.assignCleaner(Path.CLEANER);
                 workerPool.start(LOG);
 
                 // send multipart request to server
@@ -4696,7 +4696,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     configuration,
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @SuppressWarnings("resource")
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
@@ -5751,7 +5751,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -5919,7 +5919,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -6080,7 +6080,7 @@ public class IODispatcherTest {
                             return 500;
                         }
                     },
-                    new IOContextFactory<HttpConnectionContext>() {
+                    new IOContextFactory<>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();

@@ -103,9 +103,8 @@ public class HttpQueryTestBuilder {
                     return false;
                 }
             }, metrics);
-            if (workerCount > 1) {
-                workerPool.assignCleaner(Path.CLEANER);
-            }
+
+            workerPool.assignCleaner(Path.CLEANER);
 
             CairoConfiguration cairoConfiguration = configuration;
             if (cairoConfiguration == null) {
