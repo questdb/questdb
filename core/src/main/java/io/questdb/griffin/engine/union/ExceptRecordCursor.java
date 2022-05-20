@@ -55,6 +55,13 @@ class ExceptRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void close() {
+        Misc.free(this.masterCursor);
+        Misc.free(this.slaveCursor);
+        circuitBreaker = null;
+    }
+
+    @Override
     public Record getRecord() {
         return record;
     }
@@ -65,10 +72,8 @@ class ExceptRecordCursor implements RecordCursor {
     }
 
     @Override
-    public void close() {
-        Misc.free(this.masterCursor);
-        Misc.free(this.slaveCursor);
-        circuitBreaker = null;
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return masterCursor.newSymbolTable(columnIndex);
     }
 
     @Override
@@ -85,6 +90,16 @@ class ExceptRecordCursor implements RecordCursor {
     }
 
     @Override
+    public Record getRecordB() {
+        return masterCursor.getRecordB();
+    }
+
+    @Override
+    public void recordAt(Record record, long atRowId) {
+        masterCursor.recordAt(record, atRowId);
+    }
+
+    @Override
     public void toTop() {
         masterCursor.toTop();
 
@@ -96,13 +111,8 @@ class ExceptRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record getRecordB() {
-        return masterCursor.getRecordB();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        masterCursor.recordAt(record, atRowId);
+    public long size() {
+        return -1;
     }
 
     void of(RecordCursor masterCursor, RecordMetadata masterMetadata, RecordCursor slaveCursor, RecordMetadata slaveMetadata, SqlExecutionContext executionContext) {
@@ -129,26 +139,5 @@ class ExceptRecordCursor implements RecordCursor {
             key.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
-    }
-
-    @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return masterCursor.getSymbolTable(columnIndex);
-    }
-
-    @Override
-    public void toTop() {
-        masterCursor.toTop();
-
-        if (!convertSymbolsToStrings) {
-            this.record = masterCursor.getRecord();
-        } else {
-            this.unionDelegatingRecord.of(masterCursor.getRecord(), masterMetadata);
-        }
-    }
-
-    @Override
-    public long size() {
-        return -1;
     }
 }
