@@ -58,7 +58,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     }
 
     public RebuildColumnBase of(CharSequence tablePath, CairoConfiguration configuration) {
-        this.path.concat(tablePath);
+        this.path.of(tablePath);
         this.rootLen = tablePath.length();
         this.configuration = configuration;
         return this;
