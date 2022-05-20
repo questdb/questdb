@@ -1680,7 +1680,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     public void testCompileStatementsBatch() throws Exception {
         String query = "SELECT pg_advisory_unlock_all(); CLOSE ALL;";
 
-        assertMemoryLeak(()-> compiler.compileBatch(query, sqlExecutionContext, null));
+        assertMemoryLeak(() -> compiler.compileBatch(query, sqlExecutionContext, null));
     }
 
     @Test
@@ -2614,6 +2614,53 @@ public class SqlCompilerTest extends AbstractGriffinTest {
             assertSql("select * from x where \"#0101a\" = '#1234'", "#0101a\n" +
                     "#1234\n" +
                     "#1234\n");
+        });
+    }
+
+    @Test
+    public void testRebuildIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)", sqlExecutionContext);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            compile("reindex table rebuild_index column sym lock exclusive");
+            assertSql("select * from rebuild_index where sym = '1'", "sym\tx\n" +
+                    "1\t1\n" +
+                    "1\t10\n" +
+                    "1\t11\n" +
+                    "1\t12\n");
+        });
+    }
+
+    @Test
+    public void testRebuildIndexReadersLock() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)", sqlExecutionContext);
+
+            try (TableReader ignore = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "rebuild_index")) {
+                compile("reindex table rebuild_index column sym lock exclusive");
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "annot lock table");
+            }
+        });
+    }
+
+    @Test
+    public void testRebuildIndexInPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table rebuild_index as (" +
+                    "select rnd_symbol('1', '2', '33', '44') sym, x, timestamp_sequence(0, 12*60*60*1000000L) ts " +
+                    "from long_sequence(15)" +
+                    "), index(sym) timestamp(ts)", sqlExecutionContext);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            compile("reindex table rebuild_index column sym partition '1970-01-02' lock exclusive");
+            assertSql("select * from rebuild_index where sym = '1'",
+                    "sym\tx\tts\n" +
+                    "1\t1\t1970-01-01T00:00:00.000000Z\n" +
+                    "1\t10\t1970-01-05T12:00:00.000000Z\n" +
+                    "1\t11\t1970-01-06T00:00:00.000000Z\n" +
+                    "1\t12\t1970-01-06T12:00:00.000000Z\n");
         });
     }
 
@@ -3658,6 +3705,85 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testReindexSyntaxError() throws Exception {
+        assertFailure(
+                "REINDEX TABLE xxx",
+                "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                "), index(sym1), index(sym2)",
+                "REINDEX TABLE xxx".length(),
+                "LOCK EXCLUSIVE expected"
+        );
+
+        assertFailure(
+                "REINDEX TABLE xxx COLUMN sym2",
+                null,
+                "REINDEX TABLE xxx COLUMN sym2".length(),
+                "LOCK EXCLUSIVE expected"
+        );
+
+        assertFailure(
+                "REINDEX TABLE xxx LOCK",
+                null,
+                "REINDEX TABLE xxx LOCK".length(),
+                "LOCK EXCLUSIVE expected"
+        );
+
+        assertFailure(
+                "REINDEX TABLE xxx PARTITION '1234''",
+                null,
+                "REINDEX TABLE xxx PARTITION '1234''".length(),
+                "LOCK EXCLUSIVE expected"
+        );
+
+        assertFailure(
+                "REINDEX xxx PARTITION '1234''",
+                null,
+                "REINDEX ".length(),
+                "TABLE expected"
+        );
+
+        assertFailure(
+                "REINDEX TABLE ",
+                null,
+                "REINDEX TABLE ".length(),
+                "table name expected"
+        );
+
+        assertFailure(
+                "REINDEX TABLE xxx COLUMN \"sym1\" lock exclusive twice",
+                null,
+                "REINDEX TABLE xxx COLUMN \"sym1\" lock exclusive twice".length(),
+                "EOF expecte"
+        );
+    }
+
+    @Test
+    public void testReindexSyntaxCheckSemicolon() throws Exception {
+        assertMemoryLeak(() -> {
+                    compile(
+                            "create table xxx as (" +
+                                    "select " +
+                                    "rnd_symbol('A', 'B', 'C') as sym1," +
+                                    "rnd_symbol(4,4,4,2) as sym2," +
+                                    "x," +
+                                    "timestamp_sequence(0, 100000000) ts " +
+                                    "from long_sequence(10000)" +
+                                    "), index(sym1), index(sym2)");
+
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    compile("REINDEX TABLE \"xxx\" Lock exclusive;");
+                }
+        );
     }
 
     @Test

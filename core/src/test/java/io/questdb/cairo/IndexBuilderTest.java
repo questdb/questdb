@@ -243,6 +243,27 @@ public class IndexBuilderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedNoneSqlSyntax() throws Exception {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                "), index(sym1), index(sym2)";
+
+        checkRebuildIndexes(
+                createTableSql,
+                (tablePath) -> {
+                    removeFileAtPartition("sym1.v", PartitionBy.NONE, tablePath, 0);
+                    removeFileAtPartition("sym2.k", PartitionBy.NONE, tablePath, 0);
+                },
+                indexBuilder -> runReindexSql("REINDEX TABLE xxx LOCK EXCLUSIVE")
+        );
+    }
+
+    @Test
     public void testPartitionedOneColumn() throws Exception {
         String createTableSql = "create table xxx as (" +
                 "select " +
@@ -278,6 +299,25 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0);
                 },
                 indexBuilder -> indexBuilder.rebuildPartitionColumn("1970-01-01", "sym1"));
+    }
+
+    @Test
+    public void testPartitionedOneColumnFirstPartitionSql() throws Exception {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY";
+
+        checkRebuildIndexes(createTableSql,
+                tablePath -> {
+                    removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0);
+                    removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0);
+                },
+                indexBuilder -> runReindexSql("REINDEX TABLE xxx COLUMN sym1 PARTITION '1970-01-01' LOCK EXCLUSIVE"));
     }
 
     @Test
@@ -508,6 +548,53 @@ public class IndexBuilderTest extends AbstractCairoTest {
             Assert.fail();
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "Column is not indexed");
+        }
+    }
+
+    @Test
+    public void testReindexPartitionSqlSyntax() throws Exception {
+        String createTableSql = "create table xxx as (" +
+                "select " +
+                "rnd_symbol('A', 'B', 'C') as sym1," +
+                "rnd_symbol(4,4,4,2) as sym2," +
+                "x," +
+                "timestamp_sequence(0, 100000000) ts " +
+                "from long_sequence(10000)" +
+                "), index(sym1 capacity 512), index(sym2 capacity 1024) timestamp(ts) PARTITION BY DAY";
+
+        checkRebuildIndexes(createTableSql,
+                tablePath -> {
+                    removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0);
+                    removeFileAtPartition("sym2.k", PartitionBy.DAY, tablePath, 0);
+                },
+                indexBuilder -> runReindexSql("REINDEX TABLE xxx PARTITION '1970-01-01' LOCK EXCLUSIVE")
+        );
+
+        assertMemoryLeak(() -> {
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "xxx")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int columnIndex = metadata.getColumnIndex("sym1");
+                Assert.assertTrue("Column sym1 must exist", columnIndex >= 0);
+                int columnIndex2 = metadata.getColumnIndex("sym2");
+                Assert.assertTrue("Column sym2 must exist", columnIndex2 >= 0);
+                Assert.assertEquals(
+                        511,
+                        reader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD).getValueBlockCapacity()
+                );
+                Assert.assertEquals(
+                        1023,
+                        reader.getBitmapIndexReader(0, columnIndex2, BitmapIndexReader.DIR_FORWARD).getValueBlockCapacity()
+                );
+            }
+        });
+    }
+
+    private static void runReindexSql(String query) {
+        try {
+            compiler.compile(query, sqlExecutionContext);
+        } catch (SqlException ex) {
+            LOG.error().$((Throwable) ex).I$();
+            Assert.fail(ex.getMessage());
         }
     }
 
