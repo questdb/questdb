@@ -35,7 +35,7 @@ import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.griffin.QueryFuture;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
@@ -73,7 +73,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final int floatScale;
     private final int doubleScale;
     private final SCSequence eventSubSequence = new SCSequence();
-    private QueryFuture continueExecution;
+    private final long statementTimeoutNs;
+    private OperationFuture operationFuture;
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
     private RecordCursor cursor;
@@ -94,6 +95,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean timings;
     private boolean queryCacheable = false;
     private boolean queryJitCompiled = false;
+    private short queryType;
+    private QuietClosable asyncOperation;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
@@ -114,6 +117,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.nanosecondClock = nanosecondClock;
         this.floatScale = floatScale;
         this.doubleScale = doubleScale;
+        this.statementTimeoutNs =
+                httpConnectionContext.getRequestHeader().getStatementTimeout() < (Long.MAX_VALUE >>> 6) ? // Overflow protection
+                        httpConnectionContext.getRequestHeader().getStatementTimeout() * 1_000_000L :
+                        httpConnectionContext.getRequestHeader().getStatementTimeout();
     }
 
     @Override
@@ -139,14 +146,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         countRows = false;
         explain = false;
         queryJitCompiled = false;
-        continueExecution = Misc.free(continueExecution);
+        operationFuture = Misc.free(operationFuture);
     }
 
     @Override
     public void close() {
         cursor = Misc.free(cursor);
         recordCursorFactory = Misc.free(recordCursorFactory);
-        continueExecution = Misc.free(continueExecution);
+        freeAsyncOperation();
     }
 
     public void configure(
@@ -176,12 +183,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return LOG.error().$('[').$(getFd()).$("] ");
     }
 
-    public QueryFuture getContinueExecution() {
-        return continueExecution;
+    public void freeAsyncOperation() {
+        asyncOperation = Misc.free(asyncOperation);
+        operationFuture = Misc.free(operationFuture);
     }
 
-    public void setContinueExecution(QueryFuture execution) {
-        continueExecution = execution;
+    public OperationFuture getOperationFuture() {
+        return operationFuture;
     }
 
     public SCSequence getEventSubSequence() {
@@ -200,8 +208,25 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return query;
     }
 
+    public short getQueryType() {
+        return queryType;
+    }
+
     public Rnd getRnd() {
         return rnd;
+    }
+
+    public void setQueryType(short type) {
+        queryType = type;
+    }
+
+    public long getStatementTimeoutNs() {
+        return statementTimeoutNs;
+    }
+
+    public void setOperationFuture(QuietClosable op, OperationFuture fut) {
+        asyncOperation = op;
+        operationFuture = fut;
     }
 
     public void setRnd(Rnd rnd) {

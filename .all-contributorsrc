@@ -914,6 +914,16 @@
         "code",
         "bug"
       ]
+    },
+    {
+      "login": "iridess",
+      "name": "iridess",
+      "avatar_url": "https://avatars.githubusercontent.com/u/104518201?v=4",
+      "profile": "https://github.com/iridess",
+      "contributions": [
+        "code",
+        "doc"
+      ]
     }
   ],
   "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",

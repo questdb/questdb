@@ -83,4 +83,9 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
     public boolean isEntity() {
         return false;
     }
+
+    @Override
+    public boolean isUsingIndex() {
+        return true;
+    }
 }

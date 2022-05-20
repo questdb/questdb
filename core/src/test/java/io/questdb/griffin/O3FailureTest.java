@@ -31,8 +31,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -177,7 +177,7 @@ public class O3FailureTest extends AbstractO3Test {
     };
     private static final FilesFacade ffMkDirFailure = new FilesFacadeImpl() {
         @Override
-        public int mkdirs(LPSZ path, int mode) {
+        public int mkdirs(Path path, int mode) {
             if (!fixFailure.get() || (Chars.contains(path, "1970-01-06.14") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
@@ -824,25 +824,25 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        counter.set(174);
+        counter.set(174 + 45);
         executeWithPool(2, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
-        counter.set(165);
+        counter.set(165 + 45);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        counter.set(165);
+        counter.set(165 + 45);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
-        counter.set(165);
+        counter.set(165 + 45);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
@@ -904,13 +904,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
-        counter.set(193);
+        counter.set(193 + 45);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
     }
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
-        counter.set(165);
+        counter.set(165 + 45);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 
@@ -931,7 +931,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(2);
         executeWithoutPool(O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new FilesFacadeImpl() {
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -945,7 +945,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(2);
         executeWithPool(0, O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new FilesFacadeImpl() {
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -1001,7 +1001,7 @@ public class O3FailureTest extends AbstractO3Test {
             boolean tooManyFiles = false;
 
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 return super.mkdirs(path, mode);
             }
 
@@ -2693,7 +2693,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         Rnd rnd = new Rnd(Os.currentTimeMicros(), Os.currentTimeNanos());
         int batches = 0;
-        int batchCount = 1000;
+        int batchCount = 75;
         while (batches < batchCount) {
             try (TableWriter w = engine.getWriter(executionContext.getCairoSecurityContext(), "x", "test")) {
                 for (int i = 0; i < batchCount; i++) {
@@ -3574,7 +3574,7 @@ public class O3FailureTest extends AbstractO3Test {
             WorkerPool pool1 = new WorkerPool(new WorkerPoolAwareConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -3615,22 +3615,7 @@ public class O3FailureTest extends AbstractO3Test {
             });
             pool1.assignCleaner(Path.CLEANER);
 
-            final WorkerPool pool2 = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            final WorkerPool pool2 = new TestWorkerPool(1);
 
             pool2.assign(new Job() {
                 private boolean toRun = true;

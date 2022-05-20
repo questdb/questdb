@@ -125,4 +125,9 @@ class DataFrameRecordCursor extends AbstractDataFrameRecordCursor {
             next = nextRow;
         }
     }
+
+    @Override
+    public boolean isUsingIndex() {
+        return rowCursorFactory.isUsingIndex();
+    }
 }

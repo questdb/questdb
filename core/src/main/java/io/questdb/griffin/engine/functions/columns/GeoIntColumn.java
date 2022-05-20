@@ -41,11 +41,6 @@ public class GeoIntColumn extends GeoIntFunction {
         this.columnIndex = columnIndex;
     }
 
-    @Override
-    public int getGeoInt(Record rec) {
-        return rec.getGeoInt(columnIndex);
-    }
-
     public static GeoIntColumn newInstance(int columnIndex, int columnType) {
         assert ColumnType.getGeoHashBits(columnType) >= ColumnType.GEOINT_MIN_BITS &&
                 ColumnType.getGeoHashBits(columnType) <= ColumnType.GEOINT_MAX_BITS;
@@ -59,6 +54,21 @@ public class GeoIntColumn extends GeoIntFunction {
         return new GeoIntColumn(columnIndex, columnType);
     }
 
+    @Override
+    public int getGeoInt(Record rec) {
+        return rec.getGeoInt(columnIndex);
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @TestOnly
+    int getColumnIndex() {
+        return columnIndex;
+    }
+
     static {
         int bits = ColumnType.GEOINT_MAX_BITS - ColumnType.GEOINT_MIN_BITS + 1;
         COLUMNS = new GeoIntColumn[STATIC_COLUMN_COUNT * bits];
@@ -68,10 +78,5 @@ public class GeoIntColumn extends GeoIntFunction {
                 COLUMNS[col * bits + bit - ColumnType.GEOINT_MIN_BITS] = new GeoIntColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
             }
         }
-    }
-
-    @TestOnly
-    int getColumnIndex() {
-        return columnIndex;
     }
 }

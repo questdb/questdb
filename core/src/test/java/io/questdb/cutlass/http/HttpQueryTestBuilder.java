@@ -37,15 +37,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import org.junit.rules.TemporaryFolder;
 
-import java.util.Arrays;
 import java.util.concurrent.BrokenBarrierException;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -75,9 +74,6 @@ public class HttpQueryTestBuilder {
     }
 
     public void run(CairoConfiguration configuration, HttpClientCode code) throws Exception {
-        final int[] workerAffinity = new int[workerCount];
-        Arrays.fill(workerAffinity, -1);
-
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = serverConfigBuilder
@@ -87,22 +83,8 @@ public class HttpQueryTestBuilder {
                 metrics = Metrics.enabled();
             }
 
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return workerAffinity;
-                }
+            final WorkerPool workerPool = new TestWorkerPool(workerCount, metrics);
 
-                @Override
-                public int getWorkerCount() {
-                    return workerCount;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, metrics);
             if (workerCount > 1) {
                 workerPool.assignCleaner(Path.CLEANER);
             }

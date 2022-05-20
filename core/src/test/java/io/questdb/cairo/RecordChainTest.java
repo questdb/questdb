@@ -140,6 +140,11 @@ public class RecordChainTest extends AbstractCairoTest {
                 public long getLong(Record rec) {
                     return cols[0];
                 }
+
+                @Override
+                public boolean isReadThreadSafe() {
+                    return true;
+                }
             });
 
             funcs.add(null);
@@ -147,6 +152,11 @@ public class RecordChainTest extends AbstractCairoTest {
                 @Override
                 public int getInt(Record rec) {
                     return (int) cols[2];
+                }
+
+                @Override
+                public boolean isReadThreadSafe() {
+                    return true;
                 }
             });
 

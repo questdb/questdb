@@ -31,8 +31,6 @@ import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
-
 public class TextUtilTest {
 
     @Test

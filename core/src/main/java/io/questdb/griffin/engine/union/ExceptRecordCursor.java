@@ -132,6 +132,22 @@ class ExceptRecordCursor implements RecordCursor {
     }
 
     @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return masterCursor.getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public void toTop() {
+        masterCursor.toTop();
+
+        if (!convertSymbolsToStrings) {
+            this.record = masterCursor.getRecord();
+        } else {
+            this.unionDelegatingRecord.of(masterCursor.getRecord(), masterMetadata);
+        }
+    }
+
+    @Override
     public long size() {
         return -1;
     }

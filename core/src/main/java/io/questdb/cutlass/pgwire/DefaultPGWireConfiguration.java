@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
@@ -124,6 +124,21 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public int getInsertPoolCapacity() {
         return 32;
+    }
+
+    @Override
+    public boolean isUpdateCacheEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getUpdateCacheBlockCount() {
+        return 8;
+    }
+
+    @Override
+    public int getUpdateCacheRowCount() {
+        return 8;
     }
 
     @Override

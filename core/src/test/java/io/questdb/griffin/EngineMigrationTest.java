@@ -429,13 +429,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_day",
+                "select distinct k from t_day order by k",
                 sink,
                 "k\n" +
-                        "c\n" +
+                        "\n" +
                         "aaa\n" +
                         "bbbbbb\n" +
-                        "\n"
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -498,13 +498,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_day_ooo",
+                "select distinct k from t_day_ooo order by k",
                 sink,
                 "k\n" +
-                        "bbbbbb\n" +
+                        "\n" +
                         "aaa\n" +
-                        "c\n" +
-                        "\n"
+                        "bbbbbb\n" +
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -807,13 +807,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_month",
+                "select distinct k from t_month order by k",
                 sink,
                 "k\n" +
-                        "bbbbbb\n" +
-                        "c\n" +
+                        "\n" +
                         "aaa\n" +
-                        "\n"
+                        "bbbbbb\n" +
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -883,13 +883,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_month_ooo",
+                "select distinct k from t_month_ooo order by k",
                 sink,
                 "k\n" +
-                        "c\n" +
+                        "\n" +
                         "aaa\n" +
                         "bbbbbb\n" +
-                        "\n"
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -959,13 +959,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_none",
+                "select distinct k from t_none order by k",
                 sink,
                 "k\n" +
+                        "\n" +
                         "aaa\n" +
-                        "c\n" +
                         "bbbbbb\n" +
-                        "\n"
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -1043,13 +1043,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_none_nts",
+                "select distinct k from t_none_nts order by k",
                 sink,
                 "k\n" +
-                        "bbbbbb\n" +
-                        "c\n" +
+                        "\n" +
                         "aaa\n" +
-                        "\n"
+                        "bbbbbb\n" +
+                        "c\n"
         );
         TestUtils.assertSql(
                 compiler,
@@ -1107,13 +1107,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_year",
+                "select distinct k from t_year order by k",
                 sink,
                 "k\n" +
-                        "bbbbbb\n" +
+                        "\n" +
                         "aaa\n" +
-                        "c\n" +
-                        "\n"
+                        "bbbbbb\n" +
+                        "c\n"
         );
 
         TestUtils.assertSql(
@@ -1182,13 +1182,13 @@ public class EngineMigrationTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select distinct k from t_year_ooo",
+                "select distinct k from t_year_ooo order by k",
                 sink,
                 "k\n" +
-                        "c\n" +
-                        "bbbbbb\n" +
+                        "\n" +
                         "aaa\n" +
-                        "\n"
+                        "bbbbbb\n" +
+                        "c\n"
         );
 
         TestUtils.assertSql(

@@ -25,7 +25,8 @@
 package io.questdb.griffin.engine.functions.geohash;
 
 import io.questdb.griffin.engine.table.LatestByArguments;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import org.junit.Assert;
 import org.junit.Test;
 

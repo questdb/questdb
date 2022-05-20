@@ -24,6 +24,7 @@
 
 package io.questdb.log;
 
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -37,12 +38,14 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import static org.hamcrest.CoreMatchers.*;
-
-import java.io.*;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import static org.hamcrest.CoreMatchers.is;
 
 public class LogFactoryTest {
 
@@ -324,7 +327,7 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
 
-        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1);
+        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, IntervalUtils.parseFloorPartialDate("2019-12-31"));
 
         try (Path path = new Path()) {
             // create rogue file that would be in a way of logger rolling existing files
@@ -413,7 +416,7 @@ public class LogFactoryTest {
         String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
         String expectedLogFile = base + "mylog-2015-05-03.log";
         try (LogFactory factory = new LogFactory()) {
-            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1);
+            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T11:35:00.000Z"), 1, IntervalUtils.parseFloorPartialDate("2015-05-04"));
 
             factory.add(new LogWriterConfig(LogLevel.INFO, (ring, seq, level) -> {
                 LogRollingFileWriter w = new LogRollingFileWriter(FilesFacadeImpl.INSTANCE, clock, ring, seq, level);
@@ -446,7 +449,7 @@ public class LogFactoryTest {
 
             String logFile = base + "mylog-${date:yyyy-MM-dd}.log";
 
-            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1);
+            final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), 1, IntervalUtils.parseFloorPartialDate("2015-05-04"));
 
             try (Path path = new Path()) {
 
@@ -672,7 +675,7 @@ public class LogFactoryTest {
             String mustContain
     ) throws NumericException {
 
-        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), speed);
+        final MicrosecondClock clock = new TestMicrosecondClock(TimestampFormatUtils.parseTimestamp("2015-05-03T10:35:00.000Z"), speed, IntervalUtils.parseFloorPartialDate("2019-12-31"));
 
         long expectedFileCount = Files.getOpenFileCount();
         long expectedMemUsage = Unsafe.getMemUsed();
@@ -742,17 +745,19 @@ public class LogFactoryTest {
         private final long base;
         private final long start;
         private final long speed;
+        private final long limit;
 
-        public TestMicrosecondClock(long start, long speed) {
+        public TestMicrosecondClock(long start, long speed, long limit) {
             this.base = Os.currentTimeMicros();
             this.start = start;
             this.speed = speed;
+            this.limit = limit - 1;
         }
 
         @Override
         public long getTicks() {
             long wall = Os.currentTimeMicros();
-            return (wall - base) * speed + start;
+            return Math.min((wall - base) * speed + start, limit);
         }
     }
 }

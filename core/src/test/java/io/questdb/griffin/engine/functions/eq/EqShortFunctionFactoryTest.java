@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.std.Numbers;
 import org.junit.Test;
 
 public class EqShortFunctionFactoryTest extends AbstractFunctionFactoryTest {

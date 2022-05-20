@@ -80,7 +80,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     @NotNull
-    public static ScalarFunction createColumn(int position, CharSequence name, RecordMetadata metadata) throws SqlException {
+    public static ScalarFunction createColumn(
+            int position,
+            CharSequence name,
+            RecordMetadata metadata,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final int index = metadata.getColumnIndexQuiet(name);
 
         if (index == -1) {
@@ -420,7 +425,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private Function createColumn(int position, CharSequence columnName) throws SqlException {
-        return createColumn(position, columnName, metadata);
+        return createColumn(position, columnName, metadata, sqlExecutionContext);
     }
 
     private Function createConstant(int position, final CharSequence tok) throws SqlException {

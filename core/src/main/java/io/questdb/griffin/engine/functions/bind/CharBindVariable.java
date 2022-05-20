@@ -46,4 +46,9 @@ class CharBindVariable extends CharFunction implements ScalarFunction, Mutable {
     public boolean isRuntimeConstant() {
         return true;
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
 }

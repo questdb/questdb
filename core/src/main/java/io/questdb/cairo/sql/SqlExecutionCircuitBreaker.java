@@ -31,6 +31,11 @@ public interface SqlExecutionCircuitBreaker {
         }
 
         @Override
+        public boolean checkIfTripped() {
+            return false;
+        }
+
+        @Override
         public void resetTimer() {
         }
 
@@ -61,6 +66,8 @@ public interface SqlExecutionCircuitBreaker {
      * throttles heavy checks. It is meant to be used in single-threaded applications.
      */
     void statefulThrowExceptionIfTripped();
+
+    boolean checkIfTripped();
 
     boolean checkIfTripped(long executionStartTimeUs, long fd);
 

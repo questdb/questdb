@@ -302,8 +302,8 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
     @Test//values in symbol key file aren't sorted and usually reflect first insert order 
     public void testDistinctOnNonIndexedSymbolColumnInSubqueryWithLimitInOuterQuery() throws Exception {
         assertQuery("id\n1\n2\n3\n4\n5\n",
-                "SELECT * from ( select DISTINCT id FROM limtest ) limit 5",
-                "CREATE TABLE limtest as (select cast((x%6) as symbol) as id from long_sequence(20))",
+                "SELECT * from ( select DISTINCT id FROM limtest ) order by id limit 5",
+                "CREATE TABLE limtest as (select cast(x as symbol) as id from long_sequence(9))",
                 null, true, true, true);
     }
 
@@ -311,7 +311,7 @@ public class DistinctWithLimitTest extends AbstractGriffinTest {
     public void testDistinctOnNonIndexedSymbolColumnInSubqueryWithOrderByDescLimitInOuterQuery() throws Exception {
         assertQuery("id\n9\n8\n",
                 "SELECT * from ( select DISTINCT id FROM limtest ) ORDER BY id desc LIMIT 2 ",
-                "CREATE TABLE limtest as (select cast((x%10) as symbol) as id from long_sequence(20))",
+                "CREATE TABLE limtest as (select cast((x%10) as symbol) as id from long_sequence(9))",
                 null, true, true, true);
     }
 

@@ -24,7 +24,10 @@
 
 package io.questdb.cairo.vm.api;
 
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
 

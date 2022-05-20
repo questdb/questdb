@@ -42,6 +42,11 @@ public class BinFunctionTest {
         public long getBinLen(Record rec) {
             return TableUtils.NULL_LEN;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     };
 
     @Test(expected = UnsupportedOperationException.class)

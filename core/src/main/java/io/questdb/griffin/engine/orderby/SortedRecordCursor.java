@@ -24,12 +24,9 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import io.questdb.cairo.sql.DelegatingRecordCursor;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 
 class SortedRecordCursor implements DelegatingRecordCursor {
     private final RecordTreeChain chain;
@@ -53,6 +50,11 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return chainCursor.getSymbolTable(columnIndex);
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return chainCursor.newSymbolTable(columnIndex);
     }
 
     @Override

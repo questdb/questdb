@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.mp.MPSequence;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Rule;

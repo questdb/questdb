@@ -115,4 +115,9 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
     public long getDate(Record rec) {
         return max.longValue();
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }

@@ -31,8 +31,8 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BytecodeAssembler;
@@ -137,6 +137,11 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
         }
 
         @Override

@@ -32,6 +32,7 @@ import io.questdb.std.WeakSelfReturningObjectPool;
 
 public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> extends AbstractSelfReturningObject<T> {
     private final IntList types = new IntList();
+    private boolean closing;
 
     public AbstractTypeContainer(WeakSelfReturningObjectPool<T> parentPool) {
         super(parentPool);
@@ -39,8 +40,12 @@ public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> 
 
     @Override
     public void close() {
-        super.close();
-        types.clear();
+        if (!closing) {
+            closing = true;
+            super.close();
+            types.clear();
+            closing = false;
+        }
     }
 
     public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {

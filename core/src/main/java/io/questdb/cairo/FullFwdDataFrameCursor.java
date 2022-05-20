@@ -42,7 +42,6 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
                 frame.rowHi = hi;
                 partitionIndex++;
                 return frame;
-
             }
         }
         return null;

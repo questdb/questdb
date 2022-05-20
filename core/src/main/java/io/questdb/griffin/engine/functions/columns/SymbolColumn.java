@@ -28,12 +28,15 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
 public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     private final int columnIndex;
     private final boolean symbolTableStatic;
     private SymbolTable symbolTable;
+    private SymbolTableSource symbolTableSource;
+    private boolean ownSymbolTable;
 
     public SymbolColumn(int columnIndex, boolean symbolTableStatic) {
         this.columnIndex = columnIndex;
@@ -47,24 +50,44 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        return rec.getSym(columnIndex);
+        return symbolTable.valueOf(rec.getInt(columnIndex));
     }
 
     @Override
     public CharSequence getSymbolB(Record rec) {
-        return rec.getSymB(columnIndex);
+        return symbolTable.valueBOf(rec.getInt(columnIndex));
     }
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        this.symbolTable = symbolTableSource.getSymbolTable(columnIndex);
+        this.symbolTableSource = symbolTableSource;
+        if (executionContext.getCloneSymbolTables()) {
+            if (symbolTable != null) {
+                assert ownSymbolTable;
+                symbolTable = Misc.free(symbolTable);
+            }
+            symbolTable = symbolTableSource.newSymbolTable(columnIndex);
+            ownSymbolTable = true;
+        } else {
+            symbolTable = symbolTableSource.getSymbolTable(columnIndex);
+        }
         // static symbol table must be non-null
         assert !symbolTableStatic || symbolTable != null;
     }
-
+    
     @Override
     public @Nullable StaticSymbolTable getStaticSymbolTable() {
         return symbolTable instanceof StaticSymbolTable ? (StaticSymbolTable) symbolTable : null;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
+
+    @Override
+    public @Nullable SymbolTable newSymbolTable() {
+        return symbolTableSource.newSymbolTable(columnIndex);
     }
 
     @Override
@@ -80,5 +103,12 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     @Override
     public CharSequence valueBOf(int symbolKey) {
         return symbolTable.valueBOf(symbolKey);
+    }
+
+    @Override
+    public void close() {
+        if (ownSymbolTable) {
+            symbolTable = Misc.free(symbolTable);
+        }
     }
 }

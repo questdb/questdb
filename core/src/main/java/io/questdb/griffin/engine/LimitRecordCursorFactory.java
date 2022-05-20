@@ -103,6 +103,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return base.newSymbolTable(columnIndex);
+        }
+
+        @Override
         public boolean hasNext() {
             return limit-- > 0 && base.hasNext();
         }

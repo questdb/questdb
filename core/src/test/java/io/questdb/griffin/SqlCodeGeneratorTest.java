@@ -323,7 +323,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // also good numbers, extra top calls are due to symbol column API check
         // tables without symbol columns will skip this check
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -641,7 +641,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "C\n";
 
         assertQuery(expected,
-                "select distinct pair from prices",
+                "select distinct pair from prices order by pair",
                 "create table prices as " +
                         "(" +
                         " SELECT \n" +
@@ -812,7 +812,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "k");
 
         // these values are assured to be correct for the scenario
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -915,8 +915,8 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(1)" +
                         ") timestamp(t)",
                 expected +
-                        "33.74610457937482\tHYRX\t1971-01-01T00:00:00.000000Z\n");
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+                        "24.45295612285482\tHYRX\t1971-01-01T00:00:00.000000Z\n");
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1035,7 +1035,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         "), index(b) timestamp(k)",
                 "k");
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1059,7 +1059,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // also good numbers, extra top calls are due to symbol column API check
         // tables without symbol columns will skip this check
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1143,7 +1143,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         ") timestamp(t)",
                 expected +
                         "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n");
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1249,7 +1249,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
 
         // these value are also ok because ddl2 is present, there is another round of check for that
         // this ensures that "init" on filter is invoked
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1447,7 +1447,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n" +
                         "44.80468966861358\t\t\n");
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1527,7 +1527,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "75.88175403454873\tHYRX\n" +
                         "57.78947915182423\tHYRX\n");
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1612,7 +1612,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\n" +
                         "75.88175403454873\tABC\n" +
                         "57.78947915182423\tABC\n");
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -3652,7 +3652,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n");
 
         // this is good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -3728,7 +3728,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "11.3\tPEHN\t1971-01-01T00:00:00.000000Z\n");
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -3816,7 +3816,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true
         );
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -3884,7 +3884,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
 
         // this is good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -3938,7 +3938,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n");
 
         // this is good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4016,7 +4016,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 "a\tb\tk\n" +
                         "56.594291398612405\tXYZ\t1971-01-01T00:00:00.000000Z\n");
         // good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4083,7 +4083,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
 
         // good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4149,7 +4149,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
 
         // good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4610,7 +4610,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
         );
 
         // good
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4685,7 +4685,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true
         );
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4725,7 +4725,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true
         );
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -4798,7 +4798,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                 true
         );
 
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI());
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -6739,18 +6739,18 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
     public void testSelectDistinct() throws Exception {
         final String expected = "a\n" +
                 "0\n" +
-                "8\n" +
-                "3\n" +
                 "1\n" +
-                "9\n" +
                 "2\n" +
-                "6\n" +
+                "3\n" +
                 "4\n" +
+                "5\n" +
+                "6\n" +
                 "7\n" +
-                "5\n";
+                "8\n" +
+                "9\n";
 
         assertQuery(expected,
-                "select distinct a from x",
+                "select distinct a from x order by a",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -6764,69 +6764,73 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " abs(rnd_int())%10 a" +
                         " from long_sequence(1000000)" +
                         ") ",
-                expected, true);
+                expected,
+                true,
+                false,
+                true
+        );
     }
 
     @Test
     public void testSelectDistinctSymbol() throws Exception {
         final String expected = "a\n" +
-                "EHNRX\n" +
+                "\n" +
                 "BHFOW\n" +
-                "QULOF\n" +
-                "RUEDR\n" +
-                "SZSRY\n" +
-                "YYQE\n" +
-                "IBBTGP\n" +
-                "TJWC\n" +
-                "ZSXU\n" +
                 "CCXZ\n" +
+                "DZJMY\n" +
+                "EHNRX\n" +
+                "FBVTMH\n" +
+                "GETJ\n" +
+                "IBBTGP\n" +
                 "KGHVUV\n" +
-                "SWHYRX\n" +
+                "OOZZ\n" +
                 "OUOJS\n" +
                 "PDXYSB\n" +
-                "OOZZ\n" +
-                "WFFYUD\n" +
-                "DZJMY\n" +
-                "GETJ\n" +
-                "FBVTMH\n" +
+                "QULOF\n" +
+                "RUEDR\n" +
+                "SWHYRX\n" +
+                "SZSRY\n" +
+                "TJWC\n" +
                 "UICW\n" +
-                "\n";
+                "WFFYUD\n" +
+                "YYQE\n" +
+                "ZSXU\n";
 
         final String expected2 = "a\n" +
-                "EHNRX\n" +
+                "\n" +
                 "BHFOW\n" +
-                "QULOF\n" +
-                "RUEDR\n" +
-                "SZSRY\n" +
-                "YYQE\n" +
-                "IBBTGP\n" +
-                "TJWC\n" +
-                "ZSXU\n" +
                 "CCXZ\n" +
+                "CJFT\n" +
+                "DZJMY\n" +
+                "EHNRX\n" +
+                "FBVTMH\n" +
+                "GETJ\n" +
+                "HLDN\n" +
+                "IBBTGP\n" +
+                "IIB\n" +
+                "ILQP\n" +
                 "KGHVUV\n" +
-                "SWHYRX\n" +
+                "NDMRS\n" +
+                "OOZZ\n" +
                 "OUOJS\n" +
                 "PDXYSB\n" +
-                "OOZZ\n" +
-                "WFFYUD\n" +
-                "DZJMY\n" +
-                "GETJ\n" +
-                "FBVTMH\n" +
-                "UICW\n" +
-                "SSCL\n" +
-                "HLDN\n" +
-                "IIB\n" +
+                "QULOF\n" +
                 "ROGHY\n" +
-                "CJFT\n" +
-                "WNX\n" +
-                "VZKE\n" +
-                "NDMRS\n" +
+                "RUEDR\n" +
+                "SSCL\n" +
                 "SVNVD\n" +
-                "ILQP\n" +
-                "\n";
+                "SWHYRX\n" +
+                "SZSRY\n" +
+                "TJWC\n" +
+                "UICW\n" +
+                "VZKE\n" +
+                "WFFYUD\n" +
+                "WNX\n" +
+                "YYQE\n" +
+                "ZSXU\n";
 
         assertQuery(expected,
-                "select distinct a from x",
+                "select distinct a from x order by a",
                 "create table x as " +
                         "(" +
                         "select" +
