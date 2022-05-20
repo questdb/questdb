@@ -26,7 +26,6 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
@@ -70,15 +69,6 @@ public class TextLoaderBase implements Closeable, Mutable {
     public void configureDestination(CharSequence tableName, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
         textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol);
         textLexer.setTableName(tableName);
-
-        LOG.info()
-                .$("configured [table=`").$(tableName)
-                .$("`, overwrite=").$(overwrite)
-                .$(", durable=").$(durable)
-                .$(", atomicity=").$(atomicity)
-                .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
-                .$(", timestamp=").$(timestampIndexCol)
-                .$(']').$();
     }
 
     public LongList getColumnErrorCounts() {
