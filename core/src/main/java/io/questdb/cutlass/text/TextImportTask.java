@@ -94,11 +94,13 @@ public class TextImportTask {
             } else {
                 throw new RuntimeException("Unexpected phase " + phase);
             }
-        } catch (SqlException | TextException e) {
-            e.printStackTrace();//TODO: how can we react to job failing 
+        } catch (Throwable t) {
+            t.printStackTrace();//TODO: how can we react to job failing
+            return false;
+        } finally {
+            doneLatch.countDown();
         }
-
-        doneLatch.countDown();
+        
         return true;
     }
 }

@@ -133,8 +133,6 @@ public class FileSplitter implements Closeable, Mutable {
     private long lineCount;
     private boolean eol;
 
-    //line start offset of line with rolled timestamp field relative to start of file  
-    private long rolledFieldLineOffset = -1;
     private boolean useFieldRollBuf = false;
     private boolean rollBufferUnusable = false;
 
@@ -191,12 +189,7 @@ public class FileSplitter implements Closeable, Mutable {
             return;
         }
 
-        long lineStartOffset;
-        if (useFieldRollBuf) {
-            lineStartOffset = rolledFieldLineOffset;
-        } else {
-            lineStartOffset = offset + lastLineStart;
-        }
+        long lineStartOffset = lastLineStart;
         //long lineEndOffset = offset + lastLineStart;
 
         long partitionKey = partitionFloorMethod.floor(timestamp);
@@ -308,7 +301,6 @@ public class FileSplitter implements Closeable, Mutable {
         this.lineCount = 0;
         this.fieldRollBufCur = fieldRollBufPtr;
         this.useFieldRollBuf = false;
-        this.rolledFieldLineOffset = -1;
         this.rollBufferUnusable = false;
         this.header = false;
         this.errorCount = 0;
@@ -379,7 +371,6 @@ public class FileSplitter implements Closeable, Mutable {
 
     private void clearRollBuffer(long ptr) {
         useFieldRollBuf = false;
-        rolledFieldLineOffset = -1;
         fieldRollBufCur = fieldRollBufPtr;
         this.fieldLo = this.fieldHi = ptr;
     }
@@ -498,10 +489,9 @@ public class FileSplitter implements Closeable, Mutable {
 
         if (eol) {
             this.fieldLo = 0;
-        } else if (fieldIndex == timestampIndex) {//we only need to buffer index field
+        } else if (fieldIndex == timestampIndex) {
             rollField(lo, hi);
             useFieldRollBuf = true;
-            rolledFieldLineOffset = this.offset + this.lastLineStart;
         }
     }
 
@@ -576,7 +566,7 @@ public class FileSplitter implements Closeable, Mutable {
 
     private void uneol(long lo) {
         eol = false;
-        this.lastLineStart = this.fieldLo - lo;
+        this.lastLineStart = this.offset + (this.fieldLo - lo);
     }
 
     public void index(long chunkLo, long chunkHi, long lineNumber) throws SqlException {
@@ -589,7 +579,7 @@ public class FileSplitter implements Closeable, Mutable {
         this.offset = chunkLo;
         long read;
 
-        this.lastLineStart = 0;
+        this.lastLineStart = offset;
         this.lineCount = lineNumber;
 
         try {
@@ -667,7 +657,7 @@ public class FileSplitter implements Closeable, Mutable {
                 } else if (c == '\n') {
                     nlCount[(int) (quotes & 1)]++;
                     if (nlFirst[(int) (quotes & 1)] == -1) {
-                        nlFirst[(int) (quotes & 1)] = chunkStart + ptr - fileBufferPtr;
+                        nlFirst[(int) (quotes & 1)] = offset + (ptr - fileBufferPtr);
                     }
                 }
             }
