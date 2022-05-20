@@ -32,10 +32,10 @@ import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 
 import java.sql.*;
-import java.util.Arrays;
 import java.util.Properties;
 import java.util.TimeZone;
 
@@ -59,9 +59,6 @@ public class BasePGTest extends AbstractGriffinTest {
 
     protected PGWireServer createPGServer(int workerCount, long maxQueryTime) {
 
-        final int[] affinity = new int[workerCount];
-        Arrays.fill(affinity, -1);
-
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
             public long getMaxTime() {
@@ -77,7 +74,7 @@ public class BasePGTest extends AbstractGriffinTest {
 
             @Override
             public int[] getWorkerAffinity() {
-                return affinity;
+                return TestUtils.getWorkerAffinity(workerCount);
             }
 
             @Override

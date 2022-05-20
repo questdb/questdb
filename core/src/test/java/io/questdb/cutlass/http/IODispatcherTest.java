@@ -1719,22 +1719,7 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1, -1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 3;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            final WorkerPool workerPool = new TestWorkerPool(3, metrics);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
@@ -2193,22 +2178,7 @@ public class IODispatcherTest {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
@@ -2815,23 +2785,7 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
-
+            WorkerPool workerPool = new TestWorkerPool(1);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
@@ -3972,23 +3926,7 @@ public class IODispatcherTest {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
-
+            WorkerPool workerPool = new TestWorkerPool(1);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
@@ -4179,22 +4117,7 @@ public class IODispatcherTest {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            final WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)) {
@@ -4269,22 +4192,7 @@ public class IODispatcherTest {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir), metrics);
                     HttpServer httpServer = new HttpServer(httpConfiguration, engine.getMessageBus(), metrics, workerPool, false)
@@ -4376,22 +4284,7 @@ public class IODispatcherTest {
                     .build();
             QueryCache.configure(httpConfiguration);
 
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 1;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(1);
 
             try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir) {
                 @Override
@@ -5263,22 +5156,7 @@ public class IODispatcherTest {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     MessageBus messageBus = new MessageBusImpl(configuration);
                     HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, false)
@@ -5433,22 +5311,7 @@ public class IODispatcherTest {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     MessageBus messageBus = new MessageBusImpl(configuration);
                     HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, false)
@@ -5601,22 +5464,7 @@ public class IODispatcherTest {
                     false,
                     "HTTP/1.0 "
             );
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1};
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     MessageBus messageBus = new MessageBusImpl(configuration);
                     HttpServer httpServer = new HttpServer(httpConfiguration, messageBus, metrics, workerPool, false)

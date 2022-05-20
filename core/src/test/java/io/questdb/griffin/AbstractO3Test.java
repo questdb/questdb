@@ -239,16 +239,11 @@ public class AbstractO3Test {
     ) throws Exception {
         executeVanilla(() -> {
             if (workerCount > 0) {
-                int[] affinity = new int[workerCount];
-                for (int i = 0; i < workerCount; i++) {
-                    affinity[i] = -1;
-                }
-
                 WorkerPool pool = new WorkerPool(
                         new WorkerPoolAwareConfiguration() {
                             @Override
                             public int[] getWorkerAffinity() {
-                                return affinity;
+                                return TestUtils.getWorkerAffinity(getWorkerCount());
                             }
 
                             @Override
@@ -347,6 +342,10 @@ public class AbstractO3Test {
 
     protected static void executeVanilla(CustomisableRunnable code) throws Exception {
         executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root)));
+    }
+
+    protected static void executeVanillaWithMetrics(CustomisableRunnable code) throws Exception {
+        executeVanilla(() -> TestUtils.execute(null, code, new DefaultCairoConfiguration(root), Metrics.enabled()));
     }
 
     static void assertO3DataConsistency(

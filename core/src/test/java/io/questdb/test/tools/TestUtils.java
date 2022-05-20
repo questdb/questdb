@@ -24,9 +24,10 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -49,6 +50,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 import java.io.*;
+import java.util.Arrays;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -372,6 +374,29 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEventually(Runnable assertion) {
+        assertEventually(assertion, 30);
+    }
+
+    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (; ; ) {
+            try {
+                assertion.run();
+                return;
+            } catch (AssertionError error) {
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
+    }
+
     public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
         try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
              BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
@@ -670,11 +695,12 @@ public final class TestUtils {
     public static void execute(
             @Nullable WorkerPool pool,
             CustomisableRunnable runnable,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            Metrics metrics
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
-                final CairoEngine engine = new CairoEngine(configuration);
+                final CairoEngine engine = new CairoEngine(configuration, metrics);
                 final SqlCompiler compiler = new SqlCompiler(engine);
                 final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
         ) {
@@ -694,6 +720,14 @@ public final class TestUtils {
             Assert.assertEquals(0, engine.getBusyWriterCount());
             Assert.assertEquals(0, engine.getBusyReaderCount());
         }
+    }
+
+    public static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runner,
+            CairoConfiguration configuration
+    ) throws Exception {
+        execute(pool, runner, configuration, Metrics.disabled());
     }
 
     @NotNull
@@ -744,6 +778,12 @@ public final class TestUtils {
         };
     }
 
+    public static int[] getWorkerAffinity(int workerCount) {
+        int[] res = new int[workerCount];
+        Arrays.fill(res, -1);
+        return res;
+    }
+
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
         CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
         Assert.assertNotNull(compiledQuery.getInsertOperation());
@@ -751,37 +791,6 @@ public final class TestUtils {
         try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
             insertMethod.execute();
             insertMethod.commit();
-        }
-    }
-
-    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink, RecordCursorPrinter printer) {
-        sink.clear();
-        printer.print(cursor, metadata, header, sink);
-    }
-
-    public static void printSql(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableCharSink sink
-    ) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printCursor(cursor, factory.getMetadata(), true, sink, printer);
-            }
-        }
-    }
-
-    public static void printSqlWithTypes(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableCharSink sink
-    ) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                printCursor(cursor, factory.getMetadata(), true, sink, printerWithTypes);
-            }
         }
     }
 
@@ -860,14 +869,34 @@ public final class TestUtils {
         }
     }
 
-    private static void putGeoHash(long hash, int bits, CharSink sink) {
-        if (hash == GeoHashes.NULL) {
-            return;
+    public static void printCursor(RecordCursor cursor, RecordMetadata metadata, boolean header, MutableCharSink sink, RecordCursorPrinter printer) {
+        sink.clear();
+        printer.print(cursor, metadata, header, sink);
+    }
+
+    public static void printSql(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printCursor(cursor, factory.getMetadata(), true, sink, printer);
+            }
         }
-        if (bits % 5 == 0) {
-            GeoHashes.appendCharsUnsafe(hash, bits / 5, sink);
-        } else {
-            GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
+    }
+
+    public static void printSqlWithTypes(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableCharSink sink
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                printCursor(cursor, factory.getMetadata(), true, sink, printerWithTypes);
+            }
         }
     }
 
@@ -907,6 +936,17 @@ public final class TestUtils {
         }
     }
 
+    private static void putGeoHash(long hash, int bits, CharSink sink) {
+        if (hash == GeoHashes.NULL) {
+            return;
+        }
+        if (bits % 5 == 0) {
+            GeoHashes.appendCharsUnsafe(hash, bits / 5, sink);
+        } else {
+            GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
+        }
+    }
+
     private static void assertEquals(Long256 expected, Long256 actual) {
         if (expected == actual) return;
         if (actual == null) {
@@ -933,29 +973,6 @@ public final class TestUtils {
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
             Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
             Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
-        }
-    }
-
-    public static void assertEventually(Runnable assertion) {
-        assertEventually(assertion, 30);
-    }
-
-    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
-        long maxSleepingTimeMillis = 1000;
-        long nextSleepingTimeMillis = 10;
-        long startTime = System.nanoTime();
-        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
-        for (;;) {
-            try {
-                assertion.run();
-                return;
-            } catch (AssertionError error) {
-                if (System.nanoTime() >= deadline) {
-                    throw error;
-                }
-            }
-            Os.sleep(nextSleepingTimeMillis);
-            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
         }
     }
 

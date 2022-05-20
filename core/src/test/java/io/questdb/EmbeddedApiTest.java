@@ -36,8 +36,8 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.vect.GroupByJob;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
@@ -60,24 +60,7 @@ public class EmbeddedApiTest {
         final Log log = LogFactory.getLog("testConcurrentSQLExec");
 
         TestUtils.assertMemoryLeak(() -> {
-            WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return new int[]{
-                            -1, -1
-                    };
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return 2;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, Metrics.disabled());
+            final WorkerPool workerPool = new TestWorkerPool(2);
 
             Rnd rnd = new Rnd();
             try (
