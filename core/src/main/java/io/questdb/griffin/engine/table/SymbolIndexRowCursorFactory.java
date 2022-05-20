@@ -68,6 +68,11 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
     }
 
     @Override
+    public boolean isUsingIndex() {
+        return true;
+    }
+
+    @Override
     public Function getFunction() {
         return symbolFunction;
     }

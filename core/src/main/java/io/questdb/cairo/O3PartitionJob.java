@@ -91,10 +91,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         if (srcDataMax < 1) {
 
-            // this has to be a brand new partition for either of two cases:
-            // - this partition is above min partition of the table
-            // - this partition is below max partition of the table
-            // - this is last partition that is empty
+            // This has to be a brand new partition for any of three cases:
+            // - This partition is above min partition of the table.
+            // - This partition is below max partition of the table.
+            // - This is last partition that is empty.
             // pure OOO data copy into new partition
 
             if (!last) {
@@ -745,6 +745,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             O3Basket o3Basket,
             long colTopSinkAddr
     ) {
+        // Number of rows to insert from the O3 segment into this partition.
+        final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
+
+        tableWriter.addPhysicallyWrittenRows(
+                O3OpenColumnJob.isOpenColumnModeForAppend(openColumnMode)
+                        ? srcOooBatchRowSize
+                        : srcDataMax + srcOooBatchRowSize);
+
         LOG.debug().$("partition [ts=").$ts(oooTimestampLo).$(']').$();
 
         final long timestampMergeIndexAddr;

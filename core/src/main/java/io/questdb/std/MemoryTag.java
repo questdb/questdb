@@ -53,7 +53,8 @@ public final class MemoryTag {
     public static final int NATIVE_TABLE_READER = 25;
     public static final int NATIVE_TABLE_WRITER = 26;
     public static final int MMAP_TABLE_WALD_WRITER = 27;
-    public static final int SIZE = MMAP_TABLE_WALD_WRITER + 1;
+    public static final int MMAP_UPDATE = 28;
+    public static final int SIZE = MMAP_UPDATE + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -85,6 +86,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_LONG_LIST, "NATIVE_LONG_LIST");
         tagNameMap.extendAndSet(NATIVE_JIT, "NATIVE_JIT");
         tagNameMap.extendAndSet(NATIVE_OFFLOAD, "NATIVE_OFFLOAD");
+        tagNameMap.extendAndSet(MMAP_UPDATE, "MMAP_UPDATE");
         tagNameMap.extendAndSet(NATIVE_PATH, "NATIVE_PATH");
         tagNameMap.extendAndSet(NATIVE_TABLE_READER, "NATIVE_TABLE_READER");
         tagNameMap.extendAndSet(NATIVE_TABLE_WRITER, "NATIVE_TABLE_WRITER");

@@ -25,6 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.MapWriter;
+import io.questdb.cairo.SymbolValueCountCollector;
 
 public class NullMapWriter implements MapWriter {
     public static final MapWriter INSTANCE = new NullMapWriter();
@@ -46,6 +47,11 @@ public class NullMapWriter implements MapWriter {
 
     @Override
     public int put(CharSequence symbol) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int put(CharSequence symbol, SymbolValueCountCollector valueCountCollector) {
         throw new UnsupportedOperationException();
     }
 

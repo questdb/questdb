@@ -39,7 +39,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private final StringSink message = new StringSink();
     private int position;
 
-    private SqlException() {
+    protected SqlException() {
     }
 
     public static SqlException $(int position, CharSequence message) {

@@ -42,7 +42,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
 
-    private PageFrameCursor cursor; // Makes it possible to determine real row id, not one relative to page.
+    // Makes it possible to determine real row id, not one relative to page.
     private SymbolTableSource symbolTableSource;
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private PageAddressCache pageAddressCache;
@@ -54,12 +54,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
         this.pageAddressCache = other.pageAddressCache;
         this.frameIndex = other.frameIndex;
         this.rowIndex = other.rowIndex;
-
-        if (symbolTableSource instanceof PageFrameCursor) {
-            this.cursor = (PageFrameCursor) symbolTableSource;
-        } else {
-            this.cursor = null;
-        }
     }
 
     public PageAddressCacheRecord() {
@@ -185,10 +179,7 @@ public class PageAddressCacheRecord implements Record, Closeable {
 
     @Override
     public long getUpdateRowId() {
-        if (cursor != null) {
-            return cursor.getUpdateRowId(rowIndex);
-        }
-        return -1L;
+        return pageAddressCache.toTableRowID(frameIndex, rowIndex);
     }
 
     @Override
@@ -290,11 +281,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
 
     public void of(SymbolTableSource symbolTableSource, PageAddressCache pageAddressCache) {
         this.symbolTableSource = symbolTableSource;
-        if (symbolTableSource instanceof PageFrameCursor) {
-            cursor = (PageFrameCursor) symbolTableSource;
-        } else {
-            cursor = null;
-        }
         this.pageAddressCache = pageAddressCache;
         frameIndex = 0;
         rowIndex = 0;

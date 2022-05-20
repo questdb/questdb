@@ -47,7 +47,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_SIZE = 4;
     private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
     private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = 2;
-    private static final int PARTITIONS_SLOT_OFFSET_DATA_TXN = 3;
+    private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = 3;
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final FilesFacade ff;
     private final Path path;
@@ -120,10 +120,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.openPartitionInfo = new LongList(partitionCount * PARTITIONS_SLOT_SIZE);
             this.openPartitionInfo.setPos(partitionCount * PARTITIONS_SLOT_SIZE);
             for (int i = 0; i < partitionCount; i++) {
+                // number of rows, txn and column version is tracked for each partition
+                // it is compared to attachedPartitions within the txn file to determine if a partition needs to be reloaded or not
                 this.openPartitionInfo.setQuick(i * PARTITIONS_SLOT_SIZE, txFile.getPartitionTimestamp(i));
                 this.openPartitionInfo.setQuick(i * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, -1); // size
                 this.openPartitionInfo.setQuick(i * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i)); // txn
-                this.openPartitionInfo.setQuick(i * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_DATA_TXN, txFile.getPartitionDataTxn(i)); // txn
+                this.openPartitionInfo.setQuick(i * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, txFile.getPartitionColumnVersion(i)); // cv
             }
             this.columnTops = new LongList(capacity / 2);
             this.columnTops.setPos(capacity / 2);
@@ -340,11 +342,8 @@ public class TableReader implements Closeable, SymbolTableSource {
 
         while (partitionIndex < partitionCount && txPartitionIndex < txPartitionCount) {
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+            final long txPartTs = txFile.getPartitionTimestamp(txPartitionIndex);
             final long openPartitionTimestamp = openPartitionInfo.getQuick(offset);
-            final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-            final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-
-            long txPartTs = txFile.getPartitionTimestamp(txPartitionIndex);
 
             if (openPartitionTimestamp < txPartTs) {
                 // Deleted partitions
@@ -358,14 +357,19 @@ public class TableReader implements Closeable, SymbolTableSource {
                 partitionIndex++;
             } else {
                 // Refresh partition
-                long newPartitionSize = txFile.getPartitionSize(txPartitionIndex);
+                final long newPartitionSize = txFile.getPartitionSize(txPartitionIndex);
                 final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+                final long txPartitionColumnVersion = txFile.getPartitionColumnVersion(partitionIndex);
+                final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+                final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+                final long openPartitionColumnVersion = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);
+
                 if (!forceTruncate) {
-                    if (openPartitionNameTxn == txPartitionNameTxn) {
+                    if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == txPartitionColumnVersion) {
                         if (openPartitionSize != newPartitionSize) {
                             if (openPartitionSize > -1L) {
                                 reloadPartition(partitionIndex, newPartitionSize, txPartitionNameTxn);
-                                this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, newPartitionSize);
+                                this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, newPartitionSize);
                                 LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                             }
                             changed = true;
@@ -403,17 +407,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    public boolean reload() {
+   public boolean reload() {
         if (acquireTxn()) {
             return false;
         }
         final long prevPartitionVersion = this.txFile.getPartitionTableVersion();
+        final long prevColumnVersion = this.txFile.getColumnVersion();
         final long prevTruncateVersion = this.txFile.getTruncateVersion();
         try {
             reloadSlow(true);
             // partition reload will apply truncate if necessary
             // applyTruncate for non-partitioned tables only
-            reconcileOpenPartitions(prevPartitionVersion, prevTruncateVersion);
+            reconcileOpenPartitions(prevPartitionVersion, prevColumnVersion, prevTruncateVersion);
             return true;
         } catch (Throwable e) {
             releaseTxn();
@@ -484,8 +489,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private long closeRewrittenPartitionFiles(int partitionIndex, int oldBase, Path path) {
-        long partitionTs = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
-        long exisingPartitionNameTxn = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+        final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+        long partitionTs = openPartitionInfo.getQuick(offset);
+        long exisingPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
         long newSize = txFile.getPartitionSizeByPartitionTimestamp(partitionTs);
         if (exisingPartitionNameTxn != newNameTxn || newSize < 0) {
@@ -494,7 +500,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int i = 0; i < this.columnCount; i++) {
                 closePartitionColumnFile(oldBase, i);
             }
-            openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, -1);
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
             return -1;
         }
         pathGenPartitioned(partitionIndex);
@@ -726,7 +732,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset, timestamp);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1L); // size
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, -1L); // name txn
-        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_DATA_TXN, -1L); // data txn
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1L); // column version
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", path=").$(path).$(", timestamp=").$ts(timestamp).I$();
     }
@@ -817,6 +823,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                     openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                     final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
                     this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
+                    final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+                    this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txPartitionNameTxn);
+                    final long txPartitionColumnVersion = txFile.getPartitionColumnVersion(partitionIndex);
+                    this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, txPartitionColumnVersion);
                 }
 
                 return partitionSize;
@@ -917,10 +927,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void reconcileOpenPartitions(long prevPartitionVersion, long prevTruncateVersion) {
+    private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
         // Reconcile partition full or partial will only update row count of last partition and append new partitions
         boolean truncateHappened = this.txFile.getTruncateVersion() != prevTruncateVersion;
-        if (this.txFile.getPartitionTableVersion() == prevPartitionVersion && !truncateHappened) {
+        if (txFile.getPartitionTableVersion() == prevPartitionVersion && txFile.getColumnVersion() == prevColumnVersion && !truncateHappened) {
             int partitionIndex = Math.max(0, partitionCount - 1);
             final int txPartitionCount = txFile.getPartitionCount();
             if (partitionIndex < txPartitionCount) {
@@ -937,12 +947,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                         if (openPartitionNameTxn == txPartitionNameTxn) {
                             if (openPartitionSize != txPartitionSize) {
                                 reloadPartition(partitionIndex, txPartitionSize, txPartitionNameTxn);
-                                this.openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
+                                this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                 LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                             }
                         } else {
                             openPartition0(partitionIndex);
-                            this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txPartitionNameTxn);
                         }
                     }
                     partitionIndex++;

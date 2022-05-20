@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
+ *  Copyright (c) 2019-2022 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,11 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.mp;
 
-public class TableStructureChangesException extends Exception {
-    public static final TableStructureChangesException INSTANCE = new TableStructureChangesException();
+import io.questdb.Metrics;
+import io.questdb.test.tools.TestUtils;
 
-    private TableStructureChangesException() {
+public class TestWorkerPool extends WorkerPool {
+
+    public TestWorkerPool(int workerCount) {
+        this(workerCount, Metrics.disabled());
+    }
+
+    public TestWorkerPool(int workerCount, Metrics metrics) {
+        super(new WorkerPoolConfiguration() {
+            @Override
+            public int[] getWorkerAffinity() {
+                return TestUtils.getWorkerAffinity(workerCount);
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+
+            @Override
+            public boolean haltOnError() {
+                return false;
+            }
+        }, metrics);
     }
 }

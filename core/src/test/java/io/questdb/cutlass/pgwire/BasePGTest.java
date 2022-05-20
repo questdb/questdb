@@ -32,10 +32,10 @@ import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 
 import java.sql.*;
-import java.util.Arrays;
 import java.util.Properties;
 import java.util.TimeZone;
 
@@ -59,9 +59,6 @@ public class BasePGTest extends AbstractGriffinTest {
 
     protected PGWireServer createPGServer(int workerCount, long maxQueryTime) {
 
-        final int[] affinity = new int[workerCount];
-        Arrays.fill(affinity, -1);
-
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
             public long getMaxTime() {
@@ -77,7 +74,7 @@ public class BasePGTest extends AbstractGriffinTest {
 
             @Override
             public int[] getWorkerAffinity() {
-                return affinity;
+                return TestUtils.getWorkerAffinity(workerCount);
             }
 
             @Override
@@ -122,6 +119,18 @@ public class BasePGTest extends AbstractGriffinTest {
         } else {
             return getConnection(Mode.Extended, binary, -2);
         }
+    }
+
+    protected Connection getConnection(boolean simple, boolean binary, long statementTimeoutMs) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
+        properties.setProperty("sslmode", "disable");
+        properties.setProperty("binaryTransfer", Boolean.toString(binary));
+        properties.setProperty("preferQueryMode", simple ? Mode.Simple.value : Mode.Extended.value);
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        properties.setProperty("options", "-c statement_timeout=" + statementTimeoutMs);
+        return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:8812/qdb", properties);
     }
 
     protected Connection getConnection(Mode mode, boolean binary, int prepareThreshold) throws SQLException {

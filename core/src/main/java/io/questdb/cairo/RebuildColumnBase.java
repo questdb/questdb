@@ -72,21 +72,49 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         rebuildPartitionColumn(null, columnName);
     }
 
-    public void rebuildPartition(CharSequence rebuildPartitionName) {
-        rebuildPartitionColumn(rebuildPartitionName, null);
+    public void rebuildPartition(CharSequence partitionName) {
+        rebuildPartitionColumn(partitionName, null);
     }
 
-    public void rebuildPartitionColumn(CharSequence rebuildPartitionName, CharSequence rebuildColumn) {
+    public void rebuildPartitionColumn(CharSequence partitionName, CharSequence columnName) {
         FilesFacade ff = configuration.getFilesFacade();
-        path.trimTo(rootLen);
-        path.concat(TableUtils.META_FILE_NAME);
+        try {
+            lock(ff);
+            path.concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+            try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path)) {
+                final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
+                columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
+                path.trimTo(rootLen);
+
+                rebuildPartitionColumn(ALL, partitionName, columnName, columnVersionReader, ff);
+            }
+        } finally {
+                lockName(path);
+            releaseLock(ff);
+        }
+    }
+
+    public void rebuildColumn(CharSequence columnName, TableWriter tableWriter) {
+        rebuildPartitionColumn(null, columnName, tableWriter);
+    }
+
+    // if TableWriter is passed in the lock has to be held already
+    public void rebuildPartitionColumn(CharSequence partitionName, CharSequence columnName, TableWriter tableWriter) {
+        rebuildPartitionColumn(ALL, partitionName, columnName, tableWriter.getColumnVersionWriter(), configuration.getFilesFacade());
+    }
+
+    public void rebuildPartitionColumn(long partitionTs, CharSequence columnName, TableWriter tableWriter) {
+        rebuildPartitionColumn(partitionTs, null, columnName, tableWriter.getColumnVersionWriter(), configuration.getFilesFacade());
+    }
+
+    private void rebuildPartitionColumn(long partitionTs, CharSequence rebuildPartitionName, CharSequence rebuildColumn, ColumnVersionReader columnVersionReader, FilesFacade ff) {
+        path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
         if (metadata == null) {
             metadata = new TableReaderMetadata(ff);
         }
         metadata.of(path.$(), ColumnType.VERSION);
-        try {
-            lock(ff);
 
+        try {
             // Resolve column id if the column name specified
             int rebuildColumnIndex = ALL;
             if (rebuildColumn != null) {
@@ -104,61 +132,51 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 txReader.unsafeLoadAll();
                 path.trimTo(rootLen);
 
-
-                path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path)) {
-                    final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
-                    columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
-                    path.trimTo(rootLen);
-
-                    if (PartitionBy.isPartitioned(partitionBy)) {
-                        // Resolve partition timestamp if partition name specified
-                        long rebuildPartitionTs = ALL;
-                        if (rebuildPartitionName != null) {
-                            rebuildPartitionTs = PartitionBy.parsePartitionDirName(rebuildPartitionName, partitionBy);
-                        }
-
-                        for (int partitionIndex = txReader.getPartitionCount() - 1; partitionIndex > -1; partitionIndex--) {
-                            long partitionTimestamp = txReader.getPartitionTimestamp(partitionIndex);
-                            if (rebuildPartitionTs == ALL || partitionTimestamp == rebuildPartitionTs) {
-                                long partitionSize = txReader.getPartitionSize(partitionIndex);
-                                if (partitionIndex == txReader.getPartitionCount() - 1) {
-                                    partitionSize = txReader.getTransientRowCount();
-                                }
-                                long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
-                                rebuildColumn(
-                                        rebuildColumnIndex,
-                                        ff,
-                                        metadata,
-                                        partitionDirFormatMethod,
-                                        tempStringSink,
-                                        partitionTimestamp,
-                                        partitionSize,
-                                        partitionNameTxn,
-                                        columnVersionReader);
-                            }
-                        }
-                    } else {
-                        long partitionSize = txReader.getTransientRowCount();
-                        rebuildColumn(
-                                rebuildColumnIndex,
-                                ff,
-                                metadata,
-                                partitionDirFormatMethod,
-                                tempStringSink,
-                                0L,
-                                partitionSize,
-                                -1L,
-                                columnVersionReader
-                        );
+                if (PartitionBy.isPartitioned(partitionBy)) {
+                    // Resolve partition timestamp if partition name specified
+                    long rebuildPartitionTs = partitionTs;
+                    if (rebuildPartitionName != null) {
+                        rebuildPartitionTs = PartitionBy.parsePartitionDirName(rebuildPartitionName, partitionBy);
                     }
+
+                    for (int partitionIndex = txReader.getPartitionCount() - 1; partitionIndex > -1; partitionIndex--) {
+                        long partitionTimestamp = txReader.getPartitionTimestamp(partitionIndex);
+                        if (rebuildPartitionTs == ALL || partitionTimestamp == rebuildPartitionTs) {
+                            long partitionSize = txReader.getPartitionSize(partitionIndex);
+                            if (partitionIndex == txReader.getPartitionCount() - 1) {
+                                partitionSize = txReader.getTransientRowCount();
+                            }
+                            long partitionNameTxn = txReader.getPartitionNameTxn(partitionIndex);
+                            rebuildColumn(
+                                    rebuildColumnIndex,
+                                    ff,
+                                    metadata,
+                                    partitionDirFormatMethod,
+                                    tempStringSink,
+                                    partitionTimestamp,
+                                    partitionSize,
+                                    partitionNameTxn,
+                                    columnVersionReader);
+                        }
+                    }
+                } else {
+                    long partitionSize = txReader.getTransientRowCount();
+                    rebuildColumn(
+                            rebuildColumnIndex,
+                            ff,
+                            metadata,
+                            partitionDirFormatMethod,
+                            tempStringSink,
+                            0L,
+                            partitionSize,
+                            -1L,
+                            columnVersionReader
+                    );
                 }
             }
         } finally {
             metadata.close();
             path.trimTo(rootLen);
-            lockName(path);
-            releaseLock(ff);
         }
     }
 
