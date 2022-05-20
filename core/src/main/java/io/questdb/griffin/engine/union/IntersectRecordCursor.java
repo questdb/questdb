@@ -28,44 +28,38 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;
 
 class IntersectRecordCursor implements RecordCursor {
     private final Map map;
     private final RecordSink recordSink;
+    private final boolean convertSymbolsAsStrings;
     private RecordCursor masterCursor;
     private RecordCursor slaveCursor;
-    private Record masterRecord;
-    private RecordCursor symbolCursor;
+    private Record record;
     private SqlExecutionCircuitBreaker circuitBreaker;
+    private UnionDelegatingRecordImpl delegatingRecord;
 
-    public IntersectRecordCursor(Map map, RecordSink recordSink) {
+    public IntersectRecordCursor(Map map, RecordSink recordSink, boolean convertSymbolsAsStrings) {
         this.map = map;
         this.recordSink = recordSink;
-    }
-
-    void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
-        this.masterRecord = masterCursor.getRecord();
-        circuitBreaker = executionContext.getCircuitBreaker();
-        map.clear();
-        populateSlaveMap(slaveCursor);
-        toTop();
-    }
-
-    private void populateSlaveMap(RecordCursor cursor) {
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            MapKey key = map.withKey();
-            key.put(record, recordSink);
-            key.createValue();
-            circuitBreaker.statefulThrowExceptionIfTripped();
+        this.convertSymbolsAsStrings = convertSymbolsAsStrings;
+        if (convertSymbolsAsStrings) {
+            this.delegatingRecord = new UnionDelegatingRecordImpl();
+            record = delegatingRecord;
         }
+    }
+
+    @Override
+    public Record getRecord() {
+        return record;
+    }
+
+    @Override
+    public SymbolTable getSymbolTable(int columnIndex) {
+        return masterCursor.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -86,15 +80,10 @@ class IntersectRecordCursor implements RecordCursor {
     }
 
     @Override
-    public Record getRecord() {
-        return masterRecord;
-    }
-
-    @Override
     public boolean hasNext() {
         while (masterCursor.hasNext()) {
             MapKey key = map.withKey();
-            key.put(masterRecord, recordSink);
+            key.put(record, recordSink);
             if (key.findValue() != null) {
                 return true;
             }
@@ -103,14 +92,41 @@ class IntersectRecordCursor implements RecordCursor {
         return false;
     }
 
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return symbolCursor.getSymbolTable(columnIndex);
+    void of(RecordCursor masterCursor, RecordMetadata masterMetadata, RecordCursor slaveCursor, RecordMetadata slaveMetadata, SqlExecutionContext executionContext) {
+        this.masterCursor = masterCursor;
+        this.slaveCursor = slaveCursor;
+        circuitBreaker = executionContext.getCircuitBreaker();
+
+        map.clear();
+        populateSlaveMap(slaveCursor, slaveMetadata);
+
+
+        if (convertSymbolsAsStrings) {
+            delegatingRecord.of(masterCursor.getRecord(), masterMetadata);
+        } else {
+            record = masterCursor.getRecord();
+        }
+
+        toTop();
+    }
+
+    private void populateSlaveMap(RecordCursor cursor, RecordMetadata slaveMetadata) {
+        Record record = cursor.getRecord();
+        if (convertSymbolsAsStrings) {
+            delegatingRecord.of(record, slaveMetadata);
+            record = delegatingRecord;
+        }
+
+        while (cursor.hasNext()) {
+            MapKey key = map.withKey();
+            key.put(record, recordSink);
+            key.createValue();
+            circuitBreaker.statefulThrowExceptionIfTripped();
+        }
     }
 
     @Override
     public void toTop() {
-        symbolCursor = masterCursor;
         masterCursor.toTop();
     }
 

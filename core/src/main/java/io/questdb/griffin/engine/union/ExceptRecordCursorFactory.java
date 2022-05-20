@@ -49,13 +49,14 @@ public class ExceptRecordCursorFactory implements RecordCursorFactory {
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             RecordSink recordSink,
-            ColumnTypes valueTypes
+            ColumnTypes valueTypes,
+            boolean convertSymbolsToStrings
     ) {
-        this.metadata = masterFactory.getMetadata();
+        this.metadata = metadata;
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
         this.map = MapFactory.createMap(configuration, metadata, valueTypes);
-        this.cursor = new ExceptRecordCursor(map, recordSink);
+        this.cursor = new ExceptRecordCursor(map, recordSink, convertSymbolsToStrings);
     }
 
     @Override
@@ -65,7 +66,7 @@ public class ExceptRecordCursorFactory implements RecordCursorFactory {
         try {
             masterCursor = masterFactory.getCursor(executionContext);
             slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor, executionContext);
+            cursor.of(masterCursor, masterFactory.getMetadata(), slaveCursor, slaveFactory.getMetadata(), executionContext);
             return cursor;
         } catch (Throwable ex) {
             Misc.free(masterCursor);

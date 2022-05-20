@@ -49,7 +49,8 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             RecordSink recordSink,
-            ColumnTypes valueTypes
+            ColumnTypes valueTypes,
+            boolean ignore
     ) {
         this.metadata = metadata;
         this.masterFactory = masterFactory;

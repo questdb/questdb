@@ -3170,7 +3170,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext,
             RecordCursorFactory slaveFactory
     ) throws SqlException {
-        validateJoinColumnTypes(model, masterFactory, slaveFactory, true);
+        validateSetColumnTypes(model, masterFactory, slaveFactory);
         final RecordCursorFactory unionAllFactory = new UnionAllRecordCursorFactory(
                 calculateSetMetadata(masterFactory.getMetadata(), true),
                 masterFactory,
@@ -3191,7 +3191,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SetRecordCursorFactoryConstructor constructor,
             boolean convertSymbolsToStrings
     ) throws SqlException {
-        validateJoinColumnTypes(model, masterFactory, slaveFactory, convertSymbolsToStrings);
+        final boolean stringSymbolMismatch = validateSetColumnTypes(model, masterFactory, slaveFactory);
         entityColumnFilter.of(masterFactory.getMetadata().getColumnCount());
         final RecordSink recordSink = RecordSinkFactory.getInstance(
                 asm,
@@ -3199,16 +3199,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 entityColumnFilter,
                 true
         );
-
         valueTypes.clear();
-
         RecordCursorFactory unionFactory = constructor.create(
                 configuration,
-                calculateSetMetadata(masterFactory.getMetadata(), convertSymbolsToStrings),
+                calculateSetMetadata(masterFactory.getMetadata(), convertSymbolsToStrings || stringSymbolMismatch),
                 masterFactory,
                 slaveFactory,
                 recordSink,
-                valueTypes
+                valueTypes,
+                convertSymbolsToStrings || stringSymbolMismatch
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
@@ -3460,20 +3459,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private void validateJoinColumnTypes(QueryModel model, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, boolean convertSymbolsAsStrings) throws SqlException {
+    private boolean validateSetColumnTypes(QueryModel model, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) throws SqlException {
         final RecordMetadata metadata = masterFactory.getMetadata();
         final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
         final int columnCount = metadata.getColumnCount();
 
+        boolean stringSymbolMismatch = false;
         for (int i = 0; i < columnCount; i++) {
             int type1 = metadata.getColumnType(i);
             int type2 = slaveMetadata.getColumnType(i);
             if (type1 != type2) {
-                if (convertSymbolsAsStrings) {
-                    if ((ColumnType.isSymbol(type1) && ColumnType.isString(type2)
-                            || ColumnType.isString(type1) && ColumnType.isSymbol(type2))) {
-                        continue;
-                    }
+                if ((ColumnType.isSymbol(type1) && ColumnType.isString(type2)
+                        || ColumnType.isString(type1) && ColumnType.isSymbol(type2))) {
+                    stringSymbolMismatch = true;
+                    continue;
                 }
 
                 throw SqlException
@@ -3483,6 +3482,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         .put(']');
             }
         }
+        return stringSymbolMismatch;
     }
 
     private Record.CharSequenceFunction validateSubQueryColumnAndGetGetter(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {

@@ -38,6 +38,7 @@ public interface SetRecordCursorFactoryConstructor {
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             RecordSink recordSink,
-            ColumnTypes valueTypes
+            ColumnTypes valueTypes,
+            boolean convertSymbolsToStrings
     );
 }
