@@ -36,7 +36,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 
@@ -130,13 +129,10 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         }
     }
 
-    private class HashOuterJoinLightRecordCursor implements NoRandomAccessRecordCursor {
+    private class HashOuterJoinLightRecordCursor extends AbstractJoinCursor {
         private final OuterJoinRecord record;
         private final LongChain slaveChain;
         private final Map joinKeyMap;
-        private final int columnSplit;
-        private RecordCursor masterCursor;
-        private RecordCursor slaveCursor;
         private Record masterRecord;
         private LongChain.TreeCursor slaveChainCursor;
         private Record slaveRecord;
@@ -147,17 +143,12 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
                 LongChain slaveChain,
                 Record nullRecord
         ) {
+            super(columnSplit);
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
-            this.columnSplit = columnSplit;
         }
 
-        @Override
-        public void close() {
-            masterCursor = Misc.free(masterCursor);
-            slaveCursor = Misc.free(slaveCursor);
-        }
 
         @Override
         public long size() {
@@ -167,14 +158,6 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
         @Override
         public Record getRecord() {
             return record;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex < columnSplit) {
-                return masterCursor.getSymbolTable(columnIndex);
-            }
-            return slaveCursor.getSymbolTable(columnIndex - columnSplit);
         }
 
         @Override

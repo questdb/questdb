@@ -178,4 +178,9 @@ public class CursorFunction implements ScalarFunction {
     public final int getType() {
         return ColumnType.CURSOR;
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }

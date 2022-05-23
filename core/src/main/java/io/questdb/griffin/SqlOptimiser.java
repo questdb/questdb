@@ -1900,6 +1900,75 @@ class SqlOptimiser {
         }
     }
 
+    void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
+        selectQueryModel.setIsUpdate(true);
+        QueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext);
+        assert optimisedNested.isUpdate();
+        updateQueryModel.setNestedModel(optimisedNested);
+
+        // And then generate plan for UPDATE top level QueryModel
+        validateUpdateColumns(updateQueryModel, sqlExecutionContext, optimisedNested.getTableId(), optimisedNested.getTableVersion());
+    }
+
+    private void validateUpdateColumns(QueryModel updateQueryModel, SqlExecutionContext executionContext, int tableId, long tableVersion) throws SqlException {
+        try (
+                TableReader r = engine.getReader(
+                        executionContext.getCairoSecurityContext(),
+                        updateQueryModel.getTableName().token,
+                        tableId,
+                        tableVersion
+                )
+        ) {
+            TableReaderMetadata metadata = r.getMetadata();
+            int timestampIndex = metadata.getTimestampIndex();
+
+            tempList.clear(metadata.getColumnCount());
+            tempList.setPos(metadata.getColumnCount());
+            int updateSetColumnCount = updateQueryModel.getUpdateExpressions().size();
+            for(int i = 0; i < updateSetColumnCount; i++) {
+
+                // SET left hand side expressions are stored in top level UPDATE QueryModel
+                ExpressionNode columnExpression = updateQueryModel.getUpdateExpressions().get(i);
+                int position = columnExpression.position;
+                int columnIndex = metadata.getColumnIndexQuiet(columnExpression.token);
+
+                // SET right hand side expressions are stored in the Nested SELECT QueryModel as columns
+                QueryColumn queryColumn = updateQueryModel.getNestedModel().getColumns().get(i);
+                if (columnIndex < 0) {
+                    throw SqlException.invalidColumn(position, queryColumn.getName());
+                }
+                if (columnIndex == timestampIndex) {
+                    throw SqlException.$(position, "Designated timestamp column cannot be updated");
+                }
+                if (tempList.getQuick(columnIndex) == 1) {
+                    throw SqlException.$(position, "Duplicate column ").put(queryColumn.getName()).put(" in SET clause");
+                }
+
+                // When column name case does not match table column name in left side of SET
+                // for example if table "tbl" column name is "Col" but update uses
+                // UPDATE tbl SET coL = 1
+                // we need to replace to match metadata name exactly
+                CharSequence exactColName = metadata.getColumnName(columnIndex);
+                queryColumn.of(exactColName, queryColumn.getAst());
+                tempList.set(columnIndex, 1);
+
+                ExpressionNode rhs = queryColumn.getAst();
+                if (rhs.type == FUNCTION) {
+                    if (functionParser.getFunctionFactoryCache().isGroupBy(rhs.token)) {
+                        throw SqlException.$(rhs.position, "Unsupported function in SET clause");
+                    }
+                }
+            }
+            // Save update table name as a String to not re-create string later on from CharSequence
+            updateQueryModel.setUpdateTableName(r.getTableName());
+        } catch (EntryLockedException e) {
+            throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
+        } catch (CairoException e) {
+            throw SqlException.position(updateQueryModel.getModelPosition()).put(e);
+        }
+    }
+
     QueryModel optimise(QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final QueryModel rewrittenModel;
         try {
@@ -2184,17 +2253,6 @@ class SqlOptimiser {
             union.setOrderByAdviceMnemonic(orderByMnemonic);
             optimiseOrderBy(union, orderByMnemonic);
         }
-    }
-
-    void optimiseUpdate(QueryModel updateQueryModel, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
-        selectQueryModel.setIsUpdate(true);
-        QueryModel optimisedNested = optimise(selectQueryModel, sqlExecutionContext);
-        assert optimisedNested.isUpdate();
-        updateQueryModel.setNestedModel(optimisedNested);
-
-        // And then generate plan for UPDATE top level QueryModel
-        validateUpdateColumns(updateQueryModel, sqlExecutionContext, optimisedNested.getTableId(), optimisedNested.getTableVersion());
     }
 
     private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
@@ -3337,63 +3395,6 @@ class SqlOptimiser {
 
         }
         return index;
-    }
-
-    private void validateUpdateColumns(QueryModel updateQueryModel, SqlExecutionContext executionContext, int tableId, long tableVersion) throws SqlException {
-        try (
-                TableReader r = engine.getReader(
-                        executionContext.getCairoSecurityContext(),
-                        updateQueryModel.getTableName().token,
-                        tableId,
-                        tableVersion
-                )
-        ) {
-            TableReaderMetadata metadata = r.getMetadata();
-            if (metadata.getPartitionBy() == PartitionBy.NONE) {
-                throw SqlException.$(updateQueryModel.getModelPosition(), "UPDATE query can only be executed on partitioned tables");
-            }
-            int timestampIndex = metadata.getTimestampIndex();
-            if (timestampIndex < 0) {
-                throw SqlException.$(updateQueryModel.getModelPosition(), "UPDATE query can only be executed on tables with Designated timestamp");
-            }
-
-            tempList.clear(metadata.getColumnCount());
-            tempList.setPos(metadata.getColumnCount());
-            int updateSetColumnCount = updateQueryModel.getUpdateExpressions().size();
-            for (int i = 0; i < updateSetColumnCount; i++) {
-
-                // SET left hand side expressions are stored in top level UPDATE QueryModel
-                ExpressionNode columnExpression = updateQueryModel.getUpdateExpressions().get(i);
-                int position = columnExpression.position;
-                int columnIndex = metadata.getColumnIndexQuiet(columnExpression.token);
-
-                // SET right hand side expressions are stored in the Nested SELECT QueryModel as columns
-                QueryColumn queryColumn = updateQueryModel.getNestedModel().getColumns().get(i);
-                if (columnIndex < 0) {
-                    throw SqlException.invalidColumn(position, queryColumn.getName());
-                }
-                if (columnIndex == timestampIndex) {
-                    throw SqlException.$(position, "Designated timestamp column cannot be updated");
-                }
-                if (tempList.getQuick(columnIndex) == 1) {
-                    throw SqlException.duplicateColumn(position, queryColumn.getName(), "in SET clause");
-                }
-                tempList.set(columnIndex, 1);
-
-                ExpressionNode rhs = queryColumn.getAst();
-                if (rhs.type == FUNCTION) {
-                    if (functionParser.getFunctionFactoryCache().isGroupBy(rhs.token)) {
-                        throw SqlException.$(rhs.position, "Unsupported function in SET clause");
-                    }
-                }
-            }
-            // Save update table name as a String to not re-create string later on from CharSequence
-            updateQueryModel.setUpdateTableName(r.getTableName());
-        } catch (EntryLockedException e) {
-            throw SqlException.position(updateQueryModel.getModelPosition()).put("table is locked: ").put(tableLookupSequence);
-        } catch (CairoException e) {
-            throw SqlException.position(updateQueryModel.getModelPosition()).put(e);
-        }
     }
 
     private static class NonLiteralException extends RuntimeException {

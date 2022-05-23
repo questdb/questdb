@@ -122,4 +122,9 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
         }
         return Numbers.LONG_NaN;
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }

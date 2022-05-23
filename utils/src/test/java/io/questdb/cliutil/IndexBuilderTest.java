@@ -29,7 +29,7 @@ import org.junit.Test;
 
 import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
 
-public class RebuildIndexTest {
+public class IndexBuilderTest {
     @Test
     public void testColumnAndPartition() {
         RebuildColumnCommandArgs params = parseCommandArgs(

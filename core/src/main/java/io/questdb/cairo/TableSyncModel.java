@@ -96,9 +96,9 @@ public class TableSyncModel implements Mutable, Sinkable {
             long startRow,
             long rowCount,
             long nameTxn,
-            long dataTxn
+            long columnVersion
     ) {
-        partitions.add(action, timestamp, startRow, rowCount, nameTxn, dataTxn, 0, 0);
+        partitions.add(action, timestamp, startRow, rowCount, nameTxn, columnVersion, 0, 0);
     }
 
     public void addVarColumnSize(long timestamp, int columnIndex, long size) {
@@ -159,7 +159,7 @@ public class TableSyncModel implements Mutable, Sinkable {
                     Unsafe.getUnsafe().getLong(p + 12), // start row
                     Unsafe.getUnsafe().getLong(p + 20), // row count
                     Unsafe.getUnsafe().getLong(p + 28), // name txn
-                    Unsafe.getUnsafe().getLong(p + 36), // data txn
+                    Unsafe.getUnsafe().getLong(p + 36), // column version
                     0,
                     0
             );
@@ -261,7 +261,7 @@ public class TableSyncModel implements Mutable, Sinkable {
             sink.putLong(partitions.getQuick(i + 2)); // start row
             sink.putLong(partitions.getQuick(i + 3)); // row count
             sink.putLong(partitions.getQuick(i + 4)); // name txn (suffix for partition name)
-            sink.putLong(partitions.getQuick(i + 5)); // data txn
+            sink.putLong(partitions.getQuick(i + 5)); // column version
         }
 
         n = addedColumnMetadata.size();
@@ -371,7 +371,7 @@ public class TableSyncModel implements Mutable, Sinkable {
                 sink.putQuoted("startRow").put(':').put(partitions.getQuick(i + 2)).put(',');
                 sink.putQuoted("rowCount").put(':').put(partitions.getQuick(i + 3)).put(',');
                 sink.putQuoted("nameTxn").put(':').put(partitions.getQuick(i + 4)).put(',');
-                sink.putQuoted("dataTxn").put(':').put(partitions.getQuick(i + 5));
+                sink.putQuoted("columnVersion").put(':').put(partitions.getQuick(i + 5));
                 sink.put('}');
             }
 

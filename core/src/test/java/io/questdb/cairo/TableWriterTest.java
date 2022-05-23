@@ -33,8 +33,8 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.griffin.AlterStatement;
-import io.questdb.griffin.AlterStatementBuilder;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -65,8 +65,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testAddColumnConcurrentWithDataUpdates() throws Throwable {
         ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
         assertMemoryLeak(() -> {
-            CyclicBarrier start = new CyclicBarrier(2);
-            AtomicInteger done = new AtomicInteger();
+            CyclicBarrier barrier = new CyclicBarrier(2);
             AtomicInteger columnsAdded = new AtomicInteger();
             AtomicInteger insertCount = new AtomicInteger();
             int totalColAddCount = 1000;
@@ -92,8 +91,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // Write data in a loop getting writer in and out of pool
             Thread writeDataThread = new Thread(() -> {
-                try {
-                    start.await();
+                    TestUtils.await(barrier);
                     int i = 0;
                     while (columnsAdded.get() < totalColAddCount && exceptions.size() == 0) {
                         try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
@@ -106,29 +104,25 @@ public class TableWriterTest extends AbstractCairoTest {
                         } catch (Throwable e) {
                             exceptions.add(e);
                             LOG.error().$(e).$();
-                        } finally {
-                            done.incrementAndGet();
+                            throw e;
                         }
                     }
-                } catch (Exception ex) {
-                    Assert.fail();
-                }
             });
 
             Thread addColumnsThread = new Thread(() -> {
                 try {
-                    start.await();
-                    AlterStatementBuilder alterStatementBuilder = new AlterStatementBuilder();
+                    TestUtils.await(barrier);
+                    AlterOperationBuilder alterOperationBuilder = new AlterOperationBuilder();
                     for (int i = 0; i < totalColAddCount; i++) {
-                        alterStatementBuilder.clear();
+                        alterOperationBuilder.clear();
                         String columnName = "col" + i;
-                        alterStatementBuilder
+                        alterOperationBuilder
                                 .ofAddColumn(0, tableName, tableId)
                                 .ofAddColumn(columnName, ColumnType.INT, 0, false, false, 0);
-                        AlterStatement alterStatement = alterStatementBuilder.build();
-                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, "test", alterStatement)) {
+                        AlterOperation alterOperation = alterOperationBuilder.build();
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(AllowAllCairoSecurityContext.INSTANCE, tableName, alterOperation)) {
                             if (writer != null) {
-                                writer.processCommandAsync(alterStatement);
+                                writer.publishAsyncWriterCommand(alterOperation);
                             }
                         }
                         columnsAdded.incrementAndGet();
@@ -136,6 +130,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     exceptions.add(e);
                     LOG.error().$(e).$();
+                    throw e;
                 }
             });
             writeDataThread.start();
@@ -144,10 +139,6 @@ public class TableWriterTest extends AbstractCairoTest {
             writeDataThread.join();
             addColumnsThread.join();
 
-            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
-            }
-
             if (exceptions.size() != 0) {
                 for (Throwable ex : exceptions) {
                     ex.printStackTrace();
@@ -155,6 +146,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.fail();
             }
             Assert.assertTrue(insertCount.get() > 0);
+
+            try (TableReader rdr = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
+            }
+
             LOG.infoW().$("total reload count ").$(insertCount.get()).$();
         });
     }
@@ -1250,7 +1246,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotCreatePartitionDir() throws Exception {
         testConstructor(new FilesFacadeImpl() {
             @Override
-            public int mkdirs(LPSZ path, int mode) {
+            public int mkdirs(Path path, int mode) {
                 if (Chars.endsWith(path, "default" + Files.SEPARATOR)) {
                     return -1;
                 }

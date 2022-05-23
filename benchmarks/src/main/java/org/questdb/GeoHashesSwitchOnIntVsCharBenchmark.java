@@ -25,7 +25,6 @@
 package org.questdb;
 
 import io.questdb.std.Misc;
-import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import org.openjdk.jmh.annotations.*;

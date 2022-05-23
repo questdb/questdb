@@ -90,6 +90,7 @@ public class AbstractCairoTest {
     protected static int queryCacheEventQueueCapacity = -1;
     protected static int pageFrameReduceShardCount = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
+    protected static int columnVersionTaskPoolCapacity = -1;
 
     @Rule
     public TestName testName = new TestName();
@@ -98,6 +99,9 @@ public class AbstractCairoTest {
     private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
     protected static long writerCommandQueueSlotSize = 2048L;
+    protected static double columnPurgeRetryDelayMultiplier = -1;
+    protected static long columnPurgeRetryDelay = -1;
+    protected static int columnVersionPurgeQueueCapacity = -1;
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -224,11 +228,6 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public boolean enableDevelopmentUpdates() {
-                return true;
-            }
-
-            @Override
             public int getPartitionPurgeListCapacity() {
                 // Bump it to high number so that test don't fail with memory leak if LongList
                 // re-allocates
@@ -274,6 +273,16 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public double getColumnPurgeRetryDelayMultiplier() {
+                return columnPurgeRetryDelayMultiplier > 0 ? columnPurgeRetryDelayMultiplier : 2.0;
+            }
+
+            @Override
+            public long getColumnPurgeRetryDelay() {
+                return columnPurgeRetryDelay > 0 ? columnPurgeRetryDelay : 10;
+            }
+
+            @Override
             public int getQueryCacheEventQueueCapacity() {
                 return queryCacheEventQueueCapacity < 0 ? super.getQueryCacheEventQueueCapacity() : queryCacheEventQueueCapacity;
             }
@@ -289,8 +298,18 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public int getColumnPurgeQueueCapacity() {
+                return columnVersionPurgeQueueCapacity < 0 ? super.getColumnPurgeQueueCapacity() : columnVersionPurgeQueueCapacity;
+            }
+
+            @Override
             public boolean isSqlParallelFilterEnabled() {
                 return enableParallelFilter != null ? enableParallelFilter : super.isSqlParallelFilterEnabled();
+            }
+
+            @Override
+            public int getColumnPurgeTaskPoolCapacity() {
+                return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnPurgeTaskPoolCapacity();
             }
         };
         engine = new CairoEngine(configuration, metrics);
@@ -343,6 +362,9 @@ public class AbstractCairoTest {
         queryCacheEventQueueCapacity = -1;
         pageFrameReduceShardCount = -1;
         pageFrameReduceQueueCapacity = -1;
+        columnPurgeRetryDelayMultiplier = -1;
+        columnVersionPurgeQueueCapacity = -1;
+        columnVersionTaskPoolCapacity = -1;
     }
 
     protected static void configureForBackups() throws IOException {

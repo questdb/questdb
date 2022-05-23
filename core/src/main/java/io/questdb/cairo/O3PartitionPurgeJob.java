@@ -33,15 +33,15 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.tasks.O3PurgeDiscoveryTask;
+import io.questdb.tasks.O3PartitionPurgeTask;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscoveryTask> implements Closeable {
+public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPurgeTask> implements Closeable {
 
-    private final static Log LOG = LogFactory.getLog(O3PurgeDiscoveryJob.class);
+    private final static Log LOG = LogFactory.getLog(O3PartitionPurgeJob.class);
     private final CairoConfiguration configuration;
     private final MutableCharSink[] sink;
     private final StringSink[] fileNameSinks;
@@ -50,7 +50,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
     private final ObjList<TxReader> txnReaders;
     private final AtomicBoolean halted = new AtomicBoolean(false);
 
-    public O3PurgeDiscoveryJob(MessageBus messageBus, int workerCount) {
+    public O3PartitionPurgeJob(MessageBus messageBus, int workerCount) {
         super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());
         this.configuration = messageBus.getConfiguration();
         this.sink = new MutableCharSink[workerCount];
@@ -339,7 +339,7 @@ public class O3PurgeDiscoveryJob extends AbstractQueueConsumerJob<O3PurgeDiscove
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
-        final O3PurgeDiscoveryTask task = queue.get(cursor);
+        final O3PartitionPurgeTask task = queue.get(cursor);
         discoverPartitions(
                 configuration.getFilesFacade(),
                 sink[workerId],

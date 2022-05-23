@@ -137,7 +137,7 @@ public class DateFormatUtils {
     }
 
     public static int adjustYear(int year) {
-        return (year < thisCenturyLimit ? thisCenturyLow : prevCenturyLow) + year;
+        return thisCenturyLow + year;
     }
 
     public static void appendAmPm(CharSink sink, int hour, DateLocale locale) {

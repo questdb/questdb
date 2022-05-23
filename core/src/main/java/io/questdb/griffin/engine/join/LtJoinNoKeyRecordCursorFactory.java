@@ -26,7 +26,9 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -84,13 +86,10 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
         return masterFactory.hasDescendingOrder();
     }
 
-    private static class LtJoinNoKeyJoinRecordCursor implements NoRandomAccessRecordCursor {
+    private static class LtJoinNoKeyJoinRecordCursor extends AbstractJoinCursor {
         private final OuterJoinRecord record;
-        private final int columnSplit;
         private final int masterTimestampIndex;
         private final int slaveTimestampIndex;
-        private RecordCursor masterCursor;
-        private RecordCursor slaveCursor;
         private Record masterRecord;
         private Record slaveRecB;
         private Record slaveRecA;
@@ -101,30 +100,17 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactory 
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
-                int slaveTimestampIndex) {
+                int slaveTimestampIndex
+        ) {
+            super(columnSplit);
             this.record = new OuterJoinRecord(columnSplit, nullRecord);
-            this.columnSplit = columnSplit;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
         }
 
         @Override
-        public void close() {
-            masterCursor = Misc.free(masterCursor);
-            slaveCursor = Misc.free(slaveCursor);
-        }
-
-        @Override
         public Record getRecord() {
             return record;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex < columnSplit) {
-                return masterCursor.getSymbolTable(columnIndex);
-            }
-            return slaveCursor.getSymbolTable(columnIndex - columnSplit);
         }
 
         @Override

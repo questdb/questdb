@@ -37,12 +37,12 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.FloatingDirectCharSink;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
@@ -118,11 +118,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
         return new WorkerPool(new WorkerPoolConfiguration() {
-            private final int[] affinityByThread;
-
             @Override
             public int[] getWorkerAffinity() {
-                return affinityByThread;
+                return TestUtils.getWorkerAffinity(workerCount);
             }
 
             @Override
@@ -133,11 +131,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public boolean haltOnError() {
                 return haltOnError;
-            }
-
-            {
-                affinityByThread = new int[workerCount];
-                Arrays.fill(affinityByThread, -1);
             }
         }, metrics);
     }

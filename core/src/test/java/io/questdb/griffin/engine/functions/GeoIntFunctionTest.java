@@ -42,6 +42,11 @@ public class GeoIntFunctionTest extends AbstractGriffinTest {
         public int getGeoInt(Record rec) {
             return (int) hash;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     };
 
     @Test

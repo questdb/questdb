@@ -257,7 +257,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractGriffinTes
 
         @Override
         public void print(Record r, RecordMetadata m, CharSink sink) {
-            printColumn(r, m, columnIndex, sink);
+            TestUtils.printColumn(r, m, columnIndex, sink);
             sink.put("\n");
             sink.flush();
         }

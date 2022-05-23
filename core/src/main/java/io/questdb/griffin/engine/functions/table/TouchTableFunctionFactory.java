@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.TelemetryJob;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;

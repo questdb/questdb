@@ -76,9 +76,9 @@ public interface FilesFacade {
 
     int lock(long fd);
 
-    int mkdir(LPSZ path, int mode);
+    int mkdir(Path path, int mode);
 
-    int mkdirs(LPSZ path, int mode);
+    int mkdirs(Path path, int mode);
 
     long mmap(long fd, long len, long offset, int flags, int memoryTag);
 

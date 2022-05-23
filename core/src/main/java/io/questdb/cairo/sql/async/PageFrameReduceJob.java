@@ -43,7 +43,7 @@ import java.io.Closeable;
 public class PageFrameReduceJob implements Job, Closeable {
 
     private final static Log LOG = LogFactory.getLog(PageFrameReduceJob.class);
-    private final PageAddressCacheRecord record;
+    private PageAddressCacheRecord record;
     private final int[] shards;
     private final int shardCount;
     private final MessageBus messageBus;
@@ -93,9 +93,20 @@ public class PageFrameReduceJob implements Job, Closeable {
      * @param queue  page frame queue instance
      * @param subSeq subscriber sequence
      * @param record instance of record that can be positioned on the frame and each row in that frame
+     * @param circuitBreaker circuit breaker instance
      * @return inverted value of queue processing status; true if nothing was processed.
      */
     public static boolean consumeQueue(
+            RingQueue<PageFrameReduceTask> queue,
+            MCSequence subSeq,
+            PageAddressCacheRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        return consumeQueue(-1, queue, subSeq, record, circuitBreaker);
+    }
+
+    private static boolean consumeQueue(
+            int workerId,
             RingQueue<PageFrameReduceTask> queue,
             MCSequence subSeq,
             PageAddressCacheRecord record,
@@ -117,15 +128,16 @@ public class PageFrameReduceJob implements Job, Closeable {
                             .$(", cursor=").$(cursor)
                             .I$();
                     if (frameSequence.isActive()) {
-                        reduce(record, circuitBreaker, task, frameSequence);
-                    } else {
-                        frameSequence.getReduceCounter().incrementAndGet();
+                        reduce(workerId, record, circuitBreaker, task, frameSequence);
                     }
                 } catch (Throwable e) {
                     frameSequence.cancel();
                     throw e;
                 } finally {
                     subSeq.done(cursor);
+                    // Reduce counter has to be incremented only when we make
+                    // sure that the task is available for consumers.
+                    frameSequence.getReduceCounter().incrementAndGet();
                 }
                 return false;
             } else if (cursor == -1) {
@@ -142,26 +154,33 @@ public class PageFrameReduceJob implements Job, Closeable {
             PageFrameReduceTask task,
             PageFrameSequence<?> frameSequence
     ) {
-        try {
-            // we deliberately hold the queue item because
-            // processing is daisy-chained. If we were to release item before
-            // finishing reduction, next step (job) will be processing an incomplete task
-            if (!circuitBreaker.checkIfTripped(frameSequence.getStartTimeUs(), frameSequence.getCircuitBreakerFd())) {
-                record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
-                record.setFrameIndex(task.getFrameIndex());
-                assert frameSequence.doneLatch.getCount() == 0;
-                frameSequence.getReducer().reduce(record, task);
-            } else {
-                frameSequence.cancel();
-            }
-        } finally {
-            frameSequence.getReduceCounter().incrementAndGet();
+        reduce(-1, record, circuitBreaker, task, frameSequence);
+    }
+
+    private static void reduce(
+            int workerId,
+            PageAddressCacheRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            PageFrameReduceTask task,
+            PageFrameSequence<?> frameSequence
+    ) {
+        // we deliberately hold the queue item because
+        // processing is daisy-chained. If we were to release item before
+        // finishing reduction, next step (job) will be processing an incomplete task
+        if (!circuitBreaker.checkIfTripped(frameSequence.getStartTimeUs(), frameSequence.getCircuitBreakerFd())) {
+            record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+            record.setFrameIndex(task.getFrameIndex());
+            assert frameSequence.doneLatch.getCount() == 0;
+            frameSequence.getReducer().reduce(workerId, record, task);
+        } else {
+            frameSequence.cancel();
         }
     }
 
     @Override
     public void close() {
         circuitBreaker = Misc.free(circuitBreaker);
+        record = Misc.free(record);
     }
 
     @Override
@@ -172,6 +191,7 @@ public class PageFrameReduceJob implements Job, Closeable {
         for (int i = 0; i < shardCount; i++) {
             final int shard = shards[i];
             useful = !consumeQueue(
+                    workerId,
                     messageBus.getPageFrameReduceQueue(shard),
                     messageBus.getPageFrameReduceSubSeq(shard),
                     record,

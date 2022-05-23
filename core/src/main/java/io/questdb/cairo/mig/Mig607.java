@@ -38,7 +38,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 final class Mig607 {
     private static final String TXN_FILE_NAME = "_txn";

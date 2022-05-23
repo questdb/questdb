@@ -26,10 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.IntList;
-import io.questdb.std.LongList;
-import io.questdb.std.Mutable;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 
 public class PageAddressCache implements Mutable {
 
@@ -44,6 +41,7 @@ public class PageAddressCache implements Mutable {
     // Index page addresses and page sizes are stored only for variable length columns.
     private LongList indexPageAddresses = new LongList();
     private LongList pageSizes = new LongList();
+    private LongList pageRowIdOffsets = new LongList();
 
     public PageAddressCache(CairoConfiguration configuration) {
         cacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
@@ -68,10 +66,12 @@ public class PageAddressCache implements Mutable {
             pageAddresses.clear();
             indexPageAddresses.clear();
             pageSizes.clear();
+            pageRowIdOffsets.clear();
         } else {
             pageAddresses = new LongList();
             indexPageAddresses = new LongList();
             pageSizes = new LongList();
+            pageRowIdOffsets = new LongList();
         }
     }
 
@@ -87,6 +87,7 @@ public class PageAddressCache implements Mutable {
                 pageSizes.add(frame.getPageSize(columnIndex));
             }
         }
+        pageRowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
 
     public long getPageAddress(int frameIndex, int columnIndex) {
@@ -120,5 +121,9 @@ public class PageAddressCache implements Mutable {
 
     public int getColumnCount() {
         return columnCount;
+    }
+
+    public long toTableRowID(int frameIndex, long index) {
+        return pageRowIdOffsets.get(frameIndex) + index;
     }
 }

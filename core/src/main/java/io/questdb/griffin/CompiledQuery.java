@@ -24,11 +24,15 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.sql.InsertStatement;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.update.UpdateStatement;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.OperationDispatcher;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.QuietClosable;
 
 public interface CompiledQuery {
     //these values should be covered in both JsonQueryProcessor and PGConnectionContext
@@ -58,29 +62,35 @@ public interface CompiledQuery {
 
     RecordCursorFactory getRecordCursorFactory();
 
-    InsertStatement getInsertStatement();
-
     TextLoader getTextLoader();
 
-    AlterStatement getAlterStatement();
+    InsertOperation getInsertOperation();
+
+    UpdateOperation getUpdateOperation();
+
+    AlterOperation getAlterOperation();
 
     short getType();
 
-    UpdateStatement getUpdateStatement();
-
     /***
      * Executes the query.
-     * If execution is done in sync returns an instance of QueryFuture where isDone() is true.
-     * If execution happened async, QueryFuture.await() method should be called for blocking wait
-     * or QueryFuture.await(long) for wait with specified timeout.
+     * If execution is done in sync returns an instance of OperationFuture where isDone() is true.
+     * If execution happened async, OperationFuture.await() method should be called for blocking wait
+     * or OperationFuture.await(long) for wait with specified timeout.
      * @param eventSubSeq - temporary SCSequence instance to track completion of async ALTER command
      * @return query future that can be used to monitor query progress
      * @throws SqlException - throws exception if command execution fails
      */
-    QueryFuture execute(SCSequence eventSubSeq) throws SqlException;
+    OperationFuture execute(SCSequence eventSubSeq) throws SqlException;
+
+    <T extends QuietClosable> OperationDispatcher<T> getDispatcher();
+
+    <T extends QuietClosable> T getOperation();
 
     /**
-     * Returns number of rows inserted by this command . Used e.g. in pg wire protocol .
+     * Returns number of rows changed by this command. Used e.g. in pg wire protocol.
      */
-    long getInsertCount();
+    long getAffectedRowsCount();
+
+    CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 }

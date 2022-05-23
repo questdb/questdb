@@ -24,6 +24,7 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -37,7 +38,10 @@ import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -46,6 +50,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
 import java.io.*;
+import java.util.Arrays;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -369,6 +374,29 @@ public final class TestUtils {
         }
     }
 
+    public static void assertEventually(Runnable assertion) {
+        assertEventually(assertion, 30);
+    }
+
+    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (; ; ) {
+            try {
+                assertion.run();
+                return;
+            } catch (AssertionError error) {
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
+        }
+    }
+
     public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
         try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
              BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
@@ -428,7 +456,7 @@ public final class TestUtils {
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
                 long actualMemByTag = Unsafe.getMemUsedByTag(i);
                 if (memoryUsageByTag[i] != actualMemByTag) {
-                    Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i), memoryUsageByTag[i], actualMemByTag);
+                    Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
                     Assert.assertTrue(actualMemByTag > -1);
                 }
             }
@@ -667,30 +695,39 @@ public final class TestUtils {
     public static void execute(
             @Nullable WorkerPool pool,
             CustomisableRunnable runnable,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            Metrics metrics
     ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         try (
-                final CairoEngine engine = new CairoEngine(configuration);
+                final CairoEngine engine = new CairoEngine(configuration, metrics);
                 final SqlCompiler compiler = new SqlCompiler(engine);
                 final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
         ) {
             try {
                 if (pool != null) {
                     pool.assignCleaner(Path.CLEANER);
-                    O3Utils.setupWorkerPool(pool, engine.getMessageBus(), null);
+                    O3Utils.setupWorkerPool(pool, engine, null, null);
                     pool.start(LOG);
                 }
 
                 runnable.run(engine, compiler, sqlExecutionContext);
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
             } finally {
                 if (pool != null) {
                     pool.halt();
                 }
             }
+            Assert.assertEquals(0, engine.getBusyWriterCount());
+            Assert.assertEquals(0, engine.getBusyReaderCount());
         }
+    }
+
+    public static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runner,
+            CairoConfiguration configuration
+    ) throws Exception {
+        execute(pool, runner, configuration, Metrics.disabled());
     }
 
     @NotNull
@@ -741,13 +778,94 @@ public final class TestUtils {
         };
     }
 
+    public static int[] getWorkerAffinity(int workerCount) {
+        int[] res = new int[workerCount];
+        Arrays.fill(res, -1);
+        return res;
+    }
+
     public static void insert(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence insertSql) throws SqlException {
         CompiledQuery compiledQuery = compiler.compile(insertSql, sqlExecutionContext);
-        Assert.assertNotNull(compiledQuery.getInsertStatement());
-        final InsertStatement insertStatement = compiledQuery.getInsertStatement();
-        try (InsertMethod insertMethod = insertStatement.createMethod(sqlExecutionContext)) {
+        Assert.assertNotNull(compiledQuery.getInsertOperation());
+        final InsertOperation insertOperation = compiledQuery.getInsertOperation();
+        try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
             insertMethod.execute();
             insertMethod.commit();
+        }
+    }
+
+    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink) {
+        printColumn(r, m, i, sink, false);
+    }
+
+    public static void printColumn(Record r, RecordMetadata m, int i, CharSink sink, boolean printTypes) {
+        final int columnType = m.getColumnType(i);
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DATE:
+                DateFormatUtils.appendDateTime(sink, r.getDate(i));
+                break;
+            case ColumnType.TIMESTAMP:
+                TimestampFormatUtils.appendDateTimeUSec(sink, r.getTimestamp(i));
+                break;
+            case ColumnType.DOUBLE:
+                sink.put(r.getDouble(i), Numbers.MAX_SCALE);
+                break;
+            case ColumnType.FLOAT:
+                sink.put(r.getFloat(i), 4);
+                break;
+            case ColumnType.INT:
+                sink.put(r.getInt(i));
+                break;
+            case ColumnType.NULL:
+                sink.put("null");
+                break;
+            case ColumnType.STRING:
+                r.getStr(i, sink);
+                break;
+            case ColumnType.SYMBOL:
+                sink.put(r.getSym(i));
+                break;
+            case ColumnType.SHORT:
+                sink.put(r.getShort(i));
+                break;
+            case ColumnType.CHAR:
+                char c = r.getChar(i);
+                if (c > 0) {
+                    sink.put(c);
+                }
+                break;
+            case ColumnType.LONG:
+                sink.put(r.getLong(i));
+                break;
+            case ColumnType.GEOBYTE:
+                putGeoHash(r.getGeoByte(i), ColumnType.getGeoHashBits(columnType), sink);
+                break;
+            case ColumnType.GEOSHORT:
+                putGeoHash(r.getGeoShort(i), ColumnType.getGeoHashBits(columnType), sink);
+                break;
+            case ColumnType.GEOINT:
+                putGeoHash(r.getGeoInt(i), ColumnType.getGeoHashBits(columnType), sink);
+                break;
+            case ColumnType.GEOLONG:
+                putGeoHash(r.getGeoLong(i), ColumnType.getGeoHashBits(columnType), sink);
+                break;
+            case ColumnType.BYTE:
+                sink.put(r.getByte(i));
+                break;
+            case ColumnType.BOOLEAN:
+                sink.put(r.getBool(i));
+                break;
+            case ColumnType.BINARY:
+                Chars.toSink(r.getBin(i), sink);
+                break;
+            case ColumnType.LONG256:
+                r.getLong256(i, sink);
+                break;
+            default:
+                break;
+        }
+        if (printTypes) {
+            sink.put(':').put(ColumnType.nameOf(columnType));
         }
     }
 
@@ -818,6 +936,17 @@ public final class TestUtils {
         }
     }
 
+    private static void putGeoHash(long hash, int bits, CharSink sink) {
+        if (hash == GeoHashes.NULL) {
+            return;
+        }
+        if (bits % 5 == 0) {
+            GeoHashes.appendCharsUnsafe(hash, bits / 5, sink);
+        } else {
+            GeoHashes.appendBinaryStringUnsafe(hash, bits, sink);
+        }
+    }
+
     private static void assertEquals(Long256 expected, Long256 actual) {
         if (expected == actual) return;
         if (actual == null) {
@@ -844,37 +973,6 @@ public final class TestUtils {
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
             Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
             Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
-        }
-    }
-
-    public static void assertEventually(Runnable assertion) {
-        assertEventually(assertion, 30);
-    }
-
-    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
-        long maxSleepingTimeMillis = 1000;
-        long nextSleepingTimeMillis = 10;
-        long startTime = System.nanoTime();
-        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
-        for (;;) {
-            try {
-                assertion.run();
-                return;
-            } catch (AssertionError error) {
-                if (System.nanoTime() >= deadline) {
-                    throw error;
-                }
-            }
-            try {
-                Thread.sleep(nextSleepingTimeMillis);
-                nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                long elapsedTimeMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
-                throw new AssertionError("Interrupted before timeout. Expected timeout"
-                        + TimeUnit.SECONDS.toMillis(timeoutSeconds) + " ms. Elapsed time: " + elapsedTimeMillis
-                        +" ms. ");
-            }
         }
     }
 

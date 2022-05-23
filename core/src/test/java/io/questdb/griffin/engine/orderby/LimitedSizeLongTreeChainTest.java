@@ -9,11 +9,10 @@ import io.questdb.std.str.StringSink;
 import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.NotNull;
 import org.junit.After;
-
-import static org.hamcrest.CoreMatchers.*;
-
 import org.junit.Before;
 import org.junit.Test;
+
+import static org.hamcrest.CoreMatchers.equalTo;
 
 /**
  * Test RBTree removal cases asserting final tree structure .
@@ -421,12 +420,9 @@ public class LimitedSizeLongTreeChainTest extends AbstractGriffinTest {
     @NotNull
     private String toString(TestRecordCursor cursor, TestRecord right) {
         StringSink sink = new StringSink();
-        chain.print(sink, new LimitedSizeLongTreeChain.ValuePrinter() {
-            @Override
-            public String toString(long rowid) {
-                cursor.recordAt(right, rowid);
-                return String.valueOf(right.getLong(0));
-            }
+        chain.print(sink, rowid -> {
+            cursor.recordAt(right, rowid);
+            return String.valueOf(right.getLong(0));
         });
         return sink.toString();
     }

@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
 
 public class LineUdpInsertByteGeoHashTest extends LineUdpInsertGeoHashTest {
     @Override

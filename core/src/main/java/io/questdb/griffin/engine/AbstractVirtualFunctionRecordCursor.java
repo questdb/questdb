@@ -26,6 +26,7 @@ package io.questdb.griffin.engine;
 
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -89,6 +90,11 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return (SymbolTable) functions.getQuick(columnIndex);
+    }
+
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return ((SymbolFunction) functions.getQuick(columnIndex)).newSymbolTable();
     }
 
     @Override

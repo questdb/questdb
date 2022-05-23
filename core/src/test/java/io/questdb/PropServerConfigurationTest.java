@@ -295,7 +295,6 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
         Assert.assertEquals("HTTP/1.1 ", configuration.getHttpServerConfiguration().getHttpContextConfiguration().getHttpVersion());
-        Assert.assertEquals(16777216, configuration.getCairoConfiguration().getDataAppendPageSize());
 
         Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getQuestDbVersion());
         Assert.assertEquals("Unknown Version", configuration.getCairoConfiguration().getBuildInformation().getJdkVersion());
@@ -310,6 +309,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(Files.PAGE_SIZE, configuration.getCairoConfiguration().getMiscAppendPageSize());
         Assert.assertEquals(2.0, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
+        Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
+        Assert.assertEquals(31, configuration.getCairoConfiguration().getColumnPurgeRetryLimitDays());
+        Assert.assertEquals(10.0, configuration.getCairoConfiguration().getColumnPurgeRetryDelayMultiplier(), 0.00001);
+        Assert.assertEquals(60000000, configuration.getCairoConfiguration().getColumnPurgeRetryDelayLimit());
+        Assert.assertEquals(10000, configuration.getCairoConfiguration().getColumnPurgeRetryDelay());
+
         // Pg wire
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
@@ -318,6 +323,12 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getPGWireConfiguration().isInsertCacheEnabled());
         Assert.assertEquals(8, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
         Assert.assertEquals(8, configuration.getPGWireConfiguration().getInsertCacheRowCount());
+        Assert.assertEquals(64, configuration.getPGWireConfiguration().getInsertPoolCapacity());
+        Assert.assertTrue(configuration.getPGWireConfiguration().isUpdateCacheEnabled());
+        Assert.assertEquals(8, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
+        Assert.assertEquals(8, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
+
+        Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
     }
 
     @Test
@@ -810,6 +821,12 @@ public class PropServerConfigurationTest {
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
 
+            Assert.assertEquals(512, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
+            Assert.assertEquals(14, configuration.getCairoConfiguration().getColumnPurgeRetryLimitDays());
+            Assert.assertEquals(5.0, configuration.getCairoConfiguration().getColumnPurgeRetryDelayMultiplier(), 0.00001);
+            Assert.assertEquals(30000000, configuration.getCairoConfiguration().getColumnPurgeRetryDelayLimit());
+            Assert.assertEquals(30000, configuration.getCairoConfiguration().getColumnPurgeRetryDelay());
+
             // Pg wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());
             Assert.assertFalse(configuration.getPGWireConfiguration().isSelectCacheEnabled());
@@ -818,6 +835,10 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getPGWireConfiguration().isInsertCacheEnabled());
             Assert.assertEquals(128, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
             Assert.assertEquals(256, configuration.getPGWireConfiguration().getInsertCacheRowCount());
+            Assert.assertEquals(32, configuration.getPGWireConfiguration().getInsertPoolCapacity());
+            Assert.assertFalse(configuration.getPGWireConfiguration().isUpdateCacheEnabled());
+            Assert.assertEquals(128, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
+            Assert.assertEquals(256, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
         }
     }
 

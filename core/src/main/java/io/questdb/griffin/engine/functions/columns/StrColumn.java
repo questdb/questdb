@@ -73,4 +73,9 @@ public class StrColumn extends StrFunction implements ScalarFunction {
             COLUMNS.setQuick(i, new StrColumn(i));
         }
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
 }

@@ -22,17 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.update;
+package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.sql.Record;
+import io.questdb.std.WeakSelfReturningObjectPool;
+import org.junit.Test;
 
-import java.io.Closeable;
+public class TypesAndSelectTest {
+    @Test
+    public void testReturnToPoolCausesStackOverflow() {
+        WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, 1);
+        TypesAndSelect i1 = typesAndSelectPool.pop();
+        TypesAndSelect i2 = typesAndSelectPool.pop();
+        TypesAndSelect i3 = typesAndSelectPool.pop();
 
-public interface UpdateStatementMasterCursor extends Closeable {
-    void setMaster(Record master);
-    Record getRecord();
-    boolean hasNext();
-
-    @Override
-    void close();
+        i1.close();
+        i2.close();
+        i3.close();
+    }
 }

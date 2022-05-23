@@ -30,7 +30,6 @@ import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import org.junit.Test;
 
 public class LtLong256FunctionFactoryTest extends AbstractFunctionFactoryTest {
