@@ -55,36 +55,6 @@ public class UnionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUnionSymbolAndString() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table table1 as \n" +
-                    "(\n" +
-                    "  select cast(x as symbol) as sym1 \n" +
-                    "  from long_sequence(3)\n" +
-                    ")");
-            compile("create table table3 as \n" +
-                    "(\n" +
-                    "  select cast(x+2 as string) as str3\n" +
-                    "  from long_sequence(3)\n" +
-                    ")");
-
-            assertQuery(
-                    "sym1\n" +
-                            "1\n" +
-                            "2\n" +
-                            "3\n" +
-                            "4\n" +
-                            "5\n",
-                    "select sym1 from table1 \n" +
-                            "union\n" +
-                            "select str3 from table3",
-                    null,
-                    false
-            );
-        });
-    }
-
-    @Test
     public void testExceptOfLiterals() throws Exception {
         assertMemoryLeak(() -> {
             final String expected1 = "2020-04-21\t1\n" +
@@ -189,6 +159,29 @@ public class UnionTest extends AbstractGriffinTest {
                     null,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testIntersectOfLiterals() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected1 = "2020-04-21\t1\n" +
+                    "2020-04-21\t1\n";
+            final String query1 = "select '2020-04-21', 1\n" +
+                    "intersect\n" +
+                    "select '2020-04-21', 1";
+            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected1, rcf, true, false, false);
+            }
+
+            final String expected2 = "a\tb\n" +
+                    "2020-04-21\t1\n";
+            final String query2 = "select '2020-04-21' a, 1 b\n" +
+                    "intersect\n" +
+                    "select '2020-04-21', 1";
+            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
+                assertCursor(expected2, rcf, true, false, false);
+            }
         });
     }
 
@@ -315,29 +308,6 @@ public class UnionTest extends AbstractGriffinTest {
 
             try (RecordCursorFactory factory = compiler.compile("select * from x union all y", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected2, factory, false, true, true);
-            }
-        });
-    }
-
-    @Test
-    public void testIntersectOfLiterals() throws Exception {
-        assertMemoryLeak(() -> {
-            final String expected1 = "2020-04-21\t1\n" +
-                    "2020-04-21\t1\n";
-            final String query1 = "select '2020-04-21', 1\n" +
-                    "intersect\n" +
-                    "select '2020-04-21', 1";
-            try (RecordCursorFactory rcf = compiler.compile(query1, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected1, rcf, true, false, false);
-            }
-
-            final String expected2 = "a\tb\n" +
-                    "2020-04-21\t1\n";
-            final String query2 = "select '2020-04-21' a, 1 b\n" +
-                    "intersect\n" +
-                    "select '2020-04-21', 1";
-            try (RecordCursorFactory rcf = compiler.compile(query2, sqlExecutionContext).getRecordCursorFactory()) {
-                assertCursor(expected2, rcf, true, false, false);
             }
         });
     }
@@ -960,6 +930,54 @@ public class UnionTest extends AbstractGriffinTest {
             try (RecordCursorFactory factory = compiler.compile("select * from x union all y union z", sqlExecutionContext).getRecordCursorFactory()) {
                 assertCursor(expected2, factory, false, true, false);
             }
+        });
+    }
+
+    @Test
+    public void testUnionGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table x1 as (select rnd_symbol('b', 'c', 'a') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
+            compile("create table x2 as (select rnd_symbol('c', 'a', 'b') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
+
+            assertQuery("typeof\ts\tsum\n" +
+                            "STRING\tb\t9.711630235623893\n" +
+                            "STRING\ta\t4.567523321042871\n" +
+                            "STRING\tc\t6.077503835152431\n",
+                    "select typeof(s), s, sum(val) from (x1 union all x2)",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testUnionSymbolAndString() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table table1 as \n" +
+                    "(\n" +
+                    "  select cast(x as symbol) as sym1 \n" +
+                    "  from long_sequence(3)\n" +
+                    ")");
+            compile("create table table3 as \n" +
+                    "(\n" +
+                    "  select cast(x+2 as string) as str3\n" +
+                    "  from long_sequence(3)\n" +
+                    ")");
+
+            assertQuery(
+                    "sym1\n" +
+                            "1\n" +
+                            "2\n" +
+                            "3\n" +
+                            "4\n" +
+                            "5\n",
+                    "select sym1 from table1 \n" +
+                            "union\n" +
+                            "select str3 from table3",
+                    null,
+                    false
+            );
         });
     }
 }
