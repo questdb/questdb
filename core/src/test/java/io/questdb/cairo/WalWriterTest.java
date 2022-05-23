@@ -79,9 +79,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                     row.putInt(2, 42);
                     row.append();
                 }
-                assertEquals(100, walWriter.getCurrentWalDPartitionRowCount());
-                walWriter.newRow().cancel(); // force a new WAL-D partition
-                assertEquals(0, walWriter.getCurrentWalDPartitionRowCount());
+                assertEquals(100, walWriter.getCurrentWalDSegmentRowCount());
+                walWriter.newRow().cancel(); // force a new WAL-D segment
+                assertEquals(0, walWriter.getCurrentWalDSegmentRowCount());
                 for (int i = 0; i < 50; i++) {
                     WalWriter.Row row = walWriter.newRow();
                     row.putByte(0, (byte) i);
@@ -89,13 +89,13 @@ public class WalWriterTest extends AbstractGriffinTest {
                     row.putInt(2, 42);
                     row.append();
                 }
-                assertEquals(50, walWriter.getCurrentWalDPartitionRowCount());
+                assertEquals(50, walWriter.getCurrentWalDSegmentRowCount());
             }
         }
     }
 
     @Test
-    public void cancelRowStartsANewPartition_for_now() {
+    public void cancelRowStartsANewSegment_for_now() {
         String tableName = "testtable";
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
@@ -134,7 +134,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 WalWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
-                walWriter.newRow().cancel(); // new partition
+                walWriter.newRow().cancel(); // new segment
                 row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
@@ -144,10 +144,10 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertMetadataFileCreated(TableModel model, long partition, Path path) {
+    private void assertMetadataFileCreated(TableModel model, long segment, Path path) {
         int plen = path.length();
         try {
-            toMetadataPath(model.getTableName(), partition, path);
+            toMetadataPath(model.getTableName(), segment, path);
             TableReaderMetadata readerMetadata = new TableReaderMetadata(configuration.getFilesFacade(), path);
             assertMetadataMatchesModel(model, readerMetadata);
         } finally {
@@ -176,7 +176,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDdlMetadataForNewPartitionReadable() {
+    public void testDdlMetadataForNewSegmentReadable() {
         String tableName = "testtable";
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
@@ -196,7 +196,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void ddlMetadataCreatedForNewPartition() {
+    public void ddlMetadataCreatedForNewSegment() {
         String tableName = "testtable";
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
@@ -210,7 +210,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 WalWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
-                walWriter.newRow().cancel(); // force new partition
+                walWriter.newRow().cancel(); // force new segment
                 row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
@@ -220,30 +220,32 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertWalFileExist(String tableName, String columnName, int partition, Path path) {
+    private void assertWalFileExist(String tableName, String columnName, int segment, Path path) {
         int plen = path.length();
         try {
-            path.concat(tableName).slash().concat("wal").slash().concat(String.valueOf(partition)).slash().concat(columnName + ".wald").$();
+            path.concat(tableName).slash().concat("wal")
+                    .slash().put(segment)
+                    .slash().concat(columnName + ".wald").$();
             assertPathExists(path);
         } finally {
             path.trimTo(plen);
         }
     }
 
-    private void assertMetadataFileExist(String tableName, int partition, Path path) {
+    private void assertMetadataFileExist(String tableName, int segment, Path path) {
         int plen = path.length();
         try {
-            toMetadataPath(tableName, partition, path);
+            toMetadataPath(tableName, segment, path);
             assertPathExists(path);
         } finally {
             path.trimTo(plen);
         }
     }
 
-    private void toMetadataPath(CharSequence tableName, long partition, Path path) {
+    private void toMetadataPath(CharSequence tableName, long segment, Path path) {
         path.concat(tableName).slash()
                 .concat("wal").slash()
-                .concat(String.valueOf(partition)).slash()
+                .put(segment).slash()
                 .concat("_meta").$();
     }
 
