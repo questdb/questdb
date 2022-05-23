@@ -144,7 +144,7 @@ public class WalWriter implements Closeable {
     private long commitIntervalDefault;
     private long commitInterval;
     private long walDRowCounter;
-    private long waldPartitionCounter = -1;
+    private long waldSegmentCounter = -1;
 
     public WalWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
@@ -263,7 +263,7 @@ public class WalWriter implements Closeable {
             this.walDColumns = new ObjList<>(columnCount * 2);
             configureWalDColumnMemory();
 
-            openNewWalDPartition();
+            openNewWalDSegment();
             configureWalDSymbolTable();
             configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
@@ -547,7 +547,7 @@ public class WalWriter implements Closeable {
         return (masterRef - committedMasterRef) >> 1;
     }
 
-    public long getCurrentWalDPartitionRowCount() {
+    public long getCurrentWalDSegmentRowCount() {
         return walDRowCounter;
     }
 
@@ -2076,11 +2076,11 @@ public class WalWriter implements Closeable {
         }
     }
 
-    private void openNewWalDPartition() {
-        waldPartitionCounter++;
+    private void openNewWalDSegment() {
+        waldSegmentCounter++;
         walDRowCounter = 0;
         try {
-            walDPath.slash().put(waldPartitionCounter);
+            walDPath.slash().put(waldSegmentCounter);
             int plen = walDPath.length();
             if (ff.mkdirs(walDPath.slash$(), mkDirMode) != 0) {
                 throw CairoException.instance(ff.errno()).put("Cannot create WAL-D partition directory: ").put(walDPath);
@@ -2731,7 +2731,7 @@ public class WalWriter implements Closeable {
     void walDRowCancel() {
         long newMasterRef = masterRef - 1;
         walDRowValueIsNotNull.fill(0, columnCount, newMasterRef);
-        openNewWalDPartition();
+        openNewWalDSegment();
     }
 
     void rowCancel() {
