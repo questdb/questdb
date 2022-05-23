@@ -26,6 +26,7 @@ package io.questdb.cutlass.text;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
+import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -36,9 +37,11 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -66,7 +69,7 @@ public class FileIndexer implements Closeable, Mutable {
     //count of quotes, even new lines, odd new lines, offset to first even newline, offset to first odd newline
     private final LongList chunkStats = new LongList();
 
-    //holds input for scond phase - indexing: offset and start line number for each chunk
+    //holds input for second phase - indexing: offset and start line number for each chunk
     private final LongList indexChunkStats = new LongList();
 
     private final ObjList<TaskContext> contextObjList = new ObjList<>();
@@ -86,14 +89,30 @@ public class FileIndexer implements Closeable, Mutable {
     private final CharSequence inputRoot;
     private final CharSequence inputWorkRoot;
 
+    //input params start
+    //name of target table
+    private CharSequence tableName;
+
     //name of file to process in inputRoot dir
     private CharSequence inputFileName;
+
+    //name of timestamp column
+    private CharSequence timestampColumn;
+    private int partitionBy;
+    private byte columnDelimiter;
+    private TimestampAdapter timestampAdapter;
+    private boolean forceHeader;
+    //input params end
+
+    private int timestampIndex;
 
     private final StringSink partitionNameSink = new StringSink();
     private final ObjList<CharSequence> partitionNames = new ObjList<>();
 
+    private final DateLocale defaultDateLocale;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
+    private final TextDelimiterScanner textDelimiterScanner;
     private final TextMetadataDetector textMetadataDetector;
     private final TextMetadataParser textMetadataParser;
     private final SqlExecutionContext sqlExecutionContext;
@@ -117,8 +136,10 @@ public class FileIndexer implements Closeable, Mutable {
         final TextConfiguration textConfiguration = cfg.getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
+        this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
         this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
         this.textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
+        this.defaultDateLocale = textConfiguration.getDefaultDateLocale();
 
         for (int i = 0; i < workerCount; i++) {
             contextObjList.add(new TaskContext(sqlExecutionContext, textMetadataParser, typeManager));
@@ -137,13 +158,23 @@ public class FileIndexer implements Closeable, Mutable {
         textMetadataDetector.clear();
         textMetadataParser.clear();
 
+        inputFileName = null;
+        tableName = null;
+        timestampColumn = null;
+        partitionBy = -1;
+        columnDelimiter = -1;
+        timestampAdapter = null;
+        forceHeader = false;
+
         for (int i = 0; i < contextObjList.size(); i++) {
             contextObjList.get(i).clear();
         }
+
+        this.timestampColumn = null;
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         clear();
         Misc.freeObjList(contextObjList);
         this.inputFilePath.close();
@@ -151,6 +182,7 @@ public class FileIndexer implements Closeable, Mutable {
         this.utf8Sink.close();
         this.textMetadataDetector.close();
         this.textMetadataParser.close();
+        this.textDelimiterScanner.close();
     }
 
     public void collectPartitionNames() {
@@ -194,19 +226,39 @@ public class FileIndexer implements Closeable, Mutable {
         LOG.info().$("Finished index merge").$();
     }
 
-    public void of(CharSequence inputFileName, int partitionBy, byte columnDelimiter, int timestampIndex, DateFormat format, boolean ignoreHeader) {
+    public void of(CharSequence tableName, CharSequence inputFileName, int partitionBy, byte columnDelimiter, CharSequence timestampColumn, CharSequence tsFormat, boolean forceHeader) {
         clear();
 
+        this.tableName = tableName;
         this.inputFileName = inputFileName;
-        inputFilePath.of(inputRoot).slash().concat(inputFileName).$();
+        this.timestampColumn = timestampColumn;
+        this.partitionBy = partitionBy;
+        this.columnDelimiter = columnDelimiter;
+        if (tsFormat != null) {
+            DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(tsFormat);
+            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat, defaultDateLocale);
+        }
+        this.forceHeader = forceHeader;
+        this.timestampIndex = -1;
 
+        inputFilePath.of(inputRoot).slash().concat(inputFileName).$();
+    }
+
+    @TestOnly
+    void setBufferLength(int bufferSize) {
         for (int i = 0; i < contextObjList.size(); i++) {
             TaskContext context = contextObjList.get(i);
-            context.of(inputFileName, i, partitionBy, columnDelimiter, timestampIndex, format, ignoreHeader);
+            context.splitter.setBufferLength(bufferSize);
+        }
+    }
 
-            //TODO: what to do with ignoreHeader?
-            if (ignoreHeader) {
-                ignoreHeader = false;//only first splitter will process file with header
+    void prepareContexts() {
+        for (int i = 0; i < contextObjList.size(); i++) {
+            TaskContext context = contextObjList.get(i);
+            context.of(inputFileName, i, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader);
+
+            if (forceHeader) {
+                forceHeader = false;//Assumption: only first splitter will process file with header
             }
         }
     }
@@ -234,12 +286,13 @@ public class FileIndexer implements Closeable, Mutable {
     public void parseStructure() throws TextException, SqlException {
         TaskContext ctx = contextObjList.get(0);
         TextLoaderBase loader = ctx.getLoader();
-        boolean forceHeaders = true;
+
         int textAnalysisMaxLines = 10;
         final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
 
         int len = configuration.getSqlCopyBufferSize();
         long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+
         try {
             tmpPath.of(inputRoot).concat(inputFileName).$();
             long fd = ff.openRO(tmpPath);
@@ -249,9 +302,19 @@ public class FileIndexer implements Closeable, Mutable {
                 }
                 long n = ff.read(fd, buf, len, 0);
                 if (n > 0) {
-                    loader.setDelimiter((byte) ',');
+                    if (columnDelimiter < 0) {
+                        columnDelimiter = textDelimiterScanner.scan(buf, buf + n);
+                    }
+
+                    loader.setDelimiter(columnDelimiter);
                     loader.setSkipRowsWithExtraValues(false);
-                    textMetadataDetector.of(textMetadataParser.getColumnNames(), textMetadataParser.getColumnTypes(), forceHeaders);
+
+                    if (timestampColumn != null && timestampAdapter != null) {
+                        textMetadataParser.getColumnNames().add(timestampColumn);
+                        textMetadataParser.getColumnTypes().add(timestampAdapter);
+                    }
+
+                    textMetadataDetector.of(textMetadataParser.getColumnNames(), textMetadataParser.getColumnTypes(), forceHeader);
                     loader.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
                     textMetadataDetector.evaluateResults(loader.getParsedLineCount(), loader.getErrorLineCount());
                     loader.restart(textMetadataDetector.isHeader());
@@ -263,6 +326,50 @@ public class FileIndexer implements Closeable, Mutable {
             Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
         }
 
+        //validate against target table
+        if (partitionBy == PartitionBy.NONE) {
+            throw CairoException.instance(-1).put("partition by unit can't be NONE for parallel import");
+        }
+
+        if (partitionBy < 0) {
+            partitionBy = PartitionBy.NONE;
+        }
+
+        loader.configureDestination(tableName, false, true, Atomicity.SKIP_ALL, partitionBy, timestampColumn);
+        loader.prepareTable(ctx.securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), tmpPath, typeManager);
+
+        try {
+            if ((loader.getWarnings() & TextLoadWarning.PARTITION_TYPE_MISMATCH) != 0) {
+                throw CairoException.instance(-1).put("declared partition by unit doesn't match table's");
+            }
+
+            if (!PartitionBy.isPartitioned(loader.getPartitionBy())) {
+                throw CairoException.instance(-1).put("partition by not specified or target table is not partitioned");
+            }
+
+            timestampIndex = -1;
+            if (timestampColumn != null) {
+                for (int i = 0, n = textMetadataDetector.getColumnNames().size(); i < n; i++) {
+                    if (Chars.equalsIgnoreCase(textMetadataDetector.getColumnNames().get(i), timestampColumn)) {
+                        timestampIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            if (timestampIndex == -1) {
+                throw CairoException.instance(-1).put("timestamp column not found");
+            }
+
+            if (timestampAdapter == null) {
+                timestampAdapter = loader.getTimestampAdapter();
+            }
+
+            prepareContexts();
+        } catch (Throwable t) {
+            loader.clear();
+            throw t;
+        }
     }
 
     public void process() throws SqlException, TextException {
@@ -477,7 +584,7 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         public void importPartitionData(long address, long size) {
-            int len = 4094;
+            int len = 4096;
             long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
                 path.of(inputRoot).concat(inputFileName).$();
@@ -504,18 +611,18 @@ public class FileIndexer implements Closeable, Mutable {
             for (long i = lo; i < hi; i++) {
                 final CharSequence name = partitionNames.get((int) i);
                 loader.closeWriter();
-                loader.configureDestination(name, true, true, 0, PartitionBy.MONTH, null);
+                loader.configureDestination(name, true, true, Atomicity.SKIP_ALL, loader.getPartitionBy(), timestampColumn);
                 loader.prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), path, typeManager);
                 loader.restart(false);
                 path.of(inputWorkRoot).concat(inputFileName).concat(name);
-                mergePartitionIndex(ff, path, mergeIndexes);
+                mergePartitionIndexAndImportData(ff, path, mergeIndexes);
                 loader.wrapUp();
             }
         }
 
-        public void mergePartitionIndex(final FilesFacade ff,
-                                        final Path partitionPath,
-                                        final DirectLongList mergeIndexes) {
+        public void mergePartitionIndexAndImportData(final FilesFacade ff,
+                                                     final Path partitionPath,
+                                                     final DirectLongList mergeIndexes) {
 
             mergeIndexes.resetCapacity();
             mergeIndexes.clear();
@@ -572,8 +679,9 @@ public class FileIndexer implements Closeable, Mutable {
             }
         }
 
-        public void of(CharSequence inputFileName, int index, int partitionBy, byte columnDelimiter, int timestampIndex, DateFormat format, boolean ignoreHeader) {
-            splitter.of(inputFileName, index, partitionBy, columnDelimiter, timestampIndex, format, ignoreHeader);
+        public void of(CharSequence inputFileName, int index, int partitionBy, byte columnDelimiter, int timestampIndex, TimestampAdapter adapter, boolean ignoreHeader) {
+            splitter.of(inputFileName, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader);
+            loader.setDelimiter(columnDelimiter);
         }
     }
 }

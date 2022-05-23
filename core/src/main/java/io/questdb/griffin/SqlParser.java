@@ -436,6 +436,7 @@ public final class SqlParser {
             if (fileName.token.length() < 3 && Chars.startsWith(fileName.token, '\'')) {
                 throw SqlException.$(fileName.position, "file name expected");
             }
+
             CopyModel model = copyModelPool.next();
             model.setTableName(tableName);
             model.setFileName(fileName);
@@ -443,22 +444,57 @@ public final class SqlParser {
             tok = optTok(lexer);
             if (tok != null && isWithKeyword(tok)) {
                 tok = tok(lexer, "copy option");
-                while (tok != null) {
+                while (tok != null && !isSemicolon(tok)) {
                     if (isHeaderKeyword(tok)) {
                         model.setHeader(isTrueKeyword(tok(lexer, "'true' or 'false'")));
                         tok = optTok(lexer);
                     } else if (isParallelKeyword(tok)) {
-                        int parallelWorkers = expectInt(lexer);
-                        model.setParallelWorkersCount(parallelWorkers);
+                        model.setParallel(true);
                         tok = optTok(lexer);
                     } else if (isLimitKeyword(tok)) {
                         int rowsLimit = expectInt(lexer);
                         model.setRowsLimit(rowsLimit);
                         tok = optTok(lexer);
+                    } else if (isPartitionKeyword(tok)) {
+                        expectTok(lexer, "by");
+                        tok = tok(lexer, "year month day hour");
+                        int partitionBy = PartitionBy.fromString(tok);
+                        if (partitionBy == -1) {
+                            throw SqlException.$(lexer.getPosition(), "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
+                        }
+                        model.setPartitionBy(partitionBy);
+                        tok = optTok(lexer);
+                    } else if (isTimestampKeyword(tok)) {
+                        tok = tok(lexer, "timestamp column name expected");
+                        CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+                        if (!TableUtils.isValidColumnName(columnName)) {
+                            throw SqlException.$(lexer.getPosition(), "timestamp column name contains invalid characters");
+                        }
+                        model.setTimestampColumnName(columnName);
+                        tok = optTok(lexer);
+                    } else if (isFormatKeyword(tok)) {
+                        tok = tok(lexer, "timestamp format expected");
+                        CharSequence format = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+                        model.setTimestampFormat(format);
+                        tok = optTok(lexer);
+                    } else if (isDelimiterKeyword(tok)) {
+                        tok = tok(lexer, "timestamp character expected");
+                        CharSequence delimiter = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+                        if (delimiter == null || delimiter.length() != 1) {
+                            throw SqlException.$(lexer.getPosition(), "delimiter is empty or contains more than 1 character");
+                        }
+                        char delimiterChar = delimiter.charAt(0);
+                        if (delimiterChar > 127) {
+                            throw SqlException.$(lexer.getPosition(), "delimiter is not an ascii character");
+                        }
+                        model.setDelimiter((byte) delimiterChar);
+                        tok = optTok(lexer);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "unexpected option");
                     }
                 }
+            } else if (tok != null && !SqlKeywords.isSemicolon(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
             }
             return model;
         }
@@ -530,7 +566,7 @@ public final class SqlParser {
                 throw SqlException.$(partitionBy.position, "partitioning is possible only on tables with designated timestamps");
             }
             if (PartitionBy.fromString(partitionBy.token) == -1) {
-                throw SqlException.$(partitionBy.position, "'NONE', 'DAY', 'MONTH' or 'YEAR' expected");
+                throw SqlException.$(partitionBy.position, "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
             }
             model.setPartitionBy(partitionBy);
             tok = optTok(lexer);

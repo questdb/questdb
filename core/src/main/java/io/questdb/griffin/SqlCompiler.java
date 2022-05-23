@@ -53,6 +53,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.ServiceLoader;
@@ -1939,17 +1940,19 @@ public class SqlCompiler implements Closeable {
                 final CharSequence name = GenericLexer.assertNoDots(GenericLexer.unquote(model.getFileName().token), model.getFileName().position);
 
                 if (model.isParalell()) {
-                    if (model.getTimestampColumn() == -1) {
-                        model.setTimestampColumn(1);//TODO: throw error
-                    }
                     if (model.getTimestampFormat() == null) {
-                        model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");//TODO: throw error 
+                        model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
+                    }
+                    if (model.getDelimiter() < 0) {
+                        model.setDelimiter((byte) ',');
                     }
 
                     FileIndexer indexer = new FileIndexer(executionContext);
-                    DateFormat dateFormat = engine.getConfiguration().getTextConfiguration().getInputFormatConfiguration().getTimestampFormatFactory().get(model.getTimestampFormat());
-                    indexer.of(name, PartitionBy.DAY, (byte) ',', model.getTimestampColumn(), dateFormat, true);
+                    indexer.of(model.getTableName().token, name, model.getPartitionBy(), model.getDelimiter(), model.getTimestampColumnName(), model.getTimestampFormat(), model.isHeader());
+                    indexer.parseStructure();
                     indexer.process();
+                    indexer.close();
+
                     return;
                 }
 
@@ -2575,7 +2578,10 @@ public class SqlCompiler implements Closeable {
         // todo: configure the following
         //   - what happens when data row errors out, max errors may be?
         //   - we should be able to skip X rows from top, dodgy headers etc.
-        textLoader.configureDestination(model.getTableName().token, false, false, Atomicity.SKIP_ROW, PartitionBy.NONE, null);
+
+        textLoader.configureDestination(model.getTableName().token, false, false, Atomicity.SKIP_ROW,
+                model.getPartitionBy() < 0 ? PartitionBy.NONE : model.getPartitionBy(),
+                model.getTimestampColumnName());
     }
 
     private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
@@ -2678,6 +2684,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    @TestOnly
     ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         clear();
         lexer.of(query);
@@ -2685,6 +2692,7 @@ public class SqlCompiler implements Closeable {
     }
 
     // this exposed for testing only
+    @TestOnly
     ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
@@ -2692,6 +2700,7 @@ public class SqlCompiler implements Closeable {
     }
 
     // test only
+    @TestOnly
     void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
         clear();
         lexer.of(expression);

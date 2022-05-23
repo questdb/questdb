@@ -24,7 +24,16 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.model.CopyModel;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+
+import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -35,6 +44,46 @@ public class CopyTest extends AbstractGriffinTest {
     public static void setUpStatic() {
         inputRoot = new File(".").getAbsolutePath();
         AbstractGriffinTest.setUpStatic();
+    }
+
+    @Test
+    public void testParallelCopyRequiresWithBeforeOptions() {
+        try {
+            compiler.testCompileModel("copy x from 'somefile.csv' partition by HOUR ;", sqlExecutionContext);
+            Assert.fail();
+        } catch (SqlException e) {
+            assertEquals("[27] 'with' expected", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testSetParallelParallelCopyOptions() throws SqlException {
+        CopyModel model = (CopyModel) compiler.testCompileModel("copy y from 'somefile.csv' with parallel;", sqlExecutionContext);
+
+        assertEquals("y", model.getTableName().token.toString());
+        assertEquals("'somefile.csv'", model.getFileName().token.toString());
+        assertFalse(model.isHeader());
+        assertTrue(model.isParalell());
+        assertEquals(-1, model.getRowsLimit());
+        assertEquals(-1, model.getPartitionBy());
+        assertNull(model.getTimestampColumnName());
+        assertNull(model.getTimestampFormat());
+        assertEquals(-1, model.getDelimiter());
+    }
+
+    @Test
+    public void testSetAllParallelCopyOptions() throws SqlException {
+        CopyModel model = (CopyModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true parallel limit 10 partition by HOUR timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' ;", sqlExecutionContext);
+
+        assertEquals("x", model.getTableName().token.toString());
+        assertEquals("'somefile.csv'", model.getFileName().token.toString());
+        assertTrue(model.isHeader());
+        assertTrue(model.isParalell());
+        assertEquals(10, model.getRowsLimit());
+        assertEquals(PartitionBy.HOUR, model.getPartitionBy());
+        assertEquals("ts1", model.getTimestampColumnName().toString());
+        assertEquals("yyyy-MM-ddTHH:mm:ss", model.getTimestampFormat().toString());
+        assertEquals(';', model.getDelimiter());
     }
 
     @Test
@@ -238,6 +287,27 @@ public class CopyTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
 
             compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header false", sqlExecutionContext);
+
+            final String expected = "f0\tf1\tf2\tf3\tf4\n" +
+                    "type\tvalue\tactive\tdesc\t1\n" +
+                    "ABC\txy\ta\tbrown fox jumped over the fence\t10\n" +
+                    "CDE\tbb\tb\tsentence 1\n" +
+                    "sentence 2\t12\n";
+
+            assertQuery(
+                    expected,
+                    "x",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCopyParallel() throws Exception {
+        assertMemoryLeak(() -> {
+
+            compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header false ", sqlExecutionContext);
 
             final String expected = "f0\tf1\tf2\tf3\tf4\n" +
                     "type\tvalue\tactive\tdesc\t1\n" +

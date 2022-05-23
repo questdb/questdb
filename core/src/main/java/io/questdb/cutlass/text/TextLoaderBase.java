@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
@@ -142,6 +143,10 @@ public class TextLoaderBase implements Closeable, Mutable {
     public void wrapUp() throws TextException {
         textLexer.parseLast();
         textWriter.commit();
+    }
+
+    public TimestampAdapter getTimestampAdapter() {
+        return textWriter.getTimestampAdapter();
     }
 
     @FunctionalInterface

@@ -65,8 +65,6 @@ public class FileSplitter implements Closeable, Mutable {
     public static final long INDEX_ENTRY_SIZE = 2 * Long.BYTES;
 
     private static final Log LOG = LogFactory.getLog(FileSplitter.class);
-    //TODO: rework
-    private final DateLocale defaultDateLocale;
 
     //used for timestamp parsing 
     private final TypeManager typeManager;
@@ -87,7 +85,7 @@ public class FileSplitter implements Closeable, Mutable {
     private long fd = -1;
     //input file buffer (used in multiple phases)
     private long fileBufferPtr = -1;
-    private final int bufferLength;
+    private int bufferLength;
 
     private final long maxIndexChunkSize;
 
@@ -147,7 +145,6 @@ public class FileSplitter implements Closeable, Mutable {
 
     public FileSplitter(CairoConfiguration configuration) {
         final TextConfiguration textConfiguration = configuration.getTextConfiguration();
-        this.defaultDateLocale = textConfiguration.getDefaultDateLocale();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         this.ff = configuration.getFilesFacade();
@@ -167,14 +164,14 @@ public class FileSplitter implements Closeable, Mutable {
         this.timestampField = new DirectByteCharSequence();
     }
 
-    public void of(CharSequence inputFileName, int index, int partitionBy, byte columnDelimiter, int timestampIndex, DateFormat format, boolean ignoreHeader) {
+    public void of(CharSequence inputFileName, int index, int partitionBy, byte columnDelimiter, int timestampIndex, TimestampAdapter adapter, boolean ignoreHeader) {
         this.inputFileName = inputFileName;
         this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
         this.partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
         this.offset = 0;
         this.columnDelimiter = columnDelimiter;
         this.timestampIndex = timestampIndex;
-        this.timestampAdapter = (TimestampAdapter) this.typeManager.nextTimestampAdapter(false, format, defaultDateLocale);
+        this.timestampAdapter = adapter;
         this.header = ignoreHeader;
         this.index = index;
     }
@@ -720,4 +717,23 @@ public class FileSplitter implements Closeable, Mutable {
         }
     }
 
+    public boolean isHeader() {
+        return header;
+    }
+
+    public byte getColumnDelimiter() {
+        return columnDelimiter;
+    }
+
+    public void setColumnDelimiter(byte delimiter) {
+        this.columnDelimiter = delimiter;
+    }
+
+    public void setTimestampIndex(int tsIndex) {
+        this.timestampIndex = tsIndex;
+    }
+
+    public void setBufferLength(int length) {
+        this.bufferLength = length;
+    }
 }

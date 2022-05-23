@@ -35,7 +35,11 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private ExpressionNode fileName;
     private boolean header;
 
-    private int parallelWorkersCount = 1;
+    private boolean parallel;
+    private CharSequence timestampFormat;
+    private CharSequence timestampColumnName;
+    private int partitionBy;
+    private byte delimiter;
 
     //limits memory used by parallel import to this number of bytes 
     private int memoryLimit;
@@ -43,15 +47,26 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     //limits number of rows imported and makes it possible to try out configuration before running full import 
     private int rowsLimit;
 
-    private String timestampFormat;
-
-    private int timestampColumn = -1;
-
     public CopyModel() {
     }
 
     @Override
     public void clear() {
+        tableName = null;
+        fileName = null;
+        header = false;
+        parallel = false;
+        timestampFormat = null;
+        timestampColumnName = null;
+        partitionBy = -1;
+        delimiter = -1;
+
+        memoryLimit = -1;
+        rowsLimit = -1;
+    }
+
+    public byte getDelimiter() {
+        return delimiter;
     }
 
     public ExpressionNode getFileName() {
@@ -62,20 +77,24 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return memoryLimit;
     }
 
-    public int getParallelWorkersCount() {
-        return parallelWorkersCount;
+    public int getPartitionBy() {
+        return partitionBy;
     }
 
     public int getRowsLimit() {
         return rowsLimit;
     }
 
-    public int getTimestampColumn() {
-        return timestampColumn;
+    public CharSequence getTimestampColumnName() {
+        return timestampColumnName;
     }
 
-    public String getTimestampFormat() {
+    public CharSequence getTimestampFormat() {
         return timestampFormat;
+    }
+
+    public void setDelimiter(byte delimiter) {
+        this.delimiter = delimiter;
     }
 
     public void setFileName(ExpressionNode fileName) {
@@ -95,6 +114,10 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.memoryLimit = memoryLimit;
     }
 
+    public void setPartitionBy(int partitionBy) {
+        this.partitionBy = partitionBy;
+    }
+
     public void setRowsLimit(int rowsLimit) {
         this.rowsLimit = rowsLimit;
     }
@@ -111,15 +134,15 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.header = header;
     }
 
-    public void setParallelWorkersCount(int workersCount) {
-        this.parallelWorkersCount = workersCount;
+    public void setParallel(boolean parallel) {
+        this.parallel = parallel;
     }
 
-    public void setTimestampColumn(int timestampColumn) {
-        this.timestampColumn = timestampColumn;
+    public void setTimestampColumnName(CharSequence timestampColumn) {
+        this.timestampColumnName = timestampColumn;
     }
 
-    public void setTimestampFormat(String timestampFormat) {
+    public void setTimestampFormat(CharSequence timestampFormat) {
         this.timestampFormat = timestampFormat;
     }
 
@@ -129,6 +152,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     }
 
     public boolean isParalell() {
-        return parallelWorkersCount > 1;
+        return parallel;
     }
 }
