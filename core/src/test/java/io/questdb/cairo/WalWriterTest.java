@@ -31,7 +31,6 @@ import io.questdb.std.str.Path;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 
 public class WalWriterTest extends AbstractGriffinTest {
 
@@ -56,6 +55,34 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
             assertWalFileExist(tableName, "a", 0, path);
             assertWalFileExist(tableName, "b", 0, path);
+        }
+    }
+
+    @Test
+    public void symbolWal() {
+        String tableName = "testtable";
+        try (Path path = new Path().of(configuration.getRoot());
+             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                     .col("a", ColumnType.BYTE)
+                     .col("b", ColumnType.SYMBOL)
+        ) {
+            int plen = path.length();
+            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
+            path.trimTo(plen);
+            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+                for (int i = 0; i < 5; i++) {
+                    WalWriter.Row row = walWriter.newRow();
+                    row.putByte(0, (byte) i);
+                    row.putSym(1, "sym" + i);
+                    row.append();
+                }
+            }
+            assertWalFileExist(tableName, "a", 0, path);
+            assertWalFileExist(tableName, "b", 0, path);
+            assertWalSymbolFileExist(tableName, "b", ".c", path);
+            assertWalSymbolFileExist(tableName, "b", ".k", path);
+            assertWalSymbolFileExist(tableName, "b", ".o", path);
+            assertWalSymbolFileExist(tableName, "b", ".v", path);
         }
     }
 
@@ -224,6 +251,16 @@ public class WalWriterTest extends AbstractGriffinTest {
         int plen = path.length();
         try {
             path.concat(tableName).slash().concat("wal").slash().concat(String.valueOf(partition)).slash().concat(columnName + ".wald").$();
+            assertPathExists(path);
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    private void assertWalSymbolFileExist(String tableName, String columnName, String extension, Path path) {
+        int plen = path.length();
+        try {
+            path.concat(tableName).slash().concat("wal").slash().concat(columnName + extension).$();
             assertPathExists(path);
         } finally {
             path.trimTo(plen);

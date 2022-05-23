@@ -47,6 +47,7 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 import java.util.function.LongConsumer;
 
+import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 import static io.questdb.cairo.TableUtils.*;
 
 public class WalWriter implements Closeable {
@@ -263,6 +264,7 @@ public class WalWriter implements Closeable {
             configureWalDColumnMemory();
 
             openNewWalDPartition();
+            configureWalDSymbolTable();
             configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
             configureAppendPosition();
@@ -1530,23 +1532,27 @@ public class WalWriter implements Closeable {
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
             configureWalDColumn(type, i);
+        }
+    }
 
+    private void configureWalDSymbolTable() {
+        for (int i = 0; i < columnCount; i++) {
+            int type = metadata.getColumnType(i);
             if (ColumnType.isSymbol(type)) {
-                throw new UnsupportedOperationException("symbols not supported yet");
-//                final int symbolIndex = denseSymbolMapWriters.size();
-//                long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(i);
-//                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
-//                        configuration,
-//                        path.trimTo(rootLen),
-//                        metadata.getColumnName(i),
-//                        columnNameTxn,
-//                        txWriter.unsafeReadSymbolTransientCount(symbolIndex),
-//                        symbolIndex,
-//                        txWriter
-//                );
-//
-//                symbolMapWriters.extendAndSet(i, symbolMapWriter);
-//                denseSymbolMapWriters.add(symbolMapWriter);
+                final int symbolIndex = denseSymbolMapWriters.size();
+                long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(i);
+                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
+                        configuration,
+                        walDPath.trimTo(walDRootLen),
+                        metadata.getColumnName(i),
+                        columnNameTxn,
+                        txWriter.unsafeReadSymbolTransientCount(symbolIndex),
+                        symbolIndex,
+                        txWriter
+                );
+
+                symbolMapWriters.extendAndSet(i, symbolMapWriter);
+                denseSymbolMapWriters.add(symbolMapWriter);
             }
         }
     }
@@ -2086,9 +2092,23 @@ public class WalWriter implements Closeable {
                 copyMetadataTo(metaMem, false);
             }
             for (int i = 0; i < columnCount; i++) {
-                if (metadata.getColumnType(i) > 0) {
+                final int type = metadata.getColumnType(i);
+                if (type > 0) {
                     final CharSequence name = metadata.getColumnName(i);
                     openWalDColumnFiles(name, i, plen);
+                    if (ColumnType.isSymbol(type)) {
+                        try(MemoryMARW mem = Vm.getMARWInstance()) {
+                            createSymbolMapFiles(
+                                    ff,
+                                    mem,
+                                    walDPath.trimTo(walDRootLen),
+                                    name,
+                                    COLUMN_NAME_TXN_NONE,
+                                    1024, // take this from TableStructure !!!
+                                    false // take this from TableStructure !!!
+                            );
+                        }
+                    }
                 }
             }
             LOG.info().$("switched WAL-D partition [path='").$(walDPath).$('\'').I$();
