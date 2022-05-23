@@ -45,12 +45,12 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private long fd = -1;
     private long powerUpTimestampUs;
 
-    public NetworkSqlExecutionCircuitBreaker(SqlExecutionCircuitBreakerConfiguration configuration) {
+    public NetworkSqlExecutionCircuitBreaker(SqlExecutionCircuitBreakerConfiguration configuration, int memoryTag) {
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.throttle = configuration.getCircuitBreakerThrottle();
         this.bufferSize = configuration.getBufferSize();
-        this.buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.buffer = Unsafe.malloc(bufferSize, memoryTag);
         this.microsecondClock = configuration.getClock();
         long maxTime = configuration.getMaxTime();
         if (maxTime > 0) {

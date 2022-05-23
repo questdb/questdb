@@ -225,7 +225,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         this.pendingWriters = new CharSequenceObjHashMap<>(configuration.getPendingWritersCacheSize());
         this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration());
+        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration.getCircuitBreakerConfiguration(), MemoryTag.NATIVE_PGW_CONN);
         this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, configuration.getInsertPoolCapacity()); // 64
         final boolean enableInsertCache = configuration.isInsertCacheEnabled();
         final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1; // 8

@@ -34,6 +34,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import org.jetbrains.annotations.Nullable;
@@ -79,7 +80,7 @@ public class PageFrameReduceJob implements Job, Closeable {
 
         this.record = new PageAddressCacheRecord();
         if (sqlExecutionCircuitBreakerConfiguration != null) {
-            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration);
+            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_OFFLOAD);
         } else {
             this.circuitBreaker = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
         }
