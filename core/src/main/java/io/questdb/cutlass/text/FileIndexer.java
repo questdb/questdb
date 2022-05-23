@@ -337,7 +337,6 @@ public class FileIndexer implements Closeable, Mutable {
 
         loader.configureDestination(tableName, false, true, Atomicity.SKIP_ALL, partitionBy, timestampColumn);
         loader.prepareTable(ctx.securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), tmpPath, typeManager);
-
         try {
             if ((loader.getWarnings() & TextLoadWarning.PARTITION_TYPE_MISMATCH) != 0) {
                 throw CairoException.instance(-1).put("declared partition by unit doesn't match table's");
@@ -366,13 +365,12 @@ public class FileIndexer implements Closeable, Mutable {
             }
 
             prepareContexts();
-        } catch (Throwable t) {
+        } finally {
             loader.clear();
-            throw t;
         }
     }
 
-    public void process() throws SqlException, TextException {
+    public void process() throws SqlException {
         long fd = ff.openRO(inputFilePath);
         if (fd < 0) {
             throw CairoException.instance(ff.errno()).put("Can't open input file").put(inputFilePath);
@@ -385,10 +383,26 @@ public class FileIndexer implements Closeable, Mutable {
                 return;
             }
 
-            findChunkBoundaries(fd);
-            indexChunks();
-            mergePartitionIndexes();
-            //TODO: import phase
+            final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "partitions merge")) {
+                try {
+
+                    findChunkBoundaries(fd);
+                    indexChunks();
+                    mergePartitionIndexes();
+                    for (int i = 0, sz = partitionNames.size(); i < sz; i++) {
+                        final CharSequence partitionDirName = partitionNames.get(i);
+                        try {
+                            final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, PartitionBy.YEAR);
+                            writer.attachPartition(timestamp);
+                        } catch (CairoException e) {
+                            LOG.error().$("Cannot parse partition directory name=").$(partitionDirName).$();
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("e");
+                }
+            }
         } finally {
             ff.close(fd);
         }
@@ -615,13 +629,15 @@ public class FileIndexer implements Closeable, Mutable {
                 loader.prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), path, typeManager);
                 loader.restart(false);
                 path.of(inputWorkRoot).concat(inputFileName).concat(name);
-                mergePartitionIndexAndImportData(ff, path, mergeIndexes);
+                mergePartitionIndexAndImportData(ff, path, name, mergeIndexes);
                 loader.wrapUp();
+                loader.clear();
             }
         }
 
         public void mergePartitionIndexAndImportData(final FilesFacade ff,
                                                      final Path partitionPath,
+                                                     final CharSequence partitionFolder,
                                                      final DirectLongList mergeIndexes) {
 
             mergeIndexes.resetCapacity();
@@ -666,6 +682,8 @@ public class FileIndexer implements Closeable, Mutable {
                 ff.close(fd);
                 final long merged = Vect.mergeLongIndexesAscExt(mergeIndexes.getAddress(), indexesCount, address);
                 importPartitionData(merged, mergedIndexSize);
+                final CharSequence srcTableName = loader.getTableName();
+                movePartitionToDst(srcTableName, partitionFolder, tableName);
             } finally {
                 if (address != -1) {
                     ff.munmap(address, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
@@ -683,5 +701,15 @@ public class FileIndexer implements Closeable, Mutable {
             splitter.of(inputFileName, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader);
             loader.setDelimiter(columnDelimiter);
         }
+
+        private void movePartitionToDst(final CharSequence srcTableName, final CharSequence partitionFolder, final CharSequence dstTableName) {
+            final CharSequence root = sqlExecutionContext.getCairoEngine().getConfiguration().getRoot();
+            final Path srcPath = Path.getThreadLocal(root).concat(srcTableName).concat(partitionFolder).$();
+            final Path dstPath = Path.getThreadLocal2(root).concat(dstTableName).concat(partitionFolder).put(TableUtils.DETACHED_DIR_MARKER).$();
+            if (!ff.rename(srcPath, dstPath)) {
+                //todo: not on the same fs. copy&remove
+            }
+        }
+
     }
 }

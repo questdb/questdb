@@ -90,7 +90,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testIndexMerge() throws Exception {
+    public void testIndexMerge() {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         try (Path path = new Path().of(inputRoot).slash().concat("chunks")) {
             int plen = path.length();
@@ -139,25 +139,51 @@ public class FileSplitterTest extends AbstractGriffinTest {
         return result;
     }
 
-    private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws SqlException, IOException {
+    @Test
+    public void testIndexSort() {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
-
-        try (Path path = new Path().of(inputRoot).slash().concat(fileName).$();
+        try (Path path = new Path().of(inputRoot).slash().concat("chunk").$();
              FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
-            indexer.setMinChunkSize(1);
-            indexer.of("table", fileName, PartitionBy.DAY, (byte) ',', "unknown", null, false);
-            indexer.prepareContexts();
 
-            long fd = ff.openRO(path);
-            Assert.assertTrue(fd > -1);
-
+            MemoryPMARImpl chunk = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
             try {
-                LongList actualBoundaries = indexer.findChunkBoundaries(fd);
-                Assert.assertEquals(expectedBoundaries, actualBoundaries);
+                long lo = 0;
+                long hi = Long.MAX_VALUE;
+                long range = hi - lo + 1;
+                for (int i = 0; i < 10; i++) {
+                    final long z = lo + rnd.nextPositiveLong() % range;
+//                    final long z = 10 - i;
+                    chunk.putLong(z);
+                    chunk.putLong(i);
+                }
             } finally {
-                ff.close(fd);
+                chunk.close(true, Vm.TRUNCATE_TO_POINTER);
             }
+
+            //indexer.sort(path)//TODO: TEST !
+            long len = ff.length(path.$());
+            try (MemoryCMRImpl sorted = new MemoryCMRImpl(ff, path.$(), len, MemoryTag.MMAP_DEFAULT)) {
+                long offset = 0;
+                while (offset < len) {
+                    long ts = sorted.getLong(offset);
+                    long id = sorted.getLong(offset + 8);
+                    System.err.println(ts);
+                    System.err.println(id);
+                    offset += 16;
+                }
+            }
+            ff.remove(path);
+//            System.err.println("---------------");
+//            try(MemoryCMRImpl sorted = new MemoryCMRImpl(ff, path.chop$().put(".s").$(), len, MemoryTag.MMAP_DEFAULT)) {
+//                long offset = 0;
+//                while (offset < len) {
+//                    long ts = sorted.getLong(offset);
+//                    long id = sorted.getLong(offset + 8);
+//                    System.err.println(ts);
+//                    System.err.println(id);
+//                    offset += 16;
+//                }
+//            }
         }
     }
 
@@ -285,12 +311,32 @@ public class FileSplitterTest extends AbstractGriffinTest {
         }
     }
 
-    static ObjList<IndexChunk> list(IndexChunk... chunks) {
-        ObjList<IndexChunk> result = new ObjList<>(chunks.length);
-        for (int i = 0; i < chunks.length; i++) {
-            result.add(chunks[i]);
-        }
-        return result;
+    @Test
+    public void testProcessLargeCsvWithPool0() throws Exception {
+        executeWithPool(1, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
+            final String tableName = "tableName";
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(10);
+                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.YEAR, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.parseStructure();
+                indexer.process();
+            }
+            assertQuery("line\tts\td\tdescription\n" +
+                            "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
+                            "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
+                            "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
+                            "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
+                            "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
+                            "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
+                            "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
+                            "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
+                            "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
+                            "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                    "select * from " + tableName + " dst limit -10",
+                    "ts", true, false, true);
+        });
     }
 
     private void assertIndexChunksFor(SqlExecutionContext sqlExecutionContext, String format, int partitionBy, int bufferLen, String fileName, IndexChunk... expectedChunks)
@@ -559,95 +605,38 @@ public class FileSplitterTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testProcessLargeCsvWithPool0() throws Exception {
-        executeWithPool(8, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            FilesFacade ff = engine.getConfiguration().getFilesFacade();
-            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
-            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
-                indexer.setMinChunkSize(10);
-                indexer.of("tableName", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                indexer.parseStructure();
-                indexer.process();
-            }
-        });
+    static ObjList<IndexChunk> list(IndexChunk... chunks) {
+        ObjList<IndexChunk> result = new ObjList<>(chunks.length);
+        for (IndexChunk chunk : chunks) {
+            result.add(chunk);
+        }
+        return result;
     }
 
-    @Test
-    public void testIndexSort() throws Exception {
+    static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
+        assertMemoryLeak(code);
+    }
+
+    private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws SqlException {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        try (Path path = new Path().of(inputRoot).slash().concat("chunk").$();
+        inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
+
+        try (Path path = new Path().of(inputRoot).slash().concat(fileName).$();
              FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+            indexer.setMinChunkSize(1);
+            indexer.of("table", fileName, PartitionBy.DAY, (byte) ',', "unknown", null, false);
+            indexer.prepareContexts();
 
-            MemoryPMARImpl chunk = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+            long fd = ff.openRO(path);
+            Assert.assertTrue(fd > -1);
+
             try {
-                long lo = 0;
-                long hi = Long.MAX_VALUE;
-                long range = hi - lo + 1;
-                for (int i = 0; i < 10; i++) {
-                    final long z = lo + rnd.nextPositiveLong() % range;
-//                    final long z = 10 - i;
-                    chunk.putLong(z);
-                    chunk.putLong(i);
-                }
+                LongList actualBoundaries = indexer.findChunkBoundaries(fd);
+                Assert.assertEquals(expectedBoundaries, actualBoundaries);
             } finally {
-                chunk.close(true, Vm.TRUNCATE_TO_POINTER);
-            }
-
-            //indexer.sort(path)//TODO: TEST !
-            long len = ff.length(path.$());
-            try (MemoryCMRImpl sorted = new MemoryCMRImpl(ff, path.$(), len, MemoryTag.MMAP_DEFAULT)) {
-                long offset = 0;
-                while (offset < len) {
-                    long ts = sorted.getLong(offset);
-                    long id = sorted.getLong(offset + 8);
-                    System.err.println(ts);
-                    System.err.println(id);
-                    offset += 16;
-                }
-            }
-            ff.remove(path);
-//            System.err.println("---------------");
-//            try(MemoryCMRImpl sorted = new MemoryCMRImpl(ff, path.chop$().put(".s").$(), len, MemoryTag.MMAP_DEFAULT)) {
-//                long offset = 0;
-//                while (offset < len) {
-//                    long ts = sorted.getLong(offset);
-//                    long id = sorted.getLong(offset + 8);
-//                    System.err.println(ts);
-//                    System.err.println(id);
-//                    offset += 16;
-//                }
-//            }
-        }
-    }
-
-    private void createAndSortChunkFiles(Path path, int nChunks, int chunkSizeMin, int chunkSizeMax) throws IOException {
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        int plen = path.length();
-        for (int i = 0; i < nChunks; i++) {
-            path.trimTo(plen);
-            path.slash().concat("chunk").put(i).$();
-            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
-                long rng = chunkSizeMax - chunkSizeMin + 1;
-                final long count = chunkSizeMin + rnd.nextPositiveLong() % rng;
-
-                MemoryPMARImpl chunk = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-                try {
-                    long lo = 0;
-                    long hi = Long.MAX_VALUE;
-                    long range = hi - lo + 1;
-                    for (int v = 0; v < count; v++) {
-                        final long z = lo + rnd.nextPositiveLong() % range;
-                        chunk.putLong(z);
-                        chunk.putLong(v);
-                    }
-                } finally {
-                    chunk.close(true, Vm.TRUNCATE_TO_POINTER);
-                }
-                //indexer.sort(path);//TODO: fix 
+                ff.close(fd);
             }
         }
-        path.trimTo(plen);
     }
 
     protected void executeWithPool(
@@ -755,8 +744,33 @@ public class FileSplitterTest extends AbstractGriffinTest {
         }
     }
 
-    static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        TestUtils.assertMemoryLeak(code);
+    private void createAndSortChunkFiles(Path path, int nChunks, int chunkSizeMin, int chunkSizeMax) {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        int plen = path.length();
+        for (int i = 0; i < nChunks; i++) {
+            path.trimTo(plen);
+            path.slash().concat("chunk").put(i).$();
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                long rng = chunkSizeMax - chunkSizeMin + 1;
+                final long count = chunkSizeMin + rnd.nextPositiveLong() % rng;
+
+                MemoryPMARImpl chunk = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                try {
+                    long lo = 0;
+                    long hi = Long.MAX_VALUE;
+                    long range = hi - lo + 1;
+                    for (int v = 0; v < count; v++) {
+                        final long z = lo + rnd.nextPositiveLong() % range;
+                        chunk.putLong(z);
+                        chunk.putLong(v);
+                    }
+                } finally {
+                    chunk.close(true, Vm.TRUNCATE_TO_POINTER);
+                }
+                //indexer.sort(path);//TODO: fix
+            }
+        }
+        path.trimTo(plen);
     }
 
     @FunctionalInterface
