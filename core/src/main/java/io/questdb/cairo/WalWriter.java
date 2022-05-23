@@ -1861,73 +1861,6 @@ public class WalWriter implements Closeable {
         return symbolMapWriters.getQuick(columnIndex);
     }
 
-
-    private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize) {
-        long ts = this.txWriter.getMaxTimestamp();
-        if (ts > Numbers.LONG_NaN) {
-            final int columnIndex = metadata.getColumnIndex(columnName);
-            try (final MemoryMR roMem = indexMem) {
-                // Index last partition separately
-                for (int i = 0, n = txWriter.getPartitionCount() - 1; i < n; i++) {
-
-                    long timestamp = txWriter.getPartitionTimestamp(i);
-                    path.trimTo(rootLen);
-                    setStateForTimestamp(path, timestamp, false);
-
-                    if (ff.exists(path.$())) {
-                        final int plen = path.length();
-
-                        long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, columnIndex);
-                        TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
-
-                        if (ff.exists(path)) {
-
-                            path.trimTo(plen);
-                            LOG.info().$("indexing [path=").$(path).$(']').$();
-
-                            createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, plen, true);
-                            final long partitionSize = txWriter.getPartitionSizeByPartitionTimestamp(timestamp);
-                            final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
-
-                            if (partitionSize > columnTop) {
-                                TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
-                                final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
-                                roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
-                                indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);
-                                indexer.index(roMem, columnTop, partitionSize);
-                            }
-                        }
-                    }
-                }
-            } finally {
-                indexer.close();
-            }
-        }
-    }
-
-    private void indexLastPartition(SymbolColumnIndexer indexer, CharSequence columnName, long columnNameTxn, int columnIndex, int indexValueBlockSize) {
-        final int plen = path.length();
-
-        createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, plen, true);
-
-        final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
-        final long columnTop = columnVersionWriter.getColumnTop(lastPartitionTs, columnIndex);
-
-        // set indexer up to continue functioning as normal
-        indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
-        indexer.refreshSourceAndIndex(0, txWriter.getTransientRowCount());
-    }
-
-    private boolean isLastPartitionColumnsOpen() {
-        for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) > 0) {
-                return columns.getQuick(getPrimaryColumnIndex(i)).isOpen();
-            }
-        }
-        // No columns, doesn't matter
-        return true;
-    }
-
     boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
     }
@@ -2111,7 +2044,7 @@ public class WalWriter implements Closeable {
                     }
                 }
             }
-            LOG.info().$("switched WAL-D partition [path='").$(walDPath).$('\'').I$();
+            LOG.info().$("switched WAL-D segment [path='").$(walDPath).$('\'').I$();
         } catch (Throwable e) {
             distressed = true;
             throw e;
