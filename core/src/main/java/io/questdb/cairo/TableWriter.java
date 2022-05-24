@@ -64,7 +64,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.tasks.TableWriterTask.*;
 
-public class TableWriter implements Closeable {
+public class TableWriter implements Closeable, WalWriterFactory {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     public static final int O3_BLOCK_NONE = -1;
     public static final int O3_BLOCK_O3 = 1;
@@ -194,6 +194,7 @@ public class TableWriter implements Closeable {
     private long commitIntervalDefault;
     private long commitInterval;
     private UpdateOperator updateOperator;
+    private final IDGenerator walIdGenerator;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
@@ -255,6 +256,12 @@ public class TableWriter implements Closeable {
                 lock();
             } else {
                 this.lockFd = -1L;
+            }
+            walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
+            try {
+                walIdGenerator.open(path);
+            } finally {
+                path.trimTo(rootLen);
             }
             long todoCount = openTodoMem();
             int todo;
@@ -346,6 +353,14 @@ public class TableWriter implements Closeable {
 
     public static long getTimestampIndexValue(long timestampIndex, long indexRow) {
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
+    }
+
+    // can be called without holding the writer's lock
+    @Override
+    public WalWriter createWal() {
+        // always create a new wal with an increasing id
+        // remove string concat garbage below, we do not know how many wal writers will be created
+        return new WalWriter(configuration, tableName, WalWriter.WAL_NAME_BASE + walIdGenerator.getNextId(), metrics);
     }
 
     public void addColumn(CharSequence name, int type) {
@@ -2279,6 +2294,7 @@ public class TableWriter implements Closeable {
         boolean tx = inTransaction();
         freeSymbolMapWriters();
         freeIndexers();
+        Misc.free(walIdGenerator);
         Misc.free(txWriter);
         Misc.free(metaMem);
         Misc.free(ddlMem);

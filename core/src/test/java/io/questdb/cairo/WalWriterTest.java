@@ -37,7 +37,6 @@ import io.questdb.std.str.Path;
 import org.junit.Test;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -48,6 +47,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void bootstrapWal() {
         String tableName = "testtable";
+        String walName;
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
@@ -56,7 +56,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             path.trimTo(plen);
-            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                walName = walWriter.getWalName();
                 for (int i = 0; i < 100; i++) {
                     WalWriter.Row row = walWriter.newRow();
                     row.putByte(0, (byte) i);
@@ -64,14 +65,15 @@ public class WalWriterTest extends AbstractGriffinTest {
                     row.append();
                 }
             }
-            assertWalFileExist(tableName, "a", 0, path);
-            assertWalFileExist(tableName, "b", 0, path);
+            assertWalFileExist(tableName, walName, "a", 0, path);
+            assertWalFileExist(tableName, walName, "b", 0, path);
         }
     }
 
     @Test
     public void symbolWal() {
         String tableName = "testtable";
+        String walName;
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
@@ -80,20 +82,21 @@ public class WalWriterTest extends AbstractGriffinTest {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             path.trimTo(plen);
-            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
-                for (int i = 0; i < 5; i++) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                walName = walWriter.getWalName();
+                for (int i = 0; i < 50; i++) {
                     WalWriter.Row row = walWriter.newRow();
                     row.putByte(0, (byte) i);
                     row.putSym(1, "sym" + i);
                     row.append();
                 }
             }
-            assertWalFileExist(tableName, "a", 0, path);
-            assertWalFileExist(tableName, "b", 0, path);
-            assertWalSymbolFileExist(tableName, "b", ".c", path);
-            assertWalSymbolFileExist(tableName, "b", ".k", path);
-            assertWalSymbolFileExist(tableName, "b", ".o", path);
-            assertWalSymbolFileExist(tableName, "b", ".v", path);
+            assertWalFileExist(tableName, walName, "a", 0, path);
+            assertWalFileExist(tableName, walName, "b", 0, path);
+            assertWalSymbolFileExist(tableName, walName, "b", ".c", path);
+            assertWalSymbolFileExist(tableName, walName, "b", ".k", path);
+            assertWalSymbolFileExist(tableName, walName, "b", ".o", path);
+            assertWalSymbolFileExist(tableName, walName, "b", ".v", path);
         }
     }
 
@@ -109,7 +112,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             path.trimTo(plen);
-            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 for (int i = 0; i < 100; i++) {
                     WalWriter.Row row = walWriter.newRow();
                     row.putByte(0, (byte) i);
@@ -135,6 +138,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void cancelRowStartsANewSegment_for_now() {
         String tableName = "testtable";
+        String walName;
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
@@ -143,7 +147,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             path.trimTo(plen);
-            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                walName = walWriter.getWalName();
                 WalWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.cancel();
@@ -152,14 +157,15 @@ public class WalWriterTest extends AbstractGriffinTest {
                 row.putByte(0, (byte) 1);
                 row.append();
             }
-            assertWalFileExist(tableName, "a", 0, path);
-            assertWalFileExist(tableName, "a", 1, path);
+            assertWalFileExist(tableName, walName, "a", 0, path);
+            assertWalFileExist(tableName, walName, "a", 1, path);
         }
     }
 
     @Test
     public void testDddlMetadataReadable() {
         String tableName = "testtable";
+        String walName;
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
@@ -168,7 +174,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             path.trimTo(plen);
-            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                walName = walWriter.getWalName();
                 WalWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
@@ -177,14 +184,15 @@ public class WalWriterTest extends AbstractGriffinTest {
                 row.putByte(0, (byte) 1);
                 row.append();
             }
-            assertValidMetadataFileCreated(model, 0, path);
-            assertValidMetadataFileCreated(model, 1, path);
+            assertValidMetadataFileCreated(model, walName, 0, path);
+            assertValidMetadataFileCreated(model, walName, 1, path);
         }
     }
 
     @Test
     public void testddlMetadataCreated() {
         String tableName = "testtable";
+        String walName;
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
@@ -193,18 +201,20 @@ public class WalWriterTest extends AbstractGriffinTest {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             path.trimTo(plen);
-            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                walName = walWriter.getWalName();
                 WalWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
             }
-            assertMetadataFileExist(tableName, 0, path);
+            assertMetadataFileExist(tableName, walName, 0, path);
         }
     }
 
     @Test
     public void testDdlMetadataForNewSegmentReadable() {
         String tableName = "testtable";
+        String walName;
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
@@ -213,18 +223,20 @@ public class WalWriterTest extends AbstractGriffinTest {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             path.trimTo(plen);
-            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                walName = walWriter.getWalName();
                 WalWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
             }
-            assertMetadataFileExist(tableName, 0, path);
+            assertMetadataFileExist(tableName, walName, 0, path);
         }
     }
 
     @Test
     public void ddlMetadataCreatedForNewSegment() {
         String tableName = "testtable";
+        String walName;
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
@@ -233,7 +245,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             path.trimTo(plen);
-            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                walName = walWriter.getWalName();
                 WalWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
@@ -242,8 +255,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                 row.putByte(0, (byte) 1);
                 row.append();
             }
-            assertMetadataFileExist(tableName, 0, path);
-            assertMetadataFileExist(tableName, 1, path);
+            assertMetadataFileExist(tableName, walName, 0, path);
+            assertMetadataFileExist(tableName, walName, 1, path);
         }
     }
 
@@ -251,6 +264,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void testAddingColumnStartsNewSegment() {
         String tableName = "testtable";
+        String walName;
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
@@ -259,20 +273,22 @@ public class WalWriterTest extends AbstractGriffinTest {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             path.trimTo(plen);
-            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                walName = walWriter.getWalName();
                 WalWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
                 walWriter.addColumn("c", ColumnType.INT);
             }
-            assertValidMetadataFileCreated(model, 0, path);
-            assertValidMetadataFileCreated(model.col("c", ColumnType.INT), 1, path);
+            assertValidMetadataFileCreated(model, walName, 0, path);
+            assertValidMetadataFileCreated(model.col("c", ColumnType.INT), walName, 1, path);
         }
     }
 
     @Test
     public void testRemovingColumnStartsNewSegment() {
         String tableName = "testtable";
+        String walName;
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
@@ -281,24 +297,25 @@ public class WalWriterTest extends AbstractGriffinTest {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             path.trimTo(plen);
-            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                walName = walWriter.getWalName();
                 WalWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
                 walWriter.removeColumn("b");
             }
-            assertValidMetadataFileCreated(model, 0, path);
+            assertValidMetadataFileCreated(model, walName, 0, path);
             try (TableModel updatedModel = new TableModel(configuration, tableName, PartitionBy.NONE)
                     .col("a", ColumnType.BYTE)) {
-                assertValidMetadataFileCreated(updatedModel, 1, path);
+                assertValidMetadataFileCreated(updatedModel, walName, 1, path);
             }
         }
     }
 
-    private void assertValidMetadataFileCreated(TableModel model, long segment, Path path) {
+    private void assertValidMetadataFileCreated(TableModel model, String walName, long segment, Path path) {
         int plen = path.length();
         try {
-            toMetadataPath(model.getTableName(), segment, path);
+            toMetadataPath(model.getTableName(), walName, segment, path);
             WalMetadataReader walMetadataReader = new WalMetadataReader(configuration.getFilesFacade(), path);
             assertMetadataMatchesModel(model, walMetadataReader);
         } finally {
@@ -306,10 +323,10 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertWalFileExist(String tableName, String columnName, int segment, Path path) {
+    private void assertWalFileExist(String tableName, String walName, String columnName, int segment, Path path) {
         int plen = path.length();
         try {
-            path.concat(tableName).slash().concat("wal")
+            path.concat(tableName).slash().concat(walName)
                     .slash().put(segment)
                     .slash().concat(columnName + ".wald").$();
             assertPathExists(path);
@@ -318,29 +335,29 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertWalSymbolFileExist(String tableName, String columnName, String extension, Path path) {
+    private void assertWalSymbolFileExist(String tableName, String walName, String columnName, String extension, Path path) {
         int plen = path.length();
         try {
-            path.concat(tableName).slash().concat("wal").slash().concat(columnName + extension).$();
+            path.concat(tableName).slash().concat(walName).slash().concat(columnName + extension).$();
             assertPathExists(path);
         } finally {
             path.trimTo(plen);
         }
     }
 
-    private void assertMetadataFileExist(String tableName, int segment, Path path) {
+    private void assertMetadataFileExist(String tableName, CharSequence walName, int segment, Path path) {
         int plen = path.length();
         try {
-            toMetadataPath(tableName, segment, path);
+            toMetadataPath(tableName, walName, segment, path);
             assertPathExists(path);
         } finally {
             path.trimTo(plen);
         }
     }
 
-    private void toMetadataPath(CharSequence tableName, long segment, Path path) {
+    private void toMetadataPath(CharSequence tableName, CharSequence walName, long segment, Path path) {
         path.concat(tableName).slash()
-                .concat("wal").slash()
+                .concat(walName).slash()
                 .put(segment).slash()
                 .concat("_meta").$();
     }

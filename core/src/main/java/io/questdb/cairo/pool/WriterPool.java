@@ -435,6 +435,22 @@ public class WriterPool extends AbstractPool {
         }
     }
 
+    public WalWriterFactory getWalWriterFactory(CharSequence tableName) {
+        checkClosed();
+        while (true) {
+            Entry e = entries.get(tableName);
+            if (e == null || e.writer == null) {
+                // creating table writer, needs the lock
+                try (TableWriter writer = getWriterEntry(tableName, "wal", null)) {
+                    return writer;
+                } catch (EntryUnavailableException ex) {
+                    continue;
+                }
+            }
+            return e.writer;
+        }
+    }
+
     private TableWriter getWriterEntry(
             CharSequence tableName,
             CharSequence lockReason,

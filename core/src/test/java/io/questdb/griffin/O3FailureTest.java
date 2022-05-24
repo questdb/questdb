@@ -254,7 +254,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testAllocateToResizeLastPartition() throws Exception {
-        counter.set(40);
+        counter.set(42);
         executeWithPool(0, O3FailureTest::testAllocateToResizeLastPartition0, new FilesFacadeImpl() {
             private boolean failNextAlloc = false;
 
@@ -556,7 +556,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testFailOnResizingIndexContended() throws Exception {
         // this places break point on resize of key file
-        counter.set(144);
+        counter.set(146);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
     }
 
@@ -910,7 +910,7 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
-        counter.set(165 + 45);
+        counter.set(167 + 45);
         executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 
