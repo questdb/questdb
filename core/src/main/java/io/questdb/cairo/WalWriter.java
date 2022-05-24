@@ -51,6 +51,7 @@ import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 import static io.questdb.cairo.TableUtils.*;
 
 public class WalWriter implements Closeable {
+    public static final String WAL_NAME_BASE = "wal";
     public static final int WAL_FORMAT_VERSION = 0;
     private static final int ROW_ACTION_OPEN_PARTITION = 0;
     private static final int ROW_ACTION_NO_PARTITION = 1;
@@ -80,6 +81,7 @@ public class WalWriter implements Closeable {
     private final int mkDirMode;
     private final int fileOperationRetryCount;
     private final String tableName;
+    private final String walName;
     private final TableWriterMetadata metadata;
     private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
@@ -147,28 +149,30 @@ public class WalWriter implements Closeable {
     private long walDRowCounter;
     private long waldSegmentCounter = -1;
 
-    public WalWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
+    public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, Metrics metrics) {
+        this(configuration, tableName, walName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
     }
 
-    public WalWriter(CairoConfiguration configuration, CharSequence tableName, @NotNull MessageBus messageBus, Metrics metrics) {
-        this(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, metrics);
+    public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, @NotNull MessageBus messageBus, Metrics metrics) {
+        this(configuration, tableName, walName, messageBus, true, DefaultLifecycleManager.INSTANCE, metrics);
     }
 
     public WalWriter(
             CairoConfiguration configuration,
             CharSequence tableName,
+            CharSequence walName,
             @NotNull MessageBus messageBus,
             boolean lock,
             LifecycleManager lifecycleManager,
             Metrics metrics
     ) {
-        this(configuration, tableName, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
+        this(configuration, tableName, walName, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
     }
 
     public WalWriter(
             CairoConfiguration configuration,
             CharSequence tableName,
+            CharSequence walName,
             MessageBus messageBus,
             MessageBus ownMessageBus,
             boolean lock,
@@ -192,10 +196,11 @@ public class WalWriter implements Closeable {
         this.mkDirMode = configuration.getMkDirMode();
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableName = Chars.toString(tableName);
+        this.walName = Chars.toString(walName);
         this.path = new Path();
         this.path.of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
-        this.walDPath = new Path().of(root).concat(tableName).concat(WAL_BASE_DIRECTORY);
+        this.walDPath = new Path().of(root).concat(tableName).concat(walName);
         this.walDRootLen = walDPath.length();
         this.rootLen = path.length();
         try {
@@ -536,6 +541,10 @@ public class WalWriter implements Closeable {
 
     public String getTableName() {
         return tableName;
+    }
+
+    public String getWalName() {
+        return walName;
     }
 
     public long getTxn() {
@@ -1878,12 +1887,12 @@ public class WalWriter implements Closeable {
 
     private void lock() {
         try {
-            path.trimTo(rootLen);
-            lockName(path);
-            performRecovery = ff.exists(path);
-            this.lockFd = TableUtils.lock(ff, path);
+            walDPath.trimTo(walDRootLen);
+            lockName(walDPath);
+            performRecovery = ff.exists(walDPath);
+            this.lockFd = TableUtils.lock(ff, walDPath);
         } finally {
-            path.trimTo(rootLen);
+            walDPath.trimTo(walDRootLen);
         }
 
         if (this.lockFd == -1L) {
@@ -2054,8 +2063,8 @@ public class WalWriter implements Closeable {
                                         walDPath.trimTo(walDRootLen),
                                         name,
                                         COLUMN_NAME_TXN_NONE,
-                                        1024, // take this from TableStructure !!!
-                                        false // take this from TableStructure !!!
+                                        configuration.getDefaultSymbolCapacity(), // take this from TableStructure/TableWriter !!!
+                                        configuration.getDefaultSymbolCacheFlag() // take this from TableStructure/TableWriter !!!
                                 );
                             }
                         }
@@ -2344,7 +2353,7 @@ public class WalWriter implements Closeable {
                 // They are probably about to be attached.
                 return;
             }
-            if (Chars.endsWith(fileNameSink, WAL_BASE_DIRECTORY)) {
+            if (Chars.startsWith(fileNameSink, WalWriter.WAL_NAME_BASE)) {
                 // Do not remove WALs
                 return;
             }

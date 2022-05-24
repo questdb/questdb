@@ -330,8 +330,8 @@ public class AbstractCairoTest {
         SharedRandom.RANDOM.set(new Rnd());
         LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         TestUtils.createTestPath(root);
-        engine.openTableId();
-        engine.resetTableId();
+        engine.getTableIdGenerator().open();
+        engine.getTableIdGenerator().reset();
         SharedRandom.RANDOM.set(new Rnd());
     }
 
@@ -339,7 +339,7 @@ public class AbstractCairoTest {
     public void tearDown() {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         snapshotAgent.clear();
-        engine.freeTableId();
+        engine.getTableIdGenerator().close();
         engine.clear();
         TestUtils.removeTestPath(root);
         configOverrideMaxUncommittedRows = -1;
