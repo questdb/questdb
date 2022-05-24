@@ -416,6 +416,8 @@ public class WalWriter implements Closeable {
         bumpStructureVersion();
 
         metadata.addColumn(name, configuration.getRandom().nextLong(), type, isIndexed, indexValueBlockCapacity, columnIndex);
+        configureWalDColumn(type, columnCount - 1);
+        openNewWalDSegment();
 
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
     }

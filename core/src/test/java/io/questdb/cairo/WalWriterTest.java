@@ -182,17 +182,6 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertValidMetadataFileCreated(TableModel model, long segment, Path path) {
-        int plen = path.length();
-        try {
-            toMetadataPath(model.getTableName(), segment, path);
-            WalMetadataReader walMetadataReader = new WalMetadataReader(configuration.getFilesFacade(), path);
-            assertMetadataMatchesModel(model, walMetadataReader);
-        } finally {
-            path.trimTo(plen);
-        }
-    }
-
     @Test
     public void testddlMetadataCreated() {
         String tableName = "testtable";
@@ -255,6 +244,40 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
             assertMetadataFileExist(tableName, 0, path);
             assertMetadataFileExist(tableName, 1, path);
+        }
+    }
+
+
+    @Test
+    public void testAddingColumnStartsNewSegment() {
+        String tableName = "testtable";
+        try (Path path = new Path().of(configuration.getRoot());
+             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                     .col("a", ColumnType.BYTE)
+                     .col("b", ColumnType.STRING)
+        ) {
+            int plen = path.length();
+            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
+            path.trimTo(plen);
+            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+                WalWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.append();
+                walWriter.addColumn("c", ColumnType.INT);
+            }
+            assertValidMetadataFileCreated(model, 0, path);
+            assertValidMetadataFileCreated(model.col("c", ColumnType.INT), 1, path);
+        }
+    }
+
+    private void assertValidMetadataFileCreated(TableModel model, long segment, Path path) {
+        int plen = path.length();
+        try {
+            toMetadataPath(model.getTableName(), segment, path);
+            WalMetadataReader walMetadataReader = new WalMetadataReader(configuration.getFilesFacade(), path);
+            assertMetadataMatchesModel(model, walMetadataReader);
+        } finally {
+            path.trimTo(plen);
         }
     }
 
