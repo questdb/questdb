@@ -33,11 +33,11 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.junit.Test;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -295,6 +295,29 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void testDesignatedTimestampsIncludesSegmentRowNumber() {
+        String tableName = "testtable";
+        try (Path path = new Path().of(configuration.getRoot());
+             TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                     .col("a", ColumnType.BYTE)
+                     .col("b", ColumnType.STRING)
+                     .timestamp("ts")
+        ) {
+            int plen = path.length();
+            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
+            path.trimTo(plen);
+            long ts = Os.currentTimeMicros();
+            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+                WalWriter.Row row = walWriter.newRow(ts);
+                row.putByte(0, (byte) 1);
+                row.append();
+            }
+            assertValidMetadataFileCreated(model, 0, path);
+            // todo: tests content of the ts column
+        }
+    }
+
     private void assertValidMetadataFileCreated(TableModel model, long segment, Path path) {
         int plen = path.length();
         try {
@@ -360,6 +383,19 @@ public class WalWriterTest extends AbstractGriffinTest {
             assertEquals(model.getColumnName(i), metadata.getColumnName(i));
         }
     }
+
+//    public static class WalSegmentDataReader {
+//        private final FilesFacade ff;
+//
+//
+//        public WalSegmentDataReader(FilesFacade ff, Path path) {
+//            this.ff = ff;
+//        }
+//
+//        public WalSegmentDataReader of(Path path, int expectedVersion) {
+//            WalMetadataReader walMetadataReader = new WalMetadataReader(ff, path);
+//        }
+//    }
 
     public static class WalMetadataReader implements Closeable {
         private final FilesFacade ff;

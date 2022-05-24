@@ -195,7 +195,7 @@ public class WalWriter implements Closeable {
         this.path = new Path();
         this.path.of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
-        this.walDPath = new Path().of(root).concat(tableName).concat("wal");
+        this.walDPath = new Path().of(root).concat(tableName).concat(WAL_BASE_DIRECTORY);
         this.walDRootLen = walDPath.length();
         this.rootLen = path.length();
         try {
@@ -563,6 +563,12 @@ public class WalWriter implements Closeable {
     }
 
     public Row newRow(long timestamp) {
+        int timestampIndex = metadata.getTimestampIndex();
+        if (timestampIndex != -1) {
+            // todo: avoid lookups by having a designated field with PrimaryWalDColumn
+            MemoryMA primaryWalDColumn = getPrimaryWalDColumn(timestampIndex);
+            primaryWalDColumn.putLong128(timestamp, walDRowCounter);
+        }
 
         switch (rowActon) {
             case ROW_ACTION_OPEN_PARTITION:
@@ -1568,6 +1574,7 @@ public class WalWriter implements Closeable {
             };
         } else {
             nullSetters.setQuick(index, NOOP);
+            walDNullSetters.set(index, NOOP);
             timestampSetter = getPrimaryColumn(index)::putLong;
         }
     }
@@ -2335,6 +2342,10 @@ public class WalWriter implements Closeable {
             if (Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)) {
                 // Do not remove detached partitions
                 // They are probably about to be attached.
+                return;
+            }
+            if (Chars.endsWith(fileNameSink, WAL_BASE_DIRECTORY)) {
+                // Do not remove WALs
                 return;
             }
             try {
