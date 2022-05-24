@@ -99,9 +99,8 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
             columnMetadata.extendAndSet(i, meta);
             columnCount++;
             return this;
-        } else {
-            throw CairoException.duplicateColumn(meta.getName());
         }
+        throw CairoException.duplicateColumn(meta.getName());
     }
 
     public void clear() {

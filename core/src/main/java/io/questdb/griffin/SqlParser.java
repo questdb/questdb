@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
@@ -644,9 +647,7 @@ public final class SqlParser {
                 throw SqlException.$(position, " new column name contains invalid characters");
             }
 
-            if (!model.addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong())) {
-                throw SqlException.duplicateColumn(position, name);
-            }
+            model.addColumn(position, name, type, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong());
 
             CharSequence tok;
             if (ColumnType.isSymbol(type)) {
@@ -982,7 +983,7 @@ public final class SqlParser {
             updateQueryModel.getUpdateExpressions().add(setColumnExpression);
 
             QueryColumn valueColumn = queryColumnPool.next().of(col, expr);
-            fromModel.addBottomUpColumn(valueColumn);
+            fromModel.addBottomUpColumn(colPosition, valueColumn, false, "in SET clause");
 
             tok = optTok(lexer);
             if (tok == null) {
@@ -1268,8 +1269,9 @@ public final class SqlParser {
 
                 StringSink sink = Misc.getThreadLocalBuilder();
                 Chars.toLowerCase(GenericLexer.unquote(tok), sink);
-                if (!model.addColumn(sink, lexer.lastTokenPosition())) {
-                    throw SqlException.duplicateColumn(lexer.lastTokenPosition(), sink.toString());
+                tok = sink.toString();
+                if (!model.addColumn(tok, lexer.lastTokenPosition())) {
+                    throw SqlException.duplicateColumn(lexer.lastTokenPosition(), tok);
                 }
 
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
@@ -1523,7 +1525,6 @@ public final class SqlParser {
             }
 
             final CharSequence alias;
-            boolean isUserDefinedAlias = false;
 
             tok = optTok(lexer);
 
@@ -1584,7 +1585,6 @@ public final class SqlParser {
 
                 if (isAsKeyword(tok)) {
                     alias = GenericLexer.unquote(GenericLexer.immutableOf(tok(lexer, "alias")));
-                    isUserDefinedAlias = true;
                 } else {
                     alias = GenericLexer.immutableOf(GenericLexer.unquote(tok));
                 }
@@ -1593,10 +1593,8 @@ public final class SqlParser {
                 alias = createColumnAlias(expr, model);
             }
 
-            col.setAlias(alias, isUserDefinedAlias);
-            if (!model.addBottomUpColumn(col)) {
-                throw SqlException.duplicateColumn(colPosition, col.getName());
-            }
+            col.setAlias(alias);
+            model.addBottomUpColumn(lexer.lastTokenPosition(), col, false);
 
             if (tok == null || Chars.equals(tok, ';')) {
                 lexer.unparseLast();

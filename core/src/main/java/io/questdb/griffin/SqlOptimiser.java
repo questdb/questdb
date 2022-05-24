@@ -789,7 +789,6 @@ class SqlOptimiser {
 
     private void createSelectColumn(
             CharSequence columnName,
-            boolean isUserDefinedAlias,
             ExpressionNode columnAst,
             QueryModel validatingModel,
             QueryModel translatingModel,
@@ -807,13 +806,10 @@ class SqlOptimiser {
         int index = translatingAliasMap.keyIndex(columnAst.token);
         if (index < 0) {
             // column is already being referenced by translating model
-            if (isUserDefinedAlias && translatingModel.getAliasToColumnMap().contains(columnName)) {
-                throw SqlException.duplicateColumn(0, columnName);
-            }
             final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
             final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
             final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName);
-            innerModel.addBottomUpColumn(translatedColumn);
+            innerModel.addBottomUpColumn(0, translatedColumn, true);
             groupByModel.addBottomUpColumn(translatedColumn);
 
             // analytic model is used together with inner model
@@ -963,7 +959,6 @@ class SqlOptimiser {
             }
             createSelectColumn(
                     name,
-                    false,
                     nextLiteral(token, wildcardPosition),
                     null, // do not validate
                     translatingModel,
@@ -1141,7 +1136,7 @@ class SqlOptimiser {
         }
     }
 
-    private boolean emitAggregates(@Transient ExpressionNode node, QueryModel model) {
+    private boolean emitAggregates(@Transient ExpressionNode node, QueryModel model) throws SqlException {
 
         boolean replaced = false;
         this.sqlNodeStack.clear();
@@ -2513,7 +2508,7 @@ class SqlOptimiser {
         assert root != -1;
     }
 
-    private ExpressionNode replaceIfAggregate(@Transient ExpressionNode node, QueryModel model) {
+    private ExpressionNode replaceIfAggregate(@Transient ExpressionNode node, QueryModel model) throws SqlException {
         if (node != null && functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
             QueryColumn c = model.findBottomUpColumnByAst(node);
             if (c == null) {
@@ -3042,7 +3037,6 @@ class SqlOptimiser {
                 } else {
                     createSelectColumn(
                             qc.getAlias(),
-                            qc.isUserDefinedAlias(),
                             qc.getAst(),
                             baseModel,
                             translatingModel,

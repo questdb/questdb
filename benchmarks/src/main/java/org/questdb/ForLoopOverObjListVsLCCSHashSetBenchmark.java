@@ -39,21 +39,18 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class ForLoopOverObjListVsLCCSHashSetBenchmark {
 
-    private static final int NUMBER_OF_LOOKUPS = 10;
-
     private static final LowerCaseCharSequenceHashSet COLUMN_NAMES_HS = new LowerCaseCharSequenceHashSet();
-
-    private static final ObjList<CharSequence> COLUMN_NAMES_OL = new ObjList<>();
+    private static final ObjList<CharSequence> COLUMN_NAMES_OL = new ObjList<>(); // <-- winner
 
     static {
         COLUMN_NAMES_OL.add("我的泰勒很有钱");
         COLUMN_NAMES_OL.add("мій кравець багатий");
-        for (int i = 1; i < 5; i++) {
-            COLUMN_NAMES_OL.add("Χρόνια_και_χρόνια_" + i);
-        }
-        for (int i = 1; i < 5; i++) {
-            COLUMN_NAMES_OL.add("BRAZIL_" + i);
-        }
+        COLUMN_NAMES_OL.add("BRAZIL 1");
+        COLUMN_NAMES_OL.add("BRAZIL 2");
+        COLUMN_NAMES_OL.add("BRAZIL 3");
+        COLUMN_NAMES_OL.add("BRAZIL 4");
+        COLUMN_NAMES_OL.add("brazil 5");
+        COLUMN_NAMES_OL.add("España 1000 # 000 # 000 # 000 !!!!");
         for (int i = 0, limit = COLUMN_NAMES_OL.size(); i < limit; i++) {
             COLUMN_NAMES_HS.add(COLUMN_NAMES_OL.get(i));
         }
@@ -63,7 +60,7 @@ public class ForLoopOverObjListVsLCCSHashSetBenchmark {
     public static void containsColumnByNameForOverObjList() {
         final Rnd rnd = new Rnd();
         final int limit = COLUMN_NAMES_OL.size();
-        for (int j = 0, m = NUMBER_OF_LOOKUPS; j < m; j++) {
+        for (int j = 0, m = 2 * limit; j < m; j++) {
             final CharSequence target = COLUMN_NAMES_OL.get(rnd.nextInt(limit));
             if (!containsColumnByName(COLUMN_NAMES_OL, target)) {
                 throw new AssertionError();
@@ -75,7 +72,7 @@ public class ForLoopOverObjListVsLCCSHashSetBenchmark {
     public static void containsColumnByNameHashSet() {
         final Rnd rnd = new Rnd();
         final int limit = COLUMN_NAMES_OL.size();
-        for (int j = 0, m = NUMBER_OF_LOOKUPS; j < m; j++) {
+        for (int j = 0, m = 2 * limit; j < m; j++) {
             final CharSequence target = COLUMN_NAMES_OL.get(rnd.nextInt(limit));
             if (!COLUMN_NAMES_HS.contains(target)) {
                 throw new AssertionError();
@@ -83,7 +80,7 @@ public class ForLoopOverObjListVsLCCSHashSetBenchmark {
         }
     }
 
-    private static boolean containsColumnByName(ObjList<CharSequence> columns, CharSequence colName) {
+    private static final boolean containsColumnByName(ObjList<CharSequence> columns, CharSequence colName) {
         for (int i = 0, limit = columns.size(); i < limit; i++) {
             if (Chars.equalsIgnoreCase(columns.getQuick(i), colName)) {
                 return true;

@@ -30,7 +30,6 @@ import io.questdb.std.ObjectFactory;
 public class QueryColumn implements Mutable {
     public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private CharSequence alias;
-    private boolean isUserDefinedAlias;
     private ExpressionNode ast;
 
     protected QueryColumn() {
@@ -39,7 +38,6 @@ public class QueryColumn implements Mutable {
     @Override
     public void clear() {
         alias = null;
-        isUserDefinedAlias = false;
         ast = null;
     }
 
@@ -61,12 +59,7 @@ public class QueryColumn implements Mutable {
         return this;
     }
 
-    public boolean isUserDefinedAlias() {
-        return isUserDefinedAlias;
-    }
-
-    public void setAlias(CharSequence alias, boolean isUserDefinedAlias) {
+    public void setAlias(CharSequence alias) {
         this.alias = alias;
-        this.isUserDefinedAlias = isUserDefinedAlias;
     }
 }

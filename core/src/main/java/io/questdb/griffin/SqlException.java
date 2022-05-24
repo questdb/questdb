@@ -25,7 +25,8 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.*;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
@@ -58,9 +59,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     public static SqlException duplicateColumn(int position, CharSequence colName, CharSequence additionalMessage) {
-        StringSink sink = Misc.getThreadLocalBuilder();
-        Chars.toLowerCase(colName, sink);
-        SqlException exception = SqlException.$(position, "Duplicate column '").put(sink).put('\'');
+        SqlException exception = SqlException.$(position, "Duplicate column [name=").put(colName).put(']');
         if (additionalMessage != null) {
             exception.put(' ').put(additionalMessage);
         }

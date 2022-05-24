@@ -1695,7 +1695,7 @@ public class PGJobContextTest extends BasePGTest {
                         "            from long_sequence(1)\n" +
                         "        )").execute();
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "Duplicate column 'b'");
+                assertContains(e.getMessage(), "Duplicate column [name=B]");
             }
         });
     }
@@ -1714,7 +1714,7 @@ public class PGJobContextTest extends BasePGTest {
                         "            from long_sequence(1)\n" +
                         "        )").execute();
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "Duplicate column '侘寂'");
+                assertContains(e.getMessage(), "Duplicate column [name=侘寂]");
             }
         });
     }
