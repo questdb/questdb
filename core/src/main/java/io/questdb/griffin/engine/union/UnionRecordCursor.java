@@ -27,35 +27,31 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 class UnionRecordCursor implements NoRandomAccessRecordCursor {
-    private final UnionDelegatingRecordImpl record = new UnionDelegatingRecordImpl();
+    private final UnionRecord record;
     private final Map map;
     private final RecordSink recordSink;
-    private RecordCursor masterCursor;
-    private RecordMetadata masterMetadata;
-    private RecordCursor slaveCursor;
+    private RecordCursor cursorA;
+    private RecordCursor cursorB;
     private final NextMethod nextSlave = this::nextSlave;
-    private Record masterRecord;
-    private Record slaveRecord;
     private NextMethod nextMethod;
-    private RecordMetadata slaveMetadata;
     private final NextMethod nextMaster = this::nextMaster;
     private SqlExecutionCircuitBreaker circuitBreaker;
 
-    public UnionRecordCursor(Map map, RecordSink recordSink) {
+    public UnionRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
+        this.record = new UnionRecord(castFunctionsA, castFunctionsB);
         this.map = map;
         this.recordSink = recordSink;
     }
 
     @Override
     public void close() {
-        Misc.free(this.masterCursor);
-        Misc.free(this.slaveCursor);
+        Misc.free(this.cursorA);
+        Misc.free(this.cursorB);
         circuitBreaker = null;
     }
 
@@ -71,7 +67,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return masterCursor.newSymbolTable(columnIndex);
+        return cursorA.newSymbolTable(columnIndex);
     }
 
     @Override
@@ -94,10 +90,10 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public void toTop() {
         map.clear();
-        record.of(masterRecord, masterMetadata);
+        record.setAb(true);
         nextMethod = nextMaster;
-        masterCursor.toTop();
-        slaveCursor.toTop();
+        cursorA.toTop();
+        cursorB.toTop();
     }
 
     @Override
@@ -106,29 +102,26 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean nextMaster() {
-        if (masterCursor.hasNext()) {
+        if (cursorA.hasNext()) {
             return true;
         }
         return switchToSlaveCursor();
     }
 
     private boolean nextSlave() {
-        return slaveCursor.hasNext();
+        return cursorB.hasNext();
     }
 
-    void of(RecordCursor masterCursor, RecordMetadata masterMetadata, RecordCursor slaveCursor, RecordMetadata slaveMetadata, SqlExecutionContext executionContext) {
-        this.masterCursor = masterCursor;
-        this.masterMetadata = masterMetadata;
-        this.slaveCursor = slaveCursor;
-        this.masterRecord = masterCursor.getRecord();
-        this.slaveRecord = slaveCursor.getRecord();
-        this.slaveMetadata = slaveMetadata;
-        circuitBreaker = executionContext.getCircuitBreaker();
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
+        this.cursorA = cursorA;
+        this.cursorB = cursorB;
+        this.circuitBreaker = circuitBreaker;
+        this.record.of(cursorA.getRecord(), cursorB.getRecord());
         toTop();
     }
 
     private boolean switchToSlaveCursor() {
-        record.of(slaveRecord, slaveMetadata);
+        record.setAb(false);
         nextMethod = nextSlave;
         return nextMethod.next();
     }

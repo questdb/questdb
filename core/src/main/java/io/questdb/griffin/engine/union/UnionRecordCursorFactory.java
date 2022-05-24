@@ -29,55 +29,65 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 public class UnionRecordCursorFactory implements RecordCursorFactory {
     private final RecordMetadata metadata;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
+    private final RecordCursorFactory factoryA;
+    private final RecordCursorFactory factoryB;
     private final UnionRecordCursor cursor;
     private final Map map;
+    private final ObjList<Function> castFunctionsA;
+    private final ObjList<Function> castFunctionsB;
 
     public UnionRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
-            RecordCursorFactory masterFactory,
-            RecordCursorFactory slaveFactory,
+            RecordCursorFactory factoryA,
+            RecordCursorFactory factoryB,
+            ObjList<Function> castFunctionsA,
+            ObjList<Function> castFunctionsB,
             RecordSink recordSink,
             ColumnTypes valueTypes,
             boolean ignore
     ) {
         this.metadata = metadata;
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        this.factoryA = factoryA;
+        this.factoryB = factoryB;
         this.map = MapFactory.createMap(configuration, metadata, valueTypes);
-        this.cursor = new UnionRecordCursor(map, recordSink);
+        this.cursor = new UnionRecordCursor(map, recordSink, castFunctionsA, castFunctionsB);
+        this.castFunctionsA = castFunctionsA;
+        this.castFunctionsB = castFunctionsB;
     }
 
     @Override
     public void close() {
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
+        Misc.free(factoryA);
+        Misc.free(factoryB);
         Misc.free(map);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor masterCursor = null;
-        RecordCursor slaveCursor = null;
+        RecordCursor cursorA = null;
+        RecordCursor cursorB = null;
         try {
-            masterCursor = masterFactory.getCursor(executionContext);
-            slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, masterFactory.getMetadata(), slaveCursor, slaveFactory.getMetadata(), executionContext);
+            cursorA = factoryA.getCursor(executionContext);
+            cursorB = factoryB.getCursor(executionContext);
+            Function.init(castFunctionsA, cursorA, executionContext);
+            Function.init(castFunctionsB, cursorB, executionContext);
+            cursor.of(cursorA, cursorB, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable ex) {
-            Misc.free(masterCursor);
-            Misc.free(slaveCursor);
+            Misc.free(cursorA);
+            Misc.free(cursorB);
             throw ex;
         }
     }

@@ -27,35 +27,40 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 class IntersectRecordCursor implements RecordCursor {
     private final Map map;
     private final RecordSink recordSink;
     private final boolean convertSymbolsAsStrings;
-    private RecordCursor masterCursor;
-    private RecordCursor slaveCursor;
+    private RecordCursor cursorA;
+    private RecordCursor cursorB;
     private Record record;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private UnionDelegatingRecordImpl delegatingRecord;
+    private UnionRecord unionRecord;
 
-    public IntersectRecordCursor(Map map, RecordSink recordSink, boolean convertSymbolsAsStrings) {
+    public IntersectRecordCursor(
+            Map map,
+            RecordSink recordSink,
+            boolean convertSymbolsAsStrings,
+            ObjList<Function> castFunctionsA,
+            ObjList<Function> castFunctionB
+    ) {
         this.map = map;
         this.recordSink = recordSink;
         this.convertSymbolsAsStrings = convertSymbolsAsStrings;
         if (convertSymbolsAsStrings) {
-            this.delegatingRecord = new UnionDelegatingRecordImpl();
-            record = delegatingRecord;
+            this.unionRecord = new UnionRecord(castFunctionsA, castFunctionB);
+            record = unionRecord;
         }
     }
 
     @Override
     public void close() {
-        Misc.free(this.masterCursor);
-        Misc.free(this.slaveCursor);
+        Misc.free(this.cursorA);
+        Misc.free(this.cursorB);
         circuitBreaker = null;
     }
 
@@ -66,17 +71,17 @@ class IntersectRecordCursor implements RecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return masterCursor.getSymbolTable(columnIndex);
+        return cursorA.getSymbolTable(columnIndex);
     }
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return masterCursor.newSymbolTable(columnIndex);
+        return cursorA.newSymbolTable(columnIndex);
     }
 
     @Override
     public boolean hasNext() {
-        while (masterCursor.hasNext()) {
+        while (cursorA.hasNext()) {
             MapKey key = map.withKey();
             key.put(record, recordSink);
             if (key.findValue() != null) {
@@ -89,17 +94,17 @@ class IntersectRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecordB() {
-        return masterCursor.getRecordB();
+        return cursorA.getRecordB();
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        masterCursor.recordAt(record, atRowId);
+        cursorA.recordAt(record, atRowId);
     }
 
     @Override
     public void toTop() {
-        masterCursor.toTop();
+        cursorA.toTop();
     }
 
     @Override
@@ -107,36 +112,37 @@ class IntersectRecordCursor implements RecordCursor {
         return -1;
     }
 
-    void of(RecordCursor masterCursor, RecordMetadata masterMetadata, RecordCursor slaveCursor, RecordMetadata slaveMetadata, SqlExecutionContext executionContext) {
-        this.masterCursor = masterCursor;
-        this.slaveCursor = slaveCursor;
-        circuitBreaker = executionContext.getCircuitBreaker();
-
-        map.clear();
-        populateSlaveMap(slaveCursor, slaveMetadata);
-
-
+    private void hashCursorB(RecordCursor cursorB) {
+        Record recordB = cursorB.getRecord();
         if (convertSymbolsAsStrings) {
-            delegatingRecord.of(masterCursor.getRecord(), masterMetadata);
-        } else {
-            record = masterCursor.getRecord();
+            unionRecord.of(null, recordB);
+            unionRecord.setAb(false);
+            recordB = unionRecord;
         }
 
-        toTop();
-    }
-
-    private void populateSlaveMap(RecordCursor cursor, RecordMetadata slaveMetadata) {
-        Record record = cursor.getRecord();
-        if (convertSymbolsAsStrings) {
-            delegatingRecord.of(record, slaveMetadata);
-            record = delegatingRecord;
-        }
-
-        while (cursor.hasNext()) {
+        while (cursorB.hasNext()) {
             MapKey key = map.withKey();
-            key.put(record, recordSink);
+            key.put(recordB, recordSink);
             key.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
+    }
+
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
+        this.cursorA = cursorA;
+        this.cursorB = cursorB;
+        this.circuitBreaker = circuitBreaker;
+
+        map.clear();
+        hashCursorB(cursorB);
+
+        if (convertSymbolsAsStrings) {
+            unionRecord.of(cursorA.getRecord(), null);
+            unionRecord.setAb(true);
+        } else {
+            record = cursorA.getRecord();
+        }
+
+        toTop();
     }
 }

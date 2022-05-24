@@ -28,7 +28,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-public class DelegatingRecordImpl implements Record {
+public class DelegatingRecord implements Record {
     protected Record base;
 
     public void of(Record base) {

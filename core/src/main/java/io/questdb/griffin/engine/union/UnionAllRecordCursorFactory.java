@@ -24,47 +24,57 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 public class UnionAllRecordCursorFactory implements RecordCursorFactory {
     private final RecordMetadata metadata;
-    private final RecordCursorFactory masterFactory;
-    private final RecordCursorFactory slaveFactory;
+    private final RecordCursorFactory factoryA;
+    private final RecordCursorFactory factoryB;
     private final UnionAllRecordCursor cursor;
+    private final ObjList<Function> castFunctionsA;
+    private final ObjList<Function> castFunctionsB;
 
     public UnionAllRecordCursorFactory(
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
-            RecordCursorFactory slaveFactory
+            RecordCursorFactory slaveFactory,
+            ObjList<Function> castFunctionsA,
+            ObjList<Function> castFunctionsB
     ) {
         this.metadata = metadata;
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
-        this.cursor = new UnionAllRecordCursor();
+        this.factoryA = masterFactory;
+        this.factoryB = slaveFactory;
+        this.cursor = new UnionAllRecordCursor(castFunctionsA, castFunctionsB);
+        this.castFunctionsA = castFunctionsA;
+        this.castFunctionsB = castFunctionsB;
     }
 
     @Override
     public void close() {
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
+        Misc.free(factoryA);
+        Misc.free(factoryB);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor masterCursor = masterFactory.getCursor(executionContext);
-        RecordCursor slaveCursor = null;
+        RecordCursor cursorA = factoryA.getCursor(executionContext);
+        RecordCursor cursorB = null;
         try {
-            slaveCursor = slaveFactory.getCursor(executionContext);
-            cursor.of(masterCursor, masterFactory.getMetadata(), slaveCursor, slaveFactory.getMetadata());
+            cursorB = factoryB.getCursor(executionContext);
+            Function.init(castFunctionsA, cursorA, executionContext);
+            Function.init(castFunctionsB, cursorB, executionContext);
+            cursor.of(cursorA, cursorB);
             return cursor;
         } catch (Throwable e) {
-            Misc.free(slaveCursor);
-            Misc.free(masterCursor);
+            Misc.free(cursorB);
+            Misc.free(cursorA);
             throw e;
         }
     }

@@ -27,16 +27,20 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.ObjList;
 
 @FunctionalInterface
 public interface SetRecordCursorFactoryConstructor {
     RecordCursorFactory create(
             CairoConfiguration configuration,
             RecordMetadata metadata,
-            RecordCursorFactory masterFactory,
-            RecordCursorFactory slaveFactory,
+            RecordCursorFactory factoryA,
+            RecordCursorFactory factoryB,
+            ObjList<Function> castFunctionsA,
+            ObjList<Function> castFunctionsB,
             RecordSink recordSink,
             ColumnTypes valueTypes,
             boolean convertSymbolsToStrings

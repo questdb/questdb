@@ -25,35 +25,36 @@
 package io.questdb.griffin.engine.union;
 
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
-    private final UnionDelegatingRecordImpl record = new UnionDelegatingRecordImpl();
-    private RecordCursor masterCursor;
-    private RecordMetadata masterMetadata;
-    private RecordCursor slaveCursor;
+    private final UnionRecord record;
+    private RecordCursor cursorA;
+    private RecordCursor cursorB;
     private final NextMethod nextSlave = this::nextSlave;
-    private Record masterRecord;
-    private Record slaveRecord;
-    private RecordMetadata slaveMetadata;
     private NextMethod nextMethod;
     private RecordCursor symbolCursor;
     private final NextMethod nextMaster = this::nextMaster;
 
+    public UnionAllRecordCursor(ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
+        this.record = new UnionRecord(castFunctionsA, castFunctionsB);
+    }
+
     @Override
     public void toTop() {
-        record.of(masterRecord, masterMetadata);
+        record.setAb(true);
         nextMethod = nextMaster;
-        symbolCursor = masterCursor;
-        masterCursor.toTop();
-        slaveCursor.toTop();
+        symbolCursor = cursorA;
+        cursorA.toTop();
+        cursorB.toTop();
     }
 
     @Override
     public void close() {
-        Misc.free(this.masterCursor);
-        Misc.free(this.slaveCursor);
+        Misc.free(this.cursorA);
+        Misc.free(this.cursorB);
     }
 
     @Override
@@ -67,13 +68,13 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean nextSlave() {
-        return slaveCursor.hasNext();
+        return cursorB.hasNext();
     }
 
     @Override
     public long size() {
-        final long masterSize = masterCursor.size();
-        final long slaveSize = slaveCursor.size();
+        final long masterSize = cursorA.size();
+        final long slaveSize = cursorB.size();
         if (masterSize == -1 || slaveSize == -1) {
             return -1;
         }
@@ -91,23 +92,20 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean nextMaster() {
-        return masterCursor.hasNext() || switchToSlaveCursor();
+        return cursorA.hasNext() || switchToSlaveCursor();
     }
 
-    void of(RecordCursor masterCursor, RecordMetadata masterMetadata, RecordCursor slaveCursor, RecordMetadata slaveMetadata) {
-        this.masterCursor = masterCursor;
-        this.masterMetadata = masterMetadata;
-        this.slaveCursor = slaveCursor;
-        this.masterRecord = masterCursor.getRecord();
-        this.slaveRecord = slaveCursor.getRecord();
-        this.slaveMetadata = slaveMetadata;
+    void of(RecordCursor cursorA, RecordCursor cursorB) throws SqlException {
+        this.cursorA = cursorA;
+        this.cursorB = cursorB;
+        record.of(cursorA.getRecord(), cursorB.getRecord());
         toTop();
     }
 
     private boolean switchToSlaveCursor() {
-        record.of(slaveRecord, slaveMetadata);
+        record.setAb(false);
         nextMethod = nextSlave;
-        symbolCursor = slaveCursor;
+        symbolCursor = cursorB;
         return nextMethod.next();
     }
 

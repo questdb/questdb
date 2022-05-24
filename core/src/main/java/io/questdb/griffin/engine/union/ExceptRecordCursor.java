@@ -27,37 +27,41 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 class ExceptRecordCursor implements RecordCursor {
     private final Map map;
     private final RecordSink recordSink;
     private final boolean convertSymbolsToStrings;
-    private RecordCursor masterCursor;
-    private RecordMetadata masterMetadata;
-    private RecordCursor slaveCursor;
+    private RecordCursor cursorA;
+    private RecordCursor cursorB;
     private Record record;
-    private RecordMetadata slaveMetadata;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private UnionDelegatingRecordImpl unionDelegatingRecord;
+    private UnionRecord unionRecord;
 
-    public ExceptRecordCursor(Map map, RecordSink recordSink, boolean convertSymbolsToStrings) {
+    public ExceptRecordCursor(
+            Map map,
+            RecordSink recordSink,
+            boolean convertSymbolsToStrings,
+            ObjList<Function> castFunctionsA,
+            ObjList<Function> castFunctionsB
+    ) {
         this.map = map;
         this.recordSink = recordSink;
         this.convertSymbolsToStrings = convertSymbolsToStrings;
         if (convertSymbolsToStrings) {
-            unionDelegatingRecord = new UnionDelegatingRecordImpl();
-            record = unionDelegatingRecord;
+            unionRecord = new UnionRecord(castFunctionsA, castFunctionsB);
+            record = unionRecord;
         }
     }
 
     @Override
     public void close() {
-        Misc.free(this.masterCursor);
-        Misc.free(this.slaveCursor);
+        Misc.free(this.cursorA);
+        Misc.free(this.cursorB);
         circuitBreaker = null;
     }
 
@@ -68,17 +72,17 @@ class ExceptRecordCursor implements RecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return masterCursor.getSymbolTable(columnIndex);
+        return cursorA.getSymbolTable(columnIndex);
     }
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return masterCursor.newSymbolTable(columnIndex);
+        return cursorA.newSymbolTable(columnIndex);
     }
 
     @Override
     public boolean hasNext() {
-        while (masterCursor.hasNext()) {
+        while (cursorA.hasNext()) {
             MapKey key = map.withKey();
             key.put(record, recordSink);
             if (key.notFound()) {
@@ -91,22 +95,23 @@ class ExceptRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecordB() {
-        return masterCursor.getRecordB();
+        return cursorA.getRecordB();
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        masterCursor.recordAt(record, atRowId);
+        cursorA.recordAt(record, atRowId);
     }
 
     @Override
     public void toTop() {
-        masterCursor.toTop();
+        cursorA.toTop();
 
         if (!convertSymbolsToStrings) {
-            this.record = masterCursor.getRecord();
+            this.record = cursorA.getRecord();
         } else {
-            this.unionDelegatingRecord.of(masterCursor.getRecord(), masterMetadata);
+            this.unionRecord.of(cursorA.getRecord(), null);
+            this.unionRecord.setAb(true);
         }
     }
 
@@ -115,25 +120,24 @@ class ExceptRecordCursor implements RecordCursor {
         return -1;
     }
 
-    void of(RecordCursor masterCursor, RecordMetadata masterMetadata, RecordCursor slaveCursor, RecordMetadata slaveMetadata, SqlExecutionContext executionContext) {
-        this.masterCursor = masterCursor;
-        this.masterMetadata = masterMetadata;
-        this.slaveCursor = slaveCursor;
-        this.slaveMetadata = slaveMetadata;
-        circuitBreaker = executionContext.getCircuitBreaker();
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        this.cursorA = cursorA;
+        this.cursorB = cursorB;
+        this.circuitBreaker = circuitBreaker;
         map.clear();
-        populateSlaveMap();
+        hashCursorB();
         toTop();
     }
 
-    private void populateSlaveMap() {
+    private void hashCursorB() {
         if (!convertSymbolsToStrings) {
-            this.record = slaveCursor.getRecord();
+            this.record = cursorB.getRecord();
         } else {
-            this.unionDelegatingRecord.of(slaveCursor.getRecord(), slaveMetadata);
+            this.unionRecord.of(null, cursorB.getRecord());
+            this.unionRecord.setAb(false);
         }
 
-        while (slaveCursor.hasNext()) {
+        while (cursorB.hasNext()) {
             MapKey key = map.withKey();
             key.put(record, recordSink);
             key.createValue();
