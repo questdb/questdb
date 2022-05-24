@@ -1,14 +1,35 @@
-// Validate PR titles
-function validatePrTitle() {
-  const prTitleRegex = /(feat|fix|chore|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?\:.*/g
-  const prTitle = danger.github.pr.title
-  const isDraft = danger.github.pr.draft
+import { danger, fail } from "danger"
 
-  if (isDraft || prTitle.match(prTitleRegex)) {
+const supportedTypes = [
+  "feat",
+  "fix",
+  "chore",
+  "docs",
+  "style",
+  "refactor",
+  "perf",
+  "test",
+  "build",
+  "ci",
+  "chore",
+  "revert",
+]
+
+function validatePrTitle() {
+  const prTitleRegex = new RegExp(`^(${supportedTypes.join("|")})(\(.+\))?\:.*`)
+
+  const { draft, title } = danger.github.pr
+  if (draft || title.match(prTitleRegex)) {
     return
   }
 
-  message('Please update the PR title. Titles need to match this format: <type>: <description>')
+  fail(
+    [
+      "Please update the PR title. It should match this format: <type>: <description>",
+      "Where <type> is one of: " +
+        supportedTypes.map((type) => `"${type}"`).join(", "),
+    ].join("\n"),
+  )
 }
 
 validatePrTitle()
