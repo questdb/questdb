@@ -51,6 +51,7 @@ import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 import static io.questdb.cairo.TableUtils.*;
 
 public class WalWriter implements Closeable {
+    public static final int WAL_FORMAT_VERSION = 0;
     private static final int ROW_ACTION_OPEN_PARTITION = 0;
     private static final int ROW_ACTION_NO_PARTITION = 1;
     private static final int ROW_ACTION_NO_TIMESTAMP = 2;
@@ -2020,9 +2021,18 @@ public class WalWriter implements Closeable {
             }
             walDPath.trimTo(plen);
             assert columnCount > 0;
-            try (MemoryMAR metaMem = Vm.getMARInstance()) {
-                openWalDMetaFile(ff, walDPath, plen, metaMem);
-                copyMetadataTo(metaMem, false);
+            try (MemoryMAR mem = Vm.getMARInstance()) {
+                openWalDMetaFile(ff, walDPath, plen, mem);
+                mem.putInt(WAL_FORMAT_VERSION);
+                mem.putInt(columnCount);
+                long nameOffset = getColumnNameOffset(columnCount);
+                for (int i = 0; i < columnCount; i++) {
+                    int columnType = getColumnType(metaMem, i);
+                    CharSequence columnName = metaMem.getStr(nameOffset);
+                    nameOffset += Vm.getStorageLength(columnName);
+                    mem.putInt(columnType);
+                    mem.putStr(columnName);
+                }
             }
             for (int i = 0; i < columnCount; i++) {
                 final int type = metadata.getColumnType(i);

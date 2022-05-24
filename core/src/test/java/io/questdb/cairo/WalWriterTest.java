@@ -25,10 +25,21 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import org.junit.Test;
+
+import java.io.Closeable;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 
@@ -166,17 +177,17 @@ public class WalWriterTest extends AbstractGriffinTest {
                 row.putByte(0, (byte) 1);
                 row.append();
             }
-            assertMetadataFileCreated(model, 0, path);
-            assertMetadataFileCreated(model, 1, path);
+            assertValidMetadataFileCreated(model, 0, path);
+            assertValidMetadataFileCreated(model, 1, path);
         }
     }
 
-    private void assertMetadataFileCreated(TableModel model, long segment, Path path) {
+    private void assertValidMetadataFileCreated(TableModel model, long segment, Path path) {
         int plen = path.length();
         try {
             toMetadataPath(model.getTableName(), segment, path);
-            TableReaderMetadata readerMetadata = new TableReaderMetadata(configuration.getFilesFacade(), path);
-            assertMetadataMatchesModel(model, readerMetadata);
+            WalMetadataReader walMetadataReader = new WalMetadataReader(configuration.getFilesFacade(), path);
+            assertMetadataMatchesModel(model, walMetadataReader);
         } finally {
             path.trimTo(plen);
         }
@@ -293,14 +304,76 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private static void assertMetadataMatchesModel(TableModel model, TableReaderMetadata metadata) {
-        // todo: assert on more properties - symbol column configuration, etc
+    private static void assertMetadataMatchesModel(TableModel model, WalMetadataReader metadata) {
         int columnCount = model.getColumnCount();
         assertEquals(columnCount, metadata.getColumnCount());
-        assertEquals(model.getPartitionBy(), metadata.getPartitionBy());
         for (int i = 0; i < columnCount; i++) {
             assertEquals(model.getColumnType(i), metadata.getColumnType(i));
             assertEquals(model.getColumnName(i), metadata.getColumnName(i));
+        }
+    }
+
+    public static class WalMetadataReader implements Closeable {
+        private final FilesFacade ff;
+        private final MemoryMR metaMem;
+        private int columnCount;
+        private final IntList columnTypes;
+        private final List<String> columnNames;
+
+        public WalMetadataReader(FilesFacade ff, Path path) {
+            this.ff = ff;
+            this.metaMem = Vm.getMRInstance();
+            this.columnTypes = new IntList();
+            this.columnNames = new ArrayList<>();
+            of(path, WalWriter.WAL_FORMAT_VERSION);
+        }
+
+        @Override
+        public void close() {
+            Misc.free(metaMem);
+        }
+
+        public WalMetadataReader of(Path path, int expectedVersion) {
+            columnNames.clear();
+            columnTypes.clear();
+            try {
+                this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                int offset = 0;
+                int version = metaMem.getInt(offset);
+                offset += Integer.BYTES;
+                if (version != expectedVersion) {
+                    throw CairoException.instance(CairoException.METADATA_VALIDATION)
+                            .put("Invalid metadata at fd=")
+                            .put(metaMem.getFd())
+                            .put(". ");
+                }
+                this.columnCount = metaMem.getInt(offset);
+                offset += Integer.BYTES;
+                for (int i = 0; i < columnCount; i++) {
+                    int columnType = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+                    CharSequence name = metaMem.getStr(offset);
+                    offset += Vm.getStorageLength(name);
+                    columnTypes.add(columnType);
+                    columnNames.add(Chars.toString(name));
+                }
+            } catch (Throwable e) {
+                close();
+                throw e;
+            }
+            return this;
+        }
+
+        public int getColumnCount() {
+            return columnCount;
+        }
+
+        public int getColumnType(int columnIndex) {
+            return columnTypes.get(columnIndex);
+        }
+
+        public String getColumnName(int columnIndex) {
+            return columnNames.get(columnIndex);
         }
     }
 }
