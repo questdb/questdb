@@ -393,7 +393,7 @@ public class FileIndexer implements Closeable, Mutable {
                     for (int i = 0, sz = partitionNames.size(); i < sz; i++) {
                         final CharSequence partitionDirName = partitionNames.get(i);
                         try {
-                            final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, PartitionBy.YEAR);
+                            final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
                             writer.attachPartition(timestamp);
                         } catch (CairoException e) {
                             LOG.error().$("Cannot parse partition directory name=").$(partitionDirName).$();
@@ -609,7 +609,7 @@ public class FileIndexer implements Closeable, Mutable {
                         final long offset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
                         long n = ff.read(fd, buf, len, offset);
                         if (n > 0) {
-                            loader.parse(buf, buf + n, 1);
+                            loader.parse(buf, buf + n, 0); //todo: contiguous block import?
                         }
                     }
                 } finally {
@@ -705,7 +705,7 @@ public class FileIndexer implements Closeable, Mutable {
         private void movePartitionToDst(final CharSequence srcTableName, final CharSequence partitionFolder, final CharSequence dstTableName) {
             final CharSequence root = sqlExecutionContext.getCairoEngine().getConfiguration().getRoot();
             final Path srcPath = Path.getThreadLocal(root).concat(srcTableName).concat(partitionFolder).$();
-            final Path dstPath = Path.getThreadLocal2(root).concat(dstTableName).concat(partitionFolder).put(TableUtils.DETACHED_DIR_MARKER).$();
+            final Path dstPath = Path.getThreadLocal2(root).concat(dstTableName).concat(partitionFolder).$();
             if (!ff.rename(srcPath, dstPath)) {
                 //todo: not on the same fs. copy&remove
             }
