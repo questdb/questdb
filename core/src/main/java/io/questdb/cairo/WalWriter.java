@@ -2025,11 +2025,9 @@ public class WalWriter implements Closeable {
                 openWalDMetaFile(ff, walDPath, plen, mem);
                 mem.putInt(WAL_FORMAT_VERSION);
                 mem.putInt(columnCount);
-                long nameOffset = getColumnNameOffset(columnCount);
                 for (int i = 0; i < columnCount; i++) {
                     int columnType = getColumnType(metaMem, i);
-                    CharSequence columnName = metaMem.getStr(nameOffset);
-                    nameOffset += Vm.getStorageLength(columnName);
+                    CharSequence columnName = metadata.getColumnName(i);
                     mem.putInt(columnType);
                     mem.putStr(columnName);
                 }
