@@ -270,6 +270,31 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void testRemovingColumnStartsNewSegment() {
+        String tableName = "testtable";
+        try (Path path = new Path().of(configuration.getRoot());
+             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+                     .col("a", ColumnType.BYTE)
+                     .col("b", ColumnType.STRING)
+        ) {
+            int plen = path.length();
+            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
+            path.trimTo(plen);
+            try (WalWriter walWriter = new WalWriter(configuration, tableName, metrics)) {
+                WalWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.append();
+                walWriter.removeColumn("b");
+            }
+            assertValidMetadataFileCreated(model, 0, path);
+            try (TableModel updatedModel = new TableModel(configuration, tableName, PartitionBy.NONE)
+                    .col("a", ColumnType.BYTE)) {
+                assertValidMetadataFileCreated(updatedModel, 1, path);
+            }
+        }
+    }
+
     private void assertValidMetadataFileCreated(TableModel model, long segment, Path path) {
         int plen = path.length();
         try {

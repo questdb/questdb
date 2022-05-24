@@ -683,6 +683,7 @@ public class WalWriter implements Closeable {
             int timestampIndex2 = metadata.getColumnIndex(timestampColumnName);
             metadata.setTimestampIndex(timestampIndex2);
         }
+        openNewWalDSegment();
 
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
     }
@@ -2023,35 +2024,42 @@ public class WalWriter implements Closeable {
             }
             walDPath.trimTo(plen);
             assert columnCount > 0;
-            try (MemoryMAR mem = Vm.getMARInstance()) {
-                openWalDMetaFile(ff, walDPath, plen, mem);
-                mem.putInt(WAL_FORMAT_VERSION);
-                mem.putInt(columnCount);
+            try (MemoryMAR walDMetaMem = Vm.getMARInstance()) {
+                openWalDMetaFile(ff, walDPath, plen, walDMetaMem);
+                walDMetaMem.putInt(WAL_FORMAT_VERSION);
+                long sizeOffset = walDMetaMem.getAppendOffset();
+                walDMetaMem.putInt(columnCount);
+                int liveColumnCounter = 0;
                 for (int i = 0; i < columnCount; i++) {
-                    int columnType = getColumnType(metaMem, i);
-                    CharSequence columnName = metadata.getColumnName(i);
-                    mem.putInt(columnType);
-                    mem.putStr(columnName);
-                }
-            }
-            for (int i = 0; i < columnCount; i++) {
-                final int type = metadata.getColumnType(i);
-                if (type > 0) {
-                    final CharSequence name = metadata.getColumnName(i);
-                    openWalDColumnFiles(name, i, plen);
-                    if (ColumnType.isSymbol(type)) {
-                        try(MemoryMARW mem = Vm.getMARWInstance()) {
-                            createSymbolMapFiles(
-                                    ff,
-                                    mem,
-                                    walDPath.trimTo(walDRootLen),
-                                    name,
-                                    COLUMN_NAME_TXN_NONE,
-                                    1024, // take this from TableStructure !!!
-                                    false // take this from TableStructure !!!
-                            );
+                    int type = metadata.getColumnType(i);
+                    if (type > 0) {
+                        liveColumnCounter++;
+                        CharSequence name = metadata.getColumnName(i);
+                        walDMetaMem.putInt(type);
+                        walDMetaMem.putStr(name);
+
+                        openWalDColumnFiles(name, i, plen);
+                        if (ColumnType.isSymbol(type)) {
+                            try(MemoryMARW symbolMetaMem = Vm.getMARWInstance()) {
+                                createSymbolMapFiles(
+                                        ff,
+                                        symbolMetaMem,
+                                        walDPath.trimTo(walDRootLen),
+                                        name,
+                                        COLUMN_NAME_TXN_NONE,
+                                        1024, // take this from TableStructure !!!
+                                        false // take this from TableStructure !!!
+                                );
+                            }
                         }
                     }
+                }
+                if (columnCount != liveColumnCounter) {
+                    // is this a good idea? it makes the metadata file mutable (no longer append only)
+                    long currentOffset = walDMetaMem.getAppendOffset();
+                    walDMetaMem.jumpTo(sizeOffset);
+                    walDMetaMem.putInt(liveColumnCounter);
+                    walDMetaMem.jumpTo(currentOffset);
                 }
             }
             LOG.info().$("switched WAL-D segment [path='").$(walDPath).$('\'').I$();
@@ -2181,6 +2189,9 @@ public class WalWriter implements Closeable {
         final int si = getSecondaryColumnIndex(columnIndex);
         freeNullSetter(nullSetters, columnIndex);
         freeAndRemoveColumnPair(columns, pi, si);
+
+        freeNullSetter(walDNullSetters, columnIndex);
+        freeAndRemoveColumnPair(walDColumns, pi, si);
     }
 
     private void removeColumnFiles(CharSequence columnName, int columnIndex, int columnType) {
