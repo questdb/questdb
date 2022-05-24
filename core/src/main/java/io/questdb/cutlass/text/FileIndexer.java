@@ -363,11 +363,11 @@ public class FileIndexer implements Closeable, Mutable {
             if (timestampAdapter == null) {
                 timestampAdapter = loader.getTimestampAdapter();
             }
-
-            prepareContexts();
         } finally {
             loader.clear();
         }
+
+        prepareContexts();
     }
 
     public void process() throws SqlException {
@@ -390,6 +390,7 @@ public class FileIndexer implements Closeable, Mutable {
                     findChunkBoundaries(fd);
                     indexChunks();
                     mergePartitionIndexes();
+
                     for (int i = 0, sz = partitionNames.size(); i < sz; i++) {
                         final CharSequence partitionDirName = partitionNames.get(i);
                         try {
@@ -483,7 +484,7 @@ public class FileIndexer implements Closeable, Mutable {
             final long seq = pubSeq.next();
             if (seq < 0) {
                 context.buildIndexStage(5 * i, chunkLo, chunkHi, lineNumber);
-            } else {//TODO: maybe could re-use chunkStats to store number of rows found in each chunk
+            } else {
                 queue.get(seq).of(doneLatch, TextImportTask.PHASE_INDEXING, context, i / 2, chunkLo, chunkHi, lineNumber, chunkStats);
                 pubSeq.done(seq);
                 queuedCount++;
@@ -699,6 +700,7 @@ public class FileIndexer implements Closeable, Mutable {
 
         public void of(CharSequence inputFileName, int index, int partitionBy, byte columnDelimiter, int timestampIndex, TimestampAdapter adapter, boolean ignoreHeader) {
             splitter.of(inputFileName, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader);
+            loader.configureDestination(tableName, true, true, Atomicity.SKIP_ALL, partitionBy, timestampColumn);
             loader.setDelimiter(columnDelimiter);
         }
 
