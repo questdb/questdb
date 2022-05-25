@@ -570,10 +570,11 @@ public class FileIndexer implements Closeable, Mutable {
         private final TextLoaderBase loader;
         private final CairoSecurityContext securityContext;
         private final TypeManager typeManager;
+        private final DirectCharSink utf8Sink;
 
         public TaskContext(SqlExecutionContext sqlExecutionContext, TextConfiguration textConfiguration) {
             this.securityContext = sqlExecutionContext.getCairoSecurityContext();
-            DirectCharSink utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
+            utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
             this.typeManager = new TypeManager(textConfiguration, utf8Sink);
             final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
             this.splitter = new FileSplitter(cairoEngine.getConfiguration());
@@ -589,6 +590,8 @@ public class FileIndexer implements Closeable, Mutable {
             mergeIndexes.clear();
             splitter.clear();
             loader.clear();
+            typeManager.clear();
+            utf8Sink.clear();
         }
 
         @Override
@@ -597,6 +600,7 @@ public class FileIndexer implements Closeable, Mutable {
             path.close();
             splitter.close();
             loader.close();
+            utf8Sink.close();
         }
 
         public void countQuotesStage(int index, long lo, long hi, final LongList chunkStats) throws SqlException {
