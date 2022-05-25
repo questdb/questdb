@@ -55,8 +55,7 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
             RecordSink recordSink,
-            ColumnTypes valueTypes,
-            boolean ignore
+            ColumnTypes valueTypes
     ) {
         this.metadata = metadata;
         this.factoryA = factoryA;

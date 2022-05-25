@@ -42,7 +42,6 @@ public interface SetRecordCursorFactoryConstructor {
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
             RecordSink recordSink,
-            ColumnTypes valueTypes,
-            boolean convertSymbolsToStrings
+            ColumnTypes valueTypes
     );
 }

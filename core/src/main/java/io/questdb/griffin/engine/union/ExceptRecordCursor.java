@@ -38,9 +38,9 @@ class ExceptRecordCursor implements RecordCursor {
     private final boolean convertSymbolsToStrings;
     private RecordCursor cursorA;
     private RecordCursor cursorB;
-    private Record record;
+    private Record recordA;
+    private final VirtualRecord virtualRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private UnionRecord unionRecord;
 
     public ExceptRecordCursor(
             Map map,
@@ -52,10 +52,9 @@ class ExceptRecordCursor implements RecordCursor {
         this.map = map;
         this.recordSink = recordSink;
         this.convertSymbolsToStrings = convertSymbolsToStrings;
-        if (convertSymbolsToStrings) {
-            unionRecord = new UnionRecord(castFunctionsA, castFunctionsB);
-            record = unionRecord;
-        }
+        // cursor B has to be cast to the types of cursor A unless types are identical
+        // in which case this is a todo (simplify virtual record)
+        this.virtualRecord = new VirtualRecord(castFunctionsB);
     }
 
     @Override
@@ -67,7 +66,7 @@ class ExceptRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecord() {
-        return record;
+        return recordA;
     }
 
     @Override
@@ -84,7 +83,7 @@ class ExceptRecordCursor implements RecordCursor {
     public boolean hasNext() {
         while (cursorA.hasNext()) {
             MapKey key = map.withKey();
-            key.put(record, recordSink);
+            key.put(recordA, recordSink);
             if (key.notFound()) {
                 return true;
             }
@@ -106,13 +105,7 @@ class ExceptRecordCursor implements RecordCursor {
     @Override
     public void toTop() {
         cursorA.toTop();
-
-        if (!convertSymbolsToStrings) {
-            this.record = cursorA.getRecord();
-        } else {
-            this.unionRecord.of(cursorA.getRecord(), null);
-            this.unionRecord.setAb(true);
-        }
+        this.recordA = cursorA.getRecord();
     }
 
     @Override
@@ -120,28 +113,22 @@ class ExceptRecordCursor implements RecordCursor {
         return -1;
     }
 
+    private void hashCursorB() {
+        while (cursorB.hasNext()) {
+            MapKey key = map.withKey();
+            key.put(virtualRecord, recordSink);
+            key.createValue();
+            circuitBreaker.statefulThrowExceptionIfTripped();
+        }
+    }
+
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
         this.cursorA = cursorA;
         this.cursorB = cursorB;
         this.circuitBreaker = circuitBreaker;
+        this.virtualRecord.of(cursorB.getRecord());
         map.clear();
         hashCursorB();
         toTop();
-    }
-
-    private void hashCursorB() {
-        if (!convertSymbolsToStrings) {
-            this.record = cursorB.getRecord();
-        } else {
-            this.unionRecord.of(null, cursorB.getRecord());
-            this.unionRecord.setAb(false);
-        }
-
-        while (cursorB.hasNext()) {
-            MapKey key = map.withKey();
-            key.put(record, recordSink);
-            key.createValue();
-            circuitBreaker.statefulThrowExceptionIfTripped();
-        }
     }
 }

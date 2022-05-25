@@ -43,14 +43,14 @@ public class UnionAllRecordCursorFactory implements RecordCursorFactory {
 
     public UnionAllRecordCursorFactory(
             RecordMetadata metadata,
-            RecordCursorFactory masterFactory,
-            RecordCursorFactory slaveFactory,
+            RecordCursorFactory factoryA,
+            RecordCursorFactory factoryB,
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB
     ) {
         this.metadata = metadata;
-        this.factoryA = masterFactory;
-        this.factoryB = slaveFactory;
+        this.factoryA = factoryA;
+        this.factoryB = factoryB;
         this.cursor = new UnionAllRecordCursor(castFunctionsA, castFunctionsB);
         this.castFunctionsA = castFunctionsA;
         this.castFunctionsB = castFunctionsB;

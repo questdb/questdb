@@ -315,14 +315,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
-    private RecordMetadata calculateSetMetadata(RecordMetadata baseMetadata, boolean convertSymbolsToStrings) {
-        if (convertSymbolsToStrings) {
-            return GenericRecordMetadata.convertSymbolsToStrings(baseMetadata);
-        } else {
-            return GenericRecordMetadata.removeTimestamp(baseMetadata);
-        }
-    }
-
     // Check if lo, hi is set and lo >=0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
     // because such case can't really be optimized by topN/bottomN
     private boolean canBeOptimized(QueryModel model, SqlExecutionContext context, Function loFunc, Function hiFunc) {
@@ -736,7 +728,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    private ObjList<Function> generateCastFunctions(ColumnTypes castToMetadata, RecordMetadata castFromMetadata) {
+    private ObjList<Function> generateCastFunctions(RecordMetadata castToMetadata, RecordMetadata castFromMetadata) {
         int columnCount = castToMetadata.getColumnCount();
         ObjList<Function> castFunctions = new ObjList<>();
         for (int i = 0; i < columnCount; i++) {
@@ -2086,7 +2078,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // we need to pay attention to stepping over analytic column slots
         // Chain metadata is assembled in such way that all columns the factory
         // needs to provide are at the beginning of the metadata so the record the factory cursor
-        // returns can be chain record, because it chain record is always longer than record needed out of the
+        // returns can be chain record, because the chain record is always longer than record needed out of the
         // cursor and relevant columns are 0..n limited by factory metadata
 
         int addAt = columnCount;
@@ -2866,47 +2858,58 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final RecordCursorFactory factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
-        // todo: generate compound metadata
-        ColumnTypes setMetadata = widenMetadata(factoryA.getMetadata(), factoryB.getMetadata());
-        final ObjList<Function> castFunctionsA = generateCastFunctions(setMetadata, factoryA.getMetadata());
-        final ObjList<Function> castFunctionsB = generateCastFunctions(setMetadata, factoryB.getMetadata());
+        final RecordMetadata metadataA = factoryA.getMetadata();
+        final RecordMetadata metadataB = factoryB.getMetadata();
+        RecordMetadata setMetadata;
 
         switch (model.getSetOperationType()) {
             case QueryModel.SET_OPERATION_UNION:
+                setMetadata = widenSetMetadata(metadataA, metadataB);
+
                 return generateUnionFactory(
                         model,
                         executionContext,
                         factoryA,
                         factoryB,
-                        castFunctionsA,
-                        castFunctionsB,
-                        SET_UNION_CONSTRUCTOR,
-
-                        true
+                        generateCastFunctions(setMetadata, metadataA),
+                        generateCastFunctions(setMetadata, metadataB),
+                        setMetadata,
+                        SET_UNION_CONSTRUCTOR
                 );
             case QueryModel.SET_OPERATION_UNION_ALL:
-                return generateUnionAllFactory(model, executionContext, factoryA, factoryB, castFunctionsA, castFunctionsB);
+                setMetadata = widenSetMetadata(metadataA, metadataB);
+                return generateUnionAllFactory(
+                        model,
+                        executionContext,
+                        factoryA,
+                        factoryB,
+                        generateCastFunctions(setMetadata, metadataA),
+                        generateCastFunctions(setMetadata, metadataB),
+                        setMetadata
+                );
             case QueryModel.SET_OPERATION_EXCEPT:
+                setMetadata = GenericRecordMetadata.removeTimestamp(metadataA);
                 return generateUnionFactory(
                         model,
                         executionContext,
                         factoryA,
                         factoryB,
-                        castFunctionsA,
-                        castFunctionsB,
-                        SET_EXCEPT_CONSTRUCTOR,
-                        false
+                        null,
+                        generateCastFunctions(setMetadata, metadataB),
+                        setMetadata,
+                        SET_EXCEPT_CONSTRUCTOR
                 );
             case QueryModel.SET_OPERATION_INTERSECT:
+                setMetadata = GenericRecordMetadata.removeTimestamp(metadataA);
                 return generateUnionFactory(
                         model,
                         executionContext,
                         factoryA,
                         factoryB,
-                        castFunctionsA,
-                        castFunctionsB,
-                        SET_INTERSECT_CONSTRUCTOR,
-                        false
+                        null,
+                        generateCastFunctions(setMetadata, metadataB),
+                        setMetadata,
+                        SET_INTERSECT_CONSTRUCTOR
                 );
             default:
                 assert false;
@@ -3421,10 +3424,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory factoryA,
             RecordCursorFactory factoryB,
             ObjList<Function> castFunctionsA,
-            ObjList<Function> castFunctionsB
+            ObjList<Function> castFunctionsB,
+            RecordMetadata setMetadata
     ) throws SqlException {
         final RecordCursorFactory setFactory = new UnionAllRecordCursorFactory(
-                calculateSetMetadata(factoryA.getMetadata(), true),
+                setMetadata,
                 factoryA,
                 factoryB,
                 castFunctionsA,
@@ -3444,29 +3448,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory factoryB,
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
-            SetRecordCursorFactoryConstructor constructor,
-            boolean convertSymbolsToStrings
+            RecordMetadata setMetadata,
+            SetRecordCursorFactoryConstructor constructor
     ) throws SqlException {
-        final boolean stringSymbolMismatch = validateSetColumnTypes(model, factoryA, factoryB);
         entityColumnFilter.of(factoryA.getMetadata().getColumnCount());
-        RecordMetadata resultMetadata = calculateSetMetadata(factoryA.getMetadata(), convertSymbolsToStrings || stringSymbolMismatch);
         final RecordSink recordSink = RecordSinkFactory.getInstance(
                 asm,
-                resultMetadata,
+                setMetadata,
                 entityColumnFilter,
                 true
         );
         valueTypes.clear();
         RecordCursorFactory unionFactory = constructor.create(
                 configuration,
-                resultMetadata,
+                setMetadata,
                 factoryA,
                 factoryB,
                 castFunctionsA,
                 castFunctionsB,
                 recordSink,
-                valueTypes,
-                convertSymbolsToStrings || stringSymbolMismatch
+                valueTypes
         );
 
         if (model.getUnionModel().getUnionModel() != null) {
@@ -3735,34 +3736,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    private boolean validateSetColumnTypes(QueryModel model, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) throws SqlException {
-        final RecordMetadata metadata = masterFactory.getMetadata();
-        final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
-        final int columnCount = metadata.getColumnCount();
-
-        boolean stringSymbolMismatch = false;
-        for (int i = 0; i < columnCount; i++) {
-            int type1 = metadata.getColumnType(i);
-            int type2 = slaveMetadata.getColumnType(i);
-            if (type1 != type2) {
-                if (
-                        ColumnType.isSymbol(type1) && ColumnType.isString(type2)
-                                || ColumnType.isString(type1) && ColumnType.isSymbol(type2)
-                ) {
-                    stringSymbolMismatch = true;
-                    continue;
-                }
-
-                throw SqlException
-                        .$(model.getUnionModel().getModelPosition(), "column type mismatch [index=").put(i)
-                        .put(", A=").put(ColumnType.nameOf(metadata.getColumnType(i)))
-                        .put(", B=").put(ColumnType.nameOf(slaveMetadata.getColumnType(i)))
-                        .put(']');
-            }
-        }
-        return stringSymbolMismatch;
-    }
-
     private Record.CharSequenceFunction validateSubQueryColumnAndGetGetter(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
         int columnType = metadata.getColumnType(0);
         if (!ColumnType.isSymbolOrString(columnType)) {
@@ -3780,30 +3753,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return ColumnType.isString(columnType) ? Record.GET_STR : Record.GET_SYM;
     }
 
-    private ColumnTypes widenMetadata(ColumnTypes typesA, ColumnTypes typesB) throws SqlException {
+    private RecordMetadata widenSetMetadata(RecordMetadata typesA, RecordMetadata typesB) {
         int columnCount = typesA.getColumnCount();
-        if (columnCount != typesB.getColumnCount()) {
-            throw SqlException.$(0, "poop");
-        }
+        assert columnCount == typesB.getColumnCount();
 
-        ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
         for (int i = 0; i < columnCount; i++) {
             int typeA = typesA.getColumnType(i);
             int typeB = typesB.getColumnType(i);
 
-            if (typeA == typeB) {
-                columnTypes.add(typeA);
-            } else if (SqlCompiler.isAssignableFrom(typeA, typeB)) {
-                columnTypes.add(typeA);
-            } else if (SqlCompiler.isAssignableFrom(typeB, typeA)) {
-                columnTypes.add(typeB);
+            if (typeA == typeB && typeA != ColumnType.SYMBOL) {
+                metadata.add(BaseRecordMetadata.copyOf(typesA, i));
+            } else if (SqlCompiler.isAssignableFrom(typeA, typeB) && typeA != ColumnType.SYMBOL) {
+                metadata.add(BaseRecordMetadata.copyOf(typesA, i));
+            } else if (SqlCompiler.isAssignableFrom(typeB, typeA) && typeB != ColumnType.SYMBOL) {
+                // even though A is assignable to B (e.g. A union B)
+                // set metadata will use A column names
+                metadata.add(new TableColumnMetadata(
+                        typesA.getColumnName(i),
+                        typesA.getColumnHash(i),
+                        typeB
+                ));
             } else {
                 // we can cast anything to string
-                columnTypes.add(ColumnType.STRING);
+                metadata.add(new TableColumnMetadata(
+                        typesA.getColumnName(i),
+                        typesA.getColumnHash(i),
+                        ColumnType.STRING
+                ));
             }
         }
 
-        return columnTypes;
+        return metadata;
     }
 
     @FunctionalInterface

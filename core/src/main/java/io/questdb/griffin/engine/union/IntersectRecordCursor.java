@@ -34,27 +34,20 @@ import io.questdb.std.ObjList;
 class IntersectRecordCursor implements RecordCursor {
     private final Map map;
     private final RecordSink recordSink;
-    private final boolean convertSymbolsAsStrings;
     private RecordCursor cursorA;
     private RecordCursor cursorB;
-    private Record record;
+    private Record recordA;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private UnionRecord unionRecord;
+    private final VirtualRecord virtualRecord;
 
     public IntersectRecordCursor(
             Map map,
             RecordSink recordSink,
-            boolean convertSymbolsAsStrings,
-            ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionB
     ) {
         this.map = map;
         this.recordSink = recordSink;
-        this.convertSymbolsAsStrings = convertSymbolsAsStrings;
-        if (convertSymbolsAsStrings) {
-            this.unionRecord = new UnionRecord(castFunctionsA, castFunctionB);
-            record = unionRecord;
-        }
+        this.virtualRecord = new VirtualRecord(castFunctionB);
     }
 
     @Override
@@ -66,7 +59,7 @@ class IntersectRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecord() {
-        return record;
+        return recordA;
     }
 
     @Override
@@ -83,7 +76,7 @@ class IntersectRecordCursor implements RecordCursor {
     public boolean hasNext() {
         while (cursorA.hasNext()) {
             MapKey key = map.withKey();
-            key.put(record, recordSink);
+            key.put(recordA, recordSink);
             if (key.findValue() != null) {
                 return true;
             }
@@ -113,16 +106,10 @@ class IntersectRecordCursor implements RecordCursor {
     }
 
     private void hashCursorB(RecordCursor cursorB) {
-        Record recordB = cursorB.getRecord();
-        if (convertSymbolsAsStrings) {
-            unionRecord.of(null, recordB);
-            unionRecord.setAb(false);
-            recordB = unionRecord;
-        }
-
+        virtualRecord.of(cursorB.getRecord());
         while (cursorB.hasNext()) {
             MapKey key = map.withKey();
-            key.put(recordB, recordSink);
+            key.put(virtualRecord, recordSink);
             key.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
@@ -135,14 +122,7 @@ class IntersectRecordCursor implements RecordCursor {
 
         map.clear();
         hashCursorB(cursorB);
-
-        if (convertSymbolsAsStrings) {
-            unionRecord.of(cursorA.getRecord(), null);
-            unionRecord.setAb(true);
-        } else {
-            record = cursorA.getRecord();
-        }
-
+        recordA = cursorA.getRecord();
         toTop();
     }
 }

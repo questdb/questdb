@@ -44,7 +44,6 @@ public class ExceptRecordCursorFactory implements RecordCursorFactory {
     private final RecordCursorFactory factoryB;
     private final ExceptRecordCursor cursor;
     private final Map map;
-    private final ObjList<Function> castFunctionsA;
     private final ObjList<Function> castFunctionsB;
 
     public ExceptRecordCursorFactory(
@@ -52,19 +51,24 @@ public class ExceptRecordCursorFactory implements RecordCursorFactory {
             RecordMetadata metadata,
             RecordCursorFactory factoryA,
             RecordCursorFactory factoryB,
-            ObjList<Function> castFunctionsA,
+            ObjList<Function> castFunctionsA,  // unused, we keep it here to comply with an interface
             ObjList<Function> castFunctionsB,
             RecordSink recordSink,
-            ColumnTypes valueTypes,
-            boolean convertSymbolsToStrings
+            ColumnTypes valueTypes
     ) {
         this.metadata = metadata;
         this.factoryA = factoryA;
         this.factoryB = factoryB;
         this.map = MapFactory.createMap(configuration, metadata, valueTypes);
-        this.cursor = new ExceptRecordCursor(map, recordSink, convertSymbolsToStrings, castFunctionsA, castFunctionsB);
-        this.castFunctionsA = castFunctionsA;
+        this.cursor = new ExceptRecordCursor(map, recordSink, true, castFunctionsA, castFunctionsB);
         this.castFunctionsB = castFunctionsB;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(factoryA);
+        Misc.free(factoryB);
+        Misc.free(map);
     }
 
     @Override
@@ -74,7 +78,6 @@ public class ExceptRecordCursorFactory implements RecordCursorFactory {
         try {
             cursorA = factoryA.getCursor(executionContext);
             cursorB = factoryB.getCursor(executionContext);
-            Function.init(castFunctionsA, cursorA, executionContext);
             Function.init(castFunctionsB, cursorB, executionContext);
             cursor.of(cursorA, cursorB, executionContext.getCircuitBreaker());
             return cursor;
@@ -93,12 +96,5 @@ public class ExceptRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return factoryA.recordCursorSupportsRandomAccess();
-    }
-
-    @Override
-    public void close() {
-        Misc.free(factoryA);
-        Misc.free(factoryB);
-        Misc.free(map);
     }
 }

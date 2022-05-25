@@ -39,7 +39,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     private RecordCursor cursorB;
     private final NextMethod nextSlave = this::nextSlave;
     private NextMethod nextMethod;
-    private final NextMethod nextMaster = this::nextMaster;
+    private final NextMethod nextA = this::nextA;
     private SqlExecutionCircuitBreaker circuitBreaker;
 
     public UnionRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
@@ -91,7 +91,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     public void toTop() {
         map.clear();
         record.setAb(true);
-        nextMethod = nextMaster;
+        nextMethod = nextA;
         cursorA.toTop();
         cursorB.toTop();
     }
@@ -101,7 +101,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
         return -1;
     }
 
-    private boolean nextMaster() {
+    private boolean nextA() {
         if (cursorA.hasNext()) {
             return true;
         }

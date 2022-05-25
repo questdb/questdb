@@ -33,22 +33,13 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     private final UnionRecord record;
     private RecordCursor cursorA;
     private RecordCursor cursorB;
-    private final NextMethod nextSlave = this::nextSlave;
+    private final NextMethod nextB = this::nextB;
     private NextMethod nextMethod;
     private RecordCursor symbolCursor;
-    private final NextMethod nextMaster = this::nextMaster;
+    private final NextMethod nextA = this::nextA;
 
     public UnionAllRecordCursor(ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         this.record = new UnionRecord(castFunctionsA, castFunctionsB);
-    }
-
-    @Override
-    public void toTop() {
-        record.setAb(true);
-        nextMethod = nextMaster;
-        symbolCursor = cursorA;
-        cursorA.toTop();
-        cursorB.toTop();
     }
 
     @Override
@@ -63,25 +54,6 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
-    public boolean hasNext() {
-        return nextMethod.next();
-    }
-
-    private boolean nextSlave() {
-        return cursorB.hasNext();
-    }
-
-    @Override
-    public long size() {
-        final long masterSize = cursorA.size();
-        final long slaveSize = cursorB.size();
-        if (masterSize == -1 || slaveSize == -1) {
-            return -1;
-        }
-        return masterSize + slaveSize;
-    }
-
-    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         return symbolCursor.getSymbolTable(columnIndex);
     }
@@ -91,8 +63,36 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
         return symbolCursor.newSymbolTable(columnIndex);
     }
 
-    private boolean nextMaster() {
+    @Override
+    public boolean hasNext() {
+        return nextMethod.next();
+    }
+
+    @Override
+    public void toTop() {
+        record.setAb(true);
+        nextMethod = nextA;
+        symbolCursor = cursorA;
+        cursorA.toTop();
+        cursorB.toTop();
+    }
+
+    @Override
+    public long size() {
+        final long sizeA = cursorA.size();
+        final long sizeB = cursorB.size();
+        if (sizeA == -1 || sizeB == -1) {
+            return -1;
+        }
+        return sizeA + sizeB;
+    }
+
+    private boolean nextA() {
         return cursorA.hasNext() || switchToSlaveCursor();
+    }
+
+    private boolean nextB() {
+        return cursorB.hasNext();
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB) throws SqlException {
@@ -104,7 +104,7 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
 
     private boolean switchToSlaveCursor() {
         record.setAb(false);
-        nextMethod = nextSlave;
+        nextMethod = nextB;
         symbolCursor = cursorB;
         return nextMethod.next();
     }
