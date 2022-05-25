@@ -45,9 +45,9 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
     @Test
     public void testApplyInOrder() throws Exception {
         assertMemoryLeak(() -> {
-            long tsIncrement = 100*60*1_000_000L;
-            int count1 = 5;
-            int count2 = 7;
+            long tsIncrement = 5*60*1_000_000L;
+            int count1 = 100;
+            int count2 = 140;
             String timestart1 = "1970-01-06T18:56";
             compile(
                     "create table wal_all as (" +
@@ -74,10 +74,10 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
             compile(
                     "insert into wal_all\n" +
                             "select" +
-                            " indexed_timestamp_sequence(0L, '" + timestart2 + "', " + tsIncrement + "L) ts," +
+                            " indexed_timestamp_sequence("+ count1 +"L, '" + timestart2 + "', " + tsIncrement + "L) ts," +
                             " timestamp_sequence('" + timestart2 + "', " + tsIncrement + "L) ts1," +
                             " cast(x as int) i," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                            " to_timestamp('2018-02', 'yyyy-MM') + x * 720000000 timestamp," +
                             " rnd_boolean() b," +
                             " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                             " rnd_double(2) d," +
@@ -94,7 +94,6 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
             compile("create table wal_clean as (select * from wal_all)");
             compile("alter table wal_clean drop column ts");
             compile("alter table wal_clean rename column ts1 to ts");
-
             compile("create table x as (select * from wal_clean where 1 != 1) timestamp(ts) partition by DAY");
 
             try (
