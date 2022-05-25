@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
@@ -127,6 +128,21 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     @Override
     public Long256 getLong256B(Record rec) {
         return Long256NullConstant.INSTANCE.getLong256B(null);
+    }
+
+    @Override
+    public void getLong128(Record rec, CharSink sink) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Long128 getLong128A(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Long128 getLong128B(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -37,6 +38,8 @@ public class TableReaderSelectedColumnRecord implements Record {
     private int columnBase;
     private long recordIndex = 0;
     private TableReader reader;
+    private final Long128Impl long128A = new Long128Impl();
+    private final Long128Impl long128B = new Long128Impl();
 
     public TableReaderSelectedColumnRecord(@NotNull IntList columnIndexes) {
         this.columnIndexes = columnIndexes;
@@ -193,6 +196,29 @@ public class TableReaderSelectedColumnRecord implements Record {
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         return reader.getColumn(absoluteColumnIndex).getLong256B(offset);
     }
+
+    @Override
+    public Long128 getLong128A(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Long128.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        MemoryR column = reader.getColumn(absoluteColumnIndex);
+        long128A.setAll(column.getLong(offset), column.getLong(offset + Long.BYTES));
+        return long128A;
+    }
+
+    @Override
+    public Long128 getLong128B(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Long128.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        MemoryR column = reader.getColumn(absoluteColumnIndex);
+        long128B.setAll(column.getLong(offset), column.getLong(offset + Long.BYTES));
+        return long128B;
+    }
+
 
     @Override
     public CharSequence getStrB(int columnIndex) {

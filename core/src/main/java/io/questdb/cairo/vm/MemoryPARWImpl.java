@@ -626,6 +626,7 @@ public class MemoryPARWImpl implements MemoryARW {
         Numbers.appendLong256(a, b, c, d, sink);
     }
 
+    @Override
     public void getLong256(long offset, Long256Acceptor sink) {
         if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
             sink.setAll(
