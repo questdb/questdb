@@ -114,7 +114,6 @@ public class FileSplitter implements Closeable, Mutable {
 
     //fields taken & adjusted  from textLexer
     private final int fieldRollBufLimit;
-    private boolean ignoreEolOnce;
     private long lastLineStart;
 
     private long fieldRollBufCur;
@@ -125,6 +124,7 @@ public class FileSplitter implements Closeable, Mutable {
     private boolean header;
     private long lastQuotePos = -1;
     private long errorCount = 0;
+    private int maxLineLength;
 
     private int fieldIndex;
     private long lineCount;
@@ -397,22 +397,16 @@ public class FileSplitter implements Closeable, Mutable {
         return true;
     }
 
-    private void ignoreEolOnce() {
-        eol = true;
-        fieldIndex = 0;
-        ignoreEolOnce = false;
-    }
-
     private void onColumnDelimiter(long lo, long ptr) {
         checkEol(lo);
 
-        if (inQuote || ignoreEolOnce) {
+        if (inQuote) {
             return;
         }
         stashField(fieldIndex++, ptr);
     }
 
-    private void onLineEnd(long ptr) {
+    private void onLineEnd(long ptr, long lo) {
         if (inQuote) {
             return;
         }
@@ -423,13 +417,8 @@ public class FileSplitter implements Closeable, Mutable {
         }
 
         stashField(fieldIndex, ptr);
-
-        if (ignoreEolOnce) {
-            ignoreEolOnce();
-            return;
-        }
-
         triggerLine(ptr);
+        this.maxLineLength = (int) Math.max(maxLineLength, offset + ptr - lo - lastLineStart);
     }
 
     private void onQuote() {
@@ -473,7 +462,7 @@ public class FileSplitter implements Closeable, Mutable {
                 checkEol(lo);
                 onQuote();
             } else if (c == '\n' || c == '\r') {
-                onLineEnd(ptr);
+                onLineEnd(ptr, lo);
             } else {
                 checkEol(lo);
             }
@@ -528,7 +517,6 @@ public class FileSplitter implements Closeable, Mutable {
         if (fieldIndex == timestampIndex && !header) {
             if (lastQuotePos > -1) {
                 timestampField.of(this.fieldLo, lastQuotePos - 1);
-                //lastQuotePos = -1;
             } else {
                 timestampField.of(this.fieldLo, this.fieldHi - 1);
             }
@@ -540,8 +528,7 @@ public class FileSplitter implements Closeable, Mutable {
             }
         }
 
-        lastQuotePos = -1;
-
+        this.lastQuotePos = -1;
         this.fieldLo = this.fieldHi;
     }
 
@@ -565,7 +552,7 @@ public class FileSplitter implements Closeable, Mutable {
         this.lastLineStart = this.offset + (this.fieldLo - lo);
     }
 
-    public void index(long chunkLo, long chunkHi, long lineNumber) throws SqlException {
+    public void index(long chunkLo, long chunkHi, long lineNumber, LongList output, int outputIndex) throws SqlException {
         assert chunkHi > 0;
         assert chunkLo >= 0 && chunkLo < chunkHi;
 
@@ -577,6 +564,7 @@ public class FileSplitter implements Closeable, Mutable {
 
         this.lastLineStart = offset;
         this.lineCount = lineNumber;
+        this.maxLineLength = 0;
 
         try {
             do {
@@ -600,6 +588,8 @@ public class FileSplitter implements Closeable, Mutable {
 
         LOG.info().$("Finished indexing chunk [start=").$(chunkLo).$(",end=").$(chunkHi)
                 .$(",lines=").$(lineCount - lineNumber).$(",errors=").$(errorCount).$(']').$();
+
+        output.set(outputIndex, maxLineLength);
     }
 
     void openInputFile() {

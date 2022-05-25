@@ -88,7 +88,7 @@ public class TextImportTask {
             if (phase == PHASE_BOUNDARY_CHECK) {
                 context.countQuotesStage(index, lo, hi, chunkStats);
             } else if (phase == PHASE_INDEXING) {
-                context.buildIndexStage(index, lo, hi, lineNumber);
+                context.buildIndexStage(lo, hi, lineNumber, chunkStats, index);
             } else if (phase == PHASE_INDEX_MERGE) {
                 context.mergeIndexStage(index, lo, hi, partitionNames);
             } else {

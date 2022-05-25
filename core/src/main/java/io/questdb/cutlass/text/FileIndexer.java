@@ -50,7 +50,7 @@ import java.io.IOException;
  * Class is responsible for pre-processing of large unordered import files meant to go into partitioned tables.
  * It :
  * - scans whole file sequentially and extract timestamps and line offsets to per-partition index files
- * Index files are stored as $inputWorkDir/$inputFileName/$partitionName.idx .
+ * Index files are stored as $inputWorkDir/$inputFileName/$partitionName/$workerId_$chunkNumber
  * - starts W workers and using them
  * - sorts chunks by timestamp
  * - loads partitions in parallel into separate tables using index files
@@ -61,7 +61,6 @@ public class FileIndexer implements Closeable, Mutable {
 
     private static final Log LOG = LogFactory.getLog(FileIndexer.class);
 
-    //TODO: maybe fetch it from global config ?
     private static final int DEFAULT_MIN_CHUNK_SIZE = 300 * 1024 * 1024;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
 
@@ -71,6 +70,8 @@ public class FileIndexer implements Closeable, Mutable {
 
     //holds input for second phase - indexing: offset and start line number for each chunk
     private final LongList indexChunkStats = new LongList();
+    //stats calculated during indexing phase
+    private final LongList indexStats = new LongList();
 
     private final ObjList<TaskContext> contextObjList = new ObjList<>();
 
@@ -90,12 +91,9 @@ public class FileIndexer implements Closeable, Mutable {
     private final CharSequence inputWorkRoot;
 
     //input params start
-    //name of target table
     private CharSequence tableName;
-
     //name of file to process in inputRoot dir
     private CharSequence inputFileName;
-
     //name of timestamp column
     private CharSequence timestampColumn;
     private int partitionBy;
@@ -103,8 +101,9 @@ public class FileIndexer implements Closeable, Mutable {
     private TimestampAdapter timestampAdapter;
     private boolean forceHeader;
     //input params end
-
+    //index of timestamp column in input file
     private int timestampIndex;
+    private int maxLineLength;
 
     private final StringSink partitionNameSink = new StringSink();
     private final ObjList<CharSequence> partitionNames = new ObjList<>();
@@ -151,6 +150,7 @@ public class FileIndexer implements Closeable, Mutable {
         doneLatch.reset();
         chunkStats.clear();
         indexChunkStats.clear();
+        indexStats.clear();
         partitionNames.clear();
         partitionNameSink.clear();
         utf8Sink.clear();
@@ -161,16 +161,16 @@ public class FileIndexer implements Closeable, Mutable {
         inputFileName = null;
         tableName = null;
         timestampColumn = null;
+        timestampIndex = -1;
         partitionBy = -1;
         columnDelimiter = -1;
         timestampAdapter = null;
         forceHeader = false;
+        maxLineLength = 0;
 
         for (int i = 0; i < contextObjList.size(); i++) {
             contextObjList.get(i).clear();
         }
-
-        this.timestampColumn = null;
     }
 
     @Override
@@ -220,7 +220,6 @@ public class FileIndexer implements Closeable, Mutable {
             }
         }
 
-        // process our own queue (this should fix deadlock with 1 worker configuration)
         waitForWorkers(queuedCount);
 
         LOG.info().$("Finished index merge").$();
@@ -386,26 +385,28 @@ public class FileIndexer implements Closeable, Mutable {
             final CairoEngine engine = sqlExecutionContext.getCairoEngine();
             try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "partitions merge")) {
                 try {
-
                     findChunkBoundaries(fd);
                     indexChunks();
                     mergePartitionIndexes();
-
-                    for (int i = 0, sz = partitionNames.size(); i < sz; i++) {
-                        final CharSequence partitionDirName = partitionNames.get(i);
-                        try {
-                            final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
-                            writer.attachPartition(timestamp);
-                        } catch (CairoException e) {
-                            LOG.error().$("Cannot parse partition directory name=").$(partitionDirName).$();
-                        }
-                    }
+                    attachPartititons(writer);
                 } catch (Exception e) {
-                    System.err.println("e");
+                    LOG.error().$(e).$();
                 }
             }
         } finally {
             ff.close(fd);
+        }
+    }
+
+    private void attachPartititons(TableWriter writer) {
+        for (int i = 0, sz = partitionNames.size(); i < sz; i++) {
+            final CharSequence partitionDirName = partitionNames.get(i);
+            try {
+                final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
+                writer.attachPartition(timestamp);
+            } catch (CairoException e) {
+                LOG.error().$("Cannot parse partition directory name=").$(partitionDirName).$();
+            }
         }
     }
 
@@ -475,6 +476,9 @@ public class FileIndexer implements Closeable, Mutable {
 
         createWorkDir();
 
+        indexStats.setPos((indexChunkStats.size() - 2) / 2);
+        indexStats.zero(0);
+
         for (int i = 0, n = indexChunkStats.size() - 2; i < n; i += 2) {
             TaskContext context = contextObjList.get(i / 2);
             final long chunkLo = indexChunkStats.get(i);
@@ -483,9 +487,9 @@ public class FileIndexer implements Closeable, Mutable {
 
             final long seq = pubSeq.next();
             if (seq < 0) {
-                context.buildIndexStage(5 * i, chunkLo, chunkHi, lineNumber);
+                context.buildIndexStage(chunkLo, chunkHi, lineNumber, indexStats, i / 2);
             } else {
-                queue.get(seq).of(doneLatch, TextImportTask.PHASE_INDEXING, context, i / 2, chunkLo, chunkHi, lineNumber, chunkStats);
+                queue.get(seq).of(doneLatch, TextImportTask.PHASE_INDEXING, context, i / 2, chunkLo, chunkHi, lineNumber, indexStats);
                 pubSeq.done(seq);
                 queuedCount++;
             }
@@ -493,8 +497,16 @@ public class FileIndexer implements Closeable, Mutable {
 
         // process our own queue (this should fix deadlock with 1 worker configuration)
         waitForWorkers(queuedCount);
+        processIndexStats();
 
         LOG.info().$("Finished indexing file=").$(inputFilePath).$();
+    }
+
+    private void processIndexStats() {
+        maxLineLength = 0;
+        for (int i = 0, n = indexStats.size(); i < n; i++) {
+            maxLineLength = (int) Math.max(maxLineLength, indexStats.get(i));
+        }
     }
 
     private void processChunkStats(long fileLength, int chunks) {
@@ -535,6 +547,7 @@ public class FileIndexer implements Closeable, Mutable {
         }
     }
 
+    // process our own queue (this should fix deadlock with 1 worker configuration)
     private void waitForWorkers(int queuedCount) {
         // process our own queue (this should fix deadlock with 1 worker configuration)
         while (doneLatch.getCount() > -queuedCount) {
@@ -567,8 +580,8 @@ public class FileIndexer implements Closeable, Mutable {
             loader = new TextLoaderBase(cairoEngine);
         }
 
-        public void buildIndexStage(int index, long lo, long hi, long lineNumber) throws SqlException {
-            splitter.index(lo, hi, lineNumber);
+        public void buildIndexStage(long lo, long hi, long lineNumber, LongList indexStats, int index) throws SqlException {
+            splitter.index(lo, hi, lineNumber, indexStats, index);
         }
 
         @Override
@@ -599,7 +612,7 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         public void importPartitionData(long address, long size) {
-            int len = 4096;
+            int len = maxLineLength;
             long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
                 path.of(inputRoot).concat(inputFileName).$();
@@ -623,30 +636,69 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         public void mergeIndexStage(int index, long lo, long hi, final ObjList<CharSequence> partitionNames) throws TextException {
-            for (long i = lo; i < hi; i++) {
-                final CharSequence name = partitionNames.get((int) i);
+            loader.closeWriter();
+            loader.configureDestination(tableName + "_" + index, true, true, Atomicity.SKIP_ALL, loader.getPartitionBy(), timestampColumn);
+            loader.prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), path, typeManager);
+
+            try {
+                for (int i = (int) lo; i < hi; i++) {
+                    loader.restart(false);
+
+                    final CharSequence name = partitionNames.get(i);
+                    path.of(inputWorkRoot).concat(inputFileName).concat(name);
+
+                    mergePartitionIndexAndImportData(ff, path, mergeIndexes);
+
+                    loader.wrapUp();
+                }
+            } finally {
                 loader.closeWriter();
-                loader.configureDestination(name, true, true, Atomicity.SKIP_ALL, loader.getPartitionBy(), timestampColumn);
-                loader.prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), path, typeManager);
-                loader.restart(false);
-                path.of(inputWorkRoot).concat(inputFileName).concat(name);
-                mergePartitionIndexAndImportData(ff, path, name, mergeIndexes);
-                loader.wrapUp();
-                loader.clear();
+            }
+
+            for (int i = (int) lo; i < hi; i++) {
+                final CharSequence partitionName = partitionNames.get(i);
+                final CharSequence srcTableName = loader.getTableName();
+                movePartitionToDst(srcTableName, partitionName, tableName);
             }
         }
 
         public void mergePartitionIndexAndImportData(final FilesFacade ff,
                                                      final Path partitionPath,
-                                                     final CharSequence partitionFolder,
                                                      final DirectLongList mergeIndexes) {
-
             mergeIndexes.resetCapacity();
             mergeIndexes.clear();
 
             partitionPath.slash$();
             int partitionLen = partitionPath.length();
 
+            long mergedIndexSize = openIndexChunks(ff, partitionPath, mergeIndexes, partitionLen);
+
+            long address = -1;
+            try {
+                final int indexesCount = (int) mergeIndexes.size() / 2;
+                partitionPath.trimTo(partitionLen);
+                partitionPath.concat(FileSplitter.INDEX_FILE_NAME).$();
+
+                final long fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
+                address = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
+                ff.close(fd);
+
+                final long merged = Vect.mergeLongIndexesAscExt(mergeIndexes.getAddress(), indexesCount, address);
+                importPartitionData(merged, mergedIndexSize);
+            } finally {
+                if (address != -1) {
+                    ff.munmap(address, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
+                }
+                for (long i = 0, sz = mergeIndexes.size() / 2; i < sz; i++) {
+                    final long addr = mergeIndexes.get(2 * i);
+                    final long size = mergeIndexes.get(2 * i + 1) * FileSplitter.INDEX_ENTRY_SIZE;
+                    ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
+                }
+                //todo: remove all index chunks
+            }
+        }
+
+        private long openIndexChunks(FilesFacade ff, Path partitionPath, DirectLongList mergeIndexes, int partitionLen) {
             long mergedIndexSize = 0;
             long chunk = ff.findFirst(partitionPath);
             if (chunk > 0) {
@@ -672,30 +724,7 @@ public class FileIndexer implements Closeable, Mutable {
                     ff.findClose(chunk);
                 }
             }
-
-            long address = -1;
-            try {
-                final int indexesCount = (int) mergeIndexes.size() / 2;
-                partitionPath.trimTo(partitionLen);
-                partitionPath.concat(FileSplitter.INDEX_FILE_NAME).$();
-                final long fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
-                address = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
-                ff.close(fd);
-                final long merged = Vect.mergeLongIndexesAscExt(mergeIndexes.getAddress(), indexesCount, address);
-                importPartitionData(merged, mergedIndexSize);
-                final CharSequence srcTableName = loader.getTableName();
-                movePartitionToDst(srcTableName, partitionFolder, tableName);
-            } finally {
-                if (address != -1) {
-                    ff.munmap(address, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
-                }
-                for (long i = 0, sz = mergeIndexes.size() / 2; i < sz; i++) {
-                    final long addr = mergeIndexes.get(2 * i);
-                    final long size = mergeIndexes.get(2 * i + 1) * FileSplitter.INDEX_ENTRY_SIZE;
-                    ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
-                }
-                //todo: remove all index chunks
-            }
+            return mergedIndexSize;
         }
 
         public void of(CharSequence inputFileName, int index, int partitionBy, byte columnDelimiter, int timestampIndex, TimestampAdapter adapter, boolean ignoreHeader) {
@@ -709,9 +738,14 @@ public class FileIndexer implements Closeable, Mutable {
             final Path srcPath = Path.getThreadLocal(root).concat(srcTableName).concat(partitionFolder).$();
             final Path dstPath = Path.getThreadLocal2(root).concat(dstTableName).concat(partitionFolder).$();
             if (!ff.rename(srcPath, dstPath)) {
-                //todo: not on the same fs. copy&remove
+                LOG.error().$("Can't move").$(srcPath).$(" to ").$(dstPath).$(" errno=").$(ff.errno()).$();
             }
         }
 
+    }
+
+    @TestOnly
+    int getMaxLineLength() {
+        return maxLineLength;
     }
 }
