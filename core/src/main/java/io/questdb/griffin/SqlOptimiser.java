@@ -790,6 +790,7 @@ class SqlOptimiser {
     private void createSelectColumn(
             CharSequence columnName,
             ExpressionNode columnAst,
+            boolean hasSeenWildcardExpression,
             QueryModel validatingModel,
             QueryModel translatingModel,
             QueryModel innerModel,
@@ -805,6 +806,9 @@ class SqlOptimiser {
         LowerCaseCharSequenceObjHashMap<CharSequence> translatingAliasMap = translatingModel.getColumnNameToAliasMap();
         int index = translatingAliasMap.keyIndex(columnAst.token);
         if (index < 0) {
+            if (hasSeenWildcardExpression && translatingModel.getAliasToColumnMap().contains(columnName)) {
+                throw SqlException.duplicateColumn(columnAst.position, columnName);
+            }
             // column is already being referenced by translating model
             final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
             final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
@@ -960,6 +964,7 @@ class SqlOptimiser {
             createSelectColumn(
                     name,
                     nextLiteral(token, wildcardPosition),
+                    true,
                     null, // do not validate
                     translatingModel,
                     innerModel,
@@ -3014,6 +3019,7 @@ class SqlOptimiser {
         boolean outerVirtualIsSelectChoose = true;
 
         // create virtual columns from select list
+        boolean hasSeenWildcardExpression = false;
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             final boolean analytic = qc instanceof AnalyticColumn;
@@ -3034,10 +3040,12 @@ class SqlOptimiser {
                             outerVirtualModel,
                             distinctModel
                     );
+                    hasSeenWildcardExpression = true;
                 } else {
                     createSelectColumn(
                             qc.getAlias(),
                             qc.getAst(),
+                            hasSeenWildcardExpression,
                             baseModel,
                             translatingModel,
                             innerVirtualModel,
