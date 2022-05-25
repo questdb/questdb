@@ -3153,7 +3153,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
 
         engine.releaseAllWriters();
 
-        assertFailure(21, "Duplicate column [name=x]",
+        assertFailure(21, "Duplicate column [name=X]",
                 "insert into tab ( x, 'X', ts ) values ( 7, 10, 11 )");
     }
 

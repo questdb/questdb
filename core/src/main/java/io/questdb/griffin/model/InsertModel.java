@@ -48,7 +48,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         StringSink sink = Misc.getThreadLocalBuilder();
         Chars.toLowerCase(columnName, sink);
         if (!columnSet.add(sink.toString())) {
-            throw SqlException.duplicateColumn(columnPosition, sink);
+            throw SqlException.duplicateColumn(columnPosition, columnName);
         }
         columnPositions.add(columnPosition);
     }
