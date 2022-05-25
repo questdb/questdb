@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cutlass.text.types.TimestampAdapter;
+import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -141,7 +142,7 @@ public class FileIndexer implements Closeable, Mutable {
         this.defaultDateLocale = textConfiguration.getDefaultDateLocale();
 
         for (int i = 0; i < workerCount; i++) {
-            contextObjList.add(new TaskContext(sqlExecutionContext, textMetadataParser, typeManager));
+            contextObjList.add(new TaskContext(sqlExecutionContext, textConfiguration));
         }
     }
 
@@ -568,16 +569,15 @@ public class FileIndexer implements Closeable, Mutable {
         private final FileSplitter splitter;
         private final TextLoaderBase loader;
         private final CairoSecurityContext securityContext;
-        private final TextMetadataParser metadataParser;
         private final TypeManager typeManager;
 
-        public TaskContext(SqlExecutionContext sqlExecutionContext, TextMetadataParser metadataParser, TypeManager typeManager) {
+        public TaskContext(SqlExecutionContext sqlExecutionContext, TextConfiguration textConfiguration) {
             this.securityContext = sqlExecutionContext.getCairoSecurityContext();
-            this.metadataParser = metadataParser;
-            this.typeManager = typeManager;
+            DirectCharSink utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
+            this.typeManager = new TypeManager(textConfiguration, utf8Sink);
             final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
-            splitter = new FileSplitter(cairoEngine.getConfiguration());
-            loader = new TextLoaderBase(cairoEngine);
+            this.splitter = new FileSplitter(cairoEngine.getConfiguration());
+            this.loader = new TextLoaderBase(cairoEngine);
         }
 
         public void buildIndexStage(long lo, long hi, long lineNumber, LongList indexStats, int index) throws SqlException {
@@ -635,10 +635,24 @@ public class FileIndexer implements Closeable, Mutable {
 
         }
 
+        private ObjList<TypeAdapter> adjust(ObjList<TypeAdapter> types) {
+            ObjList<TypeAdapter> result = new ObjList<>();
+            for (int i = 0, n = types.size(); i < n; i++) {
+                int srcType = types.get(i).getType();
+                if (srcType == ColumnType.STRING || srcType == ColumnType.SYMBOL) {
+                    result.add(typeManager.getTypeAdapter(srcType));
+                } else {
+                    result.add(types.get(i));
+                }
+            }
+            return result;
+        }
+
         public void mergeIndexStage(int index, long lo, long hi, final ObjList<CharSequence> partitionNames) throws TextException {
             loader.closeWriter();
             loader.configureDestination(tableName + "_" + index, true, true, Atomicity.SKIP_ALL, loader.getPartitionBy(), timestampColumn);
-            loader.prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), path, typeManager);
+            ObjList<TypeAdapter> adjustedAdapters = adjust(textMetadataDetector.getColumnTypes());
+            loader.prepareTable(securityContext, textMetadataDetector.getColumnNames(), adjustedAdapters, path, typeManager);
 
             try {
                 for (int i = (int) lo; i < hi; i++) {
@@ -738,7 +752,7 @@ public class FileIndexer implements Closeable, Mutable {
             final Path srcPath = Path.getThreadLocal(root).concat(srcTableName).concat(partitionFolder).$();
             final Path dstPath = Path.getThreadLocal2(root).concat(dstTableName).concat(partitionFolder).$();
             if (!ff.rename(srcPath, dstPath)) {
-                LOG.error().$("Can't move").$(srcPath).$(" to ").$(dstPath).$(" errno=").$(ff.errno()).$();
+                LOG.error().$("Can't move ").$(srcPath).$(" to ").$(dstPath).$(" errno=").$(ff.errno()).$();
             }
         }
 

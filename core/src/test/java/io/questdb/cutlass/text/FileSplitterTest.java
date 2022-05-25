@@ -37,7 +37,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
     public void before() throws IOException {
         rnd.reset();
         inputRoot = new File(".").getAbsolutePath();
-        inputWorkRoot = temp.newFolder("imports" + System.currentTimeMillis()).getAbsolutePath();
+        inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
     }
 
     @Test
