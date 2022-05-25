@@ -24,8 +24,10 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<InsertModel> FACTORY = InsertModel::new;
@@ -42,12 +44,13 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     private InsertModel() {
     }
 
-    public boolean addColumn(CharSequence columnName, int columnPosition) {
-        if (columnSet.add(columnName)) {
-            columnPositions.add(columnPosition);
-            return true;
+    public void addColumn(CharSequence columnName, int columnPosition) throws SqlException {
+        StringSink sink = Misc.getThreadLocalBuilder();
+        Chars.toLowerCase(columnName, sink);
+        if (!columnSet.add(sink.toString())) {
+            throw SqlException.duplicateColumn(columnPosition, sink);
         }
-        return false;
+        columnPositions.add(columnPosition);
     }
 
     public void addRowTupleValues(ObjList<ExpressionNode> row) {

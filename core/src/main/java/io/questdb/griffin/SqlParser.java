@@ -30,7 +30,6 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -1267,12 +1266,7 @@ public final class SqlParser {
                     throw err(lexer, "missing column name");
                 }
 
-                StringSink sink = Misc.getThreadLocalBuilder();
-                Chars.toLowerCase(GenericLexer.unquote(tok), sink);
-                tok = sink.toString();
-                if (!model.addColumn(tok, lexer.lastTokenPosition())) {
-                    throw SqlException.duplicateColumn(lexer.lastTokenPosition(), tok);
-                }
+                model.addColumn(GenericLexer.unquote(tok), lexer.lastTokenPosition());
 
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
 
@@ -1594,7 +1588,7 @@ public final class SqlParser {
             }
 
             col.setAlias(alias);
-            model.addBottomUpColumn(lexer.lastTokenPosition(), col, false);
+            model.addBottomUpColumn(colPosition, col, false);
 
             if (tok == null || Chars.equals(tok, ';')) {
                 lexer.unparseLast();

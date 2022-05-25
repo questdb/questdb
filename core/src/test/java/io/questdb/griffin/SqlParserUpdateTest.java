@@ -127,7 +127,7 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     @Test
     public void testUpdateSameColumnTwiceFails1() throws Exception {
         assertSyntaxError(
-                "update tblx set x = 1, s = 'abc', 'X' = 2",
+                "update tblx set x = 1, s = 'abc', \"X\" = 2",
                 "update tblx set x = 1, s = 'abc', ".length(),
                 "Duplicate column [name=X] in SET clause",
                 partitionedModelOf("tblx")

@@ -3198,7 +3198,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         //     but alas that alias is taken, so it fabricates alias ts1
         // 3.- then it finds column t1.ts again, but this time with an explicit alias ts1, which is taken by the prev.
         //     column and therefore is a duplicate, so the reported error is correct -> Duplicate column 'ts1'
-        assertFailure(42, "Duplicate column [name=ts1]",
+        assertFailure(35, "Duplicate column [name=ts1]",
                 "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;");
 
         // in this case, the optimizer, left to right, expands "t1.*" to x, ts1, and then the user defines
