@@ -813,7 +813,7 @@ class SqlOptimiser {
             final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
             final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
             final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName);
-            innerModel.addBottomUpColumn(0, translatedColumn, true);
+            innerModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
             groupByModel.addBottomUpColumn(translatedColumn);
 
             // analytic model is used together with inner model
