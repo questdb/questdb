@@ -24,20 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Acceptor;
-import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjIntHashMap;
-import io.questdb.std.Os;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.junit.Test;
 
@@ -45,7 +37,7 @@ import java.io.Closeable;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractGriffinTest {
 
@@ -79,6 +71,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void symbolWal() {
         String tableName = "testtable";
         String walName;
+        IntList walSymbolCounts = new IntList();
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
@@ -87,15 +80,68 @@ public class WalWriterTest extends AbstractGriffinTest {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             path.trimTo(plen);
+
+            try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "symbolTest")) {
+                for (int i = 0; i < 5; i++) {
+                    TableWriter.Row row = tableWriter.newRow();
+                    row.putByte(0, (byte) i);
+                    row.putSym(1, "sym" + i);
+                    row.append();
+                }
+                tableWriter.commit();
+            }
+
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
-                for (int i = 0; i < 50; i++) {
+                for (int i = 0; i < 10; i++) {
                     WalWriter.Row row = walWriter.newRow();
                     row.putByte(0, (byte) i);
                     row.putSym(1, "sym" + i);
                     row.append();
                 }
+
+                walSymbolCounts.add(walWriter.getSymbolMapWriter(1).getSymbolCount());
+                walWriter.commit();
             }
+
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                assertEquals(2, reader.getColumnCount());
+                // put this back when WalWriter stops ingesting into TableWriter's column files
+//                assertEquals(5, reader.getTransientRowCount());
+                RecordCursor cursor = reader.getCursor();
+                Record record = cursor.getRecord();
+                // put this back when WalWriter stops ingesting into TableWriter's column files
+//                int i = 0;
+//                while (cursor.hasNext()) {
+//                    assertEquals(i, record.getByte(0));
+//                    assertEquals("sym" + i++, record.getSym(1));
+//                }
+                for (int i = 0; i < 5; i++) {
+                    assertTrue(cursor.hasNext());
+                    assertEquals(i, record.getByte(0));
+                    assertEquals("sym" + i, record.getSym(1));
+                    assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
+                }
+                //assertNull(reader.getSymbolMapReader(1).valueOf(5));
+            }
+
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, walSymbolCounts)) {
+                assertEquals(2, reader.getColumnCount());
+                // pass row count to WalReader in constructor for now, same as symbol counts
+                // assertEquals(10, reader.getTransientRowCount());
+                RecordCursor cursor = reader.getCursor();
+                Record record = cursor.getRecord();
+//                int i = 0;
+//                while (cursor.hasNext()) {
+//                    assertEquals(i, record.getByte(0));
+//                    assertEquals("sym" + i++, record.getSym(1));
+//                }
+                for (int i = 0; i < 10; i++) {
+                    assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
+                }
+                assertNull(reader.getSymbolMapReader(1).valueOf(10));
+            }
+
             assertWalFileExist(tableName, walName, "a", 0, path);
             assertWalFileExist(tableName, walName, "b", 0, path);
             assertWalSymbolFileExist(tableName, walName, "b", ".c", path);

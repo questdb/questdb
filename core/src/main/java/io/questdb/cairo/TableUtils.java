@@ -66,6 +66,9 @@ public final class TableUtils {
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // LONG
     public static final long META_OFFSET_COMMIT_LAG = 24; // LONG
     public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
+    public static final long WAL_META_OFFSET_VERSION = 0;
+    public static final long WAL_META_OFFSET_COUNT = 4;
+    public static final long WAL_META_OFFSET_COLUMNS = 8;
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
 
@@ -840,6 +843,70 @@ public final class TableUtils {
                 } else {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
                 }
+            }
+        } catch (Throwable e) {
+            nameIndex.clear();
+            throw e;
+        }
+    }
+
+    public static void validateWalMeta(
+            MemoryMR metaMem,
+            ObjList<TableColumnMetadata> columnMetadata,
+            LowerCaseCharSequenceIntHashMap nameIndex,
+            int expectedVersion
+    ) {
+        try {
+            long memSize = metaMem.size();
+            if (memSize < WAL_META_OFFSET_COLUMNS) {
+                throw CairoException.instance(0).put(". File is too small ").put(memSize);
+            }
+
+            final int metaVersion = metaMem.getInt(WAL_META_OFFSET_VERSION);
+            if (expectedVersion != metaVersion) {
+                throw validationException(metaMem)
+                        .put("Metadata version does not match runtime version [expected=").put(expectedVersion)
+                        .put(", actual=").put(metaVersion)
+                        .put(']');
+            }
+
+            final int columnCount = metaMem.getInt(WAL_META_OFFSET_COUNT);
+            if (columnCount < 0) {
+                throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
+            }
+
+            // validate column types and names
+            long offset = WAL_META_OFFSET_COLUMNS;
+            for (int i = 0; i < columnCount; i++) {
+                if (memSize < offset + 2 * Integer.BYTES) {
+                    throw CairoException.instance(0).put(". File is too small ").put(memSize);
+                }
+                final int type = metaMem.getInt(offset);
+                if (ColumnType.sizeOf(type) == -1) {
+                    throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
+                }
+                offset += Integer.BYTES;
+
+                final int strLength = metaMem.getInt(offset);
+                if (strLength == TableUtils.NULL_LEN) {
+                    throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
+                }
+                if (strLength < 1 || strLength > 255 || offset + Vm.getStorageLength(strLength) > memSize) {
+                    // EXT4 and many others do not allow file name length > 255 bytes
+                    throw validationException(metaMem)
+                            .put("Column name length of ")
+                            .put(strLength).put(" is invalid at offset ")
+                            .put(offset);
+                }
+
+                final CharSequence name = metaMem.getStr(offset);
+                nameIndex.put(name, i);
+                if (ColumnType.isSymbol(type)) {
+                    columnMetadata.add(new TableColumnMetadata(name.toString(), -1L, type, true, 1024, true, null));
+                } else {
+                    columnMetadata.add(new TableColumnMetadata(name.toString(), -1L, type));
+                }
+                offset += Vm.getStorageLength(name);
             }
         } catch (Throwable e) {
             nameIndex.clear();

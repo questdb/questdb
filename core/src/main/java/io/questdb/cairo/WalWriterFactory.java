@@ -25,5 +25,5 @@
 package io.questdb.cairo;
 
 public interface WalWriterFactory {
-    WalWriter createWal();
+    WalWriter createWal(TableReader reader);
 }
