@@ -361,6 +361,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                      .col("char", ColumnType.CHAR)
                      .col("boolean", ColumnType.BOOLEAN)
                      .col("date", ColumnType.DATE)
+                     .col("string", ColumnType.STRING)
                      .timestamp("ts")
         ) {
             int plen = path.length();
@@ -382,10 +383,10 @@ public class WalWriterTest extends AbstractGriffinTest {
                     row.putChar(8, (char) i);
                     row.putBool(9, i % 2 == 0);
                     row.putDate(10, i);
+                    row.putStr(11, String.valueOf(i));
                     row.append();
                 }
             }
-
 
             try (WalSegmentDataReader segmentReader = new WalSegmentDataReader(configuration.getFilesFacade(), toWalPath(tableName, walName, 0, path))) {
                 int intIndex = segmentReader.getColumnIndex("int");
@@ -400,6 +401,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 int charIndex = segmentReader.getColumnIndex("char");
                 int booleanIndex = segmentReader.getColumnIndex("boolean");
                 int dateIndex = segmentReader.getColumnIndex("date");
+                int stringIndex = segmentReader.getColumnIndex("string");
                 for (int i = 0; i < rowsToInsertTotal; i++) {
                     assertEquals(i, segmentReader.nextInt(intIndex));
                     assertEquals(i, segmentReader.nextByte(byteIndex));
@@ -414,8 +416,15 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(i, segmentReader.nextChar(charIndex));
                     assertEquals(i % 2 == 0, segmentReader.nextBool(booleanIndex));
                     assertEquals(i, segmentReader.nextDate(dateIndex));
+                    assertCharsEquals(String.valueOf(i), segmentReader.nextString(stringIndex));
                 }
             }
+        }
+    }
+
+    private static void assertCharsEquals(CharSequence expected, CharSequence actual) {
+        if (!Chars.equals(expected, actual)) {
+            throw new AssertionError("CharSequence not equal. Expected: '" + expected + "', actual: '" + " actual '");
         }
     }
 
@@ -528,9 +537,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                 int columnCount = walMetadataReader.getColumnCount();
                 for (int i = 0; i < columnCount; i++) {
                     String name = walMetadataReader.getColumnName(i);
-                    MemoryMR mem = Vm.getMRInstance();
-                    mem.wholeFile(ff, TableUtils.walDFile(path.trimTo(plen), name), MemoryTag.MMAP_DEFAULT);
-                    primaryColumns.add(mem);
+                    MemoryMR primaryMem = Vm.getMRInstance();
+                    primaryMem.wholeFile(ff, TableUtils.walDFile(path.trimTo(plen), name), MemoryTag.MMAP_DEFAULT);
+                    primaryColumns.add(primaryMem);
                     name2columns.put(name, i);
                 }
                 offsets.setAll(columnCount, 0);
@@ -560,6 +569,14 @@ public class WalWriterTest extends AbstractGriffinTest {
             long offset = offsets.get(columnIndex);
             byte result = primaryColumns.get(columnIndex).getByte(offset);
             offset += Byte.BYTES;
+            offsets.set(columnIndex, offset);
+            return result;
+        }
+
+        public CharSequence nextString(int columnIndex) {
+            long offset = offsets.get(columnIndex);
+            CharSequence result = primaryColumns.get(columnIndex).getStr(offset);
+            offset += Vm.getStorageLength(result.length());
             offsets.set(columnIndex, offset);
             return result;
         }
