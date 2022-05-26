@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.Constants;
@@ -74,7 +73,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 throw SqlException.$(argPositions.getQuick(i), "constant expected");
             }
 
-            if (!SqlCompiler.isAssignableFrom(keyType, keyArgType)) {
+            if (!ColumnType.isAssignableFrom(keyType, keyArgType)) {
                 throw SqlException.position(argPositions.getQuick(i))
                         .put("type mismatch [expected=").put(ColumnType.nameOf(keyType))
                         .put(", actual=").put(ColumnType.nameOf(keyArgType))

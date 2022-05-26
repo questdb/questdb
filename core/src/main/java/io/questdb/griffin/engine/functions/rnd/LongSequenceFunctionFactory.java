@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -53,7 +52,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         final Function seedHiFunc;
         if (args != null) {
             final int argCount = args.size();
-            if (argCount == 1 && SqlCompiler.isAssignableFrom(ColumnType.LONG, (countFunc = args.getQuick(0)).getType())) {
+            if (argCount == 1 && ColumnType.isAssignableFrom(ColumnType.LONG, (countFunc = args.getQuick(0)).getType())) {
                 return new CursorFunction(
                         new LongSequenceCursorFactory(METADATA, countFunc.getLong(null))
                 );
@@ -61,9 +60,9 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
             if (
                     argCount > 2
-                            && SqlCompiler.isAssignableFrom(ColumnType.LONG, (countFunc = args.getQuick(0)).getType())
-                            && SqlCompiler.isAssignableFrom(ColumnType.LONG, (seedLoFunc = args.getQuick(1)).getType())
-                            && SqlCompiler.isAssignableFrom(ColumnType.LONG, (seedHiFunc = args.getQuick(2)).getType())
+                            && ColumnType.isAssignableFrom(ColumnType.LONG, (countFunc = args.getQuick(0)).getType())
+                            && ColumnType.isAssignableFrom(ColumnType.LONG, (seedLoFunc = args.getQuick(1)).getType())
+                            && ColumnType.isAssignableFrom(ColumnType.LONG, (seedHiFunc = args.getQuick(2)).getType())
             ) {
                 return new CursorFunction(
                         new SeedingLongSequenceCursorFactory(

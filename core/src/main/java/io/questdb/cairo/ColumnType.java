@@ -126,12 +126,50 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
+    public static boolean isAssignableFrom(int to, int from) {
+        final int toTag = tagOf(to);
+        final int fromTag = tagOf(from);
+        return toTag == fromTag
+                || isBuiltInWideningCast(to, from)
+                || isStringCast(to, from)
+                || isGeoHashWideningCast(to, from)
+                || isImplicitParsingCast(to, toTag, fromTag)
+                || isNarrowingCast(to, from)
+                ;
+    }
+
+    public static boolean isToSameOrWider(int to, int from) {
+        final int toTag = tagOf(to);
+        final int fromTag = tagOf(from);
+        return toTag == fromTag
+                || isBuiltInWideningCast(to, from)
+                || isStringCast(to, from)
+                || isGeoHashWideningCast(to, from)
+                ;
+    }
+
     public static boolean isBinary(int columnType) {
         return columnType == BINARY;
     }
 
     public static boolean isBoolean(int columnType) {
         return columnType == ColumnType.BOOLEAN;
+    }
+
+    public static boolean isBuiltInWideningCast(int toType, int fromType) {
+        // This method returns true when a cast is not needed from type to type
+        // because of the way typed functions are implemented.
+        // For example IntFunction has getDouble() method implemented and does not need
+        // additional wrap function to CAST to double.
+        // This is usually case for widening conversions.
+        return (fromType >= BYTE
+                && toType >= BYTE
+                && toType <= DOUBLE
+                && fromType < toType)
+                || fromType == NULL
+                // char can be short and short can be char for symmetry
+                || (fromType == CHAR && toType == SHORT)
+                || (fromType == TIMESTAMP && toType == LONG);
     }
 
     public static boolean isChar(int columnType) {
@@ -263,6 +301,47 @@ public final class ColumnType {
             }
         }
         return -1;
+    }
+
+    private static boolean isStringCast(int toType, int fromType) {
+        return (fromType == STRING && toType == SYMBOL)
+                || (fromType == SYMBOL && toType == STRING)
+                || (fromType == CHAR && toType == SYMBOL)
+                || (fromType == CHAR && toType == STRING);
+    }
+
+    private static boolean isGeoHashWideningCast(int to, int from) {
+        final int toTag = tagOf(to);
+        final int fromTag = tagOf(from);
+        return (toTag == fromTag
+                && (
+                getGeoHashBits(from) > getGeoHashBits(to)
+                        || getGeoHashBits(from) == 0))
+                || (fromTag == GEOLONG && toTag == GEOINT)
+                || (fromTag == GEOLONG && toTag == GEOSHORT)
+                || (fromTag == GEOLONG && toTag == GEOBYTE)
+                || (fromTag == GEOINT && toTag == GEOSHORT)
+                || (fromTag == GEOINT && toTag == GEOBYTE)
+                || (fromTag == GEOSHORT && toTag == GEOBYTE);
+    }
+
+    private static boolean isImplicitParsingCast(int to, int toTag, int fromTag) {
+        return (fromTag == CHAR && toTag == GEOBYTE && getGeoHashBits(to) < 6)
+                || (fromTag == STRING && toTag == GEOBYTE)
+                || (fromTag == STRING && toTag == GEOSHORT)
+                || (fromTag == STRING && toTag == GEOINT)
+                || (fromTag == STRING && toTag == GEOLONG)
+                || (fromTag == STRING && toTag == TIMESTAMP)
+                || (fromTag == SYMBOL && toTag == TIMESTAMP)
+                ;
+    }
+
+    private static boolean isNarrowingCast(int toType, int fromType) {
+        return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
+                || (fromType == FLOAT && toType >= BYTE && toType <= LONG)
+                || (fromType == LONG && toType >= BYTE && toType <= INT)
+                || (fromType == INT && toType >= BYTE && toType <= SHORT)
+                || (fromType == SHORT && toType == BYTE);
     }
 
     static {

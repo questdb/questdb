@@ -36,28 +36,10 @@ import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        // GeoHashes are of different lengths
-        // and can be cast to lower precision
-        // for example cast(cast('questdb' as geohash(6c)) as geohash(5c))
-        return "cast(Gg)";
-    }
-
-    @Override
-    public Function newInstance(int position,
-                                ObjList<Function> args,
-                                IntList argPositions,
-                                CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Function value = args.getQuick(0);
-        int srcType = value.getType();
-        int targetType = args.getQuick(1).getType();
-        return newInstance(position, value, srcType, targetType);
-    }
-
     public static Function newInstance(int position, Function value, int srcType, int targetType) throws SqlException {
         int srcBitsPrecision = ColumnType.getGeoHashBits(srcType);
         int targetBitsPrecision = ColumnType.getGeoHashBits(targetType);
@@ -82,18 +64,66 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
             return Constants.getNullConstant(targetType);
         }
 
-        throw SqlException.position(position)
-                .put("CAST cannot decrease precision from GEOHASH(")
-                .put(srcBitsPrecision)
-                .put("b) to GEOHASH(")
-                .put(targetBitsPrecision)
-                .put("b)");
+        switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+                throw SqlException.position(position)
+                        .put("CAST cannot decrease precision from GEOHASH(")
+                        .put(srcBitsPrecision)
+                        .put("b) to GEOHASH(")
+                        .put(targetBitsPrecision)
+                        .put("b)");
+            case ColumnType.STRING:
+                switch (ColumnType.tagOf(srcType)) {
+                    case ColumnType.GEOBYTE:
+                        if (srcBitsPrecision % 5 == 0) {
+                            return new CastGeoByteToStrCharsFunc(value, srcBitsPrecision / 5);
+                        }
+                        return new CastGeoByteToStrBitsFunc(value, srcBitsPrecision);
+                    case ColumnType.GEOSHORT:
+                        if (srcBitsPrecision % 5 == 0) {
+                            return new CastGeoShortToStrCharsFunc(value, srcBitsPrecision / 5);
+                        }
+                        return new CastGeoShortToStrBitsFunc(value, srcBitsPrecision);
+                }
+            default:
+                throw SqlException.position(position)
+                        .put("cannot cast GEOHASH(")
+                        .put(srcBitsPrecision)
+                        .put("b) to ")
+                        .put(ColumnType.nameOf(targetType));
+        }
+    }
+
+    @Override
+    public String getSignature() {
+        // GeoHashes are of different lengths
+        // and can be cast to lower precision
+        // for example cast(cast('questdb' as geohash(6c)) as geohash(5c))
+        return "cast(Gg)";
+    }
+
+    @Override
+    public Function newInstance(int position,
+                                ObjList<Function> args,
+                                IntList argPositions,
+                                CairoConfiguration configuration,
+                                SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final Function value = args.getQuick(0);
+        int srcType = value.getType();
+        int targetType = args.getQuick(1).getType();
+        return newInstance(position, value, srcType, targetType);
     }
 
     private static Function castFunc(int shift, int targetType, Function value, int srcType) {
         switch (ColumnType.tagOf(srcType)) {
             case ColumnType.GEOBYTE:
-                return new CastByteFunc(shift, targetType, value);
+                if (ColumnType.tagOf(targetType) == ColumnType.GEOBYTE) {
+                    return new CastByteFunc(shift, targetType, value);
+                }
+                break;
             case ColumnType.GEOSHORT:
                 switch (ColumnType.tagOf(targetType)) {
                     case ColumnType.GEOBYTE:
@@ -335,6 +365,115 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public byte getGeoByte(Record rec) {
             return (byte) (value.getGeoByte(rec) >> shift);
+        }
+    }
+
+    private static class CastGeoByteToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoByteToStrCharsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoByte(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendCharsUnsafe(value, bits, sink);
+        }
+    }
+
+    private static class CastGeoShortToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoShortToStrCharsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoShort(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendCharsUnsafe(value, bits, sink);
+        }
+    }
+
+    private static class CastGeoByteToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoByteToStrBitsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoByte(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
+        }
+    }
+
+    private static class CastGeoShortToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoShortToStrBitsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoShort(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
+        }
+    }
+
+    private static abstract class AbstractCastGeoByteToStrFunction extends StrFunction implements UnaryFunction {
+        protected final Function value;
+        protected final int bits;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public AbstractCastGeoByteToStrFunction(Function value, int bits) {
+            this.value = value;
+            this.bits = bits;
+        }
+
+        @Override
+        public final Function getArg() {
+            return value;
+        }
+
+        @Override
+        public final CharSequence getStr(Record rec) {
+            return toSink(getValue(rec), sinkA);
+        }
+
+        @Override
+        public final CharSequence getStrB(Record rec) {
+            return toSink(getValue(rec), sinkB);
+        }
+
+        protected abstract long getValue(Record rec);
+
+        protected abstract void print(long value, CharSink sink);
+
+        private StringSink toSink(long value, StringSink sink) {
+            sink.clear();
+            if (value == GeoHashes.NULL) {
+                sink.put("null");
+            } else {
+                print(value, sink);
+            }
+            return sink;
         }
     }
 }

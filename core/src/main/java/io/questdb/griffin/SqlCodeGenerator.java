@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastLong256ToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.constants.*;
@@ -751,19 +752,212 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     castFunctions.add(new IntColumn(i));
                     break;
                 case ColumnType.LONG:
-                    castFunctions.add(new LongColumn(i));
+                    switch (fromType) {
+                        // BOOLEAN will not be cast to LONG
+                        // in cast of BOOLEAN -> LONG combination both will be cast to STRING
+                        case ColumnType.BYTE:
+                            castFunctions.add(new ByteColumn(i));
+                            break;
+                        case ColumnType.SHORT:
+                            castFunctions.add(new ShortColumn(i));
+                            break;
+                        case ColumnType.CHAR:
+                            castFunctions.add(new CharColumn(i));
+                            break;
+                        case ColumnType.INT:
+                            castFunctions.add(new IntColumn(i));
+                            break;
+                        case ColumnType.LONG:
+                            castFunctions.add(new LongColumn(i));
+                            break;
+                        // wider types are not possible here
+                        // LONG will be cast to wider types, not other way around
+                        // Winder types tested are: FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                        // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+                        case ColumnType.BINARY:
+                            castFunctions.add(new BinColumn(i));
+                            break;
+                    }
                     break;
                 case ColumnType.DATE:
-                    castFunctions.add(new DateColumn(i));
+                    switch (fromType) {
+                        case ColumnType.BOOLEAN:
+                            castFunctions.add(new BooleanColumn(i));
+                            break;
+                        case ColumnType.BYTE:
+                            castFunctions.add(new ByteColumn(i));
+                            break;
+                        case ColumnType.SHORT:
+                            castFunctions.add(new ShortColumn(i));
+                            break;
+                        case ColumnType.CHAR:
+                            castFunctions.add(new CharColumn(i));
+                            break;
+                        case ColumnType.INT:
+                            castFunctions.add(new IntColumn(i));
+                            break;
+                        case ColumnType.LONG:
+                            castFunctions.add(new LongColumn(i));
+                            break;
+                        case ColumnType.DATE:
+                            castFunctions.add(new DateColumn(i));
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            castFunctions.add(new TimestampColumn(i));
+                            break;
+                        case ColumnType.FLOAT:
+                            castFunctions.add(new FloatColumn(i));
+                            break;
+                        case ColumnType.DOUBLE:
+                            castFunctions.add(new DoubleColumn(i));
+                            break;
+                        case ColumnType.STRING:
+                            castFunctions.add(new StrColumn(i));
+                            break;
+                        case ColumnType.SYMBOL:
+                            // treat symbol as string
+                            castFunctions.add(new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))));
+                            break;
+                        case ColumnType.LONG256:
+                            castFunctions.add(new CastLong256ToStrFunctionFactory.CastLong256ToStrFunction(new Long256Column(i)));
+                            break;
+                        case ColumnType.GEOBYTE:
+                            castFunctions.add(new GeoByteColumn(i, setType));
+                            break;
+                        case ColumnType.GEOSHORT:
+                            castFunctions.add(new GeoShortColumn(i, setType));
+                            break;
+                        case ColumnType.GEOINT:
+                            castFunctions.add(new GeoIntColumn(i, setType));
+                            break;
+                        case ColumnType.GEOLONG:
+                            castFunctions.add(new GeoLongColumn(i, setType));
+                            break;
+                        case ColumnType.BINARY:
+                            castFunctions.add(new BinColumn(i));
+                            break;
+                    }
                     break;
                 case ColumnType.TIMESTAMP:
                     castFunctions.add(new TimestampColumn(i));
                     break;
                 case ColumnType.FLOAT:
-                    castFunctions.add(new FloatColumn(i));
+                    switch (fromType) {
+                        case ColumnType.BOOLEAN:
+                            castFunctions.add(new BooleanColumn(i));
+                            break;
+                        case ColumnType.BYTE:
+                            castFunctions.add(new ByteColumn(i));
+                            break;
+                        case ColumnType.SHORT:
+                            castFunctions.add(new ShortColumn(i));
+                            break;
+                        case ColumnType.CHAR:
+                            castFunctions.add(new CharColumn(i));
+                            break;
+                        case ColumnType.INT:
+                            castFunctions.add(new IntColumn(i));
+                            break;
+                        case ColumnType.LONG:
+                            castFunctions.add(new LongColumn(i));
+                            break;
+                        case ColumnType.DATE:
+                            castFunctions.add(new DateColumn(i));
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            castFunctions.add(new TimestampColumn(i));
+                            break;
+                        case ColumnType.FLOAT:
+                            castFunctions.add(new FloatColumn(i));
+                            break;
+                        case ColumnType.DOUBLE:
+                            castFunctions.add(new DoubleColumn(i));
+                            break;
+                        case ColumnType.STRING:
+                            castFunctions.add(new StrColumn(i));
+                            break;
+                        case ColumnType.SYMBOL:
+                            // treat symbol as string
+                            castFunctions.add(new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))));
+                            break;
+                        case ColumnType.LONG256:
+                            castFunctions.add(new CastLong256ToStrFunctionFactory.CastLong256ToStrFunction(new Long256Column(i)));
+                            break;
+                        case ColumnType.GEOBYTE:
+                            castFunctions.add(new GeoByteColumn(i, setType));
+                            break;
+                        case ColumnType.GEOSHORT:
+                            castFunctions.add(new GeoShortColumn(i, setType));
+                            break;
+                        case ColumnType.GEOINT:
+                            castFunctions.add(new GeoIntColumn(i, setType));
+                            break;
+                        case ColumnType.GEOLONG:
+                            castFunctions.add(new GeoLongColumn(i, setType));
+                            break;
+                        case ColumnType.BINARY:
+                            castFunctions.add(new BinColumn(i));
+                            break;
+                    }
                     break;
                 case ColumnType.DOUBLE:
-                    castFunctions.add(new DoubleColumn(i));
+                    switch (fromType) {
+                        case ColumnType.BOOLEAN:
+                            castFunctions.add(new BooleanColumn(i));
+                            break;
+                        case ColumnType.BYTE:
+                            castFunctions.add(new ByteColumn(i));
+                            break;
+                        case ColumnType.SHORT:
+                            castFunctions.add(new ShortColumn(i));
+                            break;
+                        case ColumnType.CHAR:
+                            castFunctions.add(new CharColumn(i));
+                            break;
+                        case ColumnType.INT:
+                            castFunctions.add(new IntColumn(i));
+                            break;
+                        case ColumnType.LONG:
+                            castFunctions.add(new LongColumn(i));
+                            break;
+                        case ColumnType.DATE:
+                            castFunctions.add(new DateColumn(i));
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            castFunctions.add(new TimestampColumn(i));
+                            break;
+                        case ColumnType.FLOAT:
+                            castFunctions.add(new FloatColumn(i));
+                            break;
+                        case ColumnType.DOUBLE:
+                            castFunctions.add(new DoubleColumn(i));
+                            break;
+                        case ColumnType.STRING:
+                            castFunctions.add(new StrColumn(i));
+                            break;
+                        case ColumnType.SYMBOL:
+                            // treat symbol as string
+                            castFunctions.add(new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))));
+                            break;
+                        case ColumnType.LONG256:
+                            castFunctions.add(new CastLong256ToStrFunctionFactory.CastLong256ToStrFunction(new Long256Column(i)));
+                            break;
+                        case ColumnType.GEOBYTE:
+                            castFunctions.add(new GeoByteColumn(i, setType));
+                            break;
+                        case ColumnType.GEOSHORT:
+                            castFunctions.add(new GeoShortColumn(i, setType));
+                            break;
+                        case ColumnType.GEOINT:
+                            castFunctions.add(new GeoIntColumn(i, setType));
+                            break;
+                        case ColumnType.GEOLONG:
+                            castFunctions.add(new GeoLongColumn(i, setType));
+                            break;
+                        case ColumnType.BINARY:
+                            castFunctions.add(new BinColumn(i));
+                            break;
+                    }
                     break;
                 case ColumnType.STRING:
                     switch (fromType) {
@@ -783,7 +977,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctions.add(new IntColumn(i));
                             break;
                         case ColumnType.LONG:
-                            castFunctions.add(new LongColumn(i));
+                            castFunctions.add(new CastLongToStrFunctionFactory.CastLongToStrFunction(new LongColumn(i)));
                             break;
                         case ColumnType.DATE:
                             castFunctions.add(new DateColumn(i));
@@ -2744,7 +2938,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int columnType = function.getType();
                 if (targetColumnType != -1 && targetColumnType != columnType) {
                     // This is an update and the target column does not match with column the update is trying to perform
-                    if (SqlCompiler.builtInFunctionCast(targetColumnType, function.getType())) {
+                    if (ColumnType.isBuiltInWideningCast(targetColumnType, function.getType())) {
                         // All functions will be able to getLong() if they support getInt(), no need to generate cast here
                         columnType = targetColumnType;
                     } else {
@@ -3764,9 +3958,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (typeA == typeB && typeA != ColumnType.SYMBOL) {
                 metadata.add(BaseRecordMetadata.copyOf(typesA, i));
-            } else if (SqlCompiler.isAssignableFrom(typeA, typeB) && typeA != ColumnType.SYMBOL) {
+            } else if (ColumnType.isToSameOrWider(typeA, typeB) && typeA != ColumnType.SYMBOL) {
                 metadata.add(BaseRecordMetadata.copyOf(typesA, i));
-            } else if (SqlCompiler.isAssignableFrom(typeB, typeA) && typeB != ColumnType.SYMBOL) {
+            } else if (ColumnType.isToSameOrWider(typeB, typeA) && typeB != ColumnType.SYMBOL) {
                 // even though A is assignable to B (e.g. A union B)
                 // set metadata will use A column names
                 metadata.add(new TableColumnMetadata(
