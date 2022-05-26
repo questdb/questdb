@@ -395,7 +395,7 @@ public class FileIndexer implements Closeable, Mutable {
     void prepareContexts() {
         for (int i = 0; i < contextObjList.size(); i++) {
             TaskContext context = contextObjList.get(i);
-            context.of(i, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes());
+            context.of(i, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), forceHeader);
             if (forceHeader) {
                 forceHeader = false;//Assumption: only first splitter will process file with header
             }
@@ -712,13 +712,13 @@ public class FileIndexer implements Closeable, Mutable {
             }
         }
 
-        public void of(int index, ObjList<CharSequence> names, ObjList<TypeAdapter> types) {
+        public void of(int index, ObjList<CharSequence> names, ObjList<TypeAdapter> types, boolean forceHeader) {
             this.names = names;
             this.types = adjust(types);
             this.timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
             this.lexer.of(columnDelimiter);
             this.lexer.setSkipLinesWithExtraValues(false);
-            this.splitter.of(inputFileName, index, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, true);
+            this.splitter.of(inputFileName, index, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader);
         }
 
         public void setCurrentTableName(final CharSequence tableName) {
