@@ -3199,7 +3199,7 @@ public class WalWriter implements Closeable {
             getPrimaryColumn(columnIndex).putLong256(l0, l1, l2, l3);
             setRowValueNotNull(columnIndex);
 
-            getPrimaryWalDColumn(columnIndex).putLong256(l1, l2, l2, l3);
+            getPrimaryWalDColumn(columnIndex).putLong256(l0, l1, l2, l3);
             setWalDRowValueNotNull(columnIndex);
         }
 
