@@ -1643,7 +1643,7 @@ public class TableWriter implements Closeable {
 
                 long mappedAddr = mapRO(ff, indexFd, expectedFileSize, MemoryTag.MMAP_DEFAULT);
                 try {
-                    long prevDataAddress = dataLength - 4;
+                    long prevDataAddress = dataLength;
                     for (long offset = partitionSize * typeSize; offset >= 0; offset -= typeSize) {
                         long dataAddress = Unsafe.getUnsafe().getLong(mappedAddr + offset);
                         if (dataAddress < 0 || dataAddress > dataLength) {
@@ -1655,7 +1655,7 @@ public class TableWriter implements Closeable {
                         }
 
                         // Check that addresses are monotonic
-                        if (dataAddress >= prevDataAddress) {
+                        if (dataAddress > prevDataAddress) {
                             throw CairoException.instance(0).put("Variable size column has invalid data address value [path=").put(path)
                                     .put(", indexOffset=").put(offset)
                                     .put(", dataAddress=").put(dataAddress)
