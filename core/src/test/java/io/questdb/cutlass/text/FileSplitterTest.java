@@ -1315,7 +1315,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
 
     @Test
     public void testProcessLargeCsvWithPool0() throws Exception {
-        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
             inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
             final String tableName = "tableName";
@@ -1336,7 +1336,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
                             "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
                             "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
                             "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
-                    "select * from " + tableName + " dst limit -10",
+                    "select * from " + tableName + " limit -10",
                     "ts", true, false, true);
         });
     }

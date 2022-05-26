@@ -26,6 +26,8 @@ package io.questdb.cutlass.text;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
@@ -33,12 +35,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -105,6 +109,7 @@ public class FileIndexer implements Closeable, Mutable {
     //index of timestamp column in input file
     private int timestampIndex;
     private int maxLineLength;
+    private final CairoSecurityContext securityContext;
 
     private final StringSink partitionNameSink = new StringSink();
     private final ObjList<CharSequence> partitionNames = new ObjList<>();
@@ -115,10 +120,18 @@ public class FileIndexer implements Closeable, Mutable {
     private final TextDelimiterScanner textDelimiterScanner;
     private final TextMetadataDetector textMetadataDetector;
     private final TextMetadataParser textMetadataParser;
+
     private final SqlExecutionContext sqlExecutionContext;
+    private final CairoEngine cairoEngine;
+    private final CairoConfiguration configuration;
+    private int atomicity;
 
     public FileIndexer(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
+        this.cairoEngine = sqlExecutionContext.getCairoEngine();
+        this.securityContext = sqlExecutionContext.getCairoSecurityContext();
+        this.configuration = cairoEngine.getConfiguration();
+
         MessageBus bus = sqlExecutionContext.getMessageBus();
         this.queue = bus.getTextImportQueue();
         this.pubSeq = bus.getTextImportPubSeq();
@@ -133,7 +146,7 @@ public class FileIndexer implements Closeable, Mutable {
         this.inputWorkRoot = cfg.getInputWorkRoot();
         this.dirMode = cfg.getMkDirMode();
 
-        final TextConfiguration textConfiguration = cfg.getTextConfiguration();
+        TextConfiguration textConfiguration = configuration.getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
@@ -142,7 +155,7 @@ public class FileIndexer implements Closeable, Mutable {
         this.defaultDateLocale = textConfiguration.getDefaultDateLocale();
 
         for (int i = 0; i < workerCount; i++) {
-            contextObjList.add(new TaskContext(sqlExecutionContext, textConfiguration));
+            contextObjList.add(new TaskContext());
         }
     }
 
@@ -168,6 +181,7 @@ public class FileIndexer implements Closeable, Mutable {
         timestampAdapter = null;
         forceHeader = false;
         maxLineLength = 0;
+        atomicity = Atomicity.SKIP_ALL;
 
         for (int i = 0; i < contextObjList.size(); i++) {
             contextObjList.get(i).clear();
@@ -240,6 +254,7 @@ public class FileIndexer implements Closeable, Mutable {
         }
         this.forceHeader = forceHeader;
         this.timestampIndex = -1;
+        this.atomicity = Atomicity.SKIP_ALL;
 
         inputFilePath.of(inputRoot).slash().concat(inputFileName).$();
     }
@@ -252,15 +267,78 @@ public class FileIndexer implements Closeable, Mutable {
         }
     }
 
-    void prepareContexts() {
-        for (int i = 0; i < contextObjList.size(); i++) {
-            TaskContext context = contextObjList.get(i);
-            context.of(inputFileName, i, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader);
+    public void parseStructure() throws TextException, SqlException {
+        int textAnalysisMaxLines = 10;
+        final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
 
-            if (forceHeader) {
-                forceHeader = false;//Assumption: only first splitter will process file with header
+        int len = configuration.getSqlCopyBufferSize();
+        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+
+        try (TextLexer lexer = new TextLexer(configuration.getTextConfiguration())) {
+            tmpPath.of(inputRoot).concat(inputFileName).$();
+            long fd = ff.openRO(tmpPath);
+            try {
+                if (fd == -1) {
+                    throw SqlException.$(0, "could not open file [errno=").put(Os.errno()).put(", path=").put(tmpPath).put(']');
+                }
+                long n = ff.read(fd, buf, len, 0);
+                if (n > 0) {
+                    if (columnDelimiter < 0) {
+                        columnDelimiter = textDelimiterScanner.scan(buf, buf + n);
+                    }
+
+                    lexer.of(columnDelimiter);
+                    lexer.setSkipLinesWithExtraValues(false);
+
+                    if (timestampColumn != null && timestampAdapter != null) {
+                        textMetadataParser.getColumnNames().add(timestampColumn);
+                        textMetadataParser.getColumnTypes().add(timestampAdapter);
+                    }
+
+                    textMetadataDetector.of(textMetadataParser.getColumnNames(), textMetadataParser.getColumnTypes(), forceHeader);
+                    lexer.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
+                    textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
+                    lexer.restart(textMetadataDetector.isHeader());
+                }
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
+        }
+
+        //validate against target table
+        if (partitionBy == PartitionBy.NONE) {
+            throw CairoException.instance(-1).put("partition by unit can't be NONE for parallel import");
+        }
+
+        if (partitionBy < 0) {
+            partitionBy = PartitionBy.NONE;
+        }
+
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            throw CairoException.instance(-1).put("partition by not specified or target table is not partitioned");
+        }
+
+        timestampIndex = -1;
+        if (timestampColumn != null) {
+            for (int i = 0, n = textMetadataDetector.getColumnNames().size(); i < n; i++) {
+                if (Chars.equalsIgnoreCase(textMetadataDetector.getColumnNames().get(i), timestampColumn)) {
+                    timestampIndex = i;
+                    break;
+                }
             }
         }
+
+        if (timestampIndex == -1) {
+            throw CairoException.instance(-1).put("timestamp column not found");
+        }
+
+        if (timestampAdapter == null) {
+            timestampAdapter = (TimestampAdapter) textMetadataDetector.getColumnTypes().getQuick(timestampIndex);
+        }
+
+        prepareContexts();
     }
 
     //TODO: we'll' need to lock dir or acquire table lock to make sure there are no two parallel user-issued imports of the same file
@@ -283,93 +361,6 @@ public class FileIndexer implements Closeable, Mutable {
         LOG.info().$("created import dir ").$(workDirPath).$();
     }
 
-    public void parseStructure() throws TextException, SqlException {
-        TaskContext ctx = contextObjList.get(0);
-        TextLoaderBase loader = ctx.getLoader();
-
-        int textAnalysisMaxLines = 10;
-        final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
-
-        int len = configuration.getSqlCopyBufferSize();
-        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-
-        try {
-            tmpPath.of(inputRoot).concat(inputFileName).$();
-            long fd = ff.openRO(tmpPath);
-            try {
-                if (fd == -1) {
-                    throw SqlException.$(0, "could not open file [errno=").put(Os.errno()).put(", path=").put(tmpPath).put(']');
-                }
-                long n = ff.read(fd, buf, len, 0);
-                if (n > 0) {
-                    if (columnDelimiter < 0) {
-                        columnDelimiter = textDelimiterScanner.scan(buf, buf + n);
-                    }
-
-                    loader.setDelimiter(columnDelimiter);
-                    loader.setSkipRowsWithExtraValues(false);
-
-                    if (timestampColumn != null && timestampAdapter != null) {
-                        textMetadataParser.getColumnNames().add(timestampColumn);
-                        textMetadataParser.getColumnTypes().add(timestampAdapter);
-                    }
-
-                    textMetadataDetector.of(textMetadataParser.getColumnNames(), textMetadataParser.getColumnTypes(), forceHeader);
-                    loader.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
-                    textMetadataDetector.evaluateResults(loader.getParsedLineCount(), loader.getErrorLineCount());
-                    loader.restart(textMetadataDetector.isHeader());
-                }
-            } finally {
-                ff.close(fd);
-            }
-        } finally {
-            Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
-        }
-
-        //validate against target table
-        if (partitionBy == PartitionBy.NONE) {
-            throw CairoException.instance(-1).put("partition by unit can't be NONE for parallel import");
-        }
-
-        if (partitionBy < 0) {
-            partitionBy = PartitionBy.NONE;
-        }
-
-        loader.configureDestination(tableName, false, true, Atomicity.SKIP_ALL, partitionBy, timestampColumn);
-        loader.prepareTable(ctx.securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), tmpPath, typeManager);
-        try {
-            if ((loader.getWarnings() & TextLoadWarning.PARTITION_TYPE_MISMATCH) != 0) {
-                throw CairoException.instance(-1).put("declared partition by unit doesn't match table's");
-            }
-
-            if (!PartitionBy.isPartitioned(loader.getPartitionBy())) {
-                throw CairoException.instance(-1).put("partition by not specified or target table is not partitioned");
-            }
-
-            timestampIndex = -1;
-            if (timestampColumn != null) {
-                for (int i = 0, n = textMetadataDetector.getColumnNames().size(); i < n; i++) {
-                    if (Chars.equalsIgnoreCase(textMetadataDetector.getColumnNames().get(i), timestampColumn)) {
-                        timestampIndex = i;
-                        break;
-                    }
-                }
-            }
-
-            if (timestampIndex == -1) {
-                throw CairoException.instance(-1).put("timestamp column not found");
-            }
-
-            if (timestampAdapter == null) {
-                timestampAdapter = loader.getTimestampAdapter();
-            }
-        } finally {
-            loader.clear();
-        }
-
-        prepareContexts();
-    }
-
     public void process() throws SqlException {
         long fd = ff.openRO(inputFilePath);
         if (fd < 0) {
@@ -383,8 +374,10 @@ public class FileIndexer implements Closeable, Mutable {
                 return;
             }
 
-            final CairoEngine engine = sqlExecutionContext.getCairoEngine();
-            try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "partitions merge")) {
+            final TaskContext context = contextObjList.get(0);
+            context.createTable(configuration.getRoot(), tableName);
+
+            try (TableWriter writer = cairoEngine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "partitions merge")) {
                 try {
                     findChunkBoundaries(fd);
                     indexChunks();
@@ -396,6 +389,16 @@ public class FileIndexer implements Closeable, Mutable {
             }
         } finally {
             ff.close(fd);
+        }
+    }
+
+    void prepareContexts() {
+        for (int i = 0; i < contextObjList.size(); i++) {
+            TaskContext context = contextObjList.get(i);
+            context.of(i, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes());
+            if (forceHeader) {
+                forceHeader = false;//Assumption: only first splitter will process file with header
+            }
         }
     }
 
@@ -563,22 +566,35 @@ public class FileIndexer implements Closeable, Mutable {
         doneLatch.reset();
     }
 
+    @TestOnly
+    int getMaxLineLength() {
+        return maxLineLength;
+    }
+
     public class TaskContext implements Closeable, Mutable {
         private final DirectLongList mergeIndexes = new DirectLongList(64, MemoryTag.NATIVE_LONG_LIST);
-        private final Path path = new Path();
         private final FileSplitter splitter;
-        private final TextLoaderBase loader;
-        private final CairoSecurityContext securityContext;
+        private final TextLexer lexer;
+
         private final TypeManager typeManager;
         private final DirectCharSink utf8Sink;
 
-        public TaskContext(SqlExecutionContext sqlExecutionContext, TextConfiguration textConfiguration) {
-            this.securityContext = sqlExecutionContext.getCairoSecurityContext();
-            utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
+        private final Path path = new Path();
+        private final MemoryMARW memory = Vm.getMARWInstance();
+        private final TableStructureAdapter structureAdapter = new TableStructureAdapter();
+
+        private CharSequence currentTableName;
+        private ObjList<CharSequence> names;
+        private ObjList<TypeAdapter> types;
+        private TimestampAdapter timestampAdapter;
+        private TableWriter tableWriterRef;
+
+        public TaskContext() {
+            final TextConfiguration textConfiguration = configuration.getTextConfiguration();
+            this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
             this.typeManager = new TypeManager(textConfiguration, utf8Sink);
-            final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
-            this.splitter = new FileSplitter(cairoEngine.getConfiguration());
-            this.loader = new TextLoaderBase(cairoEngine);
+            this.splitter = new FileSplitter(configuration);
+            this.lexer = new TextLexer(textConfiguration);
         }
 
         public void buildIndexStage(long lo, long hi, long lineNumber, LongList indexStats, int index) throws SqlException {
@@ -589,30 +605,50 @@ public class FileIndexer implements Closeable, Mutable {
         public void clear() {
             mergeIndexes.clear();
             splitter.clear();
-            loader.clear();
+            lexer.clear();
             typeManager.clear();
             utf8Sink.clear();
+            if (types != null) {
+                types.clear();
+            }
         }
 
         @Override
         public void close() throws IOException {
+            clear();
             mergeIndexes.close();
-            path.close();
             splitter.close();
-            loader.close();
+            lexer.close();
             utf8Sink.close();
+            path.close();
+            memory.close();
         }
 
         public void countQuotesStage(int index, long lo, long hi, final LongList chunkStats) throws SqlException {
             splitter.countQuotes(lo, hi, chunkStats, index);
         }
 
-        public TextLoaderBase getLoader() {
-            return loader;
-        }
-
-        public FileSplitter getSplitter() {
-            return splitter;
+        public void createTable(final CharSequence root, final CharSequence tableName) {
+            setCurrentTableName(tableName);
+            securityContext.checkWritePermission(); //todo: do this once
+            switch (cairoEngine.getStatus(securityContext, path, currentTableName)) {
+                case TableUtils.TABLE_EXISTS:
+                    cairoEngine.remove(securityContext, path, currentTableName);
+                case TableUtils.TABLE_DOES_NOT_EXIST:
+                    TableUtils.createTable(
+                            configuration.getFilesFacade(),
+                            root,
+                            configuration.getMkDirMode(),
+                            memory,
+                            path,
+                            structureAdapter,
+                            ColumnType.VERSION,
+                            (int) cairoEngine.getNextTableId()
+                    );
+                    break;
+                default:
+                    throw CairoException.instance(0).put("name is reserved [table=").put(currentTableName).put(']');
+            }
         }
 
         public void importPartitionData(long address, long size) {
@@ -627,7 +663,7 @@ public class FileIndexer implements Closeable, Mutable {
                         final long offset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
                         long n = ff.read(fd, buf, len, offset);
                         if (n > 0) {
-                            loader.parse(buf, buf + n, 0); //todo: contiguous block import?
+                            lexer.parse(buf, buf + n, 0, this::onFieldsPartitioned);
                         }
                     }
                 } finally {
@@ -637,6 +673,57 @@ public class FileIndexer implements Closeable, Mutable {
                 Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
             }
 
+        }
+
+        public void mergeIndexStage(int index, long lo, long hi, final ObjList<CharSequence> partitionNames) throws TextException {
+            createTable(inputWorkRoot, tableName + "_" + index);
+            try (TableWriter writer = new TableWriter(configuration,
+                    currentTableName,
+                    cairoEngine.getMessageBus(),
+                    null,
+                    true,
+                    DefaultLifecycleManager.INSTANCE,
+                    inputWorkRoot,
+                    cairoEngine.getMetrics())) {
+
+                tableWriterRef = writer;
+                try {
+                    lexer.restart(false);
+                    for (int i = (int) lo; i < hi; i++) {
+
+                        final CharSequence name = partitionNames.get(i);
+                        path.of(inputWorkRoot).concat(inputFileName).concat(name);
+
+                        mergePartitionIndexAndImportData(ff, path, mergeIndexes);
+                    }
+                } finally {
+                    lexer.parseLast();
+                    writer.commit(CommitMode.SYNC);
+                }
+
+            }
+            for (int i = (int) lo; i < hi; i++) {
+                final CharSequence partitionName = partitionNames.get(i);
+                movePartitionToDst(inputWorkRoot,
+                        currentTableName,
+                        partitionName,
+                        cairoEngine.getConfiguration().getRoot(),
+                        tableName);
+            }
+        }
+
+        public void of(int index, ObjList<CharSequence> names, ObjList<TypeAdapter> types) {
+            this.names = names;
+            this.types = adjust(types);
+            this.timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
+            this.lexer.of(columnDelimiter);
+            this.lexer.setSkipLinesWithExtraValues(false);
+            this.splitter.of(inputFileName, index, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, true);
+        }
+
+        public void setCurrentTableName(final CharSequence tableName) {
+            this.currentTableName = tableName;
+            this.lexer.setTableName(tableName);
         }
 
         private ObjList<TypeAdapter> adjust(ObjList<TypeAdapter> types) {
@@ -652,37 +739,14 @@ public class FileIndexer implements Closeable, Mutable {
             return result;
         }
 
-        public void mergeIndexStage(int index, long lo, long hi, final ObjList<CharSequence> partitionNames) throws TextException {
-            loader.closeWriter();
-            loader.configureDestination(tableName + "_" + index, true, true, Atomicity.SKIP_ALL, loader.getPartitionBy(), timestampColumn);
-            ObjList<TypeAdapter> adjustedAdapters = adjust(textMetadataDetector.getColumnTypes());
-            loader.prepareTable(securityContext, textMetadataDetector.getColumnNames(), adjustedAdapters, path, typeManager);
-
-            try {
-                for (int i = (int) lo; i < hi; i++) {
-                    loader.restart(false);
-
-                    final CharSequence name = partitionNames.get(i);
-                    path.of(inputWorkRoot).concat(inputFileName).concat(name);
-
-                    mergePartitionIndexAndImportData(ff, path, mergeIndexes);
-
-                    loader.wrapUp();
-                }
-            } finally {
-                loader.closeWriter();
-            }
-
-            for (int i = (int) lo; i < hi; i++) {
-                final CharSequence partitionName = partitionNames.get(i);
-                final CharSequence srcTableName = loader.getTableName();
-                movePartitionToDst(srcTableName, partitionName, tableName);
-            }
+        private void logError(long line, int i, final DirectByteCharSequence dbcs) {
+            LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(i).getType())).$("]\n\t");
+            logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
         }
 
-        public void mergePartitionIndexAndImportData(final FilesFacade ff,
-                                                     final Path partitionPath,
-                                                     final DirectLongList mergeIndexes) {
+        private void mergePartitionIndexAndImportData(final FilesFacade ff,
+                                                      final Path partitionPath,
+                                                      final DirectLongList mergeIndexes) {
             mergeIndexes.resetCapacity();
             mergeIndexes.clear();
 
@@ -716,6 +780,57 @@ public class FileIndexer implements Closeable, Mutable {
             }
         }
 
+        private void movePartitionToDst(final CharSequence srcRoot,
+                                        final CharSequence srcTableName,
+                                        final CharSequence partitionFolder,
+                                        final CharSequence dstRoot,
+                                        final CharSequence dstTableName) {
+            final CharSequence root = sqlExecutionContext.getCairoEngine().getConfiguration().getRoot();
+            final Path srcPath = Path.getThreadLocal(srcRoot).concat(srcTableName).concat(partitionFolder).$();
+            final Path dstPath = Path.getThreadLocal2(dstRoot).concat(dstTableName).concat(partitionFolder).$();
+            if (!ff.rename(srcPath, dstPath)) {
+                LOG.error().$("Can't move ").$(srcPath).$(" to ").$(dstPath).$(" errno=").$(ff.errno()).$();
+            }
+        }
+
+        private boolean onField(long line, final DirectByteCharSequence dbcs, TableWriter.Row w, int i) {
+            try {
+                types.getQuick(i).write(w, i, dbcs);
+            } catch (Exception ignore) {
+                logError(line, i, dbcs);
+                switch (atomicity) {
+                    case Atomicity.SKIP_ALL:
+                        tableWriterRef.rollback();
+                        throw CairoException.instance(0).put("bad syntax [line=").put(line).put(", col=").put(i).put(']');
+                    case Atomicity.SKIP_ROW:
+                        w.cancel();
+                        return true;
+                    default:
+                        // SKIP column
+                        break;
+                }
+            }
+            return false;
+        }
+
+        private void onFieldsPartitioned(long line, final ObjList<DirectByteCharSequence> values, int valuesLength) {
+            assert tableWriterRef != null;
+            DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
+            try {
+                final TableWriter.Row w = tableWriterRef.newRow(timestampAdapter.getTimestamp(dbcs));
+                for (int i = 0; i < valuesLength; i++) {
+                    dbcs = values.getQuick(i);
+                    if (i == timestampIndex || dbcs.length() == 0) {
+                        continue;
+                    }
+                    if (onField(line, dbcs, w, i)) return;
+                }
+                w.append();
+            } catch (Exception e) {
+                logError(line, timestampIndex, dbcs);
+            }
+        }
+
         private long openIndexChunks(FilesFacade ff, Path partitionPath, DirectLongList mergeIndexes, int partitionLen) {
             long mergedIndexSize = 0;
             long chunk = ff.findFirst(partitionPath);
@@ -745,25 +860,77 @@ public class FileIndexer implements Closeable, Mutable {
             return mergedIndexSize;
         }
 
-        public void of(CharSequence inputFileName, int index, int partitionBy, byte columnDelimiter, int timestampIndex, TimestampAdapter adapter, boolean ignoreHeader) {
-            splitter.of(inputFileName, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader);
-            loader.configureDestination(tableName, true, true, Atomicity.SKIP_ALL, partitionBy, timestampColumn);
-            loader.setDelimiter(columnDelimiter);
-        }
+        private class TableStructureAdapter implements TableStructure {
 
-        private void movePartitionToDst(final CharSequence srcTableName, final CharSequence partitionFolder, final CharSequence dstTableName) {
-            final CharSequence root = sqlExecutionContext.getCairoEngine().getConfiguration().getRoot();
-            final Path srcPath = Path.getThreadLocal(root).concat(srcTableName).concat(partitionFolder).$();
-            final Path dstPath = Path.getThreadLocal2(root).concat(dstTableName).concat(partitionFolder).$();
-            if (!ff.rename(srcPath, dstPath)) {
-                LOG.error().$("Can't move ").$(srcPath).$(" to ").$(dstPath).$(" errno=").$(ff.errno()).$();
+            @Override
+            public int getColumnCount() {
+                return types.size();
+            }
+
+            @Override
+            public CharSequence getColumnName(int columnIndex) {
+                return names.getQuick(columnIndex);
+            }
+
+            @Override
+            public int getColumnType(int columnIndex) {
+                return types.getQuick(columnIndex).getType();
+            }
+
+            @Override
+            public long getColumnHash(int columnIndex) {
+                return configuration.getRandom().nextLong();
+            }
+
+            @Override
+            public int getIndexBlockCapacity(int columnIndex) {
+                return configuration.getIndexValueBlockSize();
+            }
+
+            @Override
+            public boolean isIndexed(int columnIndex) {
+                return types.getQuick(columnIndex).isIndexed();
+            }
+
+            @Override
+            public boolean isSequential(int columnIndex) {
+                return false;
+            }
+
+            @Override
+            public int getPartitionBy() {
+                return partitionBy;
+            }
+
+            @Override
+            public boolean getSymbolCacheFlag(int columnIndex) {
+                return configuration.getDefaultSymbolCacheFlag();
+            }
+
+            @Override
+            public int getSymbolCapacity(int columnIndex) {
+                return configuration.getDefaultSymbolCapacity();
+            }
+
+            @Override
+            public CharSequence getTableName() {
+                return currentTableName;
+            }
+
+            @Override
+            public int getTimestampIndex() {
+                return timestampIndex;
+            }
+
+            @Override
+            public int getMaxUncommittedRows() {
+                return configuration.getMaxUncommittedRows();
+            }
+
+            @Override
+            public long getCommitLag() {
+                return configuration.getCommitLag();
             }
         }
-
-    }
-
-    @TestOnly
-    int getMaxLineLength() {
-        return maxLineLength;
     }
 }
