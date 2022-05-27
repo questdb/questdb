@@ -19,4 +19,4 @@ jobs:
         run: yarn danger ci
         working-directory: ./ci
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.DANGER_GITHUB_TOKEN }}
