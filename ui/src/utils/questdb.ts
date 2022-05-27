@@ -99,6 +99,7 @@ export type Table = {
   name: string
   partitionBy: string
   designatedTimestamp: string
+  columns: Column[]
 }
 
 export type Column = {
@@ -280,9 +281,23 @@ export class Client {
     const response = await this.query<Table>("tables();")
 
     if (response.type === Type.DQL) {
+      const tables = await Promise.all(
+        response.data.map(async (table) => {
+          const columnsResponse = await this.showColumns(table.name)
+          if (columnsResponse.type === Type.DQL) {
+            return {
+              ...table,
+              columns: columnsResponse.data,
+            }
+          }
+
+          return table
+        }),
+      )
+
       return {
         ...response,
-        data: response.data.slice().sort((a, b) => {
+        data: tables.slice().sort((a, b) => {
           if (a.name > b.name) {
             return 1
           }

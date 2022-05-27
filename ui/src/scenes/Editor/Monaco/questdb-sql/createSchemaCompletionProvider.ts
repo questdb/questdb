@@ -1,6 +1,6 @@
-import { Table } from "../../../../utils"
 import * as monaco from "monaco-editor"
 import { CompletionItemKind } from "./types"
+import { Table } from "../../../../utils"
 
 export const createSchemaCompletionProvider = (questDBTables: Table[] = []) => {
   const completionProvider: monaco.languages.CompletionItemProvider = {
@@ -41,6 +41,33 @@ export const createSchemaCompletionProvider = (questDBTables: Table[] = []) => {
               range,
             }
           }),
+        }
+      }
+
+      if (/SELECT /gi.test(textUntilPosition)) {
+        const tableNameMatches = model.findNextMatch(
+          "FROM '?([a-z0-9-_]*)'?",
+          position,
+          true /* isRegex */,
+          false /* matchCase */,
+          null /* wordSeparators */,
+          true /* captureMatches */,
+        )
+
+        if (Array.isArray(tableNameMatches?.matches)) {
+          const match = tableNameMatches?.matches[1]
+          const table = questDBTables.find(({ name }) => name === match)
+
+          if (table) {
+            return {
+              suggestions: table.columns.map(({ column }) => ({
+                label: column,
+                kind: CompletionItemKind.Class,
+                insertText: column,
+                range,
+              })),
+            }
+          }
         }
       }
     },

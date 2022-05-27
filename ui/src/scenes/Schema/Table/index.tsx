@@ -35,7 +35,7 @@ import * as QuestDB from "utils/questdb"
 import Row from "../Row"
 import ContextualMenu from "./ContextualMenu"
 
-type Props = QuestDB.Table &
+type Props = Omit<QuestDB.Table, "columns"> &
   Readonly<{
     designatedTimestamp: string
     description?: string
