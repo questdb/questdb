@@ -164,14 +164,11 @@ public class TimestampsBruteForceTest {
         ZonedDateTime current = ZonedDateTime.now(utc).withYear(1999);
         ZonedDateTime deadline = current.plusYears(yearsToTest);
 
-        long l = 0;
         while (current.isBefore(deadline)) {
             long epochMicros = toEpochMicros(current);
             assertFunction.accept(current, epochMicros);
             current = stepFunction.apply(current);
-            l++;
         }
-        System.out.println("Tried " + l + " different timestamps.");
     }
 
     private static long toEpochMicros(ZonedDateTime zonedDateTime) {

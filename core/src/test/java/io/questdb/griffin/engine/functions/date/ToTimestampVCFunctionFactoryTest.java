@@ -78,7 +78,7 @@ public class ToTimestampVCFunctionFactoryTest extends AbstractFunctionFactoryTes
 
         Function f = new ToTimestampVCFunctionFactory().newInstance(0, funcs, new IntList(), configuration, sqlExecutionContext);
 
-        MatcherAssert.assertThat(f.getClass().getName(), equalTo("io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory$CastLongToStrFunction"));
+        MatcherAssert.assertThat(f.getClass().getName(), equalTo("io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory$Func"));
     }
 
     @Override

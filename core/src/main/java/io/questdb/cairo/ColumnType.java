@@ -129,7 +129,7 @@ public final class ColumnType {
     public static boolean isAssignableFrom(int to, int from) {
         final int toTag = tagOf(to);
         final int fromTag = tagOf(from);
-        return toTag == fromTag
+        return (toTag == fromTag && (getGeoHashBits(from) >= getGeoHashBits(to) || getGeoHashBits(from) == 0))
                 || isBuiltInWideningCast(to, from)
                 || isStringCast(to, from)
                 || isGeoHashWideningCast(to, from)
@@ -313,11 +313,7 @@ public final class ColumnType {
     private static boolean isGeoHashWideningCast(int to, int from) {
         final int toTag = tagOf(to);
         final int fromTag = tagOf(from);
-        return (toTag == fromTag
-                && (
-                getGeoHashBits(from) > getGeoHashBits(to)
-                        || getGeoHashBits(from) == 0))
-                || (fromTag == GEOLONG && toTag == GEOINT)
+        return (fromTag == GEOLONG && toTag == GEOINT)
                 || (fromTag == GEOLONG && toTag == GEOSHORT)
                 || (fromTag == GEOLONG && toTag == GEOBYTE)
                 || (fromTag == GEOINT && toTag == GEOSHORT)
