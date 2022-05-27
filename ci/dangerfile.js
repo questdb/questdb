@@ -25,8 +25,9 @@ function validatePrTitle() {
 
   warn(
     [
-      "Please update the PR title. It should match this format\: \<type\>: \<description\>",
-      "Where \<type\> is one of\: " +
+      "Please update the PR title.",
+      "It should match this format: *type*: *description*",
+      "Where *type* is one of\: " +
         supportedTypes.map((type) => `"${type}"`).join(", "),
     ].join("\n"),
   )
