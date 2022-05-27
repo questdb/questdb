@@ -384,12 +384,16 @@ public class WalWriterTest extends AbstractGriffinTest {
                 row.append();
             }
             assertValidMetadataFileCreated(model, walName, 0, path);
-            // todo: tests content of the ts column
+            try (WalSegmentDataReader segmentReader = new WalSegmentDataReader(configuration.getFilesFacade(),toWalPath(tableName, walName, 0, path))) {
+                int tsIndex = segmentReader.getColumnIndex("ts");
+                assertDesignatedTimestamp(segmentReader, tsIndex, 0, ts);
+            }
         }
     }
 
     @Test
-    public void testReadAndWriteSimpleFixedLengthTypes() {
+    public void testReadAndWriteAllTypes() {
+        // todo: bin, geo
         String tableName = "testtable";
         String walName;
         final int rowsToInsertTotal = 100;
@@ -453,8 +457,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(i, segmentReader.nextByte(byteIndex));
                     assertEquals(i, segmentReader.nextLong(longIndex));
                     segmentReader.nextLong256(long256Index, assertingAcceptor(i, i + 1, i + 2, i + 3));
-                    assertEquals(ts, segmentReader.nextLong(tsIndex));
-                    assertEquals(i, segmentReader.nextLong(tsIndex));
+                    assertDesignatedTimestamp(segmentReader, tsIndex, i, ts);
                     assertEquals(i + 0.5, segmentReader.nextDouble(doubleIndex), 0.1);
                     assertEquals(i + 0.5, segmentReader.nextFloat(floatIndex), 0.1);
                     assertEquals(i, segmentReader.nextShort(shortIndex));
@@ -466,6 +469,11 @@ public class WalWriterTest extends AbstractGriffinTest {
                 }
             }
         }
+    }
+
+    private static void assertDesignatedTimestamp(WalSegmentDataReader segmentReader, int tsIndex, int expectedRowNumber, long expectedTimestamp) {
+        assertEquals(expectedTimestamp, segmentReader.nextLong(tsIndex));
+        assertEquals(expectedRowNumber, segmentReader.nextLong(tsIndex));
     }
 
     private static void assertCharsEquals(CharSequence expected, CharSequence actual) {
