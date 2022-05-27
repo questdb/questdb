@@ -149,30 +149,15 @@ public class WalWriter implements Closeable {
     private long walDRowCounter;
     private long waldSegmentCounter = -1;
 
-    public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, Metrics metrics) {
-        this(configuration, tableName, walName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
-    }
-
-    public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, @NotNull MessageBus messageBus, Metrics metrics) {
-        this(configuration, tableName, walName, messageBus, true, DefaultLifecycleManager.INSTANCE, metrics);
+    public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, TableReader reader, Metrics metrics) {
+        this(configuration, tableName, walName, reader, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
     }
 
     public WalWriter(
             CairoConfiguration configuration,
             CharSequence tableName,
             CharSequence walName,
-            @NotNull MessageBus messageBus,
-            boolean lock,
-            LifecycleManager lifecycleManager,
-            Metrics metrics
-    ) {
-        this(configuration, tableName, walName, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
-    }
-
-    public WalWriter(
-            CairoConfiguration configuration,
-            CharSequence tableName,
-            CharSequence walName,
+            TableReader reader,
             MessageBus messageBus,
             MessageBus ownMessageBus,
             boolean lock,
@@ -270,7 +255,7 @@ public class WalWriter implements Closeable {
             configureWalDColumnMemory();
 
             openNewWalDSegment();
-            configureWalDSymbolTable();
+            configureWalDSymbolTable(reader);
             configureTimestampSetter();
             this.appendTimestampSetter = timestampSetter;
             configureAppendPosition();
@@ -1527,23 +1512,6 @@ public class WalWriter implements Closeable {
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
             configureColumn(type, metadata.isColumnIndexed(i), i);
-
-            if (ColumnType.isSymbol(type)) {
-                final int symbolIndex = denseSymbolMapWriters.size();
-                long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(i);
-                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
-                        configuration,
-                        path.trimTo(rootLen),
-                        metadata.getColumnName(i),
-                        columnNameTxn,
-                        txWriter.unsafeReadSymbolTransientCount(symbolIndex),
-                        symbolIndex,
-                        txWriter
-                );
-
-                symbolMapWriters.extendAndSet(i, symbolMapWriter);
-                denseSymbolMapWriters.add(symbolMapWriter);
-            }
         }
     }
 
@@ -1554,21 +1522,23 @@ public class WalWriter implements Closeable {
         }
     }
 
-    private void configureWalDSymbolTable() {
+    private void configureWalDSymbolTable(TableReader reader) {
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
             if (ColumnType.isSymbol(type)) {
-                final int symbolIndex = denseSymbolMapWriters.size();
-                long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(i);
-                SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
+                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(i);
+                final SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
                         configuration,
                         walDPath.trimTo(walDRootLen),
                         metadata.getColumnName(i),
-                        columnNameTxn,
-                        txWriter.unsafeReadSymbolTransientCount(symbolIndex),
-                        symbolIndex,
-                        txWriter
+                        COLUMN_NAME_TXN_NONE,
+                        0,
+                        denseSymbolMapWriters.size(),
+                        SymbolValueCountCollector.NOOP
                 );
+                for (int j = 0; j < symbolMapReader.getSymbolCount(); j++) {
+                    symbolMapWriter.put(symbolMapReader.valueOf(j));
+                }
 
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
                 denseSymbolMapWriters.add(symbolMapWriter);

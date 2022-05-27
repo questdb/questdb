@@ -352,7 +352,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[INT] = 2;
         TYPE_SIZE_POW2[SYMBOL] = 2;
         TYPE_SIZE_POW2[DOUBLE] = 3;
-        TYPE_SIZE[STRING] = -1;
+        TYPE_SIZE_POW2[STRING] = -1;
         TYPE_SIZE_POW2[LONG] = 3;
         TYPE_SIZE_POW2[DATE] = 3;
         TYPE_SIZE_POW2[TIMESTAMP] = 3;

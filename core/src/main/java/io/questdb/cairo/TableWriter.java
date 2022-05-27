@@ -357,10 +357,10 @@ public class TableWriter implements Closeable, WalWriterFactory {
 
     // can be called without holding the writer's lock
     @Override
-    public WalWriter createWal() {
+    public WalWriter createWal(TableReader reader) {
         // always create a new wal with an increasing id
         // remove string concat garbage below, we do not know how many wal writers will be created
-        return new WalWriter(configuration, tableName, WalWriter.WAL_NAME_BASE + walIdGenerator.getNextId(), metrics);
+        return new WalWriter(configuration, tableName, WalWriter.WAL_NAME_BASE + walIdGenerator.getNextId(), reader, metrics);
     }
 
     public void addColumn(CharSequence name, int type) {

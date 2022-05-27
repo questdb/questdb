@@ -233,6 +233,16 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return getReader(securityContext, tableName, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
     }
 
+    // For testing only
+    public WalReader getWalReader(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            CharSequence walName,
+            IntList walSymbolCounts
+    ) {
+        return new WalReader(configuration, tableName, walName, walSymbolCounts);
+    }
+
     public TableReader getReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {
         try {
             return getReader(executionContext.getCairoSecurityContext(), tableName);
@@ -316,7 +326,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     @Override
     public WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName) {
         securityContext.checkWritePermission();
-        return writerPool.getWalWriterFactory(tableName).createWal();
+        try (TableReader reader = getReader(securityContext, tableName)) {
+            return writerPool.getWalWriterFactory(tableName).createWal(reader);
+        }
     }
 
     public CharSequence lock(
