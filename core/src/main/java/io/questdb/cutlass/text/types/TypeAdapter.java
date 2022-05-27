@@ -37,4 +37,9 @@ public interface TypeAdapter {
     boolean probe(CharSequence text);
 
     void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception;
+
+    //used to copy internal state between adapters belonging to different type managers
+    default TypeAdapter of(TypeAdapter other) {
+        return this;
+    }
 }

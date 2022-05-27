@@ -83,6 +83,33 @@ public class TypeManager implements Mutable {
         this.probeCount = probes.size();
     }
 
+    //copy types with parameters but separate mutable state
+    public ObjList<TypeAdapter> adjust(ObjList<TypeAdapter> types) {
+        ObjList<TypeAdapter> newTypes = new ObjList<>();
+        for (int i = 0, n = types.size(); i < n; i++) {
+            TypeAdapter srcAdapter = types.get(i);
+            TypeAdapter newAdapter;
+
+            if (srcAdapter instanceof TimestampUtf8Adapter) {
+                newAdapter = timestampUtf8AdapterPool.next();
+            } else if (srcAdapter instanceof TimestampAdapter) {
+                newAdapter = timestampAdapterPool.next();
+            } else if (srcAdapter instanceof DateUtf8Adapter) {
+                newAdapter = dateAdapterPool.next();
+            } else if (srcAdapter instanceof SymbolAdapter) {
+                newAdapter = srcAdapter.isIndexed() ? indexedSymbolAdapter : notIndexedSymbolAdapter;
+            } else if (srcAdapter instanceof StringAdapter) {
+                newAdapter = stringAdapter.of(srcAdapter);
+            } else {
+                newAdapter = getTypeAdapter(types.get(i).getType());
+            }
+
+            newAdapter.of(srcAdapter);
+            newTypes.add(newAdapter);
+        }
+        return newTypes;
+    }
+
     @Override
     public void clear() {
         dateAdapterPool.clear();

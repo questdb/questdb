@@ -208,8 +208,10 @@ public class FileSplitter implements Closeable, Mutable {
         MemoryPMARImpl memory;
         long size;
         int chunkNumber;
+        long partitionKey;
 
-        IndexOutputFile(FilesFacade ff, Path path) {
+        IndexOutputFile(FilesFacade ff, Path path, long partitionKey) {
+            this.partitionKey = partitionKey;
             this.size = 0;
             this.chunkNumber = 0;
 
@@ -274,7 +276,7 @@ public class FileSplitter implements Closeable, Mutable {
 
         path.chop$().put(index);
 
-        return new IndexOutputFile(ff, path);
+        return new IndexOutputFile(ff, path, partitionKey);
     }
 
     private Path getPartitionIndexDir(long partitionKey) {
@@ -552,7 +554,7 @@ public class FileSplitter implements Closeable, Mutable {
         this.lastLineStart = this.offset + (this.fieldLo - lo);
     }
 
-    public void index(long chunkLo, long chunkHi, long lineNumber, LongList output, int outputIndex) throws SqlException {
+    public void index(long chunkLo, long chunkHi, long lineNumber, LongList output, int outputIndex, LongList partitionKeys) throws SqlException {
         assert chunkHi > 0;
         assert chunkLo >= 0 && chunkLo < chunkHi;
 
@@ -582,14 +584,21 @@ public class FileSplitter implements Closeable, Mutable {
             } else {
                 parseLast();
             }
+
+            output.set(outputIndex, maxLineLength);
+            collectPartitionKeys(partitionKeys);
         } finally {
             closeOutputFiles();
         }
 
         LOG.info().$("Finished indexing chunk [start=").$(chunkLo).$(",end=").$(chunkHi)
                 .$(",lines=").$(lineCount - lineNumber).$(",errors=").$(errorCount).$(']').$();
+    }
 
-        output.set(outputIndex, maxLineLength);
+    private void collectPartitionKeys(LongList partitionKeys) {
+        partitionKeys.setPos(0);
+
+        outputFiles.forEach((key, value) -> partitionKeys.add(value.partitionKey));
     }
 
     void openInputFile() {

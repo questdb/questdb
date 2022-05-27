@@ -52,13 +52,15 @@ import java.io.IOException;
 
 /**
  * Class is responsible for pre-processing of large unordered import files meant to go into partitioned tables.
- * It :
- * - scans whole file sequentially and extract timestamps and line offsets to per-partition index files
- * Index files are stored as $inputWorkDir/$inputFileName/$partitionName/$workerId_$chunkNumber
- * - starts W workers and using them
- * - sorts chunks by timestamp
- * - loads partitions in parallel into separate tables using index files
+ * It does the following (in parallel) :
+ * - splits the file into N-chunks, scans in parallel and finds correct line start for each chunk
+ * - scans each chunk and extract timestamps and line offsets to per-partition index files
+ * (index files are stored as $inputWorkDir/$inputFileName/$partitionName/$workerId_$chunkNumber)
+ * then it sorts each file by timestamp value
+ * - merges all partiton index chunks into one index file per partition
+ * - loads partitions into separate tables using merged indexes (one table per worker)
  * - deattaches partitions from temp tables and attaches them to final table
+ * - removes temp tables and index files
  * <p>
  */
 public class FileIndexer implements Closeable, Mutable {
@@ -77,7 +79,7 @@ public class FileIndexer implements Closeable, Mutable {
 
     //holds input for second phase - indexing: offset and start line number for each chunk
     private final LongList indexChunkStats = new LongList();
-    //stats calculated during indexing phase
+    //stats calculated during indexing phase, (maxLineLength:list of partition floors)  for each worker 
     private final LongList indexStats = new LongList();
 
     private final ObjList<TaskContext> contextObjList = new ObjList<>();
@@ -113,6 +115,7 @@ public class FileIndexer implements Closeable, Mutable {
     private int maxLineLength;
     private final CairoSecurityContext securityContext;
 
+    private final ObjList<LongList> partitionKeys = new ObjList<>();
     private final StringSink partitionNameSink = new StringSink();
     private final ObjList<CharSequence> partitionNames = new ObjList<>();
 
@@ -156,6 +159,7 @@ public class FileIndexer implements Closeable, Mutable {
 
         for (int i = 0; i < workerCount; i++) {
             contextObjList.add(new TaskContext());
+            partitionKeys.add(new LongList());
         }
     }
 
@@ -185,6 +189,10 @@ public class FileIndexer implements Closeable, Mutable {
         for (int i = 0; i < contextObjList.size(); i++) {
             contextObjList.get(i).clear();
         }
+
+        for (int i = 0; i < partitionKeys.size(); i++) {
+            partitionKeys.get(i).clear();
+        }
     }
 
     @Override
@@ -198,19 +206,8 @@ public class FileIndexer implements Closeable, Mutable {
         this.textDelimiterScanner.close();
     }
 
-    public void collectPartitionNames() {
-        partitionNames.clear();
-        tmpPath.of(inputWorkRoot).concat(inputFileName).slash$();
-        ff.iterateDir(tmpPath, (partitionName, partitionType) -> {
-            if (Files.isDir(partitionName, partitionType, partitionNameSink)) {
-                partitionNames.add(partitionNameSink.toString());
-            }
-        });
-    }
-
-    public void mergePartitionIndexes() throws TextException {
-        LOG.info().$("Started index merge").$();
-        collectPartitionNames();
+    public void importPartitions() {
+        LOG.info().$("Started index merge and partition load").$();
 
         final int partitionCount = partitionNames.size();
         final int chunkSize = (partitionCount + workerCount - 1) / workerCount;
@@ -225,9 +222,9 @@ public class FileIndexer implements Closeable, Mutable {
 
             final long seq = pubSeq.next();
             if (seq < 0) {
-                context.mergeIndexStage(i, lo, hi, partitionNames);
+                context.importPartitionStage(i, lo, hi, partitionNames);
             } else {
-                queue.get(seq).of(doneLatch, TextImportTask.PHASE_INDEX_MERGE, context, i, lo, hi, partitionNames);
+                queue.get(seq).of(doneLatch, TextImportTask.PHASE_PARTITION_IMPORT, context, i, lo, hi, partitionNames);
                 pubSeq.done(seq);
                 queuedCount++;
             }
@@ -235,7 +232,7 @@ public class FileIndexer implements Closeable, Mutable {
 
         waitForWorkers(queuedCount);
 
-        LOG.info().$("Finished index merge").$();
+        LOG.info().$("Finished index merge and partition load").$();
     }
 
     public void of(CharSequence tableName, CharSequence inputFileName, int partitionBy, byte columnDelimiter, CharSequence timestampColumn, CharSequence tsFormat, boolean forceHeader) {
@@ -350,7 +347,7 @@ public class FileIndexer implements Closeable, Mutable {
                 try {
                     findChunkBoundaries(fd);
                     indexChunks();
-                    mergePartitionIndexes();
+                    importPartitions();
                     attachPartititons(writer);
                 } catch (Exception e) {
                     LOG.error().$(e).$();
@@ -373,6 +370,8 @@ public class FileIndexer implements Closeable, Mutable {
     }
 
     private void attachPartititons(TableWriter writer) {
+        LOG.info().$("Started attaching partitions").$();
+
         for (int i = 0, sz = partitionNames.size(); i < sz; i++) {
             final CharSequence partitionDirName = partitionNames.get(i);
             try {
@@ -382,6 +381,8 @@ public class FileIndexer implements Closeable, Mutable {
                 LOG.error().$("Cannot parse partition directory name=").$(partitionDirName).$();
             }
         }
+
+        LOG.info().$("Finished attaching partitions").$();
     }
 
     public void setMinChunkSize(int minChunkSize) {
@@ -428,7 +429,7 @@ public class FileIndexer implements Closeable, Mutable {
             if (seq < 0) {
                 context.countQuotesStage(5 * i, chunkLo, chunkHi, chunkStats);
             } else {
-                queue.get(seq).of(doneLatch, TextImportTask.PHASE_BOUNDARY_CHECK, context, 5 * i, chunkLo, chunkHi, -1, chunkStats);
+                queue.get(seq).of(doneLatch, TextImportTask.PHASE_BOUNDARY_CHECK, context, 5 * i, chunkLo, chunkHi, -1, chunkStats, null);
                 pubSeq.done(seq);
                 queuedCount++;
             }
@@ -458,16 +459,18 @@ public class FileIndexer implements Closeable, Mutable {
         indexStats.zero(0);
 
         for (int i = 0, n = indexChunkStats.size() - 2; i < n; i += 2) {
-            TaskContext context = contextObjList.get(i / 2);
+            int colIdx = i / 2;
+
+            TaskContext context = contextObjList.get(colIdx);
             final long chunkLo = indexChunkStats.get(i);
             final long lineNumber = indexChunkStats.get(i + 1);
             final long chunkHi = indexChunkStats.get(i + 2);
 
             final long seq = pubSeq.next();
             if (seq < 0) {
-                context.buildIndexStage(chunkLo, chunkHi, lineNumber, indexStats, i / 2);
+                context.buildIndexStage(chunkLo, chunkHi, lineNumber, indexStats, colIdx, partitionKeys.get(colIdx));
             } else {
-                queue.get(seq).of(doneLatch, TextImportTask.PHASE_INDEXING, context, i / 2, chunkLo, chunkHi, lineNumber, indexStats);
+                queue.get(seq).of(doneLatch, TextImportTask.PHASE_INDEXING, context, colIdx, chunkLo, chunkHi, lineNumber, indexStats, partitionKeys.get(colIdx));
                 pubSeq.done(seq);
                 queuedCount++;
             }
@@ -475,15 +478,39 @@ public class FileIndexer implements Closeable, Mutable {
 
         // process our own queue (this should fix deadlock with 1 worker configuration)
         waitForWorkers(queuedCount);
-        processIndexStats();
+        processIndexStats(partitionKeys);
 
         LOG.info().$("Finished indexing file=").$(inputFilePath).$();
     }
 
-    private void processIndexStats() {
+    private void processIndexStats(ObjList<LongList> partitionKeys) {
         maxLineLength = 0;
         for (int i = 0, n = indexStats.size(); i < n; i++) {
             maxLineLength = (int) Math.max(maxLineLength, indexStats.get(i));
+        }
+
+        LongHashSet set = new LongHashSet();
+        for (int i = 0, n = partitionKeys.size(); i < n; i++) {
+            LongList keys = partitionKeys.get(i);
+            for (int j = 0, m = keys.size(); j < m; j++) {
+                set.add(keys.get(j));
+            }
+        }
+
+        LongList uniquePartitionKeys = new LongList();
+        for (int i = 0, n = set.size(); i < n; i++) {
+            uniquePartitionKeys.add(set.get(i));
+        }
+        uniquePartitionKeys.sort();
+
+        DateFormat dirFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+
+        partitionNames.clear();
+        tmpPath.of(inputWorkRoot).concat(inputFileName).slash$();
+        for (int i = 0, n = uniquePartitionKeys.size(); i < n; i++) {
+            partitionNameSink.clear();
+            dirFormat.format(uniquePartitionKeys.get(i), null, null, partitionNameSink);
+            partitionNames.add(partitionNameSink.toString());
         }
     }
 
@@ -574,8 +601,8 @@ public class FileIndexer implements Closeable, Mutable {
             this.lexer = new TextLexer(textConfiguration);
         }
 
-        public void buildIndexStage(long lo, long hi, long lineNumber, LongList indexStats, int index) throws SqlException {
-            splitter.index(lo, hi, lineNumber, indexStats, index);
+        public void buildIndexStage(long lo, long hi, long lineNumber, LongList indexStats, int index, LongList partitionKeys) throws SqlException {
+            splitter.index(lo, hi, lineNumber, indexStats, index, partitionKeys);
         }
 
         @Override
@@ -830,10 +857,9 @@ public class FileIndexer implements Closeable, Mutable {
             } finally {
                 Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
             }
-
         }
 
-        public void mergeIndexStage(int index, long lo, long hi, final ObjList<CharSequence> partitionNames) {
+        public void importPartitionStage(int index, long lo, long hi, final ObjList<CharSequence> partitionNames) {
             createTable(inputWorkRoot, tableName + "_" + index);
             try (TableWriter writer = new TableWriter(configuration,
                     currentTableName,
@@ -872,7 +898,7 @@ public class FileIndexer implements Closeable, Mutable {
 
         public void of(int index, ObjList<CharSequence> names, ObjList<TypeAdapter> types, boolean forceHeader) {
             this.names = names;
-            this.types = adjust(types);
+            this.types = typeManager.adjust(types);
             this.timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
             this.lexer.of(columnDelimiter);
             this.lexer.setSkipLinesWithExtraValues(false);
@@ -882,19 +908,6 @@ public class FileIndexer implements Closeable, Mutable {
         public void setCurrentTableName(final CharSequence tableName) {
             this.currentTableName = tableName;
             this.lexer.setTableName(tableName);
-        }
-
-        private ObjList<TypeAdapter> adjust(ObjList<TypeAdapter> types) {
-            ObjList<TypeAdapter> result = new ObjList<>();
-            for (int i = 0, n = types.size(); i < n; i++) {
-                int srcType = types.get(i).getType();
-                if (srcType == ColumnType.STRING || srcType == ColumnType.SYMBOL) {
-                    result.add(typeManager.getTypeAdapter(srcType));
-                } else {
-                    result.add(types.get(i));
-                }
-            }
-            return result;
         }
 
         private void logError(long line, int i, final DirectByteCharSequence dbcs) {

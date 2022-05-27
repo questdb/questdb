@@ -76,4 +76,11 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
         this.locale = locale;
         return this;
     }
+
+    public TypeAdapter of(TypeAdapter adapter) {
+        DateUtf8Adapter other = (DateUtf8Adapter) adapter;
+        this.format = other.format;
+        this.locale = other.locale;
+        return this;
+    }
 }

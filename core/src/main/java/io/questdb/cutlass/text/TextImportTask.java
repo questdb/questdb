@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
@@ -33,7 +32,7 @@ public class TextImportTask {
 
     public static final byte PHASE_BOUNDARY_CHECK = 1;
     public static final byte PHASE_INDEXING = 2;
-    public static final byte PHASE_INDEX_MERGE = 3;
+    public static final byte PHASE_PARTITION_IMPORT = 3;
 
     private CountDownLatchSPI doneLatch;
     private byte phase;
@@ -43,6 +42,7 @@ public class TextImportTask {
     private long hi;
     private long lineNumber;
     private LongList chunkStats;
+    private LongList partitionKeys;
     private ObjList<CharSequence> partitionNames;
 
     public void of(
@@ -53,7 +53,8 @@ public class TextImportTask {
             long lo,
             long hi,
             long lineNumber,
-            LongList chunkStats
+            LongList chunkStats,
+            LongList partitionKeys
     ) {
         this.doneLatch = doneLatch;
         this.phase = phase;
@@ -63,6 +64,7 @@ public class TextImportTask {
         this.hi = hi;
         this.lineNumber = lineNumber;
         this.chunkStats = chunkStats;
+        this.partitionKeys = partitionKeys;
     }
 
     public void of(
@@ -88,9 +90,9 @@ public class TextImportTask {
             if (phase == PHASE_BOUNDARY_CHECK) {
                 context.countQuotesStage(index, lo, hi, chunkStats);
             } else if (phase == PHASE_INDEXING) {
-                context.buildIndexStage(lo, hi, lineNumber, chunkStats, index);
-            } else if (phase == PHASE_INDEX_MERGE) {
-                context.mergeIndexStage(index, lo, hi, partitionNames);
+                context.buildIndexStage(lo, hi, lineNumber, chunkStats, index, partitionKeys);
+            } else if (phase == PHASE_PARTITION_IMPORT) {
+                context.importPartitionStage(index, lo, hi, partitionNames);
             } else {
                 throw new RuntimeException("Unexpected phase " + phase);
             }
