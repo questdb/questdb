@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.junit.Test;
 
 import java.io.Closeable;
@@ -393,7 +394,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testReadAndWriteAllTypes() {
-        // todo: bin, geo
+        // todo: geohash
         String tableName = "testtable";
         String walName;
         int rowsToInsertTotal = 100;
@@ -418,6 +419,10 @@ public class WalWriterTest extends AbstractGriffinTest {
                      .col("geoLong", ColumnType.GEOLONG)
                      .col("bin", ColumnType.BINARY)
                      .col("bin2", ColumnType.BINARY)
+                     .col("long256b", ColumnType.LONG256) // putLong256(int columnIndex, Long256 value)
+                     .col("long256c", ColumnType.LONG256) // putLong256(int columnIndex, CharSequence hexString)
+                     .col("long256d", ColumnType.LONG256) // putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end)
+
                      .timestamp("ts")
         ) {
             int plen = path.length();
@@ -425,11 +430,14 @@ public class WalWriterTest extends AbstractGriffinTest {
             path.trimTo(plen);
             long ts = Os.currentTimeMicros();
             long pointer = Unsafe.getUnsafe().allocateMemory(rowsToInsertTotal);
+            Long256Impl long256 = new Long256Impl();
+            StringSink stringSink = new StringSink();
             try {
                 DirectBinarySequence binSeq = new DirectBinarySequence();
                 try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                     walName = walWriter.getWalName();
                     for (int i = 0; i < rowsToInsertTotal; i++) {
+                        stringSink.clear();
                         WalWriter.Row row = walWriter.newRow(ts);
                         row.putInt(0, i);
                         row.putByte(1, (byte) i);
@@ -447,14 +455,22 @@ public class WalWriterTest extends AbstractGriffinTest {
                         row.putGeoHash(13, i); // geo int
                         row.putGeoHash(14, i); // geo short
                         row.putGeoHash(15, i); // geo long
-
                         prepareBinPayload(pointer, i);
                         row.putBin(16, binSeq.of(pointer, i));
-
                         // putBin(address, length) treats length 0 the same as null.
                         // so let's start from 1 to avoid that edge-case
                         prepareBinPayload(pointer, i + 1);
                         row.putBin(17, pointer, i + 1);
+
+                        long256.setAll(i, i + 1, i + 2, i + 3);
+                        row.putLong256(18, long256);
+
+                        long256.toSink(stringSink);
+                        row.putLong256(19, stringSink);
+
+                        int l = stringSink.length();
+                        stringSink.put("some rubbish to be ignored");
+                        row.putLong256(20, stringSink, 2, l);
 
                         row.append();
                     }
@@ -465,6 +481,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                     int byteIndex = segmentReader.getColumnIndex("byte");
                     int longIndex = segmentReader.getColumnIndex("long");
                     int long256Index = segmentReader.getColumnIndex("long256");
+                    int long256bIndex = segmentReader.getColumnIndex("long256b");
+                    int long256cIndex = segmentReader.getColumnIndex("long256c");
+                    int long256dIndex = segmentReader.getColumnIndex("long256d");
                     int tsIndex = segmentReader.getColumnIndex("ts");
                     int doubleIndex = segmentReader.getColumnIndex("double");
                     int floatIndex = segmentReader.getColumnIndex("float");
@@ -482,10 +501,14 @@ public class WalWriterTest extends AbstractGriffinTest {
                     int binIndex = segmentReader.getColumnIndex("bin");
                     int bin2Index = segmentReader.getColumnIndex("bin2");
                     for (int i = 0; i < rowsToInsertTotal; i++) {
+                        stringSink.clear();
                         assertEquals(i, segmentReader.nextInt(intIndex));
                         assertEquals(i, segmentReader.nextByte(byteIndex));
                         assertEquals(i, segmentReader.nextLong(longIndex));
                         segmentReader.nextLong256(long256Index, assertingAcceptor(i, i + 1, i + 2, i + 3));
+                        segmentReader.nextLong256(long256bIndex, assertingAcceptor(i, i + 1, i + 2, i + 3));
+                        segmentReader.nextLong256(long256cIndex, assertingAcceptor(i, i + 1, i + 2, i + 3));
+                        segmentReader.nextLong256(long256dIndex, assertingAcceptor(i, i + 1, i + 2, i + 3));
                         assertDesignatedTimestamp(segmentReader, tsIndex, i, ts);
                         assertEquals(i + 0.5, segmentReader.nextDouble(doubleIndex), 0.1);
                         assertEquals(i + 0.5, segmentReader.nextFloat(floatIndex), 0.1);
