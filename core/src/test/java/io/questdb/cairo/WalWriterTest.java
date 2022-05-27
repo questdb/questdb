@@ -396,7 +396,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         // todo: bin, geo
         String tableName = "testtable";
         String walName;
-        final int rowsToInsertTotal = 100;
+        int rowsToInsertTotal = 100;
 
         try (Path path = new Path().of(configuration.getRoot());
              TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
@@ -417,6 +417,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                      .col("geoShort", ColumnType.GEOSHORT)
                      .col("geoLong", ColumnType.GEOLONG)
                      .col("bin", ColumnType.BINARY)
+                     .col("bin2", ColumnType.BINARY)
                      .timestamp("ts")
         ) {
             int plen = path.length();
@@ -449,6 +450,12 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                         prepareBinPayload(pointer, i);
                         row.putBin(16, binSeq.of(pointer, i));
+
+                        // putBin(address, length) treats length 0 the same as null.
+                        // so let's start from 1 to avoid that edge-case
+                        prepareBinPayload(pointer, i + 1);
+                        row.putBin(17, pointer, i + 1);
+
                         row.append();
                     }
                 }
@@ -473,6 +480,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     int geoShortIndex = segmentReader.getColumnIndex("geoShort");
                     int geoLongIndex = segmentReader.getColumnIndex("geoLong");
                     int binIndex = segmentReader.getColumnIndex("bin");
+                    int bin2Index = segmentReader.getColumnIndex("bin2");
                     for (int i = 0; i < rowsToInsertTotal; i++) {
                         assertEquals(i, segmentReader.nextInt(intIndex));
                         assertEquals(i, segmentReader.nextByte(byteIndex));
@@ -494,6 +502,9 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                         prepareBinPayload(pointer, i);
                         assertBinSeqEquals(binSeq.of(pointer, i), segmentReader.nextBin(binIndex));
+
+                        prepareBinPayload(pointer, i + 1);
+                        assertBinSeqEquals(binSeq.of(pointer, i + 1), segmentReader.nextBin(bin2Index));
                     }
                 }
             } finally {
