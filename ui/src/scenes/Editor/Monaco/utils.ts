@@ -62,6 +62,10 @@ export const getQueryFromCursor = (
   if (!position) return
 
   for (let i = 0; i < text.length; i++) {
+    if (sql !== null) {
+      break
+    }
+
     const char = text[i]
 
     switch (char) {
@@ -73,7 +77,7 @@ export const getQueryFromCursor = (
 
         if (
           row < position.lineNumber - 1 ||
-          (row === position.lineNumber - 1 && column < position.column)
+          (row === position.lineNumber - 1 && column < position.column - 1)
         ) {
           sqlTextStack.push({
             row: startRow,
@@ -86,6 +90,7 @@ export const getQueryFromCursor = (
           startPos = i + 1
           column++
         } else {
+          // empty queries, aka ;; , make sql.length === 0
           sql = text.substring(startPos === -1 ? 0 : startPos, i)
         }
         break
@@ -127,13 +132,9 @@ export const getQueryFromCursor = (
         break
       }
     }
-
-    if (sql) {
-      break
-    }
   }
 
-  if (!sql) {
+  if (sql === null) {
     sql = startPos === -1 ? text : text.substring(startPos)
   }
 
