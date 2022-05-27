@@ -26,13 +26,13 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableReaderRecordCursor;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Os;
@@ -51,12 +51,11 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
-    private static final int UPPERCASE_TABLE_RANDOMIZE_FACTOR = 2;
+    static final int UPPERCASE_TABLE_RANDOMIZE_FACTOR = 2;
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
-
-    private Rnd random;
+    protected final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
     private final AtomicLong timestampMillis = new AtomicLong(1465839830102300L);
-    private final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
+    protected Rnd random;
     private final String[][] colNameBases = new String[][]{
             {"terület", "TERÜLet", "tERülET", "TERÜLET"},
             {"temperature", "TEMPERATURE", "Temperature", "TempeRaTuRe"},
@@ -72,17 +71,16 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     };
     private final String[] tagValueBases = new String[]{"us-midwest", "London"};
     private final char[] nonAsciiChars = {'ó', 'í', 'Á', 'ч', 'Ъ', 'Ж', 'ю', 0x3000, 0x3080, 0x3a55};
-
-    private int numOfLines;
-    private int numOfIterations;
-    private int numOfThreads;
-    private int numOfTables;
-    private long waitBetweenIterationsMillis;
-    private boolean pinTablesToThreads;
+    protected int numOfLines;
+    protected int numOfIterations;
+    protected int numOfThreads;
+    protected int numOfTables;
+    protected long waitBetweenIterationsMillis;
+    protected boolean pinTablesToThreads;
 
     private SOCountDownLatch threadPushFinished;
-    private LowerCaseCharSequenceObjHashMap<TableData> tables;
-    private ConcurrentHashMap<CharSequence> tableNames;
+    protected LowerCaseCharSequenceObjHashMap<TableData> tables;
+    protected ConcurrentHashMap<CharSequence> tableNames;
 
     private int duplicatesFactor = -1;
     private int columnReorderingFactor = -1;
@@ -153,22 +151,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     void assertTable(TableData table) {
-        // timeout is 180 seconds
-        long timeoutMicros = 180_000_000;
-        long prev = testMicrosClock.getTicks();
         boolean checked = false;
         while (!checked) {
-            if (table.await(timeoutMicros)) {
-                checked = checkTable(table);
-                if (!checked) {
-                    long current = testMicrosClock.getTicks();
-                    timeoutMicros -= current - prev;
-                    prev = current;
-                }
-            } else {
-                Assert.fail("Timed out on waiting for the data to be ingested");
-                break;
-            }
+            table.await();
+            checked = checkTable(table);
         }
     }
 
@@ -187,7 +173,18 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 final TableReaderMetadata metadata = reader.getMetadata();
                 final CharSequence expected = table.generateRows(metadata);
                 getLog().info().$(table.getName()).$(" expected:\n").utf8(expected).$();
-                assertCursorTwoPass(expected, reader.getCursor(), metadata);
+
+                TableReaderRecordCursor cursor = reader.getCursor();
+                // Assert reader min timestamp
+                long txnMinTs = reader.getMinTimestamp();
+                int timestampIndex = reader.getMetadata().getTimestampIndex();
+                if (cursor.hasNext()) {
+                    long dataMinTs = cursor.getRecord().getLong(timestampIndex);
+                    Assert.assertEquals(dataMinTs, txnMinTs);
+                    cursor.toTop();
+                }
+
+                assertCursorTwoPass(expected, cursor, metadata);
                 return true;
             } else {
                 table.notReady();
@@ -215,7 +212,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         return columnOrdering;
     }
 
-    private LineData generateLine() {
+    protected LineData generateLine() {
         final LineData line = new LineData(timestampMillis.incrementAndGet());
         if (exerciseTags) {
             final int[] tagIndexes = getTagIndexes();
@@ -291,7 +288,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         return getTableName(tableIndex, false);
     }
 
-    private CharSequence getTableName(int tableIndex, boolean randomCase) {
+    protected CharSequence getTableName(int tableIndex, boolean randomCase) {
         final String tableName;
         if (randomCase) {
             tableName = random.nextInt(UPPERCASE_TABLE_RANDOMIZE_FACTOR) == 0 ? "WEATHER" : "weather";
@@ -302,25 +299,8 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     }
 
     @Override
-    protected WorkerPoolConfiguration getWorkerPoolConfiguration() {
-        return new WorkerPoolConfiguration() {
-            private final int[] affinity = {-1, -1, -1, -1};
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return affinity;
-            }
-
-            @Override
-            public int getWorkerCount() {
-                return 4;
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return true;
-            }
-        };
+    protected int getWorkerCount() {
+        return 4;
     }
 
     void initFuzzParameters(int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
@@ -357,7 +337,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         tableNames = new ConcurrentHashMap<>();
     }
 
-    private CharSequence pickTableName(int threadId) {
+    protected CharSequence pickTableName(int threadId) {
         return getTableName(pinTablesToThreads ? threadId : random.nextInt(numOfTables), true);
     }
 
@@ -397,28 +377,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
             try {
                 for (int i = 0; i < numOfThreads; i++) {
-                    final int threadId = i;
-                    new Thread(() -> {
-                        try (Socket socket = getSocket()) {
-                            for (int n = 0; n < numOfIterations; n++) {
-                                for (int j = 0; j < numOfLines; j++) {
-                                    final LineData line = generateLine();
-                                    final CharSequence tableName = pickTableName(threadId);
-                                    final TableData table = tables.get(tableName);
-                                    table.addLine(line);
-                                    sendToSocket(socket, line.toLine(tableName));
-                                }
-                                Os.sleep(waitBetweenIterationsMillis);
-                            }
-                        } catch (Exception e) {
-                            Assert.fail("Data sending failed [e=" + e + "]");
-                            throw new RuntimeException(e);
-                        } finally {
-                            threadPushFinished.countDown();
-                        }
-                    }).start();
+                    startThread(i, threadPushFinished);
                 }
                 threadPushFinished.await();
+                waitDone();
 
                 for (int i = 0; i < numOfTables; i++) {
                     final CharSequence tableName = getTableName(i);
@@ -434,6 +396,31 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         if (errorMsg != null) {
             Assert.fail(errorMsg);
         }
+    }
+
+    protected void startThread(int threadId, SOCountDownLatch threadPushFinished) {
+        new Thread(() -> {
+            try (Socket socket = getSocket()) {
+                for (int n = 0; n < numOfIterations; n++) {
+                    for (int j = 0; j < numOfLines; j++) {
+                        final LineData line = generateLine();
+                        final CharSequence tableName = pickTableName(threadId);
+                        final TableData table = tables.get(tableName);
+                        table.addLine(line);
+                        sendToSocket(socket, line.toLine(tableName));
+                    }
+                    Os.sleep(waitBetweenIterationsMillis);
+                }
+            } catch (Exception e) {
+                Assert.fail("Data sending failed [e=" + e + "]");
+                throw new RuntimeException(e);
+            } finally {
+                threadPushFinished.countDown();
+            }
+        }).start();
+    }
+
+    protected void waitDone() {
     }
 
     void setError(String errorMsg) {

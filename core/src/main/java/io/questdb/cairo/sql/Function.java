@@ -149,6 +149,14 @@ public interface Function extends Closeable, StatefulAtom {
         return false;
     }
 
+    /**
+     * Returns true if the function and all of its children functions are thread-safe
+     * and, thus, can be called concurrently, false - otherwise. Used as a hint for
+     * parallel SQL filters runtime, thus this method makes sense only for functions
+     * that are allowed in a filter (WHERE clause).
+     */
+    boolean isReadThreadSafe();
+
     default void toTop() {
     }
 }

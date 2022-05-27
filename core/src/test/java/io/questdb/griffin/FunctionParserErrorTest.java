@@ -25,11 +25,10 @@
 package io.questdb.griffin;
 
 import org.hamcrest.MatcherAssert;
-
-import static org.hamcrest.CoreMatchers.*;
-
 import org.junit.Assert;
 import org.junit.Test;
+
+import static org.hamcrest.CoreMatchers.containsString;
 
 public class FunctionParserErrorTest extends AbstractGriffinTest {
 

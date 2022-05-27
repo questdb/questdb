@@ -30,7 +30,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
@@ -159,6 +162,17 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         columnNameTxn
                 );
                 break;
+        }
+    }
+
+    public static boolean isOpenColumnModeForAppend(int openColumnMode) {
+        switch (openColumnMode) {
+            case OPEN_MID_PARTITION_FOR_APPEND:
+            case OPEN_LAST_PARTITION_FOR_APPEND:
+            case OPEN_NEW_PARTITION_FOR_APPEND:
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -1906,7 +1920,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // extend the existing column down, we will be discarding it anyway
                     srcDataFixSize = srcDataActualBytes + srcDataMaxBytes;
                     srcDataFixAddr = mapRW(ff, srcFixFd, srcDataFixSize, MemoryTag.MMAP_O3);
-                    setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
+                    TableUtils.setNull(columnType, srcDataFixAddr + srcDataActualBytes, srcDataTop);
                     Vect.memcpy(srcDataFixAddr + srcDataMaxBytes, srcDataFixAddr, srcDataActualBytes);
                     srcDataTop = 0;
                     srcDataFixOffset = srcDataActualBytes;
@@ -2373,46 +2387,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 tableWriter,
                 null
         );
-    }
-
-    private static void setNull(int columnType, long addr, long count) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.GEOBYTE:
-                Vect.memset(addr, count, 0);
-                break;
-            case ColumnType.CHAR:
-            case ColumnType.SHORT:
-            case ColumnType.GEOSHORT:
-                Vect.setMemoryShort(addr, (short) 0, count);
-                break;
-            case ColumnType.INT:
-            case ColumnType.GEOINT:
-                Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
-                break;
-            case ColumnType.FLOAT:
-                Vect.setMemoryFloat(addr, Float.NaN, count);
-                break;
-            case ColumnType.SYMBOL:
-                Vect.setMemoryInt(addr, -1, count);
-                break;
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.GEOLONG:
-                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);
-                break;
-            case ColumnType.DOUBLE:
-                Vect.setMemoryDouble(addr, Double.NaN, count);
-                break;
-            case ColumnType.LONG256:
-                // Long256 is null when all 4 longs are NaNs
-                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
-                break;
-            default:
-                break;
-        }
     }
 
     private static void appendNewPartition(

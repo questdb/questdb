@@ -37,11 +37,11 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3PartitionPurgeTest extends AbstractGriffinTest {
-    private static O3PurgeDiscoveryJob purgeJob;
+    private static O3PartitionPurgeJob purgeJob;
 
     @BeforeClass
     public static void begin() {
-        purgeJob = new O3PurgeDiscoveryJob(engine.getMessageBus(), 1);
+        purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), 1);
     }
 
     @AfterClass

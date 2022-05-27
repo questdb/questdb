@@ -56,6 +56,8 @@ public final class Vect {
 
     public static native void flattenIndex(long pIndex, long count);
 
+    public static native void sort3LongAscInPlace(long address, long count);
+
     private static native void freeMergedIndex(long pIndex);
 
     public static void freeMergedIndex(long pIndex, long indexSize) {

@@ -74,7 +74,7 @@ public class DateTruncFunctionFactory implements FunctionFactory {
         } else if (Chars.equals(kind, "millennium")) {
             return new TimestampFloorFunctions.TimestampFloorMillenniumFunction(innerFunction);
         } else {
-            throw SqlException.position(argPositions.getQuick(0)).put("invalid kind '").put(kind).put('\'');
+            throw SqlException.$(argPositions.getQuick(0), "invalid kind '").put(kind).put('\'');
         }
     }
 }

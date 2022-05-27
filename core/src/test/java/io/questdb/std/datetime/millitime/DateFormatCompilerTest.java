@@ -406,7 +406,7 @@ public class DateFormatCompilerTest {
     @Test
     public void testGreedyYear() throws Exception {
         assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
-        assertThat("y-MM", "1936-03-01T00:00:00.000Z", "36-03");
+        assertThat("y-MM", "2036-03-01T00:00:00.000Z", "36-03");
         assertThat("y-MM", "2015-03-01T00:00:00.000Z", "15-03");
         assertThat("y-MM", "0137-03-01T00:00:00.000Z", "137-03");
     }
@@ -418,7 +418,7 @@ public class DateFormatCompilerTest {
             DateFormatUtils.updateReferenceYear(Dates.toMillis(2015, 1, 20, 0, 0));
             assertThat("y-MM", "1564-03-01T00:00:00.000Z", "1564-03");
             assertThat("y-MM", "2006-03-01T00:00:00.000Z", "06-03");
-            assertThat("y-MM", "1955-03-01T00:00:00.000Z", "55-03");
+            assertThat("y-MM", "2055-03-01T00:00:00.000Z", "55-03");
             assertThat("y-MM", "0137-03-01T00:00:00.000Z", "137-03");
         } finally {
             DateFormatUtils.updateReferenceYear(referenceYear);
@@ -526,7 +526,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testMillisGreedy() throws Exception {
-        assertThat("ddMMy HH:mm:ss.S", "1978-03-19T21:20:45.678Z", "190378 21:20:45.678");
+        assertThat("ddMMy HH:mm:ss.S", "2078-03-19T21:20:45.678Z", "190378 21:20:45.678");
     }
 
     @Test(expected = NumericException.class)
@@ -542,7 +542,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testMillisThreeDigits() throws Exception {
-        assertThat("ddMMy HH:mm:ss.SSS", "1978-03-19T21:20:45.678Z", "190378 21:20:45.678");
+        assertThat("ddMMy HH:mm:ss.SSS", "2078-03-19T21:20:45.678Z", "190378 21:20:45.678");
     }
 
     @Test
@@ -617,7 +617,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testSecondGreedy() throws Exception {
-        assertThat("ddMMy HH:mm:s", "1978-03-19T21:20:45.000Z", "190378 21:20:45");
+        assertThat("ddMMy HH:mm:s", "2078-03-19T21:20:45.000Z", "190378 21:20:45");
     }
 
     @Test
@@ -627,7 +627,7 @@ public class DateFormatCompilerTest {
 
     @Test
     public void testSecondTwoDigits() throws Exception {
-        assertThat("ddMMy HH:mm:ss", "1978-03-19T21:20:45.000Z", "190378 21:20:45");
+        assertThat("ddMMy HH:mm:ss", "2078-03-19T21:20:45.000Z", "190378 21:20:45");
     }
 
     @Test

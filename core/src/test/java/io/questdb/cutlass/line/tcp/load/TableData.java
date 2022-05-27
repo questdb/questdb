@@ -29,8 +29,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.IntLongPriorityQueue;
 import io.questdb.std.ObjList;
-
-import java.util.concurrent.TimeUnit;
+import io.questdb.std.Rnd;
 
 import static io.questdb.cairo.ColumnType.*;
 
@@ -56,8 +55,8 @@ public class TableData {
         readyLatch.countDown();
     }
 
-    public boolean await(long micros) {
-        return readyLatch.await(TimeUnit.MICROSECONDS.toNanos(micros));
+    public void await() {
+        readyLatch.await();
     }
 
     public synchronized int size() {
@@ -94,6 +93,20 @@ public class TableData {
             index.popValue();
         }
         return sb.toString();
+    }
+
+    public synchronized LineData getRandomValidLine(Rnd rnd) {
+        int count = 0;
+        int size = rows.size();
+        int lineNum = rnd.nextInt(size) + 1;
+        int i = -1;
+        while (count < lineNum) {
+            i++;
+            if (rows.getQuick(i % size).isValid()) {
+                count++;
+            }
+        }
+        return rows.getQuick(i  % size);
     }
 
     private String getDefaultValue(short colType) {

@@ -46,8 +46,6 @@ public interface CairoConfiguration {
 
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
-    boolean enableDevelopmentUpdates();
-
     boolean enableTestFactories();
 
     int getAnalyticColumnPoolCapacity();
@@ -71,6 +69,14 @@ public interface CairoConfiguration {
 
     int getColumnIndexerQueueCapacity();
 
+    int getColumnPurgeQueueCapacity();
+
+    int getColumnPurgeTaskPoolCapacity();
+
+    int getColumnPurgeRetryLimitDays();
+
+    double getColumnPurgeRetryDelayMultiplier();
+
     /**
      * Default commit lag in microseconds for new tables. This value
      * can be overridden with 'create table' statement.
@@ -83,6 +89,10 @@ public interface CairoConfiguration {
 
     CharSequence getConfRoot(); // same as root/../conf
 
+    long getColumnPurgeRetryDelayLimit();
+
+    long getColumnPurgeRetryDelay();
+
     CharSequence getSnapshotRoot(); // same as root/../snapshot
 
     /**
@@ -93,6 +103,8 @@ public interface CairoConfiguration {
      * @return instance id.
      */
     CharSequence getSnapshotInstanceId();
+
+    CharSequence getSystemTableNamePrefix();
 
     /**
      * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.

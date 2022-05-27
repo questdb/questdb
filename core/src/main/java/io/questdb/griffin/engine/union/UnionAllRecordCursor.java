@@ -82,6 +82,11 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
         return symbolCursor.getSymbolTable(columnIndex);
     }
 
+    @Override
+    public SymbolTable newSymbolTable(int columnIndex) {
+        return symbolCursor.newSymbolTable(columnIndex);
+    }
+
     private boolean nextMaster() {
         return masterCursor.hasNext() || switchToSlaveCursor();
     }

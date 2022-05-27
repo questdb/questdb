@@ -31,12 +31,13 @@ import io.questdb.cutlass.http.processors.QueryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.junit.rules.TemporaryFolder;
 
-import java.util.Arrays;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -51,10 +52,6 @@ public class HttpHealthCheckTestBuilder {
     private boolean injectUnhandledError;
 
     public void run(HttpClientCode code) throws Exception {
-        final int workerCount = 1;
-        final int[] workerAffinity = new int[workerCount];
-        Arrays.fill(workerAffinity, -1);
-
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
             final DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
@@ -66,22 +63,7 @@ public class HttpHealthCheckTestBuilder {
                 metrics = Metrics.enabled();
             }
 
-            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                @Override
-                public int[] getWorkerAffinity() {
-                    return workerAffinity;
-                }
-
-                @Override
-                public int getWorkerCount() {
-                    return workerCount;
-                }
-
-                @Override
-                public boolean haltOnError() {
-                    return false;
-                }
-            }, metrics);
+            WorkerPool workerPool = new TestWorkerPool(1, metrics);
 
             if (injectUnhandledError) {
                 final AtomicBoolean alreadyErrored = new AtomicBoolean();

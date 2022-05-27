@@ -32,8 +32,10 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -128,18 +130,15 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         return masterFactory.hasDescendingOrder();
     }
 
-    private class SpliceJoinLightRecordCursor implements NoRandomAccessRecordCursor {
+    private class SpliceJoinLightRecordCursor extends AbstractJoinCursor {
         private final JoinRecord record;
         private final Map joinKeyMap;
-        private final int columnSplit;
         private final int masterTimestampIndex;
         private final int slaveTimestampIndex;
         private final Record nullMasterRecord;
         private final Record nullSlaveRecord;
         private Record masterRecord2;
         private Record slaveRecord2;
-        private RecordCursor masterCursor;
-        private RecordCursor slaveCursor;
         private Record masterRecord;
         private Record slaveRecord;
         private long masterKeyAddress = -1L;
@@ -160,9 +159,9 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 Record nullMasterRecord,
                 Record nullSlaveRecord
         ) {
+            super(columnSplit);
             this.record = new JoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
-            this.columnSplit = columnSplit;
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.nullMasterRecord = nullMasterRecord;
@@ -170,22 +169,8 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
-        public void close() {
-            masterCursor = Misc.free(masterCursor);
-            slaveCursor = Misc.free(slaveCursor);
-        }
-
-        @Override
         public Record getRecord() {
             return record;
-        }
-
-        @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex < columnSplit) {
-                return masterCursor.getSymbolTable(columnIndex);
-            }
-            return slaveCursor.getSymbolTable(columnIndex - columnSplit);
         }
 
         @Override

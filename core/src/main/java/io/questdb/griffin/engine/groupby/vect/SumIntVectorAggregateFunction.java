@@ -121,4 +121,8 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
         return this.count.sum() > 0 ? this.sum.sum() : Numbers.LONG_NaN;
     }
 
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }

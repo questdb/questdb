@@ -62,6 +62,11 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
+    public boolean isMapped(long offset, long len) {
+        return offset + len <= size();
+    }
+
+    @Override
     public void extend(long newSize) {
         grownLength = Math.max(newSize, grownLength);
         if (newSize > size) {

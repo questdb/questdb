@@ -48,7 +48,7 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence o3CallbackPubSeq;
     private final MCSequence o3CallbackSubSeq;
 
-    private final RingQueue<O3PurgeDiscoveryTask> o3PurgeDiscoveryQueue;
+    private final RingQueue<O3PartitionPurgeTask> o3PurgeDiscoveryQueue;
     private final MPSequence o3PurgeDiscoveryPubSeq;
     private final MCSequence o3PurgeDiscoverySubSeq;
 
@@ -80,6 +80,9 @@ public class MessageBusImpl implements MessageBus {
     private final MCSequence[] pageFrameReduceSubSeq;
     private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
     private final FanOut[] pageFrameCollectFanOut;
+    private final RingQueue<ColumnPurgeTask> columnPurgeQueue;
+    private final SCSequence columnPurgeSubSeq;
+    private final MPSequence columnPurgePubSeq;
 
     private final RingQueue<TextImportTask> textImportQueue;
     private final MPSequence textImportPubSeq;
@@ -117,7 +120,7 @@ public class MessageBusImpl implements MessageBus {
         this.o3CopySubSeq = new MCSequence(this.o3CopyQueue.getCycle());
         o3CopyPubSeq.then(o3CopySubSeq).then(o3CopyPubSeq);
 
-        this.o3PurgeDiscoveryQueue = new RingQueue<>(O3PurgeDiscoveryTask::new, configuration.getO3PurgeDiscoveryQueueCapacity());
+        this.o3PurgeDiscoveryQueue = new RingQueue<>(O3PartitionPurgeTask::new, configuration.getO3PurgeDiscoveryQueueCapacity());
         this.o3PurgeDiscoveryPubSeq = new MPSequence(this.o3PurgeDiscoveryQueue.getCycle());
         this.o3PurgeDiscoverySubSeq = new MCSequence(this.o3PurgeDiscoveryQueue.getCycle());
         this.o3PurgeDiscoveryPubSeq.then(this.o3PurgeDiscoverySubSeq).then(o3PurgeDiscoveryPubSeq);
@@ -140,6 +143,11 @@ public class MessageBusImpl implements MessageBus {
         this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
         this.queryCacheEventSubSeq = new FanOut();
         this.queryCacheEventPubSeq.then(this.queryCacheEventSubSeq).then(this.queryCacheEventPubSeq);
+
+        this.columnPurgeQueue = new RingQueue<>(ColumnPurgeTask::new, configuration.getColumnPurgeQueueCapacity());
+        this.columnPurgeSubSeq = new SCSequence();
+        this.columnPurgePubSeq = new MPSequence(this.columnPurgeQueue.getCycle());
+        this.columnPurgePubSeq.then(this.columnPurgeSubSeq).then(this.columnPurgePubSeq);
 
         this.pageFrameReduceShardCount = configuration.getPageFrameReduceShardCount();
 
@@ -178,6 +186,21 @@ public class MessageBusImpl implements MessageBus {
         // We need to close only queues with native backing memory.
         Misc.free(getTableWriterEventQueue());
         Misc.free(pageFrameReduceQueue);
+    }
+
+    @Override
+    public Sequence getColumnPurgePubSeq() {
+        return columnPurgePubSeq;
+    }
+
+    @Override
+    public RingQueue<ColumnPurgeTask> getColumnPurgeQueue() {
+        return columnPurgeQueue;
+    }
+
+    @Override
+    public SCSequence getColumnPurgeSubSeq() {
+        return columnPurgeSubSeq;
     }
 
     @Override
@@ -281,7 +304,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public RingQueue<O3PurgeDiscoveryTask> getO3PurgeDiscoveryQueue() {
+    public RingQueue<O3PartitionPurgeTask> getO3PurgeDiscoveryQueue() {
         return o3PurgeDiscoveryQueue;
     }
 

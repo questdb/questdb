@@ -38,13 +38,13 @@ import io.questdb.std.str.Path;
  * Rebuild index independently of TableWriter
  * Main purpose is for support cases when table data is corrupt and TableWriter cannot be opened
  */
-public class RebuildIndex extends RebuildColumnBase {
-    private static final Log LOG = LogFactory.getLog(RebuildIndex.class);
+public class IndexBuilder extends RebuildColumnBase {
+    private static final Log LOG = LogFactory.getLog(IndexBuilder.class);
     private final MemoryMR indexMem = Vm.getMRInstance();
     private final SymbolColumnIndexer indexer = new SymbolColumnIndexer();
     private final MemoryMAR ddlMem = Vm.getMARInstance();
 
-    public RebuildIndex() {
+    public IndexBuilder() {
         super();
         columnTypeErrorMsg = "Column is not indexed";
     }

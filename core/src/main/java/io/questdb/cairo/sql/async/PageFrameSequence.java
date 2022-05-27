@@ -63,8 +63,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private RingQueue<PageFrameReduceTask> reduceQueue;
     private SymbolTableSource symbolTableSource;
     private T atom;
-    private PageAddressCacheRecord[] records;
-    private SqlExecutionCircuitBreaker[] circuitBreakers;
+    private PageAddressCacheRecord record;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     // Local reduce task used when there is no slots in the queue to dispatch tasks.
     private PageFrameReduceTask localTask;
     private final WeakClosableObjectPool<PageFrameReduceTask> localTaskPool;
@@ -98,15 +98,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         while (doneLatch.getCount() == 0) {
-            final int workerId = getWorkerId();
-            final PageAddressCacheRecord rec = records[workerId];
-            final SqlExecutionCircuitBreaker circuitBreaker = circuitBreakers[workerId];
             final boolean allFramesReduced = reduceCounter.get() == dispatchStartFrameIndex;
-            // we were asked to steal work from the reduce queue and beyond, as much as we can
-            if (PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, rec, circuitBreaker)) {
+            // We were asked to steal work from the reduce queue and beyond, as much as we can.
+            if (PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, record, circuitBreaker)) {
                 long cursor = collectSubSeq.next();
                 if (cursor > -1) {
-                    // discard collect items
+                    // Discard collect items.
                     final PageFrameReduceTask tsk = reduceQueue.get(cursor);
                     if (tsk.getFrameSequence() == this) {
                         tsk.collected(true);
@@ -126,7 +123,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             }
         }
 
-        assert reduceCounter.get() == dispatchStartFrameIndex;
+        // It could be the case that one of the workers reduced a page frame, then marked the task as done,
+        // but haven't incremented reduce counter yet. In this case, we wait for the desired counter value.
+        while (reduceCounter.get() != dispatchStartFrameIndex) {
+            Os.pause();
+        }
     }
 
     public void clear() {
@@ -152,7 +153,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(circuitBreakers);
+        Misc.free(circuitBreaker);
+        Misc.free(record);
     }
 
     public PageFrameSequence<T> of(
@@ -167,11 +169,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         this.startTimeUs = microsecondClock.getTicks();
         this.circuitBreakerFd = executionContext.getCircuitBreaker().getFd();
 
-        // allow entry for 0 - main thread that is a non-worker
-        initWorkerRecords(
-                executionContext.getWorkerCount() + 1,
-                executionContext.getCircuitBreaker()
-        );
+        initRecord(executionContext.getCircuitBreaker());
 
         final Rnd rnd = executionContext.getAsyncRandom();
         try {
@@ -318,10 +316,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      * @return true if at least one task was dispatched or reduced; false otherwise
      */
     private boolean dispatch() {
-        final int workerId = getWorkerId();
-        final PageAddressCacheRecord record = records[workerId];
-        final SqlExecutionCircuitBreaker circuitBreaker = circuitBreakers[workerId];
-
         boolean idle = true;
         boolean dispatched = false;
 
@@ -408,10 +402,16 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         }
         localTask.of(this, dispatchStartFrameIndex++);
 
-        final int workerId = getWorkerId();
-        final PageAddressCacheRecord record = records[workerId];
-        final SqlExecutionCircuitBreaker circuitBreaker = circuitBreakers[workerId];
-        PageFrameReduceJob.reduce(record, circuitBreaker, localTask, this);
+        try {
+            if (isActive()) {
+                PageFrameReduceJob.reduce(record, circuitBreaker, localTask, this);
+            }
+        } catch (Throwable e) {
+            cancel();
+            throw e;
+        } finally {
+            reduceCounter.incrementAndGet();
+        }
     }
 
     public PageFrameReduceTask getTask(long cursor) {
@@ -450,6 +450,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
             // done latch is reset by method call above
             doneLatch.reset();
+            id = ID_SEQ.incrementAndGet();
             dispatchStartFrameIndex = 0;
             collectedFrameIndex = -1;
             reduceCounter.set(0);
@@ -457,38 +458,18 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         }
     }
 
-    private static int getWorkerId() {
-        final Thread thread = Thread.currentThread();
-        final int workerId;
-        if (thread instanceof Worker) {
-            workerId = ((Worker) thread).getWorkerId() + 1;
-        } else {
-            workerId = 0;
-        }
-        return workerId;
-    }
-
-    private void initWorkerRecords(
-            int workerCount,
-            SqlExecutionCircuitBreaker executionContextCircuitBreaker
-    ) {
-        if (records == null || records.length < workerCount) {
+    private void initRecord(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
+        if (record == null) {
             final SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration = executionContextCircuitBreaker.getConfiguration();
-            this.records = new PageAddressCacheRecord[workerCount];
-            this.circuitBreakers = new SqlExecutionCircuitBreaker[workerCount];
-            for (int i = 0; i < workerCount; i++) {
-                this.records[i] = new PageAddressCacheRecord();
-                if (sqlExecutionCircuitBreakerConfiguration != null) {
-                    this.circuitBreakers[i] = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration);
-                } else {
-                    this.circuitBreakers[i] = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-                }
+            this.record = new PageAddressCacheRecord();
+            if (sqlExecutionCircuitBreakerConfiguration != null) {
+                this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration);
+            } else {
+                this.circuitBreaker = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
             }
         }
 
-        for (int i = 0; i < workerCount; i++) {
-            this.circuitBreakers[i].setFd(executionContextCircuitBreaker.getFd());
-        }
+        this.circuitBreaker.setFd(executionContextCircuitBreaker.getFd());
     }
 
     private void prepareForDispatch(

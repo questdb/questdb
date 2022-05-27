@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
@@ -36,7 +37,6 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -70,6 +70,7 @@ public class WriterPool extends AbstractPool {
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
+    private static final long QUEUE_PROCESSING = -2L;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
     private final MicrosecondClock clock;
@@ -133,15 +134,19 @@ public class WriterPool extends AbstractPool {
     /**
      * Returns writer from the pool or sends writer command
      *
-     * @param tableName   name of the table
-     * @param lockReason  reason for the action
-     * @param writeAction lambda to write to TableWriterTask
+     * @param tableName          name of the table
+     * @param lockReason         reason for the action
+     * @param asyncWriterCommand command to write to TableWriterTask
      * @return null if command is published or TableWriter instance if writer is available
      */
-    public TableWriter getOrPublishCommand(CharSequence tableName, String lockReason, WriteToQueue<TableWriterTask> writeAction) {
+    public TableWriter getWriterOrPublishCommand(
+            CharSequence tableName,
+            String lockReason,
+            @NotNull AsyncWriterCommand asyncWriterCommand
+    ) {
         while (true) {
             try {
-                return getWriterEntry(tableName, lockReason, writeAction);
+                return getWriterEntry(tableName, lockReason, asyncWriterCommand);
             } catch (EntryUnavailableException ex) {
                 // means retry in this context
             }
@@ -268,16 +273,33 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private void addCommandToWriterQueue(Entry e, WriteToQueue<TableWriterTask> writeAction) {
+    private void addCommandToWriterQueue(Entry e, AsyncWriterCommand asyncWriterCommand, long thread) {
         TableWriter writer;
         while ((writer = e.writer) == null && e.owner != UNALLOCATED) {
             Os.pause();
         }
         if (writer == null) {
-            // Can be anything e.g. writer evicted from the pool, retry from very beginning
+            // Retry from very beginning
             throw EntryUnavailableException.instance("please retry");
         }
-        writer.processCommandAsync(writeAction);
+        writer.publishAsyncWriterCommand(asyncWriterCommand);
+
+        // Make sure writer does not go to the pool with command in the queue
+        // Wait until writer is either in the pool or out
+        while (e.owner == QUEUE_PROCESSING) {
+            Os.pause();
+        }
+
+        // If the writer is suddenly in the pool, lock it and call tick to process command queue
+        if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+            // Writer became available straight after setting items in the queue.
+            // Don't leave it unprocessed
+            try {
+                writer.tick(true);
+            } finally {
+                Unsafe.cas(e, ENTRY_OWNER, thread, UNALLOCATED);
+            }
+        }
     }
 
     private void assertLockReason(CharSequence lockReason) {
@@ -337,10 +359,10 @@ public class WriterPool extends AbstractPool {
             // order of conditions important
             if ((deadline > e.lastReleaseTime && e.owner == UNALLOCATED)) {
                 // looks like this writer is unallocated and can be released
-                // Lock with negative 2-based owner thread id to indicate it's that next
+                // Lock with negative 3-based owner thread id to indicate it's that next
                 // allocating thread can wait until the entry is released.
-                // Avoid negative thread id clashing with UNALLOCATED value
-                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, -thread - 2)) {
+                // Avoid negative thread id clashing with UNALLOCATED and QUEUE_PROCESSING values
+                if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, -thread - 3)) {
                     // lock successful
                     closeWriter(thread, e, PoolListener.EV_EXPIRE, reason);
                     iterator.remove();
@@ -411,7 +433,11 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private TableWriter getWriterEntry(CharSequence tableName, CharSequence lockReason, WriteToQueue<TableWriterTask> writeAction) {
+    private TableWriter getWriterEntry(
+            CharSequence tableName,
+            CharSequence lockReason,
+            @Nullable AsyncWriterCommand asyncWriterCommand
+    ) {
         assert null != lockReason;
         checkClosed();
 
@@ -460,12 +486,18 @@ public class WriterPool extends AbstractPool {
                         throw e.ex;
                     }
                 }
-                if (writeAction != null) {
-                    addCommandToWriterQueue(e, writeAction);
+                if (asyncWriterCommand != null) {
+                    addCommandToWriterQueue(e, asyncWriterCommand, thread);
                     return null;
                 }
-                LOG.info().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(", thread=").$(thread).I$();
-                throw EntryUnavailableException.instance(reinterpretOwnershipReason(e.ownershipReason));
+
+                CharSequence reason = reinterpretOwnershipReason(e.ownershipReason);
+                LOG.info().$("busy [table=`").utf8(tableName)
+                        .$("`, owner=").$(owner)
+                        .$(", thread=").$(thread)
+                        .$(", reason=").$(reason)
+                        .I$();
+                throw EntryUnavailableException.instance(reason);
             }
         }
     }
@@ -507,7 +539,11 @@ public class WriterPool extends AbstractPool {
         final CharSequence name = e.writer.getTableName();
         try {
             e.writer.rollback();
-            // We can apply structure changing ALTER TABLE before writer returns to the pool
+
+            if (e.owner != UNALLOCATED) {
+                e.owner = QUEUE_PROCESSING;
+            }
+            // We can apply structure changes with ALTER TABLE and do UPDATE(s) before the writer returned to the pool
             e.writer.tick(true);
         } catch (Throwable ex) {
             // We are here because of a systemic issues of some kind

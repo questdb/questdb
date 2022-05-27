@@ -49,6 +49,24 @@ typedef struct {
     uint64_t c1[256];
 } rscounts_t;
 
+struct long_3x {
+    uint64_t l1;
+    uint64_t l2;
+    uint64_t l3;
+
+    bool operator<=(const long_3x& other) const
+    {
+        if (l1 > other.l1) return false;
+        if (l1 == other.l1) {
+            if (l2 > other.l2) return false;
+            if (l2 == other.l2) {
+                if (l3 > other.l3) return false;
+            }
+        }
+        return true;
+    }
+};
+
 #define RADIX_SHUFFLE 0
 
 #if RADIX_SHUFFLE == 0
@@ -506,6 +524,16 @@ Java_io_questdb_std_Vect_sortULongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
 JNIEXPORT void JNICALL
 Java_io_questdb_std_Vect_sort128BitAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong len) {
     quick_sort_long_index_asc_in_place<__int128>(reinterpret_cast<__int128 *>(pLong), 0, len - 1);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
+    quick_sort_long_index_asc_in_place<long_3x>(reinterpret_cast<long_3x *>(pLong), 0, count - 1);
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
+    quick_sort_long_index_asc_in_place<long_3x>(reinterpret_cast<long_3x *>(pLong), 0, count - 1);
 }
 
 index_t* merge_long_indexes_asc(const java_index_entry_t *java_entries, uint32_t count, index_t *merged_index) {

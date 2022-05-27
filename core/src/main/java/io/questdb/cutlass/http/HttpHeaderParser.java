@@ -56,6 +56,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private boolean u = true;
     private boolean q = false;
     private DirectByteCharSequence charset;
+    private long statementTimeout = -1L;
 
     public HttpHeaderParser(int bufferLen, ObjectPool<DirectByteCharSequence> pool) {
         final int sz = Numbers.ceilPow2(bufferLen);
@@ -101,6 +102,7 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
         this.m = true;
         this.u = true;
         this.q = false;
+        this.statementTimeout = -1L;
         // do not clear pool
 //        this.pool.clear();
     }
@@ -172,6 +174,11 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     @Override
     public DirectByteCharSequence getUrlParam(CharSequence name) {
         return urlParams.get(name);
+    }
+
+    @Override
+    public long getStatementTimeout() {
+        return statementTimeout;
     }
 
     public boolean isIncomplete() {
@@ -355,6 +362,21 @@ public class HttpHeaderParser implements Mutable, Closeable, HttpRequestHeader {
     private void parseKnownHeaders() {
         parseContentType();
         parseContentDisposition();
+        parseStatementTimeout();
+    }
+
+    private void parseStatementTimeout() {
+        statementTimeout = -1L;
+        DirectByteCharSequence timeout = getHeader("Statement-Timeout");
+        if (timeout == null) {
+            return;
+        }
+
+        try {
+            statementTimeout = Numbers.parseLong(timeout);
+        } catch (NumericException ex) {
+            // keep -1L as default
+        }
     }
 
     private int parseMethod(long lo, long hi) {

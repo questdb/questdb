@@ -24,15 +24,13 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.NetUtils;
-import io.questdb.griffin.QueryFuture;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -43,6 +41,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
@@ -63,10 +62,12 @@ import org.postgresql.util.PSQLException;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.sql.Date;
 import java.sql.*;
 import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.GregorianCalendar;
+import java.util.List;
+import java.util.Properties;
+import java.util.TimeZone;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -1840,32 +1841,32 @@ public class PGJobContextTest extends BasePGTest {
     @Test
     public void testFetchDisconnectReleasesReaderCrossJoin() throws Exception {
         assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer ignored = createPGServer(1);
-                    final Connection connection = getConnection(false, true)
-            ) {
-                connection.setAutoCommit(false);
+            try (final PGWireServer ignored = createPGServer(1)) {
+                try (final Connection connection = getConnection(false, true)) {
+                    connection.setAutoCommit(false);
 
-                PreparedStatement tbl = connection.prepareStatement("create table xx as (" +
-                        "select x," +
-                        " timestamp_sequence(0, 1000) ts" +
-                        " from long_sequence(100000)) timestamp (ts)");
-                tbl.execute();
+                    PreparedStatement tbl = connection.prepareStatement("create table xx as (" +
+                            "select x," +
+                            " timestamp_sequence(0, 1000) ts" +
+                            " from long_sequence(100000)) timestamp (ts)");
+                    tbl.execute();
 
-                PreparedStatement stmt = connection.prepareStatement("with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj");
+                    PreparedStatement stmt = connection.prepareStatement("with crj as (select first(x) as p0 from xx) select x / p0 from xx cross join crj");
 
-                connection.setNetworkTimeout(Runnable::run, 5);
-                int testSize = 100000;
-                stmt.setFetchSize(testSize);
-                assertEquals(testSize, stmt.getFetchSize());
+                    connection.setNetworkTimeout(Runnable::run, 5);
+                    int testSize = 100000;
+                    stmt.setFetchSize(testSize);
+                    assertEquals(testSize, stmt.getFetchSize());
 
-                try {
-                    stmt.executeQuery();
-                    Assert.fail();
-                } catch (PSQLException ex) {
-                    // expected
-                    Assert.assertNotNull(ex);
+                    try {
+                        stmt.executeQuery();
+                        Assert.fail();
+                    } catch (PSQLException ex) {
+                        // expected
+                        Assert.assertNotNull(ex);
+                    }
                 }
+                Thread.sleep(100); // Give connection some time to close before closing the server.
             }
             // Assertion that no open readers left will be performed in assertMemoryLeak
         });
@@ -2982,7 +2983,6 @@ nodejs code:
 
     @Test
     public void testInvalidateWriterBetweenInserts() throws Exception {
-
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer ignored = createPGServer(2);
@@ -3036,7 +3036,6 @@ nodejs code:
                     Assert.assertEquals(1, a[0]);
                     Assert.assertEquals(1, a[1]);
                     Assert.assertEquals(1, a[2]);
-
                 }
 
                 StringSink sink = new StringSink();
@@ -3047,9 +3046,12 @@ nodejs code:
                         "0,1\n" +
                         "1,2\n" +
                         "2,3\n";
-                Statement statement = connection.createStatement();
-                ResultSet rs = statement.executeQuery("select * from test_batch");
-                assertResultSet(expected, sink, rs);
+                try (
+                        Statement statement = connection.createStatement();
+                        ResultSet rs = statement.executeQuery("select * from test_batch")
+                ) {
+                    assertResultSet(expected, sink, rs);
+                }
             }
         });
     }
@@ -3816,6 +3818,34 @@ nodejs code:
     }
 
     @Test
+    //checks that function parser error doesn't persist and affect later queries issued through the same connection
+    public void testParseErrorDoesntCorruptConnection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final PGWireServer ignored = createPGServer(2);
+                 final Connection connection = getConnection(false, false)) {
+
+                try (PreparedStatement ps1 = connection.prepareStatement("select * from " +
+                        "(select cast(x as timestamp) ts, cast('0x05cb69971d94a00000192178ef80f0' as long256) as id, x from long_sequence(10) ) " +
+                        "where ts between '2022-03-20' " +
+                        "AND id <> '0x05ab6d9fabdabb00066a5db735d17a' " +
+                        "AND id <> '0x05aba84839b9c7000006765675e630' " +
+                        "AND id <> '0x05abc58d80ba1f000001ed05351873'")) {
+                    ps1.executeQuery();
+                    Assert.fail("PSQLException should be thrown");
+                } catch (PSQLException e) {
+                    assertContains(e.getMessage(), "ERROR: unexpected argument for function: between");
+                }
+
+                try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
+                    StringSink sink = new StringSink();
+                    ResultSet result = s.executeQuery();
+                    assertResultSet("a[INTEGER],b[INTEGER]\n2,2\n", sink, result);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testParseMessageBadQueryTerminator() throws Exception {
         final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -4026,13 +4056,14 @@ nodejs code:
             try (
                     final PGWireServer ignored = createPGServer(2);
                     final Connection connection = getConnection(false, false);
-                    final Statement statement = connection.createStatement();
-                    final PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")
+                    final Statement statement = connection.createStatement()
             ) {
                 statement.execute("create table tab(ts timestamp, value double)");
-                insert.setNull(1, Types.NULL);
-                insert.setNull(2, Types.NULL);
-                insert.executeUpdate();
+                try (PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")) {
+                    insert.setNull(1, Types.NULL);
+                    insert.setNull(2, Types.NULL);
+                    insert.executeUpdate();
+                }
                 try (ResultSet rs = statement.executeQuery("select null, ts, value from tab where value = null")) {
                     StringSink sink = new StringSink();
                     String expected = "null[VARCHAR],ts[TIMESTAMP],value[DOUBLE]\n" +
@@ -4122,7 +4153,7 @@ nodejs code:
             final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
-                    return new int[]{-1, -1, -1, -1};
+                    return TestUtils.getWorkerAffinity(getWorkerCount());
                 }
 
                 @Override
@@ -6072,6 +6103,286 @@ create table tab as (
     }
 
     @Test
+    public void testUpdateAsync() throws Exception {
+        testUpdateAsync(null, writer -> {},
+                "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
+                "1,2.0,2020-06-01 00:00:02.0\n" +
+                "9,2.6,2020-06-01 00:00:06.0\n" +
+                "9,3.0,2020-06-01 00:00:12.0\n");
+    }
+
+    @Test
+    public void testUpdateAsyncWithReaderOutOfDateException() throws Exception {
+        SOCountDownLatch queryScheduledCount = new SOCountDownLatch(1);
+        testUpdateAsync(queryScheduledCount, new OnTickAction() {
+            private boolean first = true;
+
+            @Override
+            public void run(TableWriter writer) {
+                if (first) {
+                    queryScheduledCount.await();
+                    // adding a new column before calling writer.tick() will result in ReaderOutOfDateException
+                    // thrown from UpdateOperator as this changes table structure
+                    // recompile should be successful so the UPDATE completes
+                    writer.addColumn("newCol", ColumnType.INT);
+                    first = false;
+                }
+            }
+        },
+        "a[BIGINT],b[DOUBLE],ts[TIMESTAMP],newCol[INTEGER]\n" +
+        "1,2.0,2020-06-01 00:00:02.0,null\n" +
+        "9,2.6,2020-06-01 00:00:06.0,null\n" +
+        "9,3.0,2020-06-01 00:00:12.0,null\n");
+    }
+
+    private void testUpdateAsync(SOCountDownLatch queryScheduledCount, OnTickAction onTick, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(queryScheduledCount);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
+                statement.execute();
+
+                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                insert1.execute();
+
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "x", "test lock")) {
+                    SOCountDownLatch finished = new SOCountDownLatch(1);
+                    new Thread(() -> {
+                        try {
+                            final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
+                            int numOfRowsUpdated1 = update1.executeUpdate();
+                            assertEquals(2, numOfRowsUpdated1);
+                        } catch (Throwable e) {
+                            Assert.fail(e.getMessage());
+                            e.printStackTrace();
+                        } finally {
+                            finished.countDown();
+                        }
+                    }).start();
+
+                    MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
+                    long startTimeMicro = microsecondClock.getTicks();
+                    // Wait 1 min max for completion
+                    while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0) {
+                        onTick.run(writer);
+                        writer.tick(true);
+                        finished.await(500_000);
+                    }
+                }
+
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    private PGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
+        int workerCount = 2;
+
+        final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
+            @Override
+            public Rnd getRandom() {
+                return new Rnd();
+            }
+
+            @Override
+            public int[] getWorkerAffinity() {
+                return TestUtils.getWorkerAffinity(getWorkerCount());
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
+        };
+
+        WorkerPool pool = new WorkerPool(conf, metrics);
+
+        final PGWireServer pgWireServer = PGWireServer.create(
+                conf,
+                pool,
+                LOG,
+                engine,
+                compiler.getFunctionFactoryCache(),
+                snapshotAgent,
+                metrics,
+                createPGConnectionContextFactory(conf, workerCount, null, queryScheduledCount)
+        );
+
+        pool.start(LOG);
+        return pgWireServer;
+    }
+
+    @Test
+    public void testUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
+                statement.execute();
+
+                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                insert1.execute();
+
+                final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
+                int numOfRowsUpdated1 = update1.executeUpdate();
+                assertEquals(2, numOfRowsUpdated1);
+
+                final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                        "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                        "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
+                insert2.execute();
+
+                final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0");
+                int numOfRowsUpdated2 = update2.executeUpdate();
+                assertEquals(1, numOfRowsUpdated2);
+
+                final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
+                        "1,2.0,2020-06-01 00:00:02.0\n" +
+                        "9,2.6,2020-06-01 00:00:06.0\n" +
+                        "9,3.0,2020-06-01 00:00:12.0\n" +
+                        "8,4.0,2020-06-01 00:00:22.0\n" +
+                        "7,6.0,2020-06-01 00:00:32.0\n";
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection connection = getConnection(true, false)
+            ) {
+                final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts)");
+                statement.execute();
+
+                final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                        "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                        "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                        "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+                insert1.execute();
+
+                final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5; update x set a=3 where b>2.7; update x set a=2 where b<2.2");
+                int numOfRowsUpdated1 = update1.executeUpdate();
+                assertEquals(2, numOfRowsUpdated1);
+
+                final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                        "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                        "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
+                insert2.execute();
+
+                final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0; update x set a=6 where a=2");
+                int numOfRowsUpdated2 = update2.executeUpdate();
+                assertEquals(1, numOfRowsUpdated2);
+
+                final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
+                        "6,2.0,2020-06-01 00:00:02.0\n" +
+                        "9,2.6,2020-06-01 00:00:06.0\n" +
+                        "3,3.0,2020-06-01 00:00:12.0\n" +
+                        "8,4.0,2020-06-01 00:00:22.0\n" +
+                        "7,6.0,2020-06-01 00:00:32.0\n";
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateNoAutoCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(1);
+                    final Connection connection = getConnection(false, true)
+            ) {
+                connection.setAutoCommit(false);
+
+                PreparedStatement tbl = connection.prepareStatement("create table x (a int, b int, ts timestamp) timestamp(ts)");
+                tbl.execute();
+
+                PreparedStatement insert = connection.prepareStatement("insert into x values(?, ?, '2022-03-17T00:00:00'::timestamp)");
+                for (int i = 0; i < 10; i++) {
+                    insert.setInt(1, i);
+                    insert.setInt(2, i + 100);
+                    insert.execute();
+                }
+
+                PreparedStatement updateB = connection.prepareStatement("update x set b=? where a=?");
+                for (int i = 0; i < 10; i++) {
+                    updateB.setInt(1, i + 10);
+                    updateB.setInt(2, i);
+                    updateB.execute();
+                }
+
+                for (int i = 10; i < 15; i++) {
+                    insert.setInt(1, i);
+                    insert.setInt(2, i + 100);
+                    insert.execute();
+                }
+
+                PreparedStatement updateA = connection.prepareStatement("update x set a=? where a=?");
+                for (int i = 10; i < 15; i++) {
+                    updateA.setInt(1, i + 10);
+                    updateA.setInt(2, i);
+                    updateA.execute();
+                }
+
+                for (int i = 0; i < 5; i++) {
+                    updateA.setInt(1, i + 10);
+                    updateA.setInt(2, i);
+                    updateA.execute();
+                }
+
+                for (int i = 0; i < 3; i++) {
+                    updateB.setInt(1, i + 1000);
+                    updateB.setInt(2, i + 10);
+                    updateB.execute();
+                }
+                connection.commit();
+
+                final String expected = "a[INTEGER],b[INTEGER],ts[TIMESTAMP]\n" +
+                        "10,1000,2022-03-17 00:00:00.0\n" +
+                        "11,1001,2022-03-17 00:00:00.0\n" +
+                        "12,1002,2022-03-17 00:00:00.0\n" +
+                        "13,13,2022-03-17 00:00:00.0\n" +
+                        "14,14,2022-03-17 00:00:00.0\n" +
+                        "5,15,2022-03-17 00:00:00.0\n" +
+                        "6,16,2022-03-17 00:00:00.0\n" +
+                        "7,17,2022-03-17 00:00:00.0\n" +
+                        "8,18,2022-03-17 00:00:00.0\n" +
+                        "9,19,2022-03-17 00:00:00.0\n" +
+                        "20,110,2022-03-17 00:00:00.0\n" +
+                        "21,111,2022-03-17 00:00:00.0\n" +
+                        "22,112,2022-03-17 00:00:00.0\n" +
+                        "23,113,2022-03-17 00:00:00.0\n" +
+                        "24,114,2022-03-17 00:00:00.0\n";
+                try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUtf8QueryText() throws Exception {
         testQuery(
                 "rnd_double(4) расход, ",
@@ -6279,7 +6590,8 @@ create table tab as (
         });
     }
 
-    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(PGWireConfiguration conf, int workerCount, SOCountDownLatch queryStartedCount) {
+    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(PGWireConfiguration conf, int workerCount,
+                                                                                     SOCountDownLatch queryStartedCount, SOCountDownLatch queryScheduledCount) {
         return new PGWireServer.PGConnectionContextFactory(engine, conf, workerCount) {
             @Override
             protected SqlExecutionContextImpl getSqlExecutionContext(CairoEngine engine, int workerCount) {
@@ -6289,13 +6601,15 @@ create table tab as (
                         return new QueryFutureUpdateListener() {
                             @Override
                             public void reportProgress(long commandId, int status) {
-                                if (status == QueryFuture.QUERY_STARTED) {
+                                if (status == OperationFuture.QUERY_STARTED && queryStartedCount != null) {
                                     queryStartedCount.countDown();
                                 }
                             }
-
                             @Override
                             public void reportStart(CharSequence tableName, long commandId) {
+                                if (queryScheduledCount != null) {
+                                    queryScheduledCount.countDown();
+                                }
                             }
                         };
                     }
@@ -6396,8 +6710,6 @@ create table tab as (
 
     private void testAddColumnBusyWriter(boolean alterRequestReturnSuccess, SOCountDownLatch queryStartedCountDownLatch) throws SQLException, InterruptedException, BrokenBarrierException, SqlException {
         AtomicLong errors = new AtomicLong();
-        final int[] affinity = new int[2];
-        Arrays.fill(affinity, -1);
         int workerCount = 2;
 
         final PGWireConfiguration conf = new DefaultPGWireConfiguration() {
@@ -6408,7 +6720,7 @@ create table tab as (
 
             @Override
             public int[] getWorkerAffinity() {
-                return affinity;
+                return TestUtils.getWorkerAffinity(getWorkerCount());
             }
 
             @Override
@@ -6428,7 +6740,7 @@ create table tab as (
                         compiler.getFunctionFactoryCache(),
                         snapshotAgent,
                         metrics,
-                        createPGConnectionContextFactory(conf, workerCount, queryStartedCountDownLatch)
+                        createPGConnectionContextFactory(conf, workerCount, queryStartedCountDownLatch, null)
                 )
         ) {
             pool.start(LOG);
@@ -7806,5 +8118,10 @@ create table tab as (
             delayedAttemptsCounter.set(1000);
             delaying.set(true);
         }
+    }
+
+    @FunctionalInterface
+    interface OnTickAction {
+        void run(TableWriter writer);
     }
 }

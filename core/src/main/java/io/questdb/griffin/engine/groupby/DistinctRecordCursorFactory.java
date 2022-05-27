@@ -35,7 +35,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
@@ -124,6 +123,11 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
         }
 
         @Override

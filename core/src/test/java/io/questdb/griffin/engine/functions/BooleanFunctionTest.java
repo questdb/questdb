@@ -44,6 +44,11 @@ public class BooleanFunctionTest {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     };
 
     private static final BooleanFunction functionB = new BooleanFunction() {
@@ -55,6 +60,11 @@ public class BooleanFunctionTest {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     };
 
     @Test
@@ -63,6 +73,11 @@ public class BooleanFunctionTest {
         final BooleanFunction function = new BooleanFunction() {
             @Override
             public boolean getBool(Record rec) {
+                return true;
+            }
+
+            @Override
+            public boolean isReadThreadSafe() {
                 return true;
             }
         };

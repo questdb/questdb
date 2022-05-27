@@ -38,7 +38,7 @@ public class TxReader implements Closeable, Mutable {
     protected static final int PARTITION_TS_OFFSET = 0;
     protected static final int PARTITION_SIZE_OFFSET = 1;
     protected static final int PARTITION_NAME_TX_OFFSET = 2;
-    protected static final int PARTITION_DATA_TX_OFFSET = 3;
+    protected static final int PARTITION_COLUMN_VERSION_OFFSET = 3;
     private static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     protected final LongList attachedPartitions = new LongList();
     private final IntList symbolCountSnapshot = new IntList();
@@ -114,12 +114,12 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
     }
 
-    public long getPartitionDataTxn(int i) {
-        return getPartitionDataTxnByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    public long getPartitionColumnVersion(int i) {
+        return getPartitionColumnVersionByIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
-    public long getPartitionDataTxnByIndex(int index) {
-        return attachedPartitions.getQuick(index + PARTITION_DATA_TX_OFFSET);
+    public long getPartitionColumnVersionByIndex(int index) {
+        return attachedPartitions.getQuick(index + PARTITION_COLUMN_VERSION_OFFSET);
     }
 
     public long getPartitionNameTxn(int i) {
@@ -213,12 +213,13 @@ public class TxReader implements Closeable, Mutable {
             this.structureVersion = getLong(TX_OFFSET_STRUCT_VERSION_64);
             final long prevPartitionTableVersion = this.partitionTableVersion;
             this.partitionTableVersion = getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
+            final long prevColumnVersion = this.columnVersion;
             this.columnVersion = unsafeReadColumnVersion();
             this.truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
             this.symbolColumnCount = this.symbolsSize / 8;
 
             unsafeLoadSymbolCounts(symbolColumnCount);
-            unsafeLoadPartitions(prevPartitionTableVersion, partitionSegmentSize);
+            unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
 
             Unsafe.getUnsafe().loadFence();
             if (version == unsafeReadVersion()) {
@@ -326,11 +327,11 @@ public class TxReader implements Closeable, Mutable {
         return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
     }
 
-    protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize) {
+    protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long columnVersion) {
         attachedPartitions.setQuick(index + PARTITION_TS_OFFSET, partitionTimestampLo);
         attachedPartitions.setQuick(index + PARTITION_SIZE_OFFSET, partitionSize);
         attachedPartitions.setQuick(index + PARTITION_NAME_TX_OFFSET, -1);
-        attachedPartitions.setQuick(index + PARTITION_DATA_TX_OFFSET, txn);
+        attachedPartitions.setQuick(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
     }
 
     private void openTxnFile(FilesFacade ff, Path path) {
@@ -363,11 +364,11 @@ public class TxReader implements Closeable, Mutable {
         return this.size + this.baseOffset;
     }
 
-    private void unsafeLoadPartitions(long prevPartitionTableVersion, int partitionTableSize) {
+    private void unsafeLoadPartitions(long prevPartitionTableVersion, long prevColumnVersion, int partitionTableSize) {
         if (PartitionBy.isPartitioned(partitionBy)) {
             int txAttachedPartitionsSize = partitionTableSize / Long.BYTES;
             if (txAttachedPartitionsSize > 0) {
-                if (prevPartitionTableVersion != partitionTableVersion) {
+                if (prevPartitionTableVersion != partitionTableVersion || prevColumnVersion != columnVersion) {
                     attachedPartitions.clear();
                     unsafeLoadPartitions0(txAttachedPartitionsSize, 0);
                 } else {
@@ -389,7 +390,7 @@ public class TxReader implements Closeable, Mutable {
         } else {
             // Add transient row count as the only partition in attached partitions list
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
-            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, transientRowCount, columnVersion);
         }
     }
 
