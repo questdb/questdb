@@ -175,11 +175,6 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         return TableUtils.createTransitionIndex(transitionMeta, this);
     }
 
-    @Override
-    public int getColumnCount() {
-        return columnCount;
-    }
-
     public long getCommitLag() {
         return commitLag;
     }

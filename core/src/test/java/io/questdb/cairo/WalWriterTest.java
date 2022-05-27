@@ -106,40 +106,32 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 assertEquals(2, reader.getColumnCount());
-                // put this back when WalWriter stops ingesting into TableWriter's column files
-//                assertEquals(5, reader.getTransientRowCount());
+                assertEquals(5, reader.getTransientRowCount());
                 RecordCursor cursor = reader.getCursor();
                 Record record = cursor.getRecord();
-                // put this back when WalWriter stops ingesting into TableWriter's column files
-//                int i = 0;
-//                while (cursor.hasNext()) {
-//                    assertEquals(i, record.getByte(0));
-//                    assertEquals("sym" + i++, record.getSym(1));
-//                }
-                for (int i = 0; i < 5; i++) {
-                    assertTrue(cursor.hasNext());
+                int i = 0;
+                while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
                     assertEquals("sym" + i, record.getSym(1));
                     assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
+                    i++;
                 }
-                //assertNull(reader.getSymbolMapReader(1).valueOf(5));
+                assertNull(reader.getSymbolMapReader(1).valueOf(i));
             }
 
-            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, walSymbolCounts)) {
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, walSymbolCounts, 10L)) {
                 assertEquals(2, reader.getColumnCount());
-                // pass row count to WalReader in constructor for now, same as symbol counts
-                // assertEquals(10, reader.getTransientRowCount());
+                assertEquals(10, reader.getTransientRowCount());
                 RecordCursor cursor = reader.getCursor();
                 Record record = cursor.getRecord();
-//                int i = 0;
-//                while (cursor.hasNext()) {
-//                    assertEquals(i, record.getByte(0));
-//                    assertEquals("sym" + i++, record.getSym(1));
-//                }
-                for (int i = 0; i < 10; i++) {
+                int i = 0;
+                while (cursor.hasNext()) {
+                    assertEquals(i, record.getByte(0));
+                    assertEquals("sym" + i, record.getSym(1));
                     assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
+                    i++;
                 }
-                assertNull(reader.getSymbolMapReader(1).valueOf(10));
+                assertNull(reader.getSymbolMapReader(1).valueOf(i));
             }
 
             assertWalFileExist(tableName, walName, "a", 0, path);
@@ -311,7 +303,6 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-
     @Test
     public void testAddingColumnStartsNewSegment() {
         String tableName = "testtable";
@@ -432,6 +423,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     row.putStr(11, String.valueOf(i));
                     row.append();
                 }
+                walWriter.commit();
             }
 
             try (WalSegmentDataReader segmentReader = new WalSegmentDataReader(configuration.getFilesFacade(), toWalPath(tableName, walName, 0, path))) {
@@ -490,7 +482,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         try {
             path.concat(tableName).slash().concat(walName)
                     .slash().put(segment)
-                    .slash().concat(columnName + ".wald").$();
+                    .slash().concat(columnName + TableUtils.FILE_SUFFIX_D).$();
             assertPathExists(path);
         } finally {
             path.trimTo(plen);
@@ -584,7 +576,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 for (int i = 0; i < columnCount; i++) {
                     String name = walMetadataReader.getColumnName(i);
                     MemoryMR primaryMem = Vm.getMRInstance();
-                    primaryMem.wholeFile(ff, TableUtils.walDFile(path.trimTo(plen), name), MemoryTag.MMAP_DEFAULT);
+                    primaryMem.wholeFile(ff, TableUtils.dFile(path.trimTo(plen), name), MemoryTag.MMAP_DEFAULT);
                     primaryColumns.add(primaryMem);
                     name2columns.put(name, i);
                 }

@@ -72,7 +72,6 @@ public final class TableUtils {
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
 
-    public static final String FILE_SUFFIX_WALD = ".wald";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final String DEFAULT_PARTITION_NAME = "default";
@@ -365,9 +364,8 @@ public final class TableUtils {
         return path.$();
     }
 
-    public static LPSZ walDFile(Path path, CharSequence columnName) {
-        path.concat(columnName).put(FILE_SUFFIX_WALD);
-        return path.$();
+    public static LPSZ dFile(Path path, CharSequence columnName) {
+        return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
     public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
@@ -443,11 +441,9 @@ public final class TableUtils {
         return path.$();
     }
 
-    public static LPSZ walDIFile(Path path, CharSequence columnName) {
-        path.concat(columnName).put(FILE_SUFFIX_I);
-        return path.$();
+    public static LPSZ iFile(Path path, CharSequence columnName) {
+        return iFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
-
 
     public static boolean isValidColumnName(CharSequence seq) {
         for (int i = 0, l = seq.length(); i < l; i++) {

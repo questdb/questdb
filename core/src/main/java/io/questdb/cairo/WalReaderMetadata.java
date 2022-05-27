@@ -35,19 +35,21 @@ public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
     private final Path path;
     private final FilesFacade ff;
     private final MemoryMR metaMem;
+    private final long segmentId;
     private int version;
 
-    public WalReaderMetadata(FilesFacade ff) {
+    public WalReaderMetadata(FilesFacade ff, long segmentId) {
         this.path = new Path();
         this.ff = ff;
+        this.segmentId = segmentId;
         this.metaMem = Vm.getMRInstance();
         this.columnMetadata = new ObjList<>(columnCount);
         this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
-    public WalReaderMetadata(FilesFacade ff, Path path) {
-        this(ff);
-        of(path, ColumnType.VERSION);
+    public WalReaderMetadata(FilesFacade ff, long segmentId, Path path) {
+        this(ff, segmentId);
+        of(path, 0);
     }
 
     @Override
@@ -57,17 +59,12 @@ public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
         Misc.free(path);
     }
 
-    @Override
-    public int getColumnCount() {
-        return columnCount;
-    }
-
     public int getVersion() {
         return version;
     }
 
-    public WalReaderMetadata of(Path path, int expectedVersion) {
-        this.path.of(path).$();
+    public WalReaderMetadata of(Path p, int expectedVersion) {
+        path.of(p).slash().put(segmentId).concat(TableUtils.META_FILE_NAME).$();
         try {
             metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             columnNameIndexMap.clear();

@@ -52,6 +52,8 @@ public class WalReader implements Closeable, SymbolTableSource {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final MemoryMR todoMem = Vm.getMRInstance();
+    private final long segmentId;
+    private final long walRowCount;
     private int partitionCount;
     private LongList columnTops;
     private ObjList<MemoryMR> columns;
@@ -60,11 +62,13 @@ public class WalReader implements Closeable, SymbolTableSource {
     private int columnCountShl;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
 
-    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, IntList walSymbolCounts) {
+    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, IntList walSymbolCounts, long walRowCount) {
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
         this.walName = Chars.toString(walName);
+        this.segmentId = segmentId;
+        this.walRowCount = walRowCount;
         this.path = new Path();
         this.path.of(configuration.getRoot()).concat(this.tableName).concat(walName);
         this.rootLen = path.length();
@@ -72,7 +76,6 @@ public class WalReader implements Closeable, SymbolTableSource {
             this.metadata = openMetaFile();
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountShl = getColumnBits(columnCount);
-            path.trimTo(rootLen);
             LOG.debug().$("open [table=").$(this.tableName).I$();
             openSymbolMaps(walSymbolCounts);
             partitionCount = 1;
@@ -123,6 +126,10 @@ public class WalReader implements Closeable, SymbolTableSource {
         return this.columnTops.getQuick(base / 2 + columnIndex);
     }
 
+    public String getWalName() {
+        return walName;
+    }
+
     public WalReaderRecordCursor getCursor() {
         recordCursor.toTop();
         return recordCursor;
@@ -141,12 +148,12 @@ public class WalReader implements Closeable, SymbolTableSource {
     }
 
     private long openPartition0(int partitionIndex) {
+        path.slash().put(segmentId);
         try {
             if (ff.exists(path.$())) {
                 path.chop$();
-                final long partitionSize = 5;
-                openPartitionColumns(path, getColumnBase(partitionIndex), partitionSize);
-                return partitionSize;
+                openPartitionColumns(path, getColumnBase(partitionIndex), walRowCount);
+                return walRowCount;
             }
             LOG.error().$("open partition failed, partition does not exist on the disk. [path=").utf8(path.$()).I$();
             throw CairoException.instance(0).put("Table '").put(tableName)
@@ -286,7 +293,7 @@ public class WalReader implements Closeable, SymbolTableSource {
     }
 
     public long getTransientRowCount() {
-        return -1;
+        return walRowCount;
     }
 
     public long getVersion() {
@@ -355,8 +362,7 @@ public class WalReader implements Closeable, SymbolTableSource {
 
     private WalReaderMetadata openMetaFile() {
         final long deadline = this.configuration.getMicrosecondClock().getTicks() + this.configuration.getSpinLockTimeoutUs();
-        final WalReaderMetadata metadata = new WalReaderMetadata(ff);
-        path.concat("0").concat(TableUtils.META_FILE_NAME).$();
+        final WalReaderMetadata metadata = new WalReaderMetadata(ff, segmentId);
         try {
             while (true) {
                 try {
@@ -379,9 +385,9 @@ public class WalReader implements Closeable, SymbolTableSource {
             long columnSize
     ) {
         if (mem != null && mem != NullMemoryMR.INSTANCE) {
-            mem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_READER);
+            mem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WAL_READER);
         } else {
-            mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER);
+            mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_WAL_READER);
             columns.setQuick(primaryIndex, mem);
         }
         return mem;
