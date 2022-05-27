@@ -80,6 +80,37 @@ public class CastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInfinity() throws Exception {
+        assertQuery(
+                "a\n",
+                "select a from tab",
+                "create table tab (a boolean)",
+                null,
+                "insert into tab select cast('Infinity' as double) = cast('Infinity' as double)," +
+                        "cast('Infinity' as float) = cast('Infinity' as double)," +
+                        "cast('Infinity' as float) = cast('Infinity' as float)," +
+                        "cast('-Infinity' as double) = cast('-Infinity' as double)," +
+                        "cast('-Infinity' as double) = cast('-Infinity' as float)," +
+                        "cast('-Infinity' as float) = cast('-Infinity' as float)," +
+                        "cast('Infinity' as double) != cast('-Infinity' as double)," +
+                        "cast('Infinity' as float) > 1 " +
+                        "from long_sequence(8)",
+                "a\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testBooleanToByte() throws Exception {
         assertQuery(
                 "a\n",
