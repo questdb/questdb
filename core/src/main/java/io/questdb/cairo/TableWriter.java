@@ -120,9 +120,9 @@ public class TableWriter implements Closeable {
     private final int o3ColumnMemorySize;
     private final ObjList<Runnable> nullSetters;
     private final ObjList<Runnable> o3NullSetters;
-    private final ObjList<MemoryCARW> o3Columns;
-    private final ObjList<MemoryCARW> o3Columns2;
-    private ObjList<MemoryCR> o3ColumnSources;
+    private ObjList<MemoryCARW> o3Columns;
+    private ObjList<MemoryCARW> o3Columns2;
+    private ReadOnlyObjList<? extends MemoryCR> o3ColumnSources;
     private final ObjList<O3CallbackTask> o3PendingCallbackTasks = new ObjList<>();
     private final O3ColumnUpdateMethod oooSortVarColumnRef = this::o3SortVarColumn;
     private final O3ColumnUpdateMethod oooSortFixColumnRef = this::o3SortFixColumn;
@@ -298,7 +298,7 @@ public class TableWriter implements Closeable {
             this.columns = new ObjList<>(columnCount * 2);
             this.o3Columns = new ObjList<>(columnCount * 2);
             this.o3Columns2 = new ObjList<>(columnCount * 2);
-            this.o3ColumnSources = new ObjList<>(columnCount * 2);
+            this.o3ColumnSources = this.o3Columns;
             this.activeColumns = columns;
             this.symbolMapWriters = new ObjList<>(columnCount);
             this.indexers = new ObjList<>(columnCount);
@@ -2088,8 +2088,6 @@ public class TableWriter implements Closeable {
         o3Columns.extendAndSet(baseIndex + 1, oooSecondary);
         o3Columns2.extendAndSet(baseIndex, oooPrimary2);
         o3Columns2.extendAndSet(baseIndex + 1, oooSecondary2);
-        o3ColumnSources.extendAndSet(baseIndex, oooPrimary);
-        o3ColumnSources.extendAndSet(baseIndex + 1, oooSecondary);
         configureNullSetters(nullSetters, type, primary, secondary);
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
 
@@ -2129,7 +2127,7 @@ public class TableWriter implements Closeable {
         final int timestampIndex = metadata.getTimestampIndex();
         if (timestampIndex != -1) {
             o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
-            o3TimestampMemCpy = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
+            o3TimestampMemCpy = o3Columns2.getQuick(getPrimaryColumnIndex(timestampIndex));
         }
     }
 
@@ -2299,7 +2297,6 @@ public class TableWriter implements Closeable {
         } finally {
             Misc.free(txnScoreboard);
             Misc.free(path);
-            Misc.free(o3TimestampMemCpy);
             Misc.free(ownMessageBus);
             freeTempMem();
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
@@ -2572,10 +2569,6 @@ public class TableWriter implements Closeable {
      */
     private boolean o3Commit(long lag) {
         o3RowCount = getO3RowCount0();
-        o3PartitionRemoveCandidates.clear();
-        o3ErrorCount.set(0);
-        o3ColumnCounters.clear();
-        o3BasketPool.clear();
 
         long o3LagRowCount = 0;
         long maxUncommittedRows = metadata.getMaxUncommittedRows();
@@ -2695,6 +2688,21 @@ public class TableWriter implements Closeable {
         return finishO3Commit(partitionTimestampHiLimit);
     }
 
+    private void swapO3ColumnsExcept(int timestampIndex) {
+        ObjList<MemoryCARW> temp = o3Columns;
+        o3Columns = o3Columns2;
+        o3Columns2 = temp;
+
+        // Swap timestamp column back, it's
+        final int timestampMemoryIndex = getPrimaryColumnIndex(timestampIndex);
+        o3Columns2.setQuick(
+                timestampMemoryIndex,
+                o3Columns.getAndSetQuick(timestampMemoryIndex, o3Columns2.getQuick(timestampMemoryIndex))
+        );
+        o3ColumnSources = o3Columns;
+        activeColumns = o3Columns;
+    }
+
     private boolean finishO3Commit(long partitionTimestampHiLimit) {
         if (!o3InError) {
             updateO3ColumnTops();
@@ -2745,12 +2753,13 @@ public class TableWriter implements Closeable {
             Path walPath,
             long lagRowCount,
             int timestampIndex,
+            boolean inOrder,
             long rowLo,
             long rowHi,
             long o3TimestampMin,
             long o3TimestampMax
     ) {
-        if (processO3Append(walPath, lagRowCount, timestampIndex, rowLo, rowHi, o3TimestampMin, o3TimestampMax)) {
+        if (processO3Append(walPath, lagRowCount, timestampIndex, inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax)) {
             return;
         }
 
@@ -2774,6 +2783,7 @@ public class TableWriter implements Closeable {
             Path walPath,
             long o3LagRowCount,
             int timestampIndex,
+            boolean ordered,
             long rowLo,
             long rowHi,
             long o3TimestampMin,
@@ -2783,7 +2793,6 @@ public class TableWriter implements Closeable {
         final int columnCount = metadata.getColumnCount();
         ObjList<MemoryCR> mappedColumns = new ObjList<>(columnCount * 2);
         int walPathLen = walPath.length();
-        long sortedTimestampsAddr = 0L;
 
         for(int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int type = metadata.getColumnType(columnIndex);
@@ -2802,10 +2811,6 @@ public class TableWriter implements Closeable {
 
                     mappedColumns.add(primary);
                     mappedColumns.add(null);
-
-                    if (columnIndex == timestampIndex) {
-                        sortedTimestampsAddr = primary.addressOf(0); // Each record is 16 bytes, shift by 4
-                    }
                 } else {
                     sizeBitsPow2 = 3;
                     MemoryCMR fixed = Vm.getCMRInstance();
@@ -2828,14 +2833,32 @@ public class TableWriter implements Closeable {
             }
         }
 
-        ObjList<MemoryCR> savedO3ColumnSources = o3ColumnSources;
         try {
             o3ColumnSources = mappedColumns;
+            MemoryCR walTimestampColumn = mappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
+            long timestampAddr;
             o3RowCount = rowHi - rowLo;
-            processO3Append(o3LagRowCount, timestampIndex, sortedTimestampsAddr, rowHi, o3TimestampMin, o3TimestampMax, false, rowLo);
+            if (!ordered) {
+                final long timestampMemorySize = (rowHi - rowLo) << 4;
+                o3TimestampMem.jumpTo(timestampMemorySize);
+                long destTimestampAddr = o3TimestampMem.getAddress();
+                Vect.memcpy(destTimestampAddr, walTimestampColumn.addressOf(rowLo), timestampMemorySize);
+                if (rowHi - rowLo > 600 || !o3QuickSortEnabled) {
+                    o3TimestampMemCpy.jumpTo(timestampMemorySize);
+                    Vect.radixSortLongIndexAscInPlace(destTimestampAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
+                } else {
+                    Vect.quickSortLongIndexAscInPlace(destTimestampAddr, o3RowCount);
+                }
+
+                o3Sort(destTimestampAddr, timestampIndex, rowHi - rowLo);
+                timestampAddr = destTimestampAddr - (rowLo << 4); // shift
+            } else {
+                timestampAddr = walTimestampColumn.addressOf(0);
+            }
+            processO3Append(o3LagRowCount, timestampIndex, timestampAddr, rowHi, o3TimestampMin, o3TimestampMax, !ordered, rowLo);
         } finally {
             finishO3Append(o3LagRowCount);
-            o3ColumnSources = savedO3ColumnSources;
+            o3ColumnSources = o3Columns;
             Misc.freeObjList(mappedColumns);
         }
 
@@ -2850,8 +2873,13 @@ public class TableWriter implements Closeable {
             long o3TimestampMin,
             long o3TimestampMax,
             boolean flattenTimestamp1,
-            long startOffset
+            long rowLo
     ) {
+        o3ErrorCount.set(0);
+        o3PartitionRemoveCandidates.clear();
+        o3ColumnCounters.clear();
+        o3BasketPool.clear();
+
         // move uncommitted is liable to change max timestamp
         // however we need to identify last partition before max timestamp skips to NULL for example
         final long maxTimestamp = txWriter.getMaxTimestamp();
@@ -2861,7 +2889,7 @@ public class TableWriter implements Closeable {
         this.o3PartitionUpdRemaining.set(0);
         boolean success = true;
         int latchCount = 0;
-        long srcOoo = startOffset;
+        long srcOoo = rowLo;
         boolean flattenTimestamp = flattenTimestamp1;
         int pCount = 0;
         try {
@@ -3871,6 +3899,8 @@ public class TableWriter implements Closeable {
         }
 
         o3DoneLatch.await(queuedCount);
+
+        swapO3ColumnsExcept(timestampIndex);
     }
 
     private void o3SortColumn(long mergedTimestamps, int i, int type, long rowCount) {
@@ -3888,14 +3918,12 @@ public class TableWriter implements Closeable {
             long valueCount
     ) {
         final int columnOffset = getPrimaryColumnIndex(columnIndex);
-        final MemoryCARW mem = o3Columns.getQuick(columnOffset);
+        final MemoryCR mem = o3ColumnSources.getQuick(columnOffset);
         final MemoryCARW mem2 = o3Columns2.getQuick(columnOffset);
         final long src = mem.addressOf(0);
-        final long srcSize = mem.size();
         final int shl = ColumnType.pow2SizeOf(columnType);
         mem2.jumpTo(valueCount << shl);
         final long tgtDataAddr = mem2.addressOf(0);
-        final long tgtDataSize = mem2.size();
         switch (shl) {
             case 0:
                 Vect.indexReshuffle8Bit(src, tgtDataAddr, mergedTimestampsAddr, valueCount);
@@ -3916,8 +3944,6 @@ public class TableWriter implements Closeable {
                 assert false : "col type is unsupported";
                 break;
         }
-        mem.replacePage(tgtDataAddr, tgtDataSize);
-        mem2.replacePage(src, srcSize);
     }
 
     private void o3SortVarColumn(
@@ -3928,21 +3954,16 @@ public class TableWriter implements Closeable {
     ) {
         final int primaryIndex = getPrimaryColumnIndex(columnIndex);
         final int secondaryIndex = primaryIndex + 1;
-        final MemoryCARW dataMem = o3Columns.getQuick(primaryIndex);
-        final MemoryCARW indexMem = o3Columns.getQuick(secondaryIndex);
+        final MemoryCR dataMem = o3ColumnSources.getQuick(primaryIndex);
+        final MemoryCR indexMem = o3ColumnSources.getQuick(secondaryIndex);
         final MemoryCARW dataMem2 = o3Columns2.getQuick(primaryIndex);
         final MemoryCARW indexMem2 = o3Columns2.getQuick(secondaryIndex);
-        final long dataSize = dataMem.getAppendOffset();
         // ensure we have enough memory allocated
         final long srcDataAddr = dataMem.addressOf(0);
-        final long srcDataSize = dataMem.size();
         final long srcIndxAddr = indexMem.addressOf(0);
         // exclude the trailing offset from shuffling
-        final long srcIndxSize = indexMem.size();
-        final long tgtDataAddr = dataMem2.resize(dataSize);
-        final long tgtDataSize = dataMem2.size();
+        final long tgtDataAddr = dataMem2.resize(dataMem.size());
         final long tgtIndxAddr = indexMem2.resize(valueCount * Long.BYTES);
-        final long tgtIndxSize = indexMem2.size();
 
         assert srcDataAddr != 0;
         assert srcIndxAddr != 0;
@@ -3958,13 +3979,9 @@ public class TableWriter implements Closeable {
                 tgtDataAddr,
                 tgtIndxAddr
         );
-        dataMem.replacePage(tgtDataAddr, tgtDataSize);
-        indexMem.replacePage(tgtIndxAddr, tgtIndxSize);
-        dataMem2.replacePage(srcDataAddr, srcDataSize);
-        indexMem2.replacePage(srcIndxAddr, srcIndxSize);
-        dataMem.jumpTo(offset);
-        indexMem.jumpTo(valueCount * Long.BYTES);
-        indexMem.putLong(dataSize);
+        dataMem2.jumpTo(offset);
+        indexMem2.jumpTo(valueCount * Long.BYTES);
+        indexMem2.putLong(offset);
     }
 
     private void o3TimestampSetter(long timestamp) {

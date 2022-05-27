@@ -289,6 +289,12 @@ public class RecordComparatorCompiler {
                     fieldType = "Lio/questdb/std/Long256;";
                     comparatorClass = Long256Util.class;
                     break;
+                case ColumnType.LONG128:
+                    getterNameA = "getLong128A";
+                    getterNameB = "getLong128B";
+                    fieldType = "Lio/questdb/std/Long128;";
+                    comparatorClass = Long128Util.class;
+                    break;
                 default:
                     // SYMBOL
                     getterNameA = "getSym";

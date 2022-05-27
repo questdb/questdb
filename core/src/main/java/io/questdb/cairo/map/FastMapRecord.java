@@ -96,6 +96,8 @@ final class FastMapRecord implements MapRecord {
                     long256A[i + split] = new Long256Impl();
                     long256B[i + split] = new Long256Impl();
                     break;
+                case ColumnType.LONG128:
+                    throw new UnsupportedOperationException();
                 default:
                     break;
             }

@@ -29,7 +29,7 @@ import io.questdb.std.str.CharSink;
 import java.util.Arrays;
 import java.util.Comparator;
 
-public class ObjList<T> implements Mutable, Sinkable {
+public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private T[] buffer;
     private int pos = 0;
@@ -104,6 +104,7 @@ public class ObjList<T> implements Mutable, Sinkable {
     /**
      * {@inheritDoc}
      */
+    @Override
     public T get(int index) {
         if (index < pos) {
             return buffer[index];
@@ -123,6 +124,7 @@ public class ObjList<T> implements Mutable, Sinkable {
      *
      * @return last element of the list
      */
+    @Override
     public T getLast() {
         if (pos > 0) {
             return buffer[pos - 1];
@@ -139,6 +141,7 @@ public class ObjList<T> implements Mutable, Sinkable {
      * @param index of the element
      * @return element at the specified position.
      */
+    @Override
     public T getQuick(int index) {
         assert index < pos;
         return buffer[index];
@@ -152,6 +155,7 @@ public class ObjList<T> implements Mutable, Sinkable {
      * @param index position of element
      * @return element at the specified position.
      */
+    @Override
     public T getQuiet(int index) {
         if (index < pos) {
             return buffer[index];
@@ -202,6 +206,7 @@ public class ObjList<T> implements Mutable, Sinkable {
     /**
      * {@inheritDoc}
      */
+    @Override
     public int indexOf(Object o) {
         if (o == null) {
             return indexOfNull();
@@ -283,6 +288,7 @@ public class ObjList<T> implements Mutable, Sinkable {
     /**
      * {@inheritDoc}
      */
+    @Override
     public int size() {
         return pos;
     }

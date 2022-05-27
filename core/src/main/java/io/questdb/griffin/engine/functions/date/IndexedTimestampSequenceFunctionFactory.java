@@ -27,19 +27,17 @@ package io.questdb.griffin.engine.functions.date;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long128Function;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 public class IndexedTimestampSequenceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "indexed_timestamp_sequence(lNl)";
+        return "indexed_timestamp_sequence(Nl)";
     }
 
     @Override
@@ -50,31 +48,32 @@ public class IndexedTimestampSequenceFunctionFactory implements FunctionFactory 
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final long indexStart = args.getQuick(0).getLong(null);
-        final long start = args.getQuick(1).getTimestamp(null);
-        if (start == Numbers.LONG_NaN) {
-            return TimestampConstant.NULL;
-        }
-        return new IndexedTimestampSequenceFunction(indexStart, start, args.getQuick(2));
+        final Function timestampCol = args.getQuick(0);
+        final long sequenceStart = args.getQuick(1).getLong(null);
+        return new IndexedTimestampSequenceFunction(timestampCol, sequenceStart);
     }
 
-    private static class IndexedTimestampSequenceFunction extends Long128Function {
-        private final Function longIncrement;
-        private final long start;
-        private final long indexStart;
+    private static class IndexedTimestampSequenceFunction extends Long128Function implements UnaryFunction {
         private final Long128Impl long128a = new Long128Impl();
         private final Long128Impl long128b = new Long128Impl();
-        private long next;
-        private long indexNext;
+        private final Function timestampCol;
+        private final long sequenceStart;
+        private long sequenceNext;
 
-        public IndexedTimestampSequenceFunction(long indexStart, long start, Function longIncrement) {
-            this.indexNext = this.indexStart = indexStart;
-            this.next = this.start = start;
-            this.longIncrement = longIncrement;
+
+        public IndexedTimestampSequenceFunction(Function timestampCol, long sequenceCol) {
+
+            this.timestampCol = timestampCol;
+            this.sequenceStart = this.sequenceNext = sequenceCol;
         }
 
         @Override
         public void close() {
+        }
+
+        @Override
+        public Function getArg() {
+            return timestampCol;
         }
 
         @Override
@@ -85,33 +84,20 @@ public class IndexedTimestampSequenceFunctionFactory implements FunctionFactory 
 
         @Override
         public Long128 getLong128A(Record rec) {
-            long128a.setAll(next, indexNext);
-
-            next += longIncrement.getLong(rec);
-            indexNext++;
-
+            long128a.setAll(timestampCol.getTimestamp(rec), sequenceNext++);
             return long128a;
         }
 
         @Override
         public Long128 getLong128B(Record rec) {
-            long128b.setAll(next, indexNext);
-
-            next += longIncrement.getLong(rec);
-            indexNext++;
-
+            long128b.setAll(timestampCol.getTimestamp(rec), sequenceNext++);
             return long128b;
         }
 
         @Override
         public void toTop() {
-            next = start;
-            indexNext = indexStart;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            longIncrement.init(symbolTableSource, executionContext);
+            timestampCol.toTop();
+            sequenceNext = sequenceStart;
         }
 
         @Override

@@ -60,6 +60,7 @@ public class Log2TableWriter {
                 walPath,
                 0,
                 timestampIndex,
+                inOrder,
                 rowLo,
                 rowHi,
                 timestampLo,

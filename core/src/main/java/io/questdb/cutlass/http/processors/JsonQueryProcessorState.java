@@ -580,6 +580,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 case ColumnType.NULL:
                     socket.put("null");
                     break;
+                case ColumnType.LONG128:
+                    throw new UnsupportedOperationException();
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
                     socket.put("null"); // To make JSON valid
