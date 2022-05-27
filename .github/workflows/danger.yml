@@ -1,0 +1,22 @@
+name: Danger
+
+on:
+  pull_request:
+    types: [synchronize, opened, reopened, edited]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - name: Use Node.js 16.x
+        uses: actions/setup-node@master
+        with:
+          node-version: 16.x
+      - name: install danger 
+        run: yarn global add danger 
+      - name: Danger
+        run: danger ci
+        working-directory: ./ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.DANGER_GITHUB_TOKEN }}
