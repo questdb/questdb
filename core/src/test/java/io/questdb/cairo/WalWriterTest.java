@@ -412,68 +412,118 @@ public class WalWriterTest extends AbstractGriffinTest {
                      .col("boolean", ColumnType.BOOLEAN)
                      .col("date", ColumnType.DATE)
                      .col("string", ColumnType.STRING)
+                     .col("geoByte", ColumnType.GEOBYTE)
+                     .col("geoInt", ColumnType.GEOINT)
+                     .col("geoShort", ColumnType.GEOSHORT)
+                     .col("geoLong", ColumnType.GEOLONG)
+                     .col("bin", ColumnType.BINARY)
                      .timestamp("ts")
         ) {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
             path.trimTo(plen);
             long ts = Os.currentTimeMicros();
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walName = walWriter.getWalName();
-                for (int i = 0; i < rowsToInsertTotal; i++) {
-                    WalWriter.Row row = walWriter.newRow(ts);
-                    row.putInt(0, i);
-                    row.putByte(1, (byte) i);
-                    row.putLong(2, i);
-                    row.putLong256(3, i, i + 1 , i + 2, i + 3);
-                    row.putDouble(4, i + .5);
-                    row.putFloat(5, i + .5f);
-                    row.putShort(6, (short) i);
-                    row.putTimestamp(7, i);
-                    row.putChar(8, (char) i);
-                    row.putBool(9, i % 2 == 0);
-                    row.putDate(10, i);
-                    row.putStr(11, String.valueOf(i));
-                    row.append();
-                }
-            }
+            long pointer = Unsafe.getUnsafe().allocateMemory(rowsToInsertTotal);
+            try {
+                DirectBinarySequence binSeq = new DirectBinarySequence();
+                try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                    walName = walWriter.getWalName();
+                    for (int i = 0; i < rowsToInsertTotal; i++) {
+                        WalWriter.Row row = walWriter.newRow(ts);
+                        row.putInt(0, i);
+                        row.putByte(1, (byte) i);
+                        row.putLong(2, i);
+                        row.putLong256(3, i, i + 1, i + 2, i + 3);
+                        row.putDouble(4, i + .5);
+                        row.putFloat(5, i + .5f);
+                        row.putShort(6, (short) i);
+                        row.putTimestamp(7, i);
+                        row.putChar(8, (char) i);
+                        row.putBool(9, i % 2 == 0);
+                        row.putDate(10, i);
+                        row.putStr(11, String.valueOf(i));
+                        row.putGeoHash(12, i); // geo byte
+                        row.putGeoHash(13, i); // geo int
+                        row.putGeoHash(14, i); // geo short
+                        row.putGeoHash(15, i); // geo long
 
-            try (WalSegmentDataReader segmentReader = new WalSegmentDataReader(configuration.getFilesFacade(), toWalPath(tableName, walName, 0, path))) {
-                int intIndex = segmentReader.getColumnIndex("int");
-                int byteIndex = segmentReader.getColumnIndex("byte");
-                int longIndex = segmentReader.getColumnIndex("long");
-                int long256Index = segmentReader.getColumnIndex("long256");
-                int tsIndex = segmentReader.getColumnIndex("ts");
-                int doubleIndex = segmentReader.getColumnIndex("double");
-                int floatIndex = segmentReader.getColumnIndex("float");
-                int shortIndex = segmentReader.getColumnIndex("short");
-                int timestampIndex = segmentReader.getColumnIndex("timestamp");
-                int charIndex = segmentReader.getColumnIndex("char");
-                int booleanIndex = segmentReader.getColumnIndex("boolean");
-                int dateIndex = segmentReader.getColumnIndex("date");
-                int stringIndex = segmentReader.getColumnIndex("string");
-                for (int i = 0; i < rowsToInsertTotal; i++) {
-                    assertEquals(i, segmentReader.nextInt(intIndex));
-                    assertEquals(i, segmentReader.nextByte(byteIndex));
-                    assertEquals(i, segmentReader.nextLong(longIndex));
-                    segmentReader.nextLong256(long256Index, assertingAcceptor(i, i + 1, i + 2, i + 3));
-                    assertDesignatedTimestamp(segmentReader, tsIndex, i, ts);
-                    assertEquals(i + 0.5, segmentReader.nextDouble(doubleIndex), 0.1);
-                    assertEquals(i + 0.5, segmentReader.nextFloat(floatIndex), 0.1);
-                    assertEquals(i, segmentReader.nextShort(shortIndex));
-                    assertEquals(i, segmentReader.nextTimestamp(timestampIndex));
-                    assertEquals(i, segmentReader.nextChar(charIndex));
-                    assertEquals(i % 2 == 0, segmentReader.nextBool(booleanIndex));
-                    assertEquals(i, segmentReader.nextDate(dateIndex));
-                    assertCharsEquals(String.valueOf(i), segmentReader.nextString(stringIndex));
+                        prepareBinPayload(pointer, i);
+                        row.putBin(16, binSeq.of(pointer, i));
+                        row.append();
+                    }
                 }
+
+                try (WalSegmentDataReader segmentReader = new WalSegmentDataReader(configuration.getFilesFacade(), toWalPath(tableName, walName, 0, path))) {
+                    int intIndex = segmentReader.getColumnIndex("int");
+                    int byteIndex = segmentReader.getColumnIndex("byte");
+                    int longIndex = segmentReader.getColumnIndex("long");
+                    int long256Index = segmentReader.getColumnIndex("long256");
+                    int tsIndex = segmentReader.getColumnIndex("ts");
+                    int doubleIndex = segmentReader.getColumnIndex("double");
+                    int floatIndex = segmentReader.getColumnIndex("float");
+                    int shortIndex = segmentReader.getColumnIndex("short");
+                    int timestampIndex = segmentReader.getColumnIndex("timestamp");
+                    int charIndex = segmentReader.getColumnIndex("char");
+                    int booleanIndex = segmentReader.getColumnIndex("boolean");
+                    int dateIndex = segmentReader.getColumnIndex("date");
+                    int stringIndex = segmentReader.getColumnIndex("string");
+
+                    int geoByteIndex = segmentReader.getColumnIndex("geoByte");
+                    int geoIntIndex = segmentReader.getColumnIndex("geoInt");
+                    int geoShortIndex = segmentReader.getColumnIndex("geoShort");
+                    int geoLongIndex = segmentReader.getColumnIndex("geoLong");
+                    int binIndex = segmentReader.getColumnIndex("bin");
+                    for (int i = 0; i < rowsToInsertTotal; i++) {
+                        assertEquals(i, segmentReader.nextInt(intIndex));
+                        assertEquals(i, segmentReader.nextByte(byteIndex));
+                        assertEquals(i, segmentReader.nextLong(longIndex));
+                        segmentReader.nextLong256(long256Index, assertingAcceptor(i, i + 1, i + 2, i + 3));
+                        assertDesignatedTimestamp(segmentReader, tsIndex, i, ts);
+                        assertEquals(i + 0.5, segmentReader.nextDouble(doubleIndex), 0.1);
+                        assertEquals(i + 0.5, segmentReader.nextFloat(floatIndex), 0.1);
+                        assertEquals(i, segmentReader.nextShort(shortIndex));
+                        assertEquals(i, segmentReader.nextTimestamp(timestampIndex));
+                        assertEquals(i, segmentReader.nextChar(charIndex));
+                        assertEquals(i % 2 == 0, segmentReader.nextBool(booleanIndex));
+                        assertEquals(i, segmentReader.nextDate(dateIndex));
+                        assertCharsEquals(String.valueOf(i), segmentReader.nextString(stringIndex));
+                        assertEquals(i, segmentReader.nextGeoByte(geoByteIndex));
+                        assertEquals(i, segmentReader.nextGeoInt(geoIntIndex));
+                        assertEquals(i, segmentReader.nextGeoShort(geoShortIndex));
+                        assertEquals(i, segmentReader.nextGeoLong(geoLongIndex));
+
+                        prepareBinPayload(pointer, i);
+                        assertBinSeqEquals(binSeq.of(pointer, i), segmentReader.nextBin(binIndex));
+                    }
+                }
+            } finally {
+                Unsafe.getUnsafe().freeMemory(pointer);
             }
+        }
+    }
+
+    private static void prepareBinPayload(long pointer, int limit) {
+        for (int offset = 0; offset < limit; offset++) {
+            Unsafe.getUnsafe().putByte(pointer + offset, (byte) limit);
         }
     }
 
     private static void assertDesignatedTimestamp(WalSegmentDataReader segmentReader, int tsIndex, int expectedRowNumber, long expectedTimestamp) {
         assertEquals(expectedTimestamp, segmentReader.nextLong(tsIndex));
         assertEquals(expectedRowNumber, segmentReader.nextLong(tsIndex));
+    }
+
+    private static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {
+        assertNotNull(expected);
+        assertNotNull(actual);
+        assertEquals(expected.length(), actual.length());
+        for (int i = 0; i < expected.length(); i++) {
+            byte expectedByte = expected.byteAt(i);
+            byte actualByte = actual.byteAt(i);
+            assertEquals("Binary sequences not equals at offset " + i
+                    + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte +".",
+                    expectedByte, actualByte);
+        }
     }
 
     private static void assertCharsEquals(CharSequence expected, CharSequence actual) {
@@ -679,6 +729,46 @@ public class WalWriterTest extends AbstractGriffinTest {
             long offset = offsets.get(columnIndex);
             char result = primaryColumns.get(columnIndex).getChar(offset);
             offset += Character.BYTES;
+            offsets.set(columnIndex, offset);
+            return result;
+        }
+
+        public byte nextGeoByte(int columnIndex) {
+            long offset = offsets.get(columnIndex);
+            byte result = primaryColumns.get(columnIndex).getByte(offset);
+            offset += Byte.BYTES;
+            offsets.set(columnIndex, offset);
+            return result;
+        }
+
+        public int nextGeoInt(int columnIndex) {
+            long offset = offsets.get(columnIndex);
+            int result = primaryColumns.get(columnIndex).getInt(offset);
+            offset += Integer.BYTES;
+            offsets.set(columnIndex, offset);
+            return result;
+        }
+
+        public short nextGeoShort(int columnIndex) {
+            long offset = offsets.get(columnIndex);
+            short result = primaryColumns.get(columnIndex).getShort(offset);
+            offset += Short.BYTES;
+            offsets.set(columnIndex, offset);
+            return result;
+        }
+
+        public long nextGeoLong(int columnIndex) {
+            long offset = offsets.get(columnIndex);
+            long result = primaryColumns.get(columnIndex).getLong(offset);
+            offset += Long.BYTES;
+            offsets.set(columnIndex, offset);
+            return result;
+        }
+
+        public BinarySequence nextBin(int columnIndex) {
+            long offset = offsets.get(columnIndex);
+            BinarySequence result = primaryColumns.get(columnIndex).getBin(offset);
+            offset += result.length() + Long.BYTES;
             offsets.set(columnIndex, offset);
             return result;
         }
