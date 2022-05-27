@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLong256ToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
@@ -995,23 +996,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             castFunctions.add(new StrColumn(i));
                             break;
                         case ColumnType.SYMBOL:
-                            // treat symbol as string
-                            castFunctions.add(new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))));
+                            castFunctions.add(
+                                    new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(
+                                            new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))
+                                    )
+                            );
                             break;
                         case ColumnType.LONG256:
-                            castFunctions.add(new CastLong256ToStrFunctionFactory.CastLong256ToStrFunction(new Long256Column(i)));
+                            castFunctions.add(
+                                    new CastLong256ToStrFunctionFactory.CastLong256ToStrFunction(
+                                            new Long256Column(i)
+                                    )
+                            );
                             break;
                         case ColumnType.GEOBYTE:
-                            castFunctions.add(new GeoByteColumn(i, setType));
+                            castFunctions.add(
+                                    CastGeoHashToGeoHashFunctionFactory.getGeoByteToStrCastFunction(
+                                            new GeoByteColumn(i, setType),
+                                            ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                    )
+                            );
                             break;
                         case ColumnType.GEOSHORT:
-                            castFunctions.add(new GeoShortColumn(i, setType));
+                            castFunctions.add(
+                                    CastGeoHashToGeoHashFunctionFactory.getGeoShortToStrCastFunction(
+                                            new GeoShortColumn(i, setType),
+                                            ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                    )
+                            );
                             break;
                         case ColumnType.GEOINT:
-                            castFunctions.add(new GeoIntColumn(i, setType));
+                            castFunctions.add(
+                                    CastGeoHashToGeoHashFunctionFactory.getGeoIntToStrCastFunction(
+                                            new GeoIntColumn(i, setType),
+                                            ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                    )
+                            );
                             break;
                         case ColumnType.GEOLONG:
-                            castFunctions.add(new GeoLongColumn(i, setType));
+                            castFunctions.add(
+                                    CastGeoHashToGeoHashFunctionFactory.getGeoLongToStrCastFunction(
+                                            new GeoLongColumn(i, setType),
+                                            ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                    )
+                            );
                             break;
                         case ColumnType.BINARY:
                             castFunctions.add(new BinColumn(i));

@@ -38,8 +38,41 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
+    @NotNull
+    public static Function getGeoByteToStrCastFunction(Function value, int srcBitsPrecision) {
+        if (srcBitsPrecision % 5 == 0) {
+            return new CastGeoByteToStrCharsFunc(value, srcBitsPrecision / 5);
+        }
+        return new CastGeoByteToStrBitsFunc(value, srcBitsPrecision);
+    }
+
+    @NotNull
+    public static Function getGeoIntToStrCastFunction(Function value, int srcBitsPrecision) {
+        if (srcBitsPrecision % 5 == 0) {
+            return new CastGeoIntToStrCharsFunc(value, srcBitsPrecision / 5);
+        }
+        return new CastGeoIntToStrBitsFunc(value, srcBitsPrecision);
+    }
+
+    @NotNull
+    public static Function getGeoLongToStrCastFunction(Function value, int srcBitsPrecision) {
+        if (srcBitsPrecision % 5 == 0) {
+            return new CastGeoLongToStrCharsFunc(value, srcBitsPrecision / 5);
+        }
+        return new CastGeoLongToStrBitsFunc(value, srcBitsPrecision);
+    }
+
+    @NotNull
+    public static Function getGeoShortToStrCastFunction(Function value, int srcBitsPrecision) {
+        if (srcBitsPrecision % 5 == 0) {
+            return new CastGeoShortToStrCharsFunc(value, srcBitsPrecision / 5);
+        }
+        return new CastGeoShortToStrBitsFunc(value, srcBitsPrecision);
+    }
+
     public static Function newInstance(int position, Function value, int srcType, int targetType) throws SqlException {
         int srcBitsPrecision = ColumnType.getGeoHashBits(srcType);
         int targetBitsPrecision = ColumnType.getGeoHashBits(targetType);
@@ -78,15 +111,9 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
             case ColumnType.STRING:
                 switch (ColumnType.tagOf(srcType)) {
                     case ColumnType.GEOBYTE:
-                        if (srcBitsPrecision % 5 == 0) {
-                            return new CastGeoByteToStrCharsFunc(value, srcBitsPrecision / 5);
-                        }
-                        return new CastGeoByteToStrBitsFunc(value, srcBitsPrecision);
+                        return getGeoByteToStrCastFunction(value, srcBitsPrecision);
                     case ColumnType.GEOSHORT:
-                        if (srcBitsPrecision % 5 == 0) {
-                            return new CastGeoShortToStrCharsFunc(value, srcBitsPrecision / 5);
-                        }
-                        return new CastGeoShortToStrBitsFunc(value, srcBitsPrecision);
+                        return getGeoShortToStrCastFunction(value, srcBitsPrecision);
                 }
             default:
                 throw SqlException.position(position)
@@ -385,6 +412,40 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class CastGeoIntToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoIntToStrCharsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoInt(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendCharsUnsafe(value, bits, sink);
+        }
+    }
+
+    private static class CastGeoLongToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoLongToStrCharsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoLong(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendCharsUnsafe(value, bits, sink);
+        }
+    }
+
     private static class CastGeoShortToStrCharsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
 
         public CastGeoShortToStrCharsFunc(Function value, int bits) {
@@ -411,6 +472,41 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         protected long getValue(Record rec) {
             return this.value.getGeoByte(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
+        }
+    }
+
+
+    private static class CastGeoIntToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoIntToStrBitsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoInt(rec);
+        }
+
+        @Override
+        protected void print(long value, CharSink sink) {
+            GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
+        }
+    }
+
+    private static class CastGeoLongToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
+
+        public CastGeoLongToStrBitsFunc(Function value, int bits) {
+            super(value, bits);
+        }
+
+        @Override
+        protected long getValue(Record rec) {
+            return this.value.getGeoLong(rec);
         }
 
         @Override
