@@ -174,12 +174,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int mkdir(LPSZ path, int mode) {
+    public int mkdir(Path path, int mode) {
         return Files.mkdir(path, mode);
     }
 
     @Override
-    public int mkdirs(LPSZ path, int mode) {
+    public int mkdirs(Path path, int mode) {
         return Files.mkdirs(path, mode);
     }
 

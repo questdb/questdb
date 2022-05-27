@@ -76,6 +76,11 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     }
 
     @Override
+    public boolean isUsingIndex() {
+        return true;
+    }
+
+    @Override
     public Function getFunction() {
         return symbolFunction;
     }

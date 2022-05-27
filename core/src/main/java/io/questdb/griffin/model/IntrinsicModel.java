@@ -26,7 +26,10 @@ package io.questdb.griffin.model;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.LongList;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 
 /*
  * Part of implicit rule optimizer.

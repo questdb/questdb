@@ -86,6 +86,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
         }
@@ -104,6 +109,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public short getGeoShort(Record rec) {
             return (short) rnd.nextGeoHash(bits);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
@@ -128,13 +138,18 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.rnd = executionContext.getRandom();
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
         public short getGeoShort(Record rec) {
             return (byte) rnd.nextGeoHash(bits);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
     }
 
@@ -154,13 +169,18 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.rnd = executionContext.getRandom();
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
         public short getGeoShort(Record rec) {
             return (byte) rnd.nextGeoHash(bits);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            this.rnd = executionContext.getRandom();
         }
     }
 }

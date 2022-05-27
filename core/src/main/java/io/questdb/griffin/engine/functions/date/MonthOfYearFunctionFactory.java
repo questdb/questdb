@@ -46,14 +46,14 @@ public class MonthOfYearFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new Func(arg);
+        return new MonthOfYearFunction(arg);
     }
 
-    private static final class Func extends IntFunction implements UnaryFunction {
+    public static final class MonthOfYearFunction extends IntFunction implements UnaryFunction {
 
         private final Function arg;
 
-        public Func(Function arg) {
+        public MonthOfYearFunction(Function arg) {
             this.arg = arg;
         }
 
@@ -65,12 +65,12 @@ public class MonthOfYearFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
-                return Numbers.INT_NaN;
+            if (value != Numbers.LONG_NaN) {
+                final int year = Timestamps.getYear(value);
+                final boolean isLeap = Timestamps.isLeapYear(year);
+                return Timestamps.getMonthOfYear(value, year, isLeap);
             }
-            final int year = Timestamps.getYear(value);
-            final boolean isLeap = Timestamps.isLeapYear(year);
-            return Timestamps.getMonthOfYear(value, year, isLeap);
+            return Numbers.INT_NaN;
         }
     }
 }

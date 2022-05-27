@@ -211,8 +211,9 @@ public class ServerMain {
         workerPool.assignCleaner(Path.CLEANER);
         O3Utils.setupWorkerPool(
                 workerPool,
-                cairoEngine.getMessageBus(),
-                configuration.getCairoConfiguration().getCircuitBreakerConfiguration()
+                cairoEngine,
+                configuration.getCairoConfiguration().getCircuitBreakerConfiguration(),
+                functionFactoryCache
         );
 
         try {

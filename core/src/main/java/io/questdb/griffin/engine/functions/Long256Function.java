@@ -153,4 +153,9 @@ public abstract class Long256Function implements ScalarFunction {
     public final int getType() {
         return ColumnType.LONG256;
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
+    }
 }

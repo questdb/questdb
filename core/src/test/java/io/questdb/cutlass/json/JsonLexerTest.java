@@ -32,8 +32,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
-
 public class JsonLexerTest {
 
     private static final JsonLexer LEXER = new JsonLexer(4, 1024);

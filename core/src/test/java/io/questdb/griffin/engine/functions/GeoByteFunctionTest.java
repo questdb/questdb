@@ -42,6 +42,11 @@ public class GeoByteFunctionTest extends AbstractGriffinTest {
         public byte getGeoByte(Record rec) {
             return (byte) hash;
         }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
     };
 
     @Test

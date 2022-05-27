@@ -701,6 +701,11 @@ public class CompiledFilterRegressionTest extends AbstractGriffinTest {
         }
 
         @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return delegate.newSymbolTable(columnIndex);
+        }
+
+        @Override
         public boolean hasNext() {
             boolean hasNext = delegate.hasNext();
             if (hasNext) {

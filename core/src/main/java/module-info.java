@@ -90,7 +90,7 @@ open module io.questdb {
     exports io.questdb.cairo.vm.api;
     exports io.questdb.cairo.mig;
     exports io.questdb.griffin.engine.join;
-    exports io.questdb.griffin.update;
+    exports io.questdb.griffin.engine.ops;
     exports io.questdb.cairo.sql.async;
 
     provides FunctionFactory with
@@ -251,6 +251,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.YearFunctionFactory,
             io.questdb.griffin.engine.functions.date.MonthOfYearFunctionFactory,
             io.questdb.griffin.engine.functions.date.DaysPerMonthFunctionFactory,
+            io.questdb.griffin.engine.functions.date.ExtractFromTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.date.MicrosOfSecondFunctionFactory,
             io.questdb.griffin.engine.functions.date.MillisOfSecondFunctionFactory,
             io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory,

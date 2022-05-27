@@ -1385,22 +1385,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             try (MyWorkScheduler workScheduler = new MyWorkScheduler(pubSeq, subSeq)) {
                 final WorkerPool workerPool;
                 if (subSeq != null) {
-                    workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                        @Override
-                        public int[] getWorkerAffinity() {
-                            return new int[]{-1, -1};
-                        }
-
-                        @Override
-                        public int getWorkerCount() {
-                            return 2;
-                        }
-
-                        @Override
-                        public boolean haltOnError() {
-                            return false;
-                        }
-                    }, metrics);
+                    workerPool = new TestWorkerPool(2, metrics);
                     workerPool.assign(new ColumnIndexerJob(workScheduler));
                     workerPool.start(LOG);
                 } else {
@@ -1523,22 +1508,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             }
 
             try (final MyWorkScheduler workScheduler = new MyWorkScheduler()) {
-                final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
-                    @Override
-                    public int[] getWorkerAffinity() {
-                        return new int[]{-1, -1};
-                    }
-
-                    @Override
-                    public int getWorkerCount() {
-                        return 2;
-                    }
-
-                    @Override
-                    public boolean haltOnError() {
-                        return false;
-                    }
-                }, metrics);
+                WorkerPool workerPool = new TestWorkerPool(2, metrics);
                 workerPool.assign(new ColumnIndexerJob(workScheduler));
 
                 try (TableWriter writer = new TableWriter(configuration, "ABC", workScheduler, metrics)) {

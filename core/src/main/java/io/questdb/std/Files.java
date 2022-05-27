@@ -129,8 +129,6 @@ public final class Files {
 
     public static native int fsync(long fd);
 
-    public static native int sync();
-
     /**
      * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
      * can be presented to user even if file system is not supported.
@@ -187,31 +185,31 @@ public final class Files {
 
     public static native int lock(long fd);
 
-    public static int mkdir(LPSZ path, int mode) {
+    public static int mkdir(Path path, int mode) {
         return mkdir(path.address(), mode);
     }
 
-    public static int mkdirs(LPSZ path, int mode) {
-        try (Path pp = new Path()) {
-            for (int i = 0, n = path.length(); i < n; i++) {
-                char c = path.charAt(i);
-                if (c == File.separatorChar) {
+    public static int mkdirs(Path path, int mode) {
+        for (int i = 0, n = path.length(); i < n; i++) {
+            char c = path.charAt(i);
+            if (c == File.separatorChar) {
 
-                    if (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':') {
-                        pp.put(c);
-                        continue;
-                    }
-
-                    pp.$();
-                    if (pp.length() > 0 && !Files.exists(pp)) {
-                        int r = Files.mkdir(pp, mode);
-                        if (r != 0) {
-                            return r;
-                        }
-                    }
-                    pp.chop$();
+                // do not attempt to create '/' on linux or 'C:\' on Windows
+                if ((i == 0 && Os.type != Os.WINDOWS) || (i == 2 && Os.type == Os.WINDOWS && path.charAt(1) == ':')) {
+                    continue;
                 }
-                pp.put(c);
+
+                // replace separator we just found with \0
+                // temporarily truncate path to the directory we need to create
+                path.$at(i);
+                if (path.length() > 0 && !Files.exists(path)) {
+                    int r = Files.mkdir(path, mode);
+                    if (r != 0) {
+                        path.put(i, File.separatorChar);
+                        return r;
+                    }
+                }
+                path.put(i, File.separatorChar);
             }
         }
         return 0;
@@ -343,6 +341,8 @@ public final class Files {
     public static boolean setLastModified(LPSZ lpsz, long millis) {
         return setLastModified(lpsz.address(), millis);
     }
+
+    public static native int sync();
 
     public static boolean touch(LPSZ lpsz) {
         long fd = openRW(lpsz);

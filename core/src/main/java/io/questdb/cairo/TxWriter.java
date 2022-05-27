@@ -179,6 +179,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             this.readBaseOffset = writeBaseOffset;
 
             prevTransientRowCount = transientRowCount;
+            prevMinTimestamp = minTimestamp;
+            prevMaxTimestamp = maxTimestamp;
+
             prevRecordBaseOffset = lastRecordBaseOffset;
             lastRecordBaseOffset = writeBaseOffset;
         } else {
@@ -308,7 +311,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         attachedPartitions.setPos(index + LONGS_PER_TX_ATTACHED_PARTITION);
         long newTimestampLo = getPartitionTimestampLo(timestamp);
-        initPartitionAt(index, newTimestampLo, 0);
+        initPartitionAt(index, newTimestampLo, 0, -1);
         transientRowCount = 0;
         txPartitionCount++;
         if (extensionListener != null) {
@@ -367,8 +370,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private int calculateWriteSize() {
-        // If by any action data is reset, clear attachedPartitions
-        if (maxTimestamp == Long.MIN_VALUE) {
+        // If by any action data is reset and table is partitioned, clear attachedPartitions
+        if (maxTimestamp == Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.clear();
         }
         return calculateTxRecordSize(symbolColumnCount * 8, attachedPartitions.size() * 8);
@@ -400,6 +403,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         finishABHeader(writeBaseOffset, symbolColumnCount * 8, attachedPartitions.size() * 8, commitMode);
 
         prevTransientRowCount = transientRowCount;
+        prevMinTimestamp = minTimestamp;
+        prevMaxTimestamp = maxTimestamp;
+
         prevRecordStructureVersion = lastRecordStructureVersion;
         lastRecordStructureVersion = recordStructureVersion;
         prevRecordBaseOffset = lastRecordBaseOffset;
@@ -445,7 +451,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         } else if (extensionListener != null) {
             extensionListener.onTableExtended(partitionTimestamp);
         }
-        initPartitionAt(index, partitionTimestamp, partitionSize);
+        initPartitionAt(index, partitionTimestamp, partitionSize, -1);
     }
 
     private void openTxnFile(FilesFacade ff, Path path) {
@@ -487,8 +493,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void saveAttachedPartitionsToTx(int symbolColumnCount) {
-        // change partition count only when we have something to save to the
-        // partition table
+        // change partition count only when we have something to save to the partition table
         if (maxTimestamp != Long.MIN_VALUE) {
             final int size = attachedPartitions.size();
             final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
@@ -534,14 +539,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         if (attachedPartitions.getQuick(index + PARTITION_SIZE_OFFSET) != partitionSize) {
             recordStructureVersion++;
             attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
-            attachedPartitions.set(index + PARTITION_DATA_TX_OFFSET, txn);
         }
     }
 
-    void updatePartitionSizeByIndexAndTxn(int index, long partitionSize) {
+    void updatePartitionSizeAndTxnByIndex(int index, long partitionSize) {
         recordStructureVersion++;
         attachedPartitions.set(index + PARTITION_SIZE_OFFSET, partitionSize);
         attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
+    }
+
+    void updatePartitionColumnVersion(long partitionTimestamp) {
+        final int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
+        attachedPartitions.set(index + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
     }
 
     private void writeTransientSymbolCount(int symbolIndex, int symCount) {

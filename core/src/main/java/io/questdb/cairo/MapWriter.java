@@ -29,7 +29,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.charFileName;
+import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public interface MapWriter extends SymbolCountProvider {
     static void createSymbolMapFiles(
@@ -68,6 +69,8 @@ public interface MapWriter extends SymbolCountProvider {
     int put(char c);
 
     int put(CharSequence symbol);
+
+    int put(CharSequence symbol, SymbolValueCountCollector valueCountCollector);
 
     void rollback(int symbolCount);
 
