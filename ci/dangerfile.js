@@ -23,7 +23,7 @@ function validatePrTitle() {
     return
   }
 
-  fail(
+  warn(
     [
       "Please update the PR title. It should match this format: <type>: <description>",
       "Where <type> is one of: " +
