@@ -84,10 +84,7 @@ public class HttpQueryTestBuilder {
             }
 
             final WorkerPool workerPool = new TestWorkerPool(workerCount, metrics);
-
-            if (workerCount > 1) {
-                workerPool.assignCleaner(Path.CLEANER);
-            }
+            workerPool.assignCleaner(Path.CLEANER);
 
             CairoConfiguration cairoConfiguration = configuration;
             if (cairoConfiguration == null) {
