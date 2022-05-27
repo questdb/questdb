@@ -4,7 +4,7 @@ import { Table } from "../../../../utils"
 
 export const createSchemaCompletionProvider = (questDBTables: Table[] = []) => {
   const completionProvider: monaco.languages.CompletionItemProvider = {
-    triggerCharacters: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '".split(
+    triggerCharacters: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz( '".split(
       "",
     ),
     provideCompletionItems(model, position) {
@@ -24,48 +24,51 @@ export const createSchemaCompletionProvider = (questDBTables: Table[] = []) => {
         endColumn: word.endColumn,
       }
 
-      if (
-        word.word ||
-        /(FROM|INTO|TABLE) $/gim.test(textUntilPosition) ||
-        (/'$/gim.test(textUntilPosition) && !textUntilPosition.endsWith("= '"))
-      ) {
-        return {
-          suggestions: questDBTables.map((item) => {
-            return {
-              label: item.name,
-              kind: CompletionItemKind.Class,
-              insertText:
-                textUntilPosition.substr(-1) === "'"
-                  ? item.name
-                  : `'${item.name}'`,
-              range,
-            }
-          }),
-        }
-      }
-
-      if (/SELECT /gi.test(textUntilPosition)) {
-        const tableNameMatches = model.findNextMatch(
-          "FROM '?([a-z0-9-_]*)'?",
-          position,
-          true /* isRegex */,
-          false /* matchCase */,
-          null /* wordSeparators */,
-          true /* captureMatches */,
-        )
-
-        if (Array.isArray(tableNameMatches?.matches)) {
-          const match = tableNameMatches?.matches[1]
-          const table = questDBTables.find(({ name }) => name === match)
-
-          if (table) {
-            return {
-              suggestions: table.columns.map(({ column }) => ({
-                label: column,
+      // Prevent overly aggressive suggestions
+      if (word.word) {
+        if (
+          /(FROM|INTO|TABLE) $/gim.test(textUntilPosition) ||
+          (/'$/gim.test(textUntilPosition) &&
+            !textUntilPosition.endsWith("= '"))
+        ) {
+          return {
+            suggestions: questDBTables.map((item) => {
+              return {
+                label: item.name,
                 kind: CompletionItemKind.Class,
-                insertText: column,
+                insertText:
+                  textUntilPosition.substr(-1) === "'"
+                    ? item.name
+                    : `'${item.name}'`,
                 range,
-              })),
+              }
+            }),
+          }
+        }
+
+        if (/SELECT /gi.test(textUntilPosition)) {
+          const tableNameMatches = model.findNextMatch(
+            "FROM '?([a-z0-9-_]*)'?",
+            position,
+            true /* isRegex */,
+            false /* matchCase */,
+            null /* wordSeparators */,
+            true /* captureMatches */,
+          )
+
+          if (Array.isArray(tableNameMatches?.matches)) {
+            const match = tableNameMatches?.matches[1]
+            const table = questDBTables.find(({ name }) => name === match)
+
+            if (table) {
+              return {
+                suggestions: table.columns.map(({ column }) => ({
+                  label: column,
+                  kind: CompletionItemKind.Class,
+                  insertText: column,
+                  range,
+                })),
+              }
             }
           }
         }
