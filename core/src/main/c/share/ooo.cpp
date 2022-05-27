@@ -531,11 +531,6 @@ Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
     quick_sort_long_index_asc_in_place<long_3x>(reinterpret_cast<long_3x *>(pLong), 0, count - 1);
 }
 
-JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong, jlong count) {
-    quick_sort_long_index_asc_in_place<long_3x>(reinterpret_cast<long_3x *>(pLong), 0, count - 1);
-}
-
 index_t* merge_long_indexes_asc(const java_index_entry_t *java_entries, uint32_t count, index_t *merged_index) {
     if (count == 1) {
         return java_entries[0].index;
