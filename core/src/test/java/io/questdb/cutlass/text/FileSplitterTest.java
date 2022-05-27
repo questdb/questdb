@@ -1314,9 +1314,39 @@ public class FileSplitterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testProcessLargeCsvWithPool0() throws Exception {
+    public void testImportCsvIntoExistingTableWithColumnReorder() throws Exception {
         executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+
+            final String tableName = "tableName";
+            compiler.compile("create table " + tableName + " ( ts timestamp, line string, description string, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
+
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(10);
+                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.parseStructure();
+                indexer.process();
+            }
+            assertQuery("line\tts\td\tdescription\n" +
+                            "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
+                            "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
+                            "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
+                            "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
+                            "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
+                            "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
+                            "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
+                            "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
+                            "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
+                            "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                    "select line, ts, d, description from " + tableName + " limit -10",
+                    "ts", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportCsvIntoNewTable() throws Exception {
+        executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
             final String tableName = "tableName";
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
@@ -1403,6 +1433,9 @@ public class FileSplitterTest extends AbstractGriffinTest {
     private List<File> findAllFilesIn(File root) {
         List<File> result = new ArrayList<>();
         File[] files = root.listFiles();
+        if (files == null) {
+            return result;
+        }
         for (File f : files) {
             if (f.isDirectory()) {
                 result.addAll(findAllFilesIn(f));
@@ -1437,7 +1470,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
 
     @Test
     public void testParseStructureOfFileWithHeaderButMissingTimestampColumnName() throws Exception {
-        testParseThrowsException("test-quotes-big.csv", PartitionBy.MONTH, null, "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", "[-1] timestamp column not found");
+        testParseThrowsException("test-quotes-big.csv", PartitionBy.MONTH, null, "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", "[-1] timestamp column must be set when importing to new table");
     }
 
     @Test
@@ -1509,11 +1542,10 @@ public class FileSplitterTest extends AbstractGriffinTest {
                 indexer.parseStructure();
                 Assert.fail("exception expected");
             } catch (Exception e) {
-                Assert.assertEquals("[-1] partition by not specified or target table is not partitioned", e.getMessage());
+                Assert.assertEquals("[-1] target table is not partitioned", e.getMessage());
             }
         });
     }
-
 
     @Test
     public void testParseStructureOfFileWithHeaderButTargetTableIsNotPartitioned2() throws Exception {
@@ -1527,7 +1559,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
                 indexer.parseStructure();
                 Assert.fail("exception expected");
             } catch (Exception e) {
-                Assert.assertEquals("[-1] partition by not specified or target table is not partitioned", e.getMessage());
+                Assert.assertEquals("[-1] target table is not partitioned", e.getMessage());
             }
         });
     }
@@ -1555,7 +1587,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
                 indexer.of("tableName", "test-quotes-big.csv", -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 indexer.parseStructure();
             } catch (Exception e) {
-                Assert.assertEquals("[-1] partition by not specified or target table is not partitioned", e.getMessage());
+                Assert.assertEquals("[-1] partition by unit must be set when importing to new table", e.getMessage());
             }
         });
     }
