@@ -55,6 +55,8 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         // to NaN route to this factory. Obviously comparing naively will not work
         // We have to check arg types and when NaN is present we would generate special case
         // functions for NaN checks.
+        // As for Infinity, Infinity could be double or float, and the special judgment is
+        // only between Infinity and Infinity.
 
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
