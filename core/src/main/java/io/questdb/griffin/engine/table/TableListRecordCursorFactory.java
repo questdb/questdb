@@ -112,7 +112,7 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
          * This method aims to get the next
          * table name stored in sink
          *
-         * @return none.
+         * @return true if it has next else false.
          */
         @Override
         public boolean hasNext() {
