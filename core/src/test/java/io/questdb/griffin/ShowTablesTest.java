@@ -30,6 +30,18 @@ import org.junit.Test;
 public class ShowTablesTest extends AbstractGriffinTest {
 
     @Test
+    public void testShowTablesWithAlphabeticalOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableNames = "wyoxbaivdumesgftclkprhzqjn";
+            for (int i = 0; i < tableNames.length(); ++i){
+                String sql = "create table " + tableNames.charAt(i) + " (cust_id int, ccy symbol, balance double)";
+                compiler.compile(sql, sqlExecutionContext);
+            }
+            assertQuery("table\na\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\nu\nv\nw\nx\ny\nz\n", "show tables", null, false, sqlExecutionContext, false);
+        });
+    }
+
+    @Test
     public void testShowTablesWithSingleTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);

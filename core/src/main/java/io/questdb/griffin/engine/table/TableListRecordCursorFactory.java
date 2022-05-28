@@ -33,17 +33,31 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntStack;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+
+import java.util.Comparator;
+import java.util.stream.IntStream;
 
 public class TableListRecordCursorFactory implements RecordCursorFactory {
 
     public static final String TABLE_NAME_COLUMN = "table";
     private static final RecordMetadata METADATA;
 
+    private static final CharSeqComparator CSC = new CharSeqComparator();
+    private static final StringSink[] sinks;
+
+    private static int length = 0;
     private final FilesFacade ff;
     private final TableListRecordCursor cursor;
     private Path path;
+
+    static {
+        sinks = IntStream.range(0, 100000).mapToObj(i -> new StringSink()).toArray(StringSink[]::new);
+    }
+
 
     public TableListRecordCursorFactory(FilesFacade ff, CharSequence dbRoot) {
         this.ff = ff;
@@ -75,9 +89,11 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
     }
 
     private class TableListRecordCursor implements RecordCursor {
-        private final StringSink sink = new StringSink();
+        private final ObjList<CharSequence> sink_list = new ObjList<CharSequence>();
         private final TableListRecord record = new TableListRecord();
+        private final StringSink sink = new StringSink();
         private long findPtr = 0;
+        private boolean flag = true;
 
         @Override
         public void close() {
@@ -94,21 +110,19 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            while (true) {
-                if (findPtr == 0) {
-                    findPtr = ff.findFirst(path);
-                    if (findPtr <= 0) {
-                        return false;
-                    }
-                } else {
-                    if (ff.findNext(findPtr) <= 0) {
-                        return false;
-                    }
+            sortTable();
+            if (length == 0) {
+                for (StringSink stringSink : sinks) {
+                    stringSink.clear();
                 }
-                if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
-                    return true;
-                }
+                sink_list.clear();
+                this.flag = true;
+                return false;
             }
+            sink.clear();
+            sink.put(sink_list.get(sink_list.size() - length));
+            --length;
+            return length >= 0;
         }
 
         @Override
@@ -129,6 +143,38 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
         @Override
         public long size() {
             return -1;
+        }
+
+        public boolean next() {
+            while (true) {
+                if (findPtr == 0) {
+                    findPtr = ff.findFirst(path);
+                    if (findPtr <= 0) {
+                        return false;
+                    }
+                } else {
+                    if (ff.findNext(findPtr) <= 0) {
+                        return false;
+                    }
+                }
+                if (Files.isDir(ff.findName(findPtr), ff.findType(findPtr), sink)) {
+                    return true;
+                }
+            }
+        }
+
+        public void sortTable() {
+            if (this.flag) {
+                int i = 0;
+                while (next()) {
+                    sinks[i].put(sink);
+                    sink_list.add(sinks[i]);
+                    ++i;
+                }
+                length = sink_list.size();
+                sink_list.sort(CSC);
+                this.flag = false;
+            }
         }
 
         private TableListRecordCursor of() {
@@ -154,6 +200,13 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
             public int getStrLen(int col) {
                 return getStr(col).length();
             }
+        }
+    }
+
+    private static class CharSeqComparator implements Comparator<CharSequence> {
+        @Override
+        public int compare(CharSequence s1, CharSequence s2) {
+            return CharSequence.compare(s1, s2);
         }
     }
 
