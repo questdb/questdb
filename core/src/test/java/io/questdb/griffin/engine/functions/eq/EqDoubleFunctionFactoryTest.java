@@ -325,7 +325,7 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         FunctionFactory factory = getFunctionFactory();
         ObjList<Function> args = new ObjList<>();
         args.add(new FloatConstant(Float.POSITIVE_INFINITY));
-        args.add(new DoubleConstant(Float.POSITIVE_INFINITY));
+        args.add(new FloatConstant(Float.POSITIVE_INFINITY));
 
         IntList argPositions = new IntList();
         argPositions.add(2);
