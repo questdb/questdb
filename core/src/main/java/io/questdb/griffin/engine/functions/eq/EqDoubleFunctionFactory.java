@@ -97,6 +97,12 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
     }
 
     protected static class Func extends NegatableBooleanFunction implements BinaryFunction {
+        // This function uses both subtraction and equality to judge whether two parameters
+        // are equal because subtraction is to prevent the judging mistakes with different
+        // precision, and equality is for the comparison of Infinity. In java,
+        // Infinity - Infinity = NaN, so it won't satisfy the subtraction situation. But
+        // Infinity = Infinity, so use equality could solve this problem.
+
         protected final Function left;
         protected final Function right;
 
