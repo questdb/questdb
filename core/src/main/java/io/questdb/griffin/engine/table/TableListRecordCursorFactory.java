@@ -108,6 +108,12 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
             return record;
         }
 
+        /**
+         * This method aims to get the next
+         * table name stored in sink
+         *
+         * @return none.
+         */
         @Override
         public boolean hasNext() {
             sortTable();
@@ -145,6 +151,12 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
             return -1;
         }
 
+        /**
+         * This method returns a boolean number
+         * to check whether we have next table name
+         *
+         * @return true if it has next else false.
+         */
         public boolean next() {
             while (true) {
                 if (findPtr == 0) {
@@ -163,6 +175,11 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
+        /**
+         * This method aims to sort table
+         * name which stored in sin_list with
+         * alphabetic order.
+         */
         public void sortTable() {
             if (this.flag) {
                 int i = 0;
@@ -203,6 +220,11 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
         }
     }
 
+    /**
+     * A comparator class used to sort
+     * @author jttmtv
+     * @version 0.1
+     */
     private static class CharSeqComparator implements Comparator<CharSequence> {
         @Override
         public int compare(CharSequence s1, CharSequence s2) {

@@ -29,6 +29,10 @@ import org.junit.Test;
 
 public class ShowTablesTest extends AbstractGriffinTest {
 
+    /**
+     * Test show tables with alphabetical order
+     * @throws Exception If command execution encounters failure
+     */
     @Test
     public void testShowTablesWithAlphabeticalOrder() throws Exception {
         assertMemoryLeak(() -> {
