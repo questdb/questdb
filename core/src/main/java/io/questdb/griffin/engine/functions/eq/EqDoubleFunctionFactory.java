@@ -86,7 +86,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
 
     private static boolean isInfiniteConstant(Function operand, int operandType) {
         return operand.isConstant() &&
-                (ColumnType.isDouble(operandType) && Double.isInfinite(operand.getDouble(null)));
+                ((ColumnType.isDouble(operandType) || ColumnType.isFloat(operandType)) && Double.isInfinite(operand.getDouble(null)));
     }
 
     private static Function dispatchUnaryFunc(Function operand, int operandType) {
