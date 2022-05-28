@@ -336,6 +336,22 @@ public class EqDoubleFunctionFactoryTest extends AbstractFunctionFactoryTest {
         Assert.assertTrue(function.isConstant());
     }
 
+    @Test
+    public void testNegInfFloatEqualsNegInfFloat() throws SqlException {
+        FunctionFactory factory = getFunctionFactory();
+        ObjList<Function> args = new ObjList<>();
+        args.add(new FloatConstant(Float.NEGATIVE_INFINITY));
+        args.add(new FloatConstant(Float.NEGATIVE_INFINITY));
+
+        IntList argPositions = new IntList();
+        argPositions.add(2);
+        argPositions.add(1);
+
+        Function function = factory.newInstance(4, args, argPositions, configuration, sqlExecutionContext);
+        Assert.assertTrue(function.getBool(null));
+        Assert.assertTrue(function.isConstant());
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new EqDoubleFunctionFactory();
