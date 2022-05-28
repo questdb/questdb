@@ -150,10 +150,6 @@ public final class ColumnType {
         return columnType == DOUBLE;
     }
 
-    public static boolean isFloat(int columnType) {
-        return columnType == FLOAT;
-    }
-
     public static boolean isGeoHash(int columnType) {
         return (columnType & TYPE_FLAG_GEO_HASH) != 0;
     }

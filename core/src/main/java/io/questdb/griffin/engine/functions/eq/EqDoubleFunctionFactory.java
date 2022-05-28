@@ -55,8 +55,6 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         // to NaN route to this factory. Obviously comparing naively will not work
         // We have to check arg types and when NaN is present we would generate special case
         // functions for NaN checks.
-        // As for Infinity, Infinity could be double or float, and the special judgment is
-        // only between Infinity and Infinity.
 
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
@@ -67,14 +65,8 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         if (isNullConstant(left, leftType)) {
             return dispatchUnaryFunc(right, rightType);
         }
-        if (isInfiniteConstant(left, leftType)) {
-            return dispatchUnaryFuncInfinite(right, rightType, left.getDouble(null) > 0);
-        }
         if (isNullConstant(right, rightType)) {
             return dispatchUnaryFunc(left, leftType);
-        }
-        if (isInfiniteConstant(right, rightType)) {
-            return dispatchUnaryFuncInfinite(left, leftType, right.getDouble(null) > 0);
         }
         return new Func(args.getQuick(0), args.getQuick(1));
     }
@@ -84,11 +76,6 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
                 (ColumnType.isDouble(operandType) && Double.isNaN(operand.getDouble(null))
                         ||
                         operandType == ColumnType.NULL);
-    }
-
-    private static boolean isInfiniteConstant(Function operand, int operandType) {
-        return operand.isConstant() &&
-                ((ColumnType.isDouble(operandType) && Double.isInfinite(operand.getDouble(null))) || (ColumnType.isFloat(operandType) && Float.isInfinite(operand.getFloat(null))) );
     }
 
     private static Function dispatchUnaryFunc(Function operand, int operandType) {
@@ -109,16 +96,6 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static Function dispatchUnaryFuncInfinite(Function operand, int operandType, boolean isPos) {
-        switch (ColumnType.tagOf(operandType)) {
-            case ColumnType.FLOAT:
-                return isPos? new FuncFloatIsInfinite(operand) : new FuncFloatIsNegInfinite(operand);
-            default:
-                // double
-                return isPos? new FuncDoubleIsInfinite(operand) :new FuncDoubleIsNegInfinite(operand);
-        }
-    }
-
     protected static class Func extends NegatableBooleanFunction implements BinaryFunction {
         protected final Function left;
         protected final Function right;
@@ -132,7 +109,7 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             final double l = left.getDouble(rec);
             final double r = right.getDouble(rec);
-            return negated != (l != l && r != r || Math.abs(l - r) < 0.0000000001);
+            return negated != (l != l && r != r || Math.abs(l - r) < 0.0000000001 || l == r);
         }
 
         @Override
@@ -246,78 +223,6 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (Double.isNaN(arg.getDouble(rec)));
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-    }
-
-    protected static class FuncFloatIsInfinite extends NegatableBooleanFunction implements UnaryFunction {
-        protected final Function arg;
-
-        public FuncFloatIsInfinite(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getFloat(rec) == Float.POSITIVE_INFINITY);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-    }
-
-    protected static class FuncFloatIsNegInfinite extends NegatableBooleanFunction implements UnaryFunction {
-        protected final Function arg;
-
-        public FuncFloatIsNegInfinite(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getFloat(rec) == Float.NEGATIVE_INFINITY);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-    }
-
-    protected static class FuncDoubleIsInfinite extends NegatableBooleanFunction implements UnaryFunction {
-        protected final Function arg;
-
-        public FuncDoubleIsInfinite(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getDouble(rec) == Double.POSITIVE_INFINITY);
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
-        }
-    }
-
-    protected static class FuncDoubleIsNegInfinite extends NegatableBooleanFunction implements UnaryFunction {
-        protected final Function arg;
-
-        public FuncDoubleIsNegInfinite(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return negated != (arg.getDouble(rec) == Double.NEGATIVE_INFINITY);
         }
 
         @Override
