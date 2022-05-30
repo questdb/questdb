@@ -91,7 +91,6 @@ public class TableUtilsTest {
         Assert.assertFalse(TableUtils.isValidTableName("./"));
         Assert.assertFalse(TableUtils.isValidTableName("/asdf"));
         Assert.assertFalse(TableUtils.isValidTableName("\\asdf"));
-        Assert.assertFalse(TableUtils.isValidTableName("asdf\nasdf"));
         Assert.assertFalse(TableUtils.isValidTableName("asdf\rasdf"));
         Assert.assertFalse(TableUtils.isValidTableName("t..t.csv"));
         Assert.assertFalse(TableUtils.isValidTableName("\""));
@@ -109,5 +108,6 @@ public class TableUtilsTest {
         Assert.assertTrue(TableUtils.isValidTableName("table-name"));
         Assert.assertTrue(TableUtils.isValidTableName("table_name"));
         Assert.assertTrue(TableUtils.isValidTableName("table$name"));
+        Assert.assertTrue(TableUtils.isValidTableName("asdf\nasdf"));
     }
 }
