@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDateToFloatFunctionFactory implements FunctionFactory {
@@ -43,13 +42,13 @@ public class CastDateToFloatFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastDateToFloatFunction(args.getQuick(0));
     }
 
-    private static class Func extends FloatFunction implements UnaryFunction {
+    public static class CastDateToFloatFunction extends FloatFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
+        public CastDateToFloatFunction(Function arg) {
             this.arg = arg;
         }
 
@@ -60,8 +59,7 @@ public class CastDateToFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            final long value = arg.getDate(rec);
-            return value != Numbers.LONG_NaN ? value : Float.NaN;
+            return arg.getFloat(rec);
         }
     }
 }

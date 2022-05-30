@@ -193,7 +193,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     int fromGeoBits = ColumnType.getGeoHashBits(fromType);
                     int toGeoBits = ColumnType.getGeoHashBits(toType);
                     if (ColumnType.isGeoHash(toType) && toGeoBits < fromGeoBits) {
-                        return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, fromType, toType);
+                        return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, toType, fromType);
                     }
                 }
                 break;

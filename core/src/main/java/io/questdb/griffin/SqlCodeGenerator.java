@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.Vm;
@@ -41,10 +42,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
-import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLong256ToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.groupby.*;
@@ -92,7 +90,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
-    private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
+    private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = (configuration1, metadata, factoryA, factoryB, castFunctionsB, recordSink, valueTypes1, valueTypes12) -> new ExceptRecordCursorFactory(configuration1, metadata, factoryA, factoryB, recordSink, valueTypes1, valueTypes12);
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final MemoryCARW jitIRMem;
@@ -730,13 +728,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    private ObjList<Function> generateCastFunctions(RecordMetadata castToMetadata, RecordMetadata castFromMetadata) {
+    private ObjList<Function> generateCastFunctions(
+            RecordMetadata castToMetadata,
+            RecordMetadata castFromMetadata,
+            int modelPosition
+    ) throws SqlException {
         int columnCount = castToMetadata.getColumnCount();
         ObjList<Function> castFunctions = new ObjList<>();
         for (int i = 0; i < columnCount; i++) {
-            int setType = ColumnType.tagOf(castToMetadata.getColumnType(i));
-            int fromType = ColumnType.tagOf(castFromMetadata.getColumnType(i));
-            switch (setType) {
+            int toType = castToMetadata.getColumnType(i);
+            int fromType = castFromMetadata.getColumnType(i);
+            int toTag = ColumnType.tagOf(toType);
+            int fromTag = ColumnType.tagOf(fromType);
+            switch (toTag) {
                 case ColumnType.BOOLEAN:
                     castFunctions.add(new BooleanColumn(i));
                     break;
@@ -744,16 +748,64 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     castFunctions.add(new ByteColumn(i));
                     break;
                 case ColumnType.SHORT:
-                    castFunctions.add(new ShortColumn(i));
+                    switch (fromTag) {
+                        // BOOLEAN will not be cast to CHAR
+                        // in cast of BOOLEAN -> CHAR combination both will be cast to STRING
+                        case ColumnType.BYTE:
+                            castFunctions.add(new ByteColumn(i));
+                            break;
+                        case ColumnType.CHAR:
+                            castFunctions.add(new CharColumn(i));
+                            break;
+                        case ColumnType.SHORT:
+                            castFunctions.add(new ShortColumn(i));
+                            break;
+                        // wider types are not possible here
+                        // CHAR will be cast to wider types, not other way around
+                        // Winder types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                        // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+                    }
                     break;
                 case ColumnType.CHAR:
-                    castFunctions.add(new CharColumn(i));
+                    switch (fromTag) {
+                        // BOOLEAN will not be cast to CHAR
+                        // in cast of BOOLEAN -> CHAR combination both will be cast to STRING
+                        case ColumnType.BYTE:
+                            castFunctions.add(new CastByteToCharFunctionFactory.CastByteToCharFunction(new ByteColumn(i)));
+                            break;
+                        case ColumnType.CHAR:
+                            castFunctions.add(new CharColumn(i));
+                            break;
+                        // wider types are not possible here
+                        // CHAR will be cast to wider types, not other way around
+                        // Winder types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                        // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+                    }
                     break;
                 case ColumnType.INT:
-                    castFunctions.add(new IntColumn(i));
+                    switch (fromTag) {
+                        // BOOLEAN will not be cast to INT
+                        // in cast of BOOLEAN -> INT combination both will be cast to STRING
+                        case ColumnType.BYTE:
+                            castFunctions.add(new ByteColumn(i));
+                            break;
+                        case ColumnType.SHORT:
+                            castFunctions.add(new ShortColumn(i));
+                            break;
+                        case ColumnType.CHAR:
+                            castFunctions.add(new CharColumn(i));
+                            break;
+                        case ColumnType.INT:
+                            castFunctions.add(new IntColumn(i));
+                            break;
+                        // wider types are not possible here
+                        // INT will be cast to wider types, not other way around
+                        // Winder types tested are: LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                        // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+                    }
                     break;
                 case ColumnType.LONG:
-                    switch (fromType) {
+                    switch (fromTag) {
                         // BOOLEAN will not be cast to LONG
                         // in cast of BOOLEAN -> LONG combination both will be cast to STRING
                         case ColumnType.BYTE:
@@ -775,78 +827,57 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // LONG will be cast to wider types, not other way around
                         // Winder types tested are: FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
                         // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
-                        case ColumnType.BINARY:
-                            castFunctions.add(new BinColumn(i));
-                            break;
                     }
                     break;
                 case ColumnType.DATE:
-                    switch (fromType) {
-                        case ColumnType.BOOLEAN:
-                            castFunctions.add(new BooleanColumn(i));
-                            break;
+                    switch (fromTag) {
                         case ColumnType.BYTE:
-                            castFunctions.add(new ByteColumn(i));
+                            castFunctions.add(new CastByteToDateFunctionFactory.CastByteToDateFunction(new ByteColumn(i)));
                             break;
                         case ColumnType.SHORT:
-                            castFunctions.add(new ShortColumn(i));
+                            castFunctions.add(new CastShortToDateFunctionFactory.CastShortToDateFunction(new ShortColumn(i)));
                             break;
                         case ColumnType.CHAR:
-                            castFunctions.add(new CharColumn(i));
+                            castFunctions.add(new CastCharToDateFunctionFactory.CastCharToDateFunction(new CharColumn(i)));
                             break;
                         case ColumnType.INT:
-                            castFunctions.add(new IntColumn(i));
+                            castFunctions.add(new CastIntToDateFunctionFactory.CastIntToDateFunction(new IntColumn(i)));
                             break;
                         case ColumnType.LONG:
-                            castFunctions.add(new LongColumn(i));
+                            castFunctions.add(new CastLongToDateFunctionFactory.CastLongToDateFunction(new LongColumn(i)));
                             break;
                         case ColumnType.DATE:
                             castFunctions.add(new DateColumn(i));
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            castFunctions.add(new TimestampColumn(i));
-                            break;
-                        case ColumnType.FLOAT:
-                            castFunctions.add(new FloatColumn(i));
-                            break;
-                        case ColumnType.DOUBLE:
-                            castFunctions.add(new DoubleColumn(i));
-                            break;
-                        case ColumnType.STRING:
-                            castFunctions.add(new StrColumn(i));
-                            break;
-                        case ColumnType.SYMBOL:
-                            // treat symbol as string
-                            castFunctions.add(new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))));
-                            break;
-                        case ColumnType.LONG256:
-                            castFunctions.add(new CastLong256ToStrFunctionFactory.CastLong256ToStrFunction(new Long256Column(i)));
-                            break;
-                        case ColumnType.GEOBYTE:
-                            castFunctions.add(new GeoByteColumn(i, setType));
-                            break;
-                        case ColumnType.GEOSHORT:
-                            castFunctions.add(new GeoShortColumn(i, setType));
-                            break;
-                        case ColumnType.GEOINT:
-                            castFunctions.add(new GeoIntColumn(i, setType));
-                            break;
-                        case ColumnType.GEOLONG:
-                            castFunctions.add(new GeoLongColumn(i, setType));
-                            break;
-                        case ColumnType.BINARY:
-                            castFunctions.add(new BinColumn(i));
                             break;
                     }
                     break;
                 case ColumnType.TIMESTAMP:
-                    castFunctions.add(new TimestampColumn(i));
+                    switch (fromTag) {
+                        case ColumnType.BYTE:
+                            castFunctions.add(new CastByteToTimestampFunctionFactory.CastByteToTimestampFunction(new ByteColumn(i)));
+                            break;
+                        case ColumnType.CHAR:
+                            castFunctions.add(new CastCharToTimestampFunctionFactory.CastCharToTimestampFunction(new CharColumn(i)));
+                            break;
+                        case ColumnType.SHORT:
+                            castFunctions.add(new CastShortToTimestampFunctionFactory.CastShortToTimestampFunction(new ShortColumn(i)));
+                            break;
+                        case ColumnType.INT:
+                            castFunctions.add(new CastIntToTimestampFunctionFactory.CastIntToTimestampFunction(new IntColumn(i)));
+                            break;
+                        case ColumnType.LONG:
+                            castFunctions.add(new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new LongColumn(i)));
+                            break;
+                        case ColumnType.DATE:
+                            castFunctions.add(new CastDateToTimestampFunctionFactory.CastDateToTimestampFunction(new DateColumn(i)));
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            castFunctions.add(new TimestampColumn(i));
+                            break;
+                    }
                     break;
                 case ColumnType.FLOAT:
-                    switch (fromType) {
-                        case ColumnType.BOOLEAN:
-                            castFunctions.add(new BooleanColumn(i));
-                            break;
+                    switch (fromTag) {
                         case ColumnType.BYTE:
                             castFunctions.add(new ByteColumn(i));
                             break;
@@ -870,42 +901,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             break;
                         case ColumnType.FLOAT:
                             castFunctions.add(new FloatColumn(i));
-                            break;
-                        case ColumnType.DOUBLE:
-                            castFunctions.add(new DoubleColumn(i));
-                            break;
-                        case ColumnType.STRING:
-                            castFunctions.add(new StrColumn(i));
-                            break;
-                        case ColumnType.SYMBOL:
-                            // treat symbol as string
-                            castFunctions.add(new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))));
-                            break;
-                        case ColumnType.LONG256:
-                            castFunctions.add(new CastLong256ToStrFunctionFactory.CastLong256ToStrFunction(new Long256Column(i)));
-                            break;
-                        case ColumnType.GEOBYTE:
-                            castFunctions.add(new GeoByteColumn(i, setType));
-                            break;
-                        case ColumnType.GEOSHORT:
-                            castFunctions.add(new GeoShortColumn(i, setType));
-                            break;
-                        case ColumnType.GEOINT:
-                            castFunctions.add(new GeoIntColumn(i, setType));
-                            break;
-                        case ColumnType.GEOLONG:
-                            castFunctions.add(new GeoLongColumn(i, setType));
-                            break;
-                        case ColumnType.BINARY:
-                            castFunctions.add(new BinColumn(i));
                             break;
                     }
                     break;
                 case ColumnType.DOUBLE:
-                    switch (fromType) {
-                        case ColumnType.BOOLEAN:
-                            castFunctions.add(new BooleanColumn(i));
-                            break;
+                    switch (fromTag) {
                         case ColumnType.BYTE:
                             castFunctions.add(new ByteColumn(i));
                             break;
@@ -933,64 +933,46 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         case ColumnType.DOUBLE:
                             castFunctions.add(new DoubleColumn(i));
                             break;
-                        case ColumnType.STRING:
-                            castFunctions.add(new StrColumn(i));
-                            break;
-                        case ColumnType.SYMBOL:
-                            // treat symbol as string
-                            castFunctions.add(new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))));
-                            break;
-                        case ColumnType.LONG256:
-                            castFunctions.add(new CastLong256ToStrFunctionFactory.CastLong256ToStrFunction(new Long256Column(i)));
-                            break;
-                        case ColumnType.GEOBYTE:
-                            castFunctions.add(new GeoByteColumn(i, setType));
-                            break;
-                        case ColumnType.GEOSHORT:
-                            castFunctions.add(new GeoShortColumn(i, setType));
-                            break;
-                        case ColumnType.GEOINT:
-                            castFunctions.add(new GeoIntColumn(i, setType));
-                            break;
-                        case ColumnType.GEOLONG:
-                            castFunctions.add(new GeoLongColumn(i, setType));
-                            break;
-                        case ColumnType.BINARY:
-                            castFunctions.add(new BinColumn(i));
-                            break;
                     }
                     break;
                 case ColumnType.STRING:
-                    switch (fromType) {
+                    switch (fromTag) {
                         case ColumnType.BOOLEAN:
                             castFunctions.add(new BooleanColumn(i));
                             break;
                         case ColumnType.BYTE:
-                            castFunctions.add(new ByteColumn(i));
+                            castFunctions.add(new CastByteToStrFunctionFactory.CastByteToStrFunction(new ByteColumn(i)));
                             break;
                         case ColumnType.SHORT:
-                            castFunctions.add(new ShortColumn(i));
+                            castFunctions.add(new CastShortToStrFunctionFactory.CastShortToStrFunction(new ShortColumn(i)));
                             break;
                         case ColumnType.CHAR:
+                            // CharFunction has built-in cast to String
                             castFunctions.add(new CharColumn(i));
                             break;
                         case ColumnType.INT:
-                            castFunctions.add(new IntColumn(i));
+                            castFunctions.add(new CastIntToStrFunctionFactory.CastIntToStrFunction(new IntColumn(i)));
                             break;
                         case ColumnType.LONG:
                             castFunctions.add(new CastLongToStrFunctionFactory.CastLongToStrFunction(new LongColumn(i)));
                             break;
                         case ColumnType.DATE:
-                            castFunctions.add(new DateColumn(i));
+                            castFunctions.add(new CastDateToStrFunctionFactory.CastDateToStrFunction(new DateColumn(i)));
                             break;
                         case ColumnType.TIMESTAMP:
-                            castFunctions.add(new TimestampColumn(i));
+                            castFunctions.add(new CastTimestampToStrFunctionFactory.CastTimestampToStrFunction(new TimestampColumn(i)));
                             break;
                         case ColumnType.FLOAT:
-                            castFunctions.add(new FloatColumn(i));
+                            castFunctions.add(new CastFloatToStrFunctionFactory.CastFloatToStrFunction(
+                                    new FloatColumn(i),
+                                    configuration.getFloatToStrCastScale()
+                            ));
                             break;
                         case ColumnType.DOUBLE:
-                            castFunctions.add(new DoubleColumn(i));
+                            castFunctions.add(new CastDoubleToStrFunctionFactory.CastDoubleToStrFunction(
+                                    new DoubleColumn(i),
+                                    configuration.getDoubleToStrCastScale()
+                            ));
                             break;
                         case ColumnType.STRING:
                             castFunctions.add(new StrColumn(i));
@@ -1012,15 +994,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         case ColumnType.GEOBYTE:
                             castFunctions.add(
                                     CastGeoHashToGeoHashFunctionFactory.getGeoByteToStrCastFunction(
-                                            new GeoByteColumn(i, setType),
-                                            ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                            new GeoByteColumn(i, toTag),
+                                            ColumnType.getGeoHashBits(fromType)
                                     )
                             );
                             break;
                         case ColumnType.GEOSHORT:
                             castFunctions.add(
                                     CastGeoHashToGeoHashFunctionFactory.getGeoShortToStrCastFunction(
-                                            new GeoShortColumn(i, setType),
+                                            new GeoShortColumn(i, toTag),
                                             ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
                                     )
                             );
@@ -1028,7 +1010,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         case ColumnType.GEOINT:
                             castFunctions.add(
                                     CastGeoHashToGeoHashFunctionFactory.getGeoIntToStrCastFunction(
-                                            new GeoIntColumn(i, setType),
+                                            new GeoIntColumn(i, toTag),
                                             ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
                                     )
                             );
@@ -1036,89 +1018,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         case ColumnType.GEOLONG:
                             castFunctions.add(
                                     CastGeoHashToGeoHashFunctionFactory.getGeoLongToStrCastFunction(
-                                            new GeoLongColumn(i, setType),
+                                            new GeoLongColumn(i, toTag),
                                             ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
                                     )
                             );
                             break;
                         case ColumnType.BINARY:
-                            castFunctions.add(new BinColumn(i));
-                            break;
+                            throw SqlException
+                                    .$(modelPosition, "unsupported cast [column=").put(castFromMetadata.getColumnName(i))
+                                    .put(", from=").put(ColumnType.nameOf(fromType))
+                                    .put(", to=").put(ColumnType.nameOf(toType))
+                                    .put(']');
                     }
                     break;
                 case ColumnType.SYMBOL:
-                    switch (fromType) {
-                        case ColumnType.BOOLEAN:
-                            castFunctions.add(new BooleanColumn(i));
-                            break;
-                        case ColumnType.BYTE:
-                            castFunctions.add(new ByteColumn(i));
-                            break;
-                        case ColumnType.SHORT:
-                            castFunctions.add(new ShortColumn(i));
-                            break;
-                        case ColumnType.CHAR:
-                            castFunctions.add(new CharColumn(i));
-                            break;
-                        case ColumnType.INT:
-                            castFunctions.add(new IntColumn(i));
-                            break;
-                        case ColumnType.LONG:
-                            castFunctions.add(new LongColumn(i));
-                            break;
-                        case ColumnType.DATE:
-                            castFunctions.add(new DateColumn(i));
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            castFunctions.add(new TimestampColumn(i));
-                            break;
-                        case ColumnType.FLOAT:
-                            castFunctions.add(new FloatColumn(i));
-                            break;
-                        case ColumnType.DOUBLE:
-                            castFunctions.add(new DoubleColumn(i));
-                            break;
-                        case ColumnType.STRING:
-                            castFunctions.add(new StrColumn(i));
-                            break;
-                        case ColumnType.SYMBOL:
-                            // treat symbol as string
-                            castFunctions.add(new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))));
-                            break;
-                        case ColumnType.LONG256:
-                            castFunctions.add(new Long256Column(i));
-                            break;
-                        case ColumnType.GEOBYTE:
-                            castFunctions.add(new GeoByteColumn(i, setType));
-                            break;
-                        case ColumnType.GEOSHORT:
-                            castFunctions.add(new GeoShortColumn(i, setType));
-                            break;
-                        case ColumnType.GEOINT:
-                            castFunctions.add(new GeoIntColumn(i, setType));
-                            break;
-                        case ColumnType.GEOLONG:
-                            castFunctions.add(new GeoLongColumn(i, setType));
-                            break;
-                        case ColumnType.BINARY:
-                            castFunctions.add(new BinColumn(i));
-                            break;
-                    }
+                    castFunctions.add(new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(
+                            new SymbolColumn(
+                                    i,
+                                    castFromMetadata.isSymbolTableStatic(i)
+                            )));
                     break;
                 case ColumnType.LONG256:
                     castFunctions.add(new Long256Column(i));
                     break;
                 case ColumnType.GEOBYTE:
-                    castFunctions.add(new GeoByteColumn(i, setType));
+                    castFunctions.add(new GeoByteColumn(i, toType));
                     break;
                 case ColumnType.GEOSHORT:
-                    castFunctions.add(new GeoShortColumn(i, setType));
+                    castFunctions.add(new GeoShortColumn(i, toType));
                     break;
                 case ColumnType.GEOINT:
-                    castFunctions.add(new GeoIntColumn(i, setType));
+                    castFunctions.add(new GeoIntColumn(i, toType));
                     break;
                 case ColumnType.GEOLONG:
-                    castFunctions.add(new GeoLongColumn(i, setType));
+                    castFunctions.add(new GeoLongColumn(i, toType));
                     break;
                 case ColumnType.BINARY:
                     castFunctions.add(new BinColumn(i));
@@ -3080,62 +3013,67 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final RecordCursorFactory factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
-        final RecordMetadata metadataA = factoryA.getMetadata();
-        final RecordMetadata metadataB = factoryB.getMetadata();
-        RecordMetadata setMetadata;
+        try {
+            final RecordMetadata metadataA = factoryA.getMetadata();
+            final RecordMetadata metadataB = factoryB.getMetadata();
+            RecordMetadata setMetadata;
 
-        switch (model.getSetOperationType()) {
-            case QueryModel.SET_OPERATION_UNION:
-                setMetadata = widenSetMetadata(metadataA, metadataB);
+            switch (model.getSetOperationType()) {
+                case QueryModel.SET_OPERATION_UNION:
+                    setMetadata = widenSetMetadata(metadataA, metadataB);
 
-                return generateUnionFactory(
-                        model,
-                        executionContext,
-                        factoryA,
-                        factoryB,
-                        generateCastFunctions(setMetadata, metadataA),
-                        generateCastFunctions(setMetadata, metadataB),
-                        setMetadata,
-                        SET_UNION_CONSTRUCTOR
-                );
-            case QueryModel.SET_OPERATION_UNION_ALL:
-                setMetadata = widenSetMetadata(metadataA, metadataB);
-                return generateUnionAllFactory(
-                        model,
-                        executionContext,
-                        factoryA,
-                        factoryB,
-                        generateCastFunctions(setMetadata, metadataA),
-                        generateCastFunctions(setMetadata, metadataB),
-                        setMetadata
-                );
-            case QueryModel.SET_OPERATION_EXCEPT:
-                setMetadata = GenericRecordMetadata.removeTimestamp(metadataA);
-                return generateUnionFactory(
-                        model,
-                        executionContext,
-                        factoryA,
-                        factoryB,
-                        null,
-                        generateCastFunctions(setMetadata, metadataB),
-                        setMetadata,
-                        SET_EXCEPT_CONSTRUCTOR
-                );
-            case QueryModel.SET_OPERATION_INTERSECT:
-                setMetadata = GenericRecordMetadata.removeTimestamp(metadataA);
-                return generateUnionFactory(
-                        model,
-                        executionContext,
-                        factoryA,
-                        factoryB,
-                        null,
-                        generateCastFunctions(setMetadata, metadataB),
-                        setMetadata,
-                        SET_INTERSECT_CONSTRUCTOR
-                );
-            default:
-                assert false;
-                return null;
+                    return generateUnionFactory(
+                            model,
+                            executionContext,
+                            factoryA,
+                            factoryB,
+                            generateCastFunctions(setMetadata, metadataA, model.getModelPosition()),
+                            generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()),
+                            setMetadata,
+                            SET_UNION_CONSTRUCTOR
+                    );
+                case QueryModel.SET_OPERATION_UNION_ALL:
+                    setMetadata = widenSetMetadata(metadataA, metadataB);
+                    return generateUnionAllFactory(
+                            model,
+                            executionContext,
+                            factoryA,
+                            factoryB,
+                            generateCastFunctions(setMetadata, metadataA, model.getModelPosition()),
+                            generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()),
+                            setMetadata
+                    );
+                case QueryModel.SET_OPERATION_EXCEPT:
+                    setMetadata = GenericRecordMetadata.removeTimestamp(metadataA);
+                    return generateUnionFactory(
+                            model,
+                            executionContext,
+                            factoryA,
+                            factoryB,
+                            null,
+                            generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()),
+                            setMetadata,
+                            SET_EXCEPT_CONSTRUCTOR
+                    );
+                case QueryModel.SET_OPERATION_INTERSECT:
+                    setMetadata = GenericRecordMetadata.removeTimestamp(metadataA);
+                    return generateUnionFactory(
+                            model,
+                            executionContext,
+                            factoryA,
+                            factoryB,
+                            null,
+                            generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()),
+                            setMetadata,
+                            SET_INTERSECT_CONSTRUCTOR
+                    );
+                default:
+                    assert false;
+                    return null;
+            }
+        } catch (Throwable e) {
+            Misc.free(factoryB);
+            throw e;
         }
     }
 

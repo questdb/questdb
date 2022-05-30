@@ -750,7 +750,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from long_sequence(20)" +
                         ")",
-                "with tab as (x where b in ('BB')) tab ".length(),
+                34,
                 "latest by query does not provide dedicated TIMESTAMP column"
         );
     }

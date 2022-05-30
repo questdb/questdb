@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
@@ -35,23 +36,15 @@ import io.questdb.std.ObjList;
 class ExceptRecordCursor implements RecordCursor {
     private final Map map;
     private final RecordSink recordSink;
-    private final boolean convertSymbolsToStrings;
+    private final VirtualRecord virtualRecord;
     private RecordCursor cursorA;
     private RecordCursor cursorB;
     private Record recordA;
-    private final VirtualRecord virtualRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
 
-    public ExceptRecordCursor(
-            Map map,
-            RecordSink recordSink,
-            boolean convertSymbolsToStrings,
-            ObjList<Function> castFunctionsA,
-            ObjList<Function> castFunctionsB
-    ) {
+    public ExceptRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsB) {
         this.map = map;
         this.recordSink = recordSink;
-        this.convertSymbolsToStrings = convertSymbolsToStrings;
         // cursor B has to be cast to the types of cursor A unless types are identical
         // in which case this is a todo (simplify virtual record)
         this.virtualRecord = new VirtualRecord(castFunctionsB);

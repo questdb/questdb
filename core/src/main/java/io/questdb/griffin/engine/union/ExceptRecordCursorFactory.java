@@ -51,7 +51,7 @@ public class ExceptRecordCursorFactory implements RecordCursorFactory {
             RecordMetadata metadata,
             RecordCursorFactory factoryA,
             RecordCursorFactory factoryB,
-            ObjList<Function> castFunctionsA,  // unused, we keep it here to comply with an interface
+            // unused, we keep it here to comply with an interface
             ObjList<Function> castFunctionsB,
             RecordSink recordSink,
             ColumnTypes valueTypes
@@ -60,7 +60,7 @@ public class ExceptRecordCursorFactory implements RecordCursorFactory {
         this.factoryA = factoryA;
         this.factoryB = factoryB;
         this.map = MapFactory.createMap(configuration, metadata, valueTypes);
-        this.cursor = new ExceptRecordCursor(map, recordSink, true, castFunctionsA, castFunctionsB);
+        this.cursor = new ExceptRecordCursor(map, recordSink, castFunctionsB);
         this.castFunctionsB = castFunctionsB;
     }
 

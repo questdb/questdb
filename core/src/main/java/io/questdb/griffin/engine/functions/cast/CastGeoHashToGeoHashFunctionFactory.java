@@ -73,18 +73,18 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         return new CastGeoShortToStrBitsFunc(value, srcBitsPrecision);
     }
 
-    public static Function newInstance(int position, Function value, int srcType, int targetType) throws SqlException {
-        int srcBitsPrecision = ColumnType.getGeoHashBits(srcType);
-        int targetBitsPrecision = ColumnType.getGeoHashBits(targetType);
-        int shift = srcBitsPrecision - targetBitsPrecision;
+    public static Function newInstance(int position, Function value, int toType, int fromType) throws SqlException {
+        int fromBits = ColumnType.getGeoHashBits(fromType);
+        int toBits = ColumnType.getGeoHashBits(toType);
+        int shift = fromBits - toBits;
         if (shift > 0) {
             if (value.isConstant()) {
-                long val = GeoHashes.getGeoLong(srcType, value, null);
+                long val = GeoHashes.getGeoLong(fromType, value, null);
                 // >> shift will take care of NULL value -1
-                return Constants.getGeoHashConstantWithType(val >> shift, targetType);
+                return Constants.getGeoHashConstantWithType(val >> shift, toType);
             }
 
-            final Function result = castFunc(shift, targetType, value, srcType);
+            final Function result = getCastGeoHashToGeoHashFunction(value, toType, fromType, shift);
             if (result != null) {
                 return result;
             }
@@ -94,33 +94,33 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
 
         // check if this is a null of different bit count
         if (value.isConstant() && GeoHashes.getGeoLong(value.getType(), value, null) == GeoHashes.NULL) {
-            return Constants.getNullConstant(targetType);
+            return Constants.getNullConstant(toType);
         }
 
-        switch (ColumnType.tagOf(targetType)) {
+        switch (ColumnType.tagOf(toType)) {
             case ColumnType.GEOBYTE:
             case ColumnType.GEOSHORT:
             case ColumnType.GEOINT:
             case ColumnType.GEOLONG:
                 throw SqlException.position(position)
                         .put("CAST cannot decrease precision from GEOHASH(")
-                        .put(srcBitsPrecision)
+                        .put(fromBits)
                         .put("b) to GEOHASH(")
-                        .put(targetBitsPrecision)
+                        .put(toBits)
                         .put("b)");
             case ColumnType.STRING:
-                switch (ColumnType.tagOf(srcType)) {
+                switch (ColumnType.tagOf(fromType)) {
                     case ColumnType.GEOBYTE:
-                        return getGeoByteToStrCastFunction(value, srcBitsPrecision);
+                        return getGeoByteToStrCastFunction(value, fromBits);
                     case ColumnType.GEOSHORT:
-                        return getGeoShortToStrCastFunction(value, srcBitsPrecision);
+                        return getGeoShortToStrCastFunction(value, fromBits);
                 }
             default:
                 throw SqlException.position(position)
                         .put("cannot cast GEOHASH(")
-                        .put(srcBitsPrecision)
+                        .put(fromBits)
                         .put("b) to ")
-                        .put(ColumnType.nameOf(targetType));
+                        .put(ColumnType.nameOf(toType));
         }
     }
 
@@ -137,48 +137,49 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
                                 ObjList<Function> args,
                                 IntList argPositions,
                                 CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext) throws SqlException {
+                                SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final Function value = args.getQuick(0);
         int srcType = value.getType();
         int targetType = args.getQuick(1).getType();
-        return newInstance(position, value, srcType, targetType);
+        return newInstance(position, value, targetType, srcType);
     }
 
-    private static Function castFunc(int shift, int targetType, Function value, int srcType) {
-        switch (ColumnType.tagOf(srcType)) {
+    private static Function getCastGeoHashToGeoHashFunction(Function value, int toType, int fromType, int shift) {
+        switch (ColumnType.tagOf(fromType)) {
             case ColumnType.GEOBYTE:
-                if (ColumnType.tagOf(targetType) == ColumnType.GEOBYTE) {
-                    return new CastByteFunc(shift, targetType, value);
+                if (ColumnType.tagOf(toType) == ColumnType.GEOBYTE) {
+                    return new CastByteFunc(shift, toType, value);
                 }
                 break;
             case ColumnType.GEOSHORT:
-                switch (ColumnType.tagOf(targetType)) {
+                switch (ColumnType.tagOf(toType)) {
                     case ColumnType.GEOBYTE:
-                        return new CastShortToByteFunc(shift, targetType, value);
+                        return new CastShortToByteFunc(shift, toType, value);
                     case ColumnType.GEOSHORT:
-                        return new CastShortFunc(shift, targetType, value);
+                        return new CastGeoShortFunction(shift, toType, value);
                 }
                 break;
             case ColumnType.GEOINT:
-                switch (ColumnType.tagOf(targetType)) {
+                switch (ColumnType.tagOf(toType)) {
                     case ColumnType.GEOBYTE:
-                        return new CastIntToByteFunc(shift, targetType, value);
+                        return new CastIntToByteFunc(shift, toType, value);
                     case ColumnType.GEOSHORT:
-                        return new CastIntToShortFunc(shift, targetType, value);
+                        return new CastGeoIntToGeoShortFunction(shift, toType, value);
                     case ColumnType.GEOINT:
-                        return new CastIntFunc(shift, targetType, value);
+                        return new CastIntFunc(shift, toType, value);
                 }
                 break;
             default:
-                switch (ColumnType.tagOf(targetType)) {
+                switch (ColumnType.tagOf(toType)) {
                     case ColumnType.GEOBYTE:
-                        return new CastLongToByteFunc(shift, targetType, value);
+                        return new CastLongToByteFunc(shift, toType, value);
                     case ColumnType.GEOSHORT:
-                        return new CastLongToShortFunc(shift, targetType, value);
+                        return new CastGeoLongToGeoShortFunction(shift, toType, value);
                     case ColumnType.GEOINT:
-                        return new CastLongToIntFunc(shift, targetType, value);
+                        return new CastLongToIntFunc(shift, toType, value);
                     case ColumnType.GEOLONG:
-                        return new CastLongFunc(shift, targetType, value);
+                        return new CastLongFunc(shift, toType, value);
                 }
         }
         return null;
@@ -226,11 +227,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastLongToShortFunc extends GeoShortFunction implements UnaryFunction {
+    public static class CastGeoLongToGeoShortFunction extends GeoShortFunction implements UnaryFunction {
         private final Function value;
         private final int shift;
 
-        public CastLongToShortFunc(int shift, int targetType, Function value) {
+        public CastGeoLongToGeoShortFunction(int shift, int targetType, Function value) {
             super(targetType);
             this.value = value;
             this.shift = shift;
@@ -311,11 +312,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastIntToShortFunc extends GeoShortFunction implements UnaryFunction {
+    public static class CastGeoIntToGeoShortFunction extends GeoShortFunction implements UnaryFunction {
         private final Function value;
         private final int shift;
 
-        public CastIntToShortFunc(int shift, int targetType, Function value) {
+        public CastGeoIntToGeoShortFunction(int shift, int targetType, Function value) {
             super(targetType);
             this.value = value;
             this.shift = shift;
@@ -332,11 +333,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class CastShortFunc extends GeoShortFunction implements UnaryFunction {
+    public static class CastGeoShortFunction extends GeoShortFunction implements UnaryFunction {
         private final Function value;
         private final int shift;
 
-        public CastShortFunc(int shift, int targetType, Function value) {
+        public CastGeoShortFunction(int shift, int targetType, Function value) {
             super(targetType);
             this.value = value;
             this.shift = shift;

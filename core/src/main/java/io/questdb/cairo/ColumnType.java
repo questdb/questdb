@@ -139,13 +139,7 @@ public final class ColumnType {
     }
 
     public static boolean isToSameOrWider(int to, int from) {
-        final int toTag = tagOf(to);
-        final int fromTag = tagOf(from);
-        return toTag == fromTag
-                || isBuiltInWideningCast(to, from)
-                || isStringCast(to, from)
-                || isGeoHashWideningCast(to, from)
-                ;
+        return to == from || isBuiltInWideningCast(to, from) || isStringCast(to, from);
     }
 
     public static boolean isBinary(int columnType) {
