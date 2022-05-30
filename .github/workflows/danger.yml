@@ -3,6 +3,8 @@ name: Danger
 on:
   pull_request_target:
     types: [synchronize, opened, reopened, edited]
+    branches:
+      - "master"
 
 jobs:
   build:
