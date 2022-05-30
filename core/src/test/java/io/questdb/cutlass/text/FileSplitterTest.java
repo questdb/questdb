@@ -1631,7 +1631,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
             }
 
             assertQuery("count\n" +
-                            "300000000",
+                            "300000000\n",
                     "select count(*) from tableName",
                     null, false, false, true);
 
@@ -1650,6 +1650,11 @@ public class FileSplitterTest extends AbstractGriffinTest {
                 indexer.parseStructure();
                 indexer.process();
             }
+
+            assertQuery("count\n" +
+                            "300000000\n",
+                    "select count(*) from tableName",
+                    null, false, false, true);
         });
     }
 
