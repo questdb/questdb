@@ -56,15 +56,24 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
+import java.security.interfaces.ECPrivateKey;
+import java.security.interfaces.ECPublicKey;
+import java.util.Base64;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+
+import static io.questdb.cutlass.line.tcp.AuthDb.EC_ALGORITHM;
 
 public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(LineTcpReceiverTest.class);
     private final static String AUTH_KEY_ID1 = "testUser1";
-    private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
+    private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=");
     private final static String AUTH_KEY_ID2 = "testUser2";
-    private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
+    private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("AIZc78-On-91DLplVNtyLOmKddY0AL9mnT5onl19Vv_g");
     private static final long TEST_TIMEOUT_IN_MS = 120000;
     private Path path;
 
@@ -76,6 +85,34 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @After
     public void tearDownLineTcpReceiverTest() {
         path.close();
+    }
+
+    @Test
+    public void generateKeys() throws NoSuchAlgorithmException {
+        KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(EC_ALGORITHM);
+
+        KeyPair keys = keyPairGenerator.generateKeyPair();
+        ECPublicKey publicKey = (ECPublicKey) keys.getPublic();
+
+        String x = Base64.getUrlEncoder().encodeToString(
+                publicKey.getW().getAffineX().toByteArray()
+        );
+
+        String y = Base64.getUrlEncoder().encodeToString(
+                publicKey.getW().getAffineY().toByteArray()
+        );
+
+        System.out.println("x: " + x);
+        System.out.println("y: " + x);
+
+        ECPrivateKey privateKey = (ECPrivateKey) keys.getPrivate();
+        System.out.println("s: " +
+                Base64.getUrlEncoder().encodeToString(
+                        privateKey.getS().toByteArray()
+                )
+        );
+
+        System.out.printf("%s\tec-p-256-sha256\t%s\t%s%n", AUTH_KEY_ID1, x, y);
     }
 
     @Test
@@ -144,7 +181,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         });
     }
 
-
     @Test
     public void testGoodAuthenticated() throws Exception {
         test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 1_000, false);
@@ -153,6 +189,71 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test(expected = NetworkError.class)
     public void testInvalidSignature() throws Exception {
         test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768, 6_000, true);
+    }
+
+    @Test(expected = NetworkError.class)
+    public void testInvalidZeroSignature() throws Exception {
+        test(AUTH_KEY_ID1, 768, 100, true, bufferSize ->
+                new AuthenticatedLineTcpSender(
+                        authKeyId,
+                        AUTH_PRIVATE_KEY1,
+                        Net.parseIPv4("127.0.0.1"),
+                        bindPort,
+                        bufferSize
+                ) {
+                    @Override
+                    public void authenticate() throws NetworkError {
+                        long buffer = 0;
+                        try {
+                            buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
+
+                            // Send key id
+                            int n = 0;
+                            byte[] keyIdBytes = AUTH_KEY_ID1.getBytes();
+                            while (n < keyIdBytes.length) {
+                                Unsafe.getUnsafe().putByte(buffer + n, keyIdBytes[n]);
+                                n++;
+                            }
+                            Unsafe.getUnsafe().putByte(buffer + n, (byte) '\n');
+                            n++;
+                            if (nf.send(fd, buffer, n) != n) {
+                                throw NetworkError.instance(nf.errno()).put("send error");
+                            }
+
+                            // Receive challenge
+                            n = 0;
+                            while (true) {
+                                int rc = nf.recv(fd, buffer + n, 1);
+                                if (rc < 0) {
+                                    throw NetworkError.instance(nf.errno()).put("disconnected during authentication");
+                                }
+                                byte b = Unsafe.getUnsafe().getByte(buffer + n);
+                                if (b == (byte) '\n') {
+                                    break;
+                                }
+                                n++;
+                            }
+
+                            int sz = n;
+
+                            // Send signature
+                            byte[] rawSignature = new byte[64];
+                            byte[] signature = Base64.getEncoder().encode(rawSignature);
+                            for (n = 0; n < signature.length; n++) {
+                                Unsafe.getUnsafe().putByte(buffer + n, signature[n]);
+                            }
+                            Unsafe.getUnsafe().putByte(buffer + n, (byte) '\n');
+                            n++;
+                            if (nf.send(fd, buffer, n) != n) {
+                                throw NetworkError.instance(nf.errno()).put("send error");
+                            }
+                            LOG.info().$("authenticated").$();
+                        } finally {
+                            Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+                }
+        );
     }
 
     @Test(expected = NetworkError.class)
@@ -1037,6 +1138,24 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             final int nRows,
             boolean expectDisconnect
     ) throws Exception {
+        test(authKeyId, msgBufferSize, nRows, expectDisconnect,
+                bufferSize ->
+                        new AuthenticatedLineTcpSender(
+                                authKeyId,
+                                authPrivateKey,
+                                Net.parseIPv4("127.0.0.1"),
+                                bindPort,
+                                bufferSize
+                        ));
+    }
+
+    private void test(
+            String authKeyId,
+            int msgBufferSize,
+            final int nRows,
+            boolean expectDisconnect,
+            Function<Integer, AuthenticatedLineTcpSender> createSender
+    ) throws Exception {
         this.authKeyId = authKeyId;
         this.msgBufferSize = msgBufferSize;
         assertMemoryLeak(() -> {
@@ -1071,13 +1190,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     final AbstractLineSender[] senders = new AbstractLineSender[tables.size()];
                     for (int n = 0; n < senders.length; n++) {
                         if (null != authKeyId) {
-                            AuthenticatedLineTcpSender sender = new AuthenticatedLineTcpSender(
-                                    authKeyId,
-                                    authPrivateKey,
-                                    Net.parseIPv4("127.0.0.1"),
-                                    bindPort,
-                                    4096
-                            );
+                            AuthenticatedLineTcpSender sender = createSender.apply(4096);
                             sender.authenticate();
                             senders[n] = sender;
                         } else {

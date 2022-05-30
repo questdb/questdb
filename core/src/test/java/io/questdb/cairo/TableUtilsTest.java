@@ -64,12 +64,16 @@ public class TableUtilsTest {
         testIsValidColumnName('*', false);
         testIsValidColumnName('%', false);
         testIsValidColumnName('~', false);
+        Assert.assertFalse(TableUtils.isValidColumnName(".."));
+        Assert.assertFalse(TableUtils.isValidColumnName("."));
+        Assert.assertFalse(TableUtils.isValidColumnName("t\u007Ftcsv"));
 
         testIsValidColumnName('!', true);
         testIsValidColumnName('a', true);
         testIsValidColumnName('b', true);
         testIsValidColumnName('^', true);
         testIsValidColumnName('[', true);
+        testIsValidColumnName('$', true);
     }
 
     private void testIsValidColumnName(char c, boolean expected) {
@@ -77,5 +81,33 @@ public class TableUtilsTest {
         Assert.assertEquals(expected, TableUtils.isValidColumnName(c + "abc"));
         Assert.assertEquals(expected, TableUtils.isValidColumnName("abc" + c));
         Assert.assertEquals(expected, TableUtils.isValidColumnName("ab" + c + "c"));
+    }
+
+    @Test
+    public void testIsValidTableName() {
+        Assert.assertFalse(TableUtils.isValidTableName("?abcd"));
+        Assert.assertFalse(TableUtils.isValidTableName(""));
+        Assert.assertFalse(TableUtils.isValidTableName(" "));
+        Assert.assertFalse(TableUtils.isValidTableName("./"));
+        Assert.assertFalse(TableUtils.isValidTableName("/asdf"));
+        Assert.assertFalse(TableUtils.isValidTableName("\\asdf"));
+        Assert.assertFalse(TableUtils.isValidTableName("asdf\nasdf"));
+        Assert.assertFalse(TableUtils.isValidTableName("asdf\rasdf"));
+        Assert.assertFalse(TableUtils.isValidTableName("t..t.csv"));
+        Assert.assertFalse(TableUtils.isValidTableName("\""));
+        Assert.assertFalse(TableUtils.isValidTableName("t\u007Ft.csv"));
+        Assert.assertFalse(TableUtils.isValidTableName("."));
+        Assert.assertFalse(TableUtils.isValidTableName(".."));
+        Assert.assertFalse(TableUtils.isValidTableName("..."));
+        Assert.assertFalse(TableUtils.isValidTableName("..\\"));
+        Assert.assertFalse(TableUtils.isValidTableName("\\.."));
+        Assert.assertFalse(TableUtils.isValidTableName("/.."));
+        Assert.assertFalse(TableUtils.isValidTableName("../"));
+
+        Assert.assertTrue(TableUtils.isValidTableName("table name"));
+        Assert.assertTrue(TableUtils.isValidTableName("table name.csv"));
+        Assert.assertTrue(TableUtils.isValidTableName("table-name"));
+        Assert.assertTrue(TableUtils.isValidTableName("table_name"));
+        Assert.assertTrue(TableUtils.isValidTableName("table$name"));
     }
 }

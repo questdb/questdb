@@ -359,6 +359,50 @@ public final class TableUtils {
         return path.$();
     }
 
+    public static boolean isValidColumnName(CharSequence seq) {
+        for (int i = 0, l = seq.length(); i < l; i++) {
+            char c = seq.charAt(i);
+            switch (c) {
+                case '?':
+                case '.':
+                case ',':
+                case '\'':
+                case '\"':
+                case '\\':
+                case '/':
+                case ':':
+                case ')':
+                case '(':
+                case '+':
+                case '-':
+                case '*':
+                case '%':
+                case '~':
+                case '\u0000':
+                case '\u0001':
+                case '\u0002':
+                case '\u0003':
+                case '\u0004':
+                case '\u0005':
+                case '\u0006':
+                case '\u0007':
+                case '\u0008':
+                case '\u0009': // Control characters, except \n
+                case '\u000B':
+                case '\u000c':
+                case '\r':
+                case '\u000e':
+                case '\u000f':
+                case '\u007f':
+                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+                    return false;
+                default:
+                    break;
+            }
+        }
+        return true;
+    }
+
     public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
         path.concat(columnName).put(".o");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
@@ -432,33 +476,51 @@ public final class TableUtils {
         return path.$();
     }
 
-    public static boolean isValidColumnName(CharSequence seq) {
-        for (int i = 0, l = seq.length(); i < l; i++) {
-            char c = seq.charAt(i);
+    public static boolean isValidTableName(CharSequence tableName) {
+        int l = tableName.length();
+        for (int i = 0; i < l; i++) {
+            char c = tableName.charAt(i);
             switch (c) {
-                case '?':
                 case '.':
+                    if (i == 0 || i == l - 1 || tableName.charAt(i - 1) == '.') {
+                        // Single dot in the middle is allowed only
+                        return false;
+                    }
+                    break;
+                case '?':
                 case ',':
                 case '\'':
                 case '\"':
                 case '\\':
                 case '/':
-                case '\0':
                 case ':':
                 case ')':
                 case '(':
                 case '+':
-                case '-':
                 case '*':
                 case '%':
                 case '~':
+                case '\u0000':
+                case '\u0001':
+                case '\u0002':
+                case '\u0003':
+                case '\u0004':
+                case '\u0005':
+                case '\u0006':
+                case '\u0007':
+                case '\u0008':
+                case '\u0009': // Control characters, except \n
+                case '\u000B':
+                case '\u000c':
+                case '\r':
+                case '\u000e':
+                case '\u000f':
+                case '\u007f':
                 case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
                     return false;
-                default:
-                    break;
             }
         }
-        return true;
+        return tableName.length() > 0 && tableName.charAt(0) != ' ' && tableName.charAt(l - 1) != ' ';
     }
 
     public static long lock(FilesFacade ff, Path path) {
