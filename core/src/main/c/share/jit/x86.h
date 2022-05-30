@@ -73,12 +73,12 @@ namespace questdb::x86 {
             }
             case data_type_t::f32: {
                 Xmm row_data = c.newXmmSs("f32_mem");
-                c.vmovss(row_data, mem);
+                c.movss(row_data, mem);
                 return {row_data, type, data_kind_t::kMemory};
             }
             case data_type_t::f64: {
                 Xmm row_data = c.newXmmSd("f64_mem");
-                c.vmovsd(row_data, mem);
+                c.movsd(row_data, mem);
                 return {row_data, type, data_kind_t::kMemory};
             }
             default:
