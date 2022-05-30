@@ -224,15 +224,15 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     private CharSequence cachedValue(int key) {
-        String symbol = cache.getQuiet(key);
+        final String symbol = cache.getQuiet(key);
         return symbol != null ? symbol : fetchAndCache(key);
     }
 
     private CharSequence fetchAndCache(int key) {
-        String symbol;
-        CharSequence cs = charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        final CharSequence cs = uncachedValue(key);
         assert cs != null;
-        cache.extendAndSet(key, symbol = Chars.toString(cs));
+        final String symbol = Chars.toString(cs);
+        cache.extendAndSet(key, symbol);
         return symbol;
     }
 

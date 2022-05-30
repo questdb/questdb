@@ -112,10 +112,12 @@ public class WalWriterTest extends AbstractGriffinTest {
                 int i = 0;
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
+                    assertEquals(i, record.getInt(1));
                     assertEquals("sym" + i, record.getSym(1));
                     assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
                     i++;
                 }
+                assertEquals(i, reader.getTransientRowCount());
                 assertNull(reader.getSymbolMapReader(1).valueOf(i));
             }
 
@@ -127,11 +129,21 @@ public class WalWriterTest extends AbstractGriffinTest {
                 int i = 0;
                 while (cursor.hasNext()) {
                     assertEquals(i, record.getByte(0));
+                    assertEquals(i, record.getInt(1));
                     assertEquals("sym" + i, record.getSym(1));
                     assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
                     i++;
                 }
+                assertEquals(i, reader.getTransientRowCount());
                 assertNull(reader.getSymbolMapReader(1).valueOf(i));
+
+                final SymbolMapDiff symbolMapDiff = reader.getSymbolMapDiff(1);
+                assertEquals(5, symbolMapDiff.size());
+                for (int k = 0; k < symbolMapDiff.size(); k++) {
+                    final int expectedKey = k + 5;
+                    assertEquals(expectedKey, symbolMapDiff.getKey(k));
+                    assertEquals("sym" + expectedKey, symbolMapDiff.getSymbol(k));
+                }
             }
 
             assertWalFileExist(tableName, walName, "a", 0, path);

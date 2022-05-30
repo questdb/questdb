@@ -846,10 +846,11 @@ public final class TableUtils {
         }
     }
 
-    public static void validateWalMeta(
+    public static void loadWalMeta(
             MemoryMR metaMem,
             ObjList<TableColumnMetadata> columnMetadata,
             LowerCaseCharSequenceIntHashMap nameIndex,
+            ObjList<SymbolMapDiff> symbolMapDiffs,
             int expectedVersion
     ) {
         try {
@@ -871,7 +872,7 @@ public final class TableUtils {
                 throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
             }
 
-            // validate column types and names
+            // load column types and names
             long offset = WAL_META_OFFSET_COLUMNS;
             for (int i = 0; i < columnCount; i++) {
                 if (memSize < offset + 2 * Integer.BYTES) {
@@ -903,6 +904,52 @@ public final class TableUtils {
                     columnMetadata.add(new TableColumnMetadata(name.toString(), -1L, type));
                 }
                 offset += Vm.getStorageLength(name);
+            }
+
+            // load symbol diffs
+            while (true) {
+                if (memSize < offset + Integer.BYTES) {
+                    throw CairoException.instance(0).put(". File is too small ").put(memSize);
+                }
+                final int columnIndex = metaMem.getInt(offset);
+                if (columnIndex == SymbolMapDiff.END_OF_SYMBOL_DIFFS) {
+                    break;
+                }
+                offset += Integer.BYTES;
+
+                final SymbolMapDiff symbolMapDiff = new SymbolMapDiff();
+                symbolMapDiffs.extendAndSet(columnIndex, symbolMapDiff);
+
+                if (memSize < offset + Integer.BYTES) {
+                    throw CairoException.instance(0).put(". File is too small ").put(memSize);
+                }
+                final int numOfNewSymbols = metaMem.getInt(offset);
+                offset += Integer.BYTES;
+
+                for (int i = 0; i < numOfNewSymbols; i++) {
+                    if (memSize < offset + Integer.BYTES) {
+                        throw CairoException.instance(0).put(". File is too small ").put(memSize);
+                    }
+                    final int key = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+
+                    if (memSize < offset + Integer.BYTES) {
+                        throw CairoException.instance(0).put(". File is too small ").put(memSize);
+                    }
+                    final int strLength = metaMem.getInt(offset);
+                    if (strLength < 1 || strLength > 255 || offset + Vm.getStorageLength(strLength) > memSize) {
+                        // EXT4 and many others do not allow file name length > 255 bytes
+                        throw validationException(metaMem)
+                                .put("Symbol value length of ")
+                                .put(strLength).put(" is invalid at offset ")
+                                .put(offset);
+                    }
+
+                    final CharSequence symbol = metaMem.getStr(offset);
+                    offset += Vm.getStorageLength(symbol);
+
+                    symbolMapDiff.add(symbol.toString(), key);
+                }
             }
         } catch (Throwable e) {
             nameIndex.clear();

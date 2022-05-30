@@ -262,10 +262,6 @@ public class WalReader implements Closeable, SymbolTableSource {
         return -1;
     }
 
-    public WalReaderMetadata getMetadata() {
-        return metadata;
-    }
-
     public long getMinTimestamp() {
         return -1;
     }
@@ -276,6 +272,10 @@ public class WalReader implements Closeable, SymbolTableSource {
 
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
         return symbolMapReaders.getQuick(columnIndex);
+    }
+
+    public SymbolMapDiff getSymbolMapDiff(int columnIndex) {
+        return metadata.getSymbolMapDiff(columnIndex);
     }
 
     @Override
