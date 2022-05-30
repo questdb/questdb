@@ -65,7 +65,7 @@ namespace questdb::x86 {
         c.comment("int32_to_float");
         Xmm r = c.newXmmSs();
         if (!check_null) {
-            c.vcvtsi2ss(r, r, rhs);
+            c.cvtsi2ss(r, rhs);
             return r;
         }
         Label l_null = c.newLabel();
@@ -74,10 +74,10 @@ namespace questdb::x86 {
 
         c.cmp(rhs, INT_NULL);
         c.je(l_null);
-        c.vcvtsi2ss(r, r, rhs);
+        c.cvtsi2ss(r, rhs);
         c.jmp(l_exit);
         c.bind(l_null);
-        c.vmovss(r, NaN);
+        c.movss(r, NaN);
         c.bind(l_exit);
         return r;
     }
@@ -85,9 +85,9 @@ namespace questdb::x86 {
     inline Xmm int32_to_double(Compiler &c, const Gpd &rhs, bool check_null) {
         c.comment("int32_to_double");
         Xmm r = c.newXmmSd();
-        c.vxorps(r, r, r);
+        c.xorps(r, r);
         if (!check_null) {
-            c.vcvtsi2sd(r, r, rhs);
+            c.cvtsi2sd(r, rhs);
             return r;
         }
         Label l_null = c.newLabel();
@@ -96,10 +96,10 @@ namespace questdb::x86 {
 
         c.cmp(rhs, INT_NULL);
         c.je(l_null);
-        c.vcvtsi2sd(r, r, rhs);
+        c.cvtsi2sd(r, rhs);
         c.jmp(l_exit);
         c.bind(l_null);
-        c.vmovsd(r, NaN);
+        c.movsd(r, NaN);
         c.bind(l_exit);
         return r;
     }
@@ -109,7 +109,7 @@ namespace questdb::x86 {
         c.comment("int64_to_float");
         Xmm r = c.newXmmSs();
         if (!check_null) {
-            c.vcvtsi2ss(r, r, rhs);
+            c.cvtsi2ss(r, rhs);
             return r;
         }
         Label l_null = c.newLabel();
@@ -120,10 +120,10 @@ namespace questdb::x86 {
         c.movabs(n, LONG_NULL);
         c.cmp(rhs, n);
         c.je(l_null);
-        c.vcvtsi2ss(r, r, rhs);
+        c.cvtsi2ss(r, rhs);
         c.jmp(l_exit);
         c.bind(l_null);
-        c.vmovss(r, NaN);
+        c.movss(r, NaN);
         c.bind(l_exit);
         return r;
     }
@@ -131,9 +131,9 @@ namespace questdb::x86 {
     inline Xmm int64_to_double(Compiler &c, const Gpq &rhs, bool check_null) {
         c.comment("int64_to_double");
         Xmm r = c.newXmmSd();
-        c.vxorps(r, r, r);
+        c.xorps(r, r);
         if (!check_null) {
-            c.vcvtsi2sd(r, r, rhs);
+            c.cvtsi2sd(r, rhs);
             return r;
         }
         Label l_null = c.newLabel();
@@ -144,10 +144,10 @@ namespace questdb::x86 {
         c.movabs(n, LONG_NULL);
         c.cmp(rhs, n);
         c.je(l_null);
-        c.vcvtsi2sd(r, r, rhs);
+        c.cvtsi2sd(r, rhs);
         c.jmp(l_exit);
         c.bind(l_null);
-        c.vmovsd(r, NaN);
+        c.movsd(r, NaN);
         c.bind(l_exit);
         return r;
     }
@@ -155,8 +155,8 @@ namespace questdb::x86 {
     inline Xmm float_to_double(Compiler &c, const Xmm &rhs) {
         c.comment("float_to_double");
         Xmm r = c.newXmmSd();
-        c.vxorps(r, r, r);
-        c.vcvtss2sd(r, r, rhs);
+        c.xorps(r, r);
+        c.cvtss2sd(r, rhs);
         return r;
     }
 
@@ -349,55 +349,43 @@ namespace questdb::x86 {
     }
 
     inline Xmm float_add(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Xmm r = c.newXmmSs();
-        c.vaddss(r, lhs, rhs);
-        return r;
+        c.addss(lhs, rhs);
+        return lhs;
     }
 
     inline Xmm float_sub(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Xmm r = c.newXmmSs();
-        c.vsubss(r, lhs, rhs);
-        return r;
+        c.subss(lhs, rhs);
+        return lhs;
     }
 
     inline Xmm float_mul(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Xmm r = c.newXmmSs();
-        c.vmulss(r, lhs, rhs);
-        return r;
+        c.mulss(lhs, rhs);
+        return lhs;
     }
 
     inline Xmm float_div(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Xmm r = c.newXmmSs();
-        c.vdivss(r, lhs, rhs);
-        return r;
+        c.divss(lhs, rhs);
+        return lhs;
     }
 
     inline Xmm double_add(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Xmm r = c.newXmmSd();
-        c.vxorps(r, r, r);
-        c.vaddsd(r, lhs, rhs);
-        return r;
+        c.addsd(lhs, rhs);
+        return lhs;
     }
 
     inline Xmm double_sub(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Xmm r = c.newXmmSd();
-        c.vxorps(r, r, r);
-        c.vsubsd(r, lhs, rhs);
-        return r;
+        c.subsd(lhs, rhs);
+        return lhs;
     }
 
     inline Xmm double_mul(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Xmm r = c.newXmmSd();
-        c.vxorps(r, r, r);
-        c.vmulsd(r, lhs, rhs);
-        return r;
+        c.mulsd(lhs, rhs);
+        return lhs;
     }
 
     inline Xmm double_div(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
-        Xmm r = c.newXmmSd();
-        c.vxorps(r, r, r);
-        c.vdivsd(r, lhs, rhs);
-        return r;
+        c.divsd(lhs, rhs);
+        return lhs;
     }
 
     inline Gpd int32_eq(Compiler &c, const Gpd &lhs, const Gpd &rhs) {
@@ -625,7 +613,7 @@ namespace questdb::x86 {
     inline Gpd double_lt(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
         Gp r = c.newInt32();
         c.cmpsd(lhs, rhs, Predicate::kCmpLT);
-        c.vmovd(r, lhs);
+        c.movd(r, lhs);
         c.neg(r);
         return r.as<Gpd>();
     }
@@ -633,7 +621,7 @@ namespace questdb::x86 {
     inline Gpd double_le(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
         Gp r = c.newInt32();
         c.cmpsd(lhs, rhs, Predicate::kCmpLE);
-        c.vmovd(r, lhs);
+        c.movd(r, lhs);
         c.neg(r);
         return r.as<Gpd>();
     }
@@ -641,7 +629,7 @@ namespace questdb::x86 {
     inline Gpd double_gt(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
         Gp r = c.newInt32();
         c.cmpsd(rhs, lhs, Predicate::kCmpLT);
-        c.vmovd(r, rhs);
+        c.movd(r, rhs);
         c.neg(r);
         return r.as<Gpd>();
     }
@@ -649,7 +637,7 @@ namespace questdb::x86 {
     inline Gpd double_ge(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
         Gp r = c.newInt32();
         c.cmpsd(rhs, lhs, Predicate::kCmpLE);
-        c.vmovd(r, rhs);
+        c.movd(r, rhs);
         c.neg(r);
         return r.as<Gpd>();
     }
@@ -674,7 +662,7 @@ namespace questdb::x86 {
     inline Gpd float_lt(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
         Gp r = c.newInt32();
         c.cmpss(lhs, rhs, Predicate::kCmpLT);
-        c.vmovd(r, lhs);
+        c.movd(r, lhs);
         c.neg(r);
         return r.as<Gpd>();
     }
@@ -682,7 +670,7 @@ namespace questdb::x86 {
     inline Gpd float_le(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
         Gp r = c.newInt32();
         c.cmpss(lhs, rhs, Predicate::kCmpLE);
-        c.vmovd(r, lhs);
+        c.movd(r, lhs);
         c.neg(r);
         return r.as<Gpd>();
     }
@@ -690,7 +678,7 @@ namespace questdb::x86 {
     inline Gpd float_gt(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
         Gp r = c.newInt32();
         c.cmpss(rhs, lhs, Predicate::kCmpLT);
-        c.vmovd(r, rhs);
+        c.movd(r, rhs);
         c.neg(r);
         return r.as<Gpd>();
     }
@@ -698,7 +686,7 @@ namespace questdb::x86 {
     inline Gpd float_ge(Compiler &c, const Xmm &lhs, const Xmm &rhs) {
         Gp r = c.newInt32();
         c.cmpss(rhs, lhs, Predicate::kCmpLE);
-        c.vmovd(r, rhs);
+        c.movd(r, rhs);
         c.neg(r);
         return r.as<Gpd>();
     }
