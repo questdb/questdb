@@ -38,6 +38,7 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
+import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
@@ -50,6 +51,7 @@ public class QMapReadSequentialKeyBenchmark {
     private static final Rnd rnd = new Rnd();
     private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
     private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    private static final HashMap<String, Long> hmap = new HashMap<>();
     private static final StringSink sink = new StringSink();
 
     public static void main(String[] args) throws RunnerException {
@@ -75,6 +77,11 @@ public class QMapReadSequentialKeyBenchmark {
         sink.put(rnd.nextInt(N));
         key.putStr(sink);
         return key.findValue();
+    }
+
+    @Benchmark
+    public Long testHashMap() {
+        return hmap.put(String.valueOf(rnd.nextInt(N)), 100L);
     }
 
     @Benchmark
