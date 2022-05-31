@@ -154,6 +154,16 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
         authState = AuthState.FAILED;
     }
 
+    private boolean checkAllZeros(byte[] signatureRaw) {
+        int n = signatureRaw.length;
+        for (int i = 0; i < n; i++) {
+            if (signatureRaw[i] != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private void waitForResponse() {
         int lineEnd = findLineEnd();
         if (lineEnd != -1) {
@@ -174,6 +184,13 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
             Signature sig = signatureRaw.length == 64 ? tlSigP1363.get() : tlSigDER.get();
             boolean verified;
             try {
+                // On some out of date JDKs zeros can be valid signature because of a bug in the JDK code
+                // Check that it's not the case.
+                if (checkAllZeros(signatureRaw)) {
+                    LOG.info().$('[').$(fd).$("] invalid signature, can be cyber attack!").$();
+                    authState = AuthState.FAILED;
+                    return;
+                }
                 sig.initVerify(pubKey);
                 sig.update(challengeBytes);
                 verified = sig.verify(signatureRaw);
