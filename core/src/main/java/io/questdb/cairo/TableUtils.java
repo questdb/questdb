@@ -362,6 +362,7 @@ public final class TableUtils {
     public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
         int l = seq.length();
         if (l > fsFileNameLimit) {
+            // Most file systems don't support files name longer than 255 bytes
             return false;
         }
 
@@ -484,7 +485,7 @@ public final class TableUtils {
     public static boolean isValidTableName(CharSequence tableName, int fsFileNameLimit) {
         int l = tableName.length();
         if (l > fsFileNameLimit) {
-            // Most file systems don't support files
+            // Most file systems don't support files name longer than 255 bytes
             return false;
         }
         for (int i = 0; i < l; i++) {
