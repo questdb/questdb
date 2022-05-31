@@ -37,15 +37,9 @@ public class HashTest {
         testHash(hashFunction);
     }
 
-    @Test
-    public void testStringHashAlternative() {
-        FastMap.HashFunction hashFunction = Hash::hashMemAlternative;
-        testHash(hashFunction);
-    }
-
     private void testHash(FastMap.HashFunction hashFunction) {
         Rnd rnd = new Rnd();
-        IntHashSet hashes = new IntHashSet(100000);
+        LongHashSet hashes = new LongHashSet(100000);
         final int LEN = 64;
 
         long address = Unsafe.malloc(LEN, MemoryTag.NATIVE_DEFAULT);
