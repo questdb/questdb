@@ -486,7 +486,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private void checkTableName(CharSequence tableName) {
-        if (!TableUtils.isValidTableName(tableName)) {
+        if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
             throw CairoException.instance(0)
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');

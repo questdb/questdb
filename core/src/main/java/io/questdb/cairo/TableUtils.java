@@ -359,8 +359,13 @@ public final class TableUtils {
         return path.$();
     }
 
-    public static boolean isValidColumnName(CharSequence seq) {
-        for (int i = 0, l = seq.length(); i < l; i++) {
+    public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
+        int l = seq.length();
+        if (l > fsFileNameLimit) {
+            return false;
+        }
+
+        for (int i = 0; i < l; i++) {
             char c = seq.charAt(i);
             switch (c) {
                 case '?':
@@ -400,7 +405,7 @@ public final class TableUtils {
                     break;
             }
         }
-        return true;
+        return l > 0;
     }
 
     public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
@@ -476,8 +481,12 @@ public final class TableUtils {
         return path.$();
     }
 
-    public static boolean isValidTableName(CharSequence tableName) {
+    public static boolean isValidTableName(CharSequence tableName, int fsFileNameLimit) {
         int l = tableName.length();
+        if (l > fsFileNameLimit) {
+            // Most file systems don't support files
+            return false;
+        }
         for (int i = 0; i < l; i++) {
             char c = tableName.charAt(i);
             switch (c) {

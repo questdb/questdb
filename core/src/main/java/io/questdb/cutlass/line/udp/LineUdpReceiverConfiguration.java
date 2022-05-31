@@ -38,6 +38,8 @@ public interface LineUdpReceiverConfiguration {
 
     int getGroupIPv4Address();
 
+    int getMaxFileNameLength();
+
     int getMsgBufferSize();
 
     int getMsgCount();

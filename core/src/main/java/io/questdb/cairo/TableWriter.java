@@ -1918,7 +1918,7 @@ public class TableWriter implements Closeable {
     }
 
     private void checkColumnName(CharSequence name) {
-        if (!TableUtils.isValidColumnName(name)) {
+        if (!TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength())) {
             throw CairoException.instance(0).put("invalid column name [table=").put(tableName).put(", column=").putAsPrintable(name).put(']');
         }
     }
