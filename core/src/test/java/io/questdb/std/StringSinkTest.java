@@ -22,49 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.udp;
+package io.questdb.std;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
-import io.questdb.network.NetworkFacade;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Test;
 
-public interface LineUdpReceiverConfiguration {
+public class StringSinkTest {
+    @Test
+    public void testUnprintable() {
+        StringSink ss = new StringSink();
+        ss.putAsPrintable("\u0101abcd\u1234def\u0012");
 
-    int getCommitMode();
+        TestUtils.assertEquals("āabcdሴdef\\u0012", ss.toString());
+    }
 
-    int getBindIPv4Address();
+    @Test
+    public void testUnprintableNewLine() {
+        StringSink ss = new StringSink();
+        ss.putAsPrintable("\nasd+-~f\r\0 д");
 
-    int getCommitRate();
-
-    int getGroupIPv4Address();
-
-    int getMaxFileNameLength();
-
-    int getMsgBufferSize();
-
-    int getMsgCount();
-
-    NetworkFacade getNetworkFacade();
-
-    int getPort();
-
-    int getReceiveBufferSize();
-
-    CairoSecurityContext getCairoSecurityContext();
-
-    boolean isEnabled();
-
-    boolean isUnicast();
-
-    boolean ownThread();
-
-    int ownThreadAffinity();
-
-    LineProtoTimestampAdapter getTimestampAdapter();
-
-    int getDefaultPartitionBy();
-
-    short getDefaultColumnTypeForFloat();
-
-    short getDefaultColumnTypeForInteger();
+        TestUtils.assertEquals("\\u000aasd+-~f\\u000d\\u0000 д", ss.toString());
+    }
 }

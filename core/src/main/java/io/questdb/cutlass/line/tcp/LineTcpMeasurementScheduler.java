@@ -114,7 +114,8 @@ class LineTcpMeasurementScheduler implements Closeable {
                             lineConfiguration.getTimestampAdapter(),
                             defaultColumnTypes,
                             lineConfiguration.isStringToCharCastAllowed(),
-                            lineConfiguration.isSymbolAsFieldSupported()),
+                            lineConfiguration.isSymbolAsFieldSupported(),
+                            lineConfiguration.getMaxFileNameLength()),
                     getEventSlotSize(maxMeasurementSize),
                     queueSize,
                     MemoryTag.NATIVE_DEFAULT
