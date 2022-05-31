@@ -76,6 +76,8 @@ public class WalWriterTest extends AbstractGriffinTest {
              TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
                      .col("b", ColumnType.SYMBOL)
+                     .col("c", ColumnType.SYMBOL)
+                     .col("d", ColumnType.SYMBOL)
         ) {
             int plen = path.length();
             TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
@@ -86,6 +88,8 @@ public class WalWriterTest extends AbstractGriffinTest {
                     TableWriter.Row row = tableWriter.newRow();
                     row.putByte(0, (byte) i);
                     row.putSym(1, "sym" + i);
+                    row.putSym(2, "s" + i % 2);
+                    row.putSym(3, "symbol" + i % 2);
                     row.append();
                 }
                 tableWriter.commit();
@@ -97,15 +101,19 @@ public class WalWriterTest extends AbstractGriffinTest {
                     WalWriter.Row row = walWriter.newRow();
                     row.putByte(0, (byte) i);
                     row.putSym(1, "sym" + i);
+                    row.putSym(2, "s" + i % 2);
+                    row.putSym(3, "symbol" + i % 3);
                     row.append();
                 }
 
                 walSymbolCounts.add(walWriter.getSymbolMapWriter(1).getSymbolCount());
+                walSymbolCounts.add(walWriter.getSymbolMapWriter(2).getSymbolCount());
+                walSymbolCounts.add(walWriter.getSymbolMapWriter(3).getSymbolCount());
                 walWriter.commit();
             }
 
             try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                assertEquals(2, reader.getColumnCount());
+                assertEquals(4, reader.getColumnCount());
                 assertEquals(5, reader.getTransientRowCount());
                 RecordCursor cursor = reader.getCursor();
                 Record record = cursor.getRecord();
@@ -115,14 +123,22 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(i, record.getInt(1));
                     assertEquals("sym" + i, record.getSym(1));
                     assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
+                    assertEquals(i % 2, record.getInt(2));
+                    assertEquals("s" + i % 2, record.getSym(2));
+                    assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
+                    assertEquals(i % 2, record.getInt(3));
+                    assertEquals("symbol" + i % 2, record.getSym(3));
+                    assertEquals("symbol" + i % 2, reader.getSymbolMapReader(3).valueOf(i % 2));
                     i++;
                 }
                 assertEquals(i, reader.getTransientRowCount());
-                assertNull(reader.getSymbolMapReader(1).valueOf(i));
+                assertNull(reader.getSymbolMapReader(1).valueOf(5));
+                assertNull(reader.getSymbolMapReader(2).valueOf(2));
+                assertNull(reader.getSymbolMapReader(3).valueOf(2));
             }
 
             try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, walSymbolCounts, 10L)) {
-                assertEquals(2, reader.getColumnCount());
+                assertEquals(4, reader.getColumnCount());
                 assertEquals(10, reader.getTransientRowCount());
                 RecordCursor cursor = reader.getCursor();
                 Record record = cursor.getRecord();
@@ -132,17 +148,34 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(i, record.getInt(1));
                     assertEquals("sym" + i, record.getSym(1));
                     assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
+                    assertEquals(i % 2, record.getInt(2));
+                    assertEquals("s" + i % 2, record.getSym(2));
+                    assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
+                    assertEquals(i % 3, record.getInt(3));
+                    assertEquals("symbol" + i % 3, record.getSym(3));
+                    assertEquals("symbol" + i % 3, reader.getSymbolMapReader(3).valueOf(i % 3));
                     i++;
                 }
                 assertEquals(i, reader.getTransientRowCount());
-                assertNull(reader.getSymbolMapReader(1).valueOf(i));
+                assertNull(reader.getSymbolMapReader(1).valueOf(10));
+                assertNull(reader.getSymbolMapReader(2).valueOf(2));
+                assertNull(reader.getSymbolMapReader(3).valueOf(3));
 
-                final SymbolMapDiff symbolMapDiff = reader.getSymbolMapDiff(1);
-                assertEquals(5, symbolMapDiff.size());
-                for (int k = 0; k < symbolMapDiff.size(); k++) {
+                assertNull(reader.getSymbolMapDiff(0));
+                final SymbolMapDiff symbolMapDiff1 = reader.getSymbolMapDiff(1);
+                assertEquals(5, symbolMapDiff1.size());
+                for (int k = 0; k < symbolMapDiff1.size(); k++) {
                     final int expectedKey = k + 5;
-                    assertEquals(expectedKey, symbolMapDiff.getKey(k));
-                    assertEquals("sym" + expectedKey, symbolMapDiff.getSymbol(k));
+                    assertEquals(expectedKey, symbolMapDiff1.getKey(k));
+                    assertEquals("sym" + expectedKey, symbolMapDiff1.getSymbol(k));
+                }
+                assertNull(reader.getSymbolMapDiff(2));
+                final SymbolMapDiff symbolMapDiff3 = reader.getSymbolMapDiff(3);
+                assertEquals(1, symbolMapDiff3.size());
+                for (int k = 0; k < symbolMapDiff3.size(); k++) {
+                    final int expectedKey = k + 2;
+                    assertEquals(expectedKey, symbolMapDiff3.getKey(k));
+                    assertEquals("symbol" + expectedKey, symbolMapDiff3.getSymbol(k));
                 }
             }
 

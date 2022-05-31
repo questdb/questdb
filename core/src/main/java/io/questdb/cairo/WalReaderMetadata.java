@@ -72,7 +72,7 @@ public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
             columnNameIndexMap.clear();
             TableUtils.loadWalMeta(metaMem, columnMetadata, columnNameIndexMap, symbolMapDiffs, expectedVersion);
             version = metaMem.getInt(TableUtils.WAL_META_OFFSET_VERSION);
-            columnCount = metaMem.getInt(TableUtils.WAL_META_OFFSET_COLUMNS);
+            columnCount = metaMem.getInt(TableUtils.WAL_META_OFFSET_COUNT);
             timestampIndex = -1;
         } catch (Throwable e) {
             close();
