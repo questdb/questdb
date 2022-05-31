@@ -95,19 +95,4 @@ public interface MemoryR extends Closeable {
     long offsetInPage(long offset);
 
     int pageIndex(long offset);
-
-    default long hash0(long offset, long size) {
-        long n = size - (size & 7);
-        long h = 179426491L;
-        for (long i = 0; i < n; i += 4) {
-            h = (h << 5) - h + getInt(offset + i);
-        }
-
-        for (; n < size; n++) {
-            h = (h << 5) - h + getByte(offset + n);
-        }
-        return h;
-    }
-
-    long getGrownLength();
 }
