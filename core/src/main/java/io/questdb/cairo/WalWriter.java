@@ -145,7 +145,7 @@ public class WalWriter implements Closeable {
     ) {
 
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
-        assert TableUtils.isValidColumnName(name) : "invalid column name";
+        assert TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength()) : "invalid column name";
 
         checkDistressed();
 
