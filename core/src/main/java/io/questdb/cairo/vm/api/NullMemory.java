@@ -254,11 +254,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public long getGrownLength() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public FilesFacade getFilesFacade() {
         throw new UnsupportedOperationException();
     }
