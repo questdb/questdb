@@ -2685,13 +2685,60 @@ public class TableWriterTest extends AbstractCairoTest {
             create(FF, PartitionBy.DAY, 10);
 
             try (Path path = new Path()) {
-                // create random directory
+                // create random directories
+                FilesFacade ff = configuration.getFilesFacade();
+
                 path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").slash$();
-                Assert.assertEquals(0, configuration.getFilesFacade().mkdirs(path, configuration.getMkDirMode()));
+                Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
+
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("default").slash$();
+                Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
+
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
+                Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
                 new TableWriter(configuration, PRODUCT, metrics).close();
 
-                Assert.assertFalse(configuration.getFilesFacade().exists(path));
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("default").slash$();
+                Assert.assertTrue(ff.exists(path));
+
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").slash$();
+                Assert.assertTrue(ff.exists(path));
+
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
+                Assert.assertFalse(ff.exists(path));
+            }
+        });
+    }
+
+    @Test
+    public void testSkipOverSpuriousDirNonPartitioned() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            create(FF, PartitionBy.NONE, 10);
+
+            try (Path path = new Path()) {
+                // create random directories
+                FilesFacade ff = configuration.getFilesFacade();
+
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").slash$();
+                Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
+
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("default").slash$();
+                Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
+
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
+                Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
+
+                new TableWriter(configuration, PRODUCT, metrics).close();
+
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("default").slash$();
+                Assert.assertTrue(ff.exists(path));
+
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").slash$();
+                Assert.assertTrue(ff.exists(path));
+
+                path.of(configuration.getRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
+                Assert.assertTrue(ff.exists(path));
             }
         });
     }
