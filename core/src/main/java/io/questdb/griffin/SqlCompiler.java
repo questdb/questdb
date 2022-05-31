@@ -28,8 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterPool;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
@@ -1277,7 +1277,7 @@ public class SqlCompiler implements Closeable {
 
             CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
 
-            if (!TableUtils.isValidColumnName(columnName)) {
+            if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
@@ -1623,7 +1623,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(lexer.lastTokenPosition(), " column already exists");
             }
 
-            if (!TableUtils.isValidColumnName(tok)) {
+            if (!TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
@@ -2547,7 +2547,7 @@ public class SqlCompiler implements Closeable {
             if (Chars.isQuoted(tok)) {
                 tok = GenericLexer.unquote(tok);
             }
-            if (tok == null || TableUtils.isValidColumnName(tok)) {
+            if (tok == null || TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
                 columnName = GenericLexer.immutableOf(tok);
                 tok = SqlUtil.fetchNext(lexer);
             }

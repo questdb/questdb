@@ -43,9 +43,9 @@ import static org.junit.Assert.assertEquals;
 
 public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     private final static String AUTH_KEY_ID1 = "testUser1";
-    private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
+    private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=");
     private final static String AUTH_KEY_ID2 = "testUser2";
-    private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
+    private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("AIZc78-On-91DLplVNtyLOmKddY0AL9mnT5onl19Vv_g");
     private final Random rand = new Random(0);
     private byte[] sentBytes;
     private int maxSendBytes = 1024;

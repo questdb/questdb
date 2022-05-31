@@ -56,6 +56,8 @@ public interface LineTcpReceiverConfiguration {
 
     long getCommitIntervalDefault();
 
+    int getMaxFileNameLength();
+
     int getMaxMeasurementSize();
 
     MicrosecondClock getMicrosecondClock();
