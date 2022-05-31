@@ -54,12 +54,9 @@ public class WalReader implements Closeable, SymbolTableSource {
     private final MemoryMR todoMem = Vm.getMRInstance();
     private final long segmentId;
     private final long walRowCount;
-    private int partitionCount;
-    private LongList columnTops;
-    private ObjList<MemoryMR> columns;
-    private ObjList<BitmapIndexReader> bitmapIndexes;
-    private int columnCount;
-    private int columnCountShl;
+    private final ObjList<MemoryMR> columns;
+    private final int columnCount;
+    private final int columnCountShl;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
 
     public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, IntList walSymbolCounts, long walRowCount) {
@@ -78,17 +75,12 @@ public class WalReader implements Closeable, SymbolTableSource {
             this.columnCountShl = getColumnBits(columnCount);
             LOG.debug().$("open [table=").$(this.tableName).I$();
             openSymbolMaps(walSymbolCounts);
-            partitionCount = 1;
 
-            int capacity = getColumnBase(partitionCount);
+            final int capacity = 2 * columnCount + 2;
             this.columns = new ObjList<>(capacity);
             this.columns.setPos(capacity + 2);
             this.columns.setQuick(0, NullMemoryMR.INSTANCE);
             this.columns.setQuick(1, NullMemoryMR.INSTANCE);
-            this.bitmapIndexes = new ObjList<>(capacity);
-            this.bitmapIndexes.setPos(capacity + 2);
-            this.columnTops = new LongList(capacity / 2);
-            this.columnTops.setPos(capacity / 2);
             this.recordCursor.of(this);
         } catch (Throwable e) {
             close();
@@ -96,15 +88,14 @@ public class WalReader implements Closeable, SymbolTableSource {
         }
     }
 
-    public static int getPrimaryColumnIndex(int base, int index) {
-        return 2 + base + index * 2;
+    public static int getPrimaryColumnIndex(int index) {
+        return index * 2 + 2;
     }
 
     @Override
     public void close() {
         if (isOpen()) {
             freeSymbolMapReaders();
-            freeBitmapIndexCache();
             Misc.free(metadata);
             Misc.free(todoMem);
             freeColumns();
@@ -118,14 +109,6 @@ public class WalReader implements Closeable, SymbolTableSource {
         return columns.getQuick(absoluteIndex);
     }
 
-    public int getColumnBase(int partitionIndex) {
-        return partitionIndex << columnCountShl;
-    }
-
-    public long getColumnTop(int base, int columnIndex) {
-        return this.columnTops.getQuick(base / 2 + columnIndex);
-    }
-
     public String getWalName() {
         return walName;
     }
@@ -135,24 +118,12 @@ public class WalReader implements Closeable, SymbolTableSource {
         return recordCursor;
     }
 
-    long getPartitionRowCount(int partitionIndex) {
-        return -1;
-    }
-
-    public long openPartition(int partitionIndex) {
-        final long size = getPartitionRowCount(partitionIndex);
-        if (size != -1) {
-            return size;
-        }
-        return openPartition0(partitionIndex);
-    }
-
-    private long openPartition0(int partitionIndex) {
+    public long openSegment() {
         path.slash().put(segmentId);
         try {
             if (ff.exists(path.$())) {
                 path.chop$();
-                openPartitionColumns(path, getColumnBase(partitionIndex), walRowCount);
+                openPartitionColumns(path, walRowCount);
                 return walRowCount;
             }
             LOG.error().$("open partition failed, partition does not exist on the disk. [path=").utf8(path.$()).I$();
@@ -165,14 +136,11 @@ public class WalReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void openPartitionColumns(Path path, int columnBase, long partitionRowCount) {
+    private void openPartitionColumns(Path path, long partitionRowCount) {
         for (int i = 0; i < columnCount; i++) {
             reloadColumnAt(
                     path,
                     this.columns,
-                    this.columnTops,
-                    this.bitmapIndexes,
-                    columnBase,
                     i,
                     partitionRowCount
             );
@@ -182,24 +150,20 @@ public class WalReader implements Closeable, SymbolTableSource {
     private void reloadColumnAt(
             Path path,
             ObjList<MemoryMR> columns,
-            LongList columnTops,
-            ObjList<BitmapIndexReader> indexReaders,
-            int columnBase,
             int columnIndex,
             long partitionRowCount
     ) {
         final int plen = path.length();
         try {
             final CharSequence name = metadata.getColumnName(columnIndex);
-            final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);
+            final int primaryIndex = getPrimaryColumnIndex(columnIndex);
             final int secondaryIndex = primaryIndex + 1;
 
             MemoryMR mem1 = columns.getQuick(primaryIndex);
             MemoryMR mem2 = columns.getQuick(secondaryIndex);
 
-            final long columnTop = 0L;
             long columnTxn = COLUMN_NAME_TXN_NONE;
-            final long columnRowCount = partitionRowCount - columnTop;
+            final long columnRowCount = partitionRowCount;
             assert partitionRowCount < 0 || columnRowCount >= 0;
 
             // When column is added mid-table existence the top record is only
@@ -222,32 +186,9 @@ public class WalReader implements Closeable, SymbolTableSource {
                     openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
                     Misc.free(columns.getAndSetQuick(secondaryIndex, null));
                 }
-
-                columnTops.setQuick(columnBase / 2 + columnIndex, columnTop);
-
-                if (metadata.isColumnIndexed(columnIndex)) {
-                    BitmapIndexReader indexReader = indexReaders.getQuick(primaryIndex);
-                    if (indexReader instanceof BitmapIndexBwdReader) {
-                        // name txn is -1 because the parent call sets up partition name for us
-                        ((BitmapIndexBwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTxn, columnTop, -1);
-                    }
-
-                    indexReader = indexReaders.getQuick(secondaryIndex);
-                    if (indexReader instanceof BitmapIndexFwdReader) {
-                        ((BitmapIndexFwdReader) indexReader).of(configuration, path.trimTo(plen), name, columnTxn, columnTop, -1);
-                    }
-
-                } else {
-                    Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
-                    Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
-                }
             } else {
                 Misc.free(columns.getAndSetQuick(primaryIndex, NullMemoryMR.INSTANCE));
                 Misc.free(columns.getAndSetQuick(secondaryIndex, NullMemoryMR.INSTANCE));
-                // the appropriate index for NUllColumn will be created lazily when requested
-                // these indexes have state and may not be always required
-                Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
-                Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
             }
         } finally {
             path.trimTo(plen);
@@ -264,10 +205,6 @@ public class WalReader implements Closeable, SymbolTableSource {
 
     public long getMinTimestamp() {
         return -1;
-    }
-
-    public int getPartitionCount() {
-        return partitionCount;
     }
 
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
@@ -308,10 +245,6 @@ public class WalReader implements Closeable, SymbolTableSource {
         return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
     }
 
-    private void freeBitmapIndexCache() {
-        Misc.freeObjList(bitmapIndexes);
-    }
-
     private void freeColumns() {
         Misc.freeObjList(columns);
     }
@@ -332,10 +265,6 @@ public class WalReader implements Closeable, SymbolTableSource {
 
     int getColumnCount() {
         return columnCount;
-    }
-
-    int getPartitionIndex(int columnBase) {
-        return columnBase >>> columnCountShl;
     }
 
     private void handleMetadataLoadException(long deadline, CairoException ex) {

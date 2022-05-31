@@ -30,17 +30,10 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Rows;
 
 public class WalReaderRecordCursor implements RecordCursor {
-
-    protected final WalReaderRecord recordA = new WalReaderRecord();
+    private final WalReaderRecord recordA = new WalReaderRecord();
     private final WalReaderRecord recordB = new WalReaderRecord();
-    protected WalReader reader;
-    private int partitionIndex = 0;
-    private int partitionLimit;
+    private WalReader reader;
     private long maxRecordIndex = -1;
-    private int partitionLo;
-    private long recordLo;
-    private int partitionHi;
-    private long recordHi;
 
     @Override
     public void close() {
@@ -67,7 +60,7 @@ public class WalReaderRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (recordA.getRecordIndex() < maxRecordIndex || switchPartition()) {
+        if (recordA.getRecordIndex() < maxRecordIndex) {
             recordA.incrementRecordIndex();
             return true;
         }
@@ -86,78 +79,25 @@ public class WalReaderRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long rowId) {
-        ((WalReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
+        ((WalReaderRecord) record).jumpTo(Rows.toLocalRowID(rowId));
     }
 
     @Override
     public void toTop() {
-        partitionIndex = partitionLo;
-        if (recordHi == -1) {
-            partitionLimit = reader.getPartitionCount();
-        } else {
-            partitionLimit = Math.min(partitionHi + 1, reader.getPartitionCount());
-        }
-        maxRecordIndex = recordLo - 1;
-        recordA.jumpTo(0, maxRecordIndex);
+        recordA.jumpTo(-1);
     }
 
     public void of(WalReader reader) {
-        this.partitionLo = 0;
-        this.recordLo = 0;
-        this.partitionHi = reader.getPartitionCount();
-        // because we set partitionHi to partition count
-        // the recordHi value becomes irrelevant - partition index never gets to partitionCount.
-        this.recordHi = -1;
-        of0(reader);
-    }
-
-    private void of0(WalReader reader) {
         close();
         this.reader = reader;
         this.recordA.of(reader);
         this.recordB.of(reader);
-        toTop();
+        openSegment();
     }
 
-    public void of(WalReader reader, int partitionLo, long recordLo, int partitionHi, long recordHi) {
-        this.partitionLo = partitionLo;
-        this.partitionHi = partitionHi;
-        this.recordLo = recordLo;
-        this.recordHi = recordHi;
-        of0(reader);
-    }
-
-    public void startFrom(long rowid) {
-        partitionIndex = Rows.toPartitionIndex(rowid);
-        long recordIndex = Rows.toLocalRowID(rowid);
-        recordA.jumpTo(this.partitionIndex, recordIndex);
-        maxRecordIndex = reader.openPartition(partitionIndex) - 1;
-        partitionIndex++;
-        this.partitionLimit = reader.getPartitionCount();
-    }
-
-    private boolean switchPartition() {
-        if (partitionIndex < partitionLimit) {
-            return switchPartition0();
-        }
-        return false;
-    }
-
-    private boolean switchPartition0() {
-        while (partitionIndex < partitionLimit) {
-            final long partitionSize = reader.openPartition(partitionIndex);
-            if (partitionSize > 0) {
-                if (partitionIndex == partitionHi && recordHi > -1) {
-                    maxRecordIndex = recordHi - 1;
-                } else {
-                    maxRecordIndex = partitionSize - 1;
-                }
-                recordA.jumpTo(partitionIndex, -1);
-                partitionIndex++;
-                return true;
-            }
-            partitionIndex++;
-        }
-        return false;
+    private void openSegment() {
+        final long segmentSize = reader.openSegment();
+        maxRecordIndex = segmentSize - 1;
+        recordA.jumpTo(-1);
     }
 }
