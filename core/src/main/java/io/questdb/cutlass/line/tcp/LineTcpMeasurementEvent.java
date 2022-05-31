@@ -46,6 +46,7 @@ class LineTcpMeasurementEvent implements Closeable {
     private final DefaultColumnTypes defaultColumnTypes;
     private final boolean stringToCharCastAllowed;
     private final boolean symbolAsFieldSupported;
+    private final int maxColumnNameLength;
     private int writerWorkerId;
     private TableUpdateDetails tableUpdateDetails;
     private boolean commitOnWriterClose;
@@ -57,8 +58,10 @@ class LineTcpMeasurementEvent implements Closeable {
             LineProtoTimestampAdapter timestampAdapter,
             DefaultColumnTypes defaultColumnTypes,
             boolean stringToCharCastAllowed,
-            boolean symbolAsFieldSupported
+            boolean symbolAsFieldSupported,
+            int maxColumnNameLength
     ) {
+        this.maxColumnNameLength = maxColumnNameLength;
         this.buffer = new LineTcpEventBuffer(bufLo, bufSize);
         this.clock = clock;
         this.timestampAdapter = timestampAdapter;
@@ -272,7 +275,7 @@ class LineTcpMeasurementEvent implements Closeable {
             } else if (columnWriterIndex == COLUMN_NOT_FOUND) {
                 // send column by name
                 final String columnName = localDetails.getColName();
-                if (TableUtils.isValidColumnName(columnName)) {
+                if (TableUtils.isValidColumnName(columnName, maxColumnNameLength)) {
                     offset = buffer.addColumnName(offset, columnName);
                     colType = localDetails.getColumnType(columnName, entityType);
                 } else {

@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.mp.MPSequence;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -65,6 +64,7 @@ public class HttpFlushQueryCacheTest {
                     "PARTITION BY DAY");
 
             // execute a SELECT query that uses native memory
+            engine.releaseInactive();
             long memInitial = Unsafe.getMemUsed();
 
             String sql = "SELECT *\n" +
@@ -77,6 +77,7 @@ public class HttpFlushQueryCacheTest {
                     "00\r\n" +
                     "\r\n");
 
+            engine.releaseInactive();
             long memAfterJoin = Unsafe.getMemUsed();
             Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
 
