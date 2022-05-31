@@ -80,7 +80,7 @@ public class PageFrameReduceJob implements Job, Closeable {
 
         this.record = new PageAddressCacheRecord();
         if (sqlExecutionCircuitBreakerConfiguration != null) {
-            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_OFFLOAD);
+            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_CB1);
         } else {
             this.circuitBreaker = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
         }
