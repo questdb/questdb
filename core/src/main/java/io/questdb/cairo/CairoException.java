@@ -78,6 +78,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return cacheable;
     }
 
+    public CairoException putAsPrintable(CharSequence nonPrintable) {
+        message.putAsPrintable(nonPrintable);
+        return this;
+    }
+
     public CairoException setCacheable(boolean cacheable) {
         this.cacheable = cacheable;
         return this;

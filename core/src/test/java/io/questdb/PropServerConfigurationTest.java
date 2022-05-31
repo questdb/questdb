@@ -329,6 +329,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
+        Assert.assertEquals(127, configuration.getCairoConfiguration().getMaxFileNameLength());
+        Assert.assertEquals(127, configuration.getLineTcpReceiverConfiguration().getMaxFileNameLength());
+        Assert.assertEquals(127, configuration.getLineUdpReceiverConfiguration().getMaxFileNameLength());
     }
 
     @Test
@@ -839,6 +842,10 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getPGWireConfiguration().isUpdateCacheEnabled());
             Assert.assertEquals(128, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
             Assert.assertEquals(256, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
+
+            Assert.assertEquals(255, configuration.getCairoConfiguration().getMaxFileNameLength());
+            Assert.assertEquals(255, configuration.getLineTcpReceiverConfiguration().getMaxFileNameLength());
+            Assert.assertEquals(255, configuration.getLineUdpReceiverConfiguration().getMaxFileNameLength());
         }
     }
 

@@ -53,6 +53,11 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     }
 
     @Override
+    public int getMaxFileNameLength() {
+        return 127;
+    }
+
+    @Override
     public int getMsgBufferSize() {
         return 2048;
     }
