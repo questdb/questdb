@@ -215,6 +215,7 @@ public class WalReaderRecord implements Record, Sinkable {
 
     public void of(WalReader reader) {
         this.reader = reader;
+        jumpTo(-1);
     }
 
     @Override

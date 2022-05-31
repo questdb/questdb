@@ -42,7 +42,7 @@ import static org.junit.Assert.*;
 public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
-    public void bootstrapWal() {
+    public void testBootstrapWal() {
         String tableName = "testtable";
         String walName;
         try (Path path = new Path().of(configuration.getRoot());
@@ -68,7 +68,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void symbolWal() {
+    public void testSymbolWal() {
         String tableName = "testtable";
         String walName;
         IntList walSymbolCounts = new IntList();
@@ -139,7 +139,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, walSymbolCounts, 10L)) {
                 assertEquals(4, reader.getColumnCount());
-                assertEquals(10, reader.getTransientRowCount());
+                assertEquals(10, reader.size());
                 RecordCursor cursor = reader.getCursor();
                 Record record = cursor.getRecord();
                 int i = 0;
@@ -156,7 +156,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals("symbol" + i % 3, reader.getSymbolMapReader(3).valueOf(i % 3));
                     i++;
                 }
-                assertEquals(i, reader.getTransientRowCount());
+                assertEquals(i, reader.size());
                 assertNull(reader.getSymbolMapReader(1).valueOf(10));
                 assertNull(reader.getSymbolMapReader(2).valueOf(2));
                 assertNull(reader.getSymbolMapReader(3).valueOf(3));
@@ -251,7 +251,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDddlMetadataReadable() {
+    public void testDdlMetadataReadable() {
         String tableName = "testtable";
         String walName;
         try (Path path = new Path().of(configuration.getRoot());
@@ -278,7 +278,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testddlMetadataCreated() {
+    public void testDdlMetadataCreated() {
         String tableName = "testtable";
         String walName;
         try (Path path = new Path().of(configuration.getRoot());
@@ -322,7 +322,7 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void ddlMetadataCreatedForNewSegment() {
+    public void testDdlMetadataCreatedForNewSegment() {
         String tableName = "testtable";
         String walName;
         try (Path path = new Path().of(configuration.getRoot());

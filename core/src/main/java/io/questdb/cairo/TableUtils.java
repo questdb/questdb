@@ -923,7 +923,7 @@ public final class TableUtils {
         }
     }
 
-    public static void loadWalMeta(
+    static void loadWalMetadata(
             MemoryMR metaMem,
             ObjList<TableColumnMetadata> columnMetadata,
             LowerCaseCharSequenceIntHashMap nameIndex,
@@ -1245,5 +1245,27 @@ public final class TableUtils {
             default:
                 break;
         }
+    }
+
+    static void handleMetadataLoadException(CairoConfiguration configuration, CharSequence tableName, long deadline, CairoException ex) {
+        // This is temporary solution until we can get multiple version of metadata not overwriting each other
+        if (isMetaFileMissingFileSystemError(ex)) {
+            if (configuration.getMicrosecondClock().getTicks() < deadline) {
+                LOG.info().$("error reloading metadata [table=").$(tableName)
+                        .$(", errno=").$(ex.getErrno())
+                        .$(", error=").$(ex.getFlyweightMessage()).I$();
+                Os.pause();
+            } else {
+                LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
+                throw CairoException.instance(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
+            }
+        } else {
+            throw ex;
+        }
+    }
+
+    private static boolean isMetaFileMissingFileSystemError(CairoException ex) {
+        int errno = ex.getErrno();
+        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.METADATA_VALIDATION;
     }
 }

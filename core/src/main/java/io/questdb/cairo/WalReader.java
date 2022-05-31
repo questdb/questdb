@@ -51,37 +51,34 @@ public class WalReader implements Closeable, SymbolTableSource {
     private final String walName;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
-    private final MemoryMR todoMem = Vm.getMRInstance();
     private final long segmentId;
     private final long walRowCount;
     private final ObjList<MemoryMR> columns;
     private final int columnCount;
-    private final int columnCountShl;
-    private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
 
     public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, IntList walSymbolCounts, long walRowCount) {
         this.configuration = configuration;
-        this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
         this.walName = Chars.toString(walName);
         this.segmentId = segmentId;
         this.walRowCount = walRowCount;
-        this.path = new Path();
-        this.path.of(configuration.getRoot()).concat(this.tableName).concat(walName);
-        this.rootLen = path.length();
+
+        ff = configuration.getFilesFacade();
+        path = new Path();
+        path.of(configuration.getRoot()).concat(this.tableName).concat(this.walName);
+        rootLen = path.length();
         try {
-            this.metadata = openMetaFile();
-            this.columnCount = this.metadata.getColumnCount();
-            this.columnCountShl = getColumnBits(columnCount);
+            metadata = openMetaFile();
+            columnCount = metadata.getColumnCount();
             LOG.debug().$("open [table=").$(this.tableName).I$();
             openSymbolMaps(walSymbolCounts);
 
             final int capacity = 2 * columnCount + 2;
-            this.columns = new ObjList<>(capacity);
-            this.columns.setPos(capacity + 2);
-            this.columns.setQuick(0, NullMemoryMR.INSTANCE);
-            this.columns.setQuick(1, NullMemoryMR.INSTANCE);
-            this.recordCursor.of(this);
+            columns = new ObjList<>(capacity);
+            columns.setPos(capacity + 2);
+            columns.setQuick(0, NullMemoryMR.INSTANCE);
+            columns.setQuick(1, NullMemoryMR.INSTANCE);
+            recordCursor.of(this);
         } catch (Throwable e) {
             close();
             throw e;
@@ -94,19 +91,19 @@ public class WalReader implements Closeable, SymbolTableSource {
 
     @Override
     public void close() {
-        if (isOpen()) {
-            freeSymbolMapReaders();
-            Misc.free(metadata);
-            Misc.free(todoMem);
-            freeColumns();
-            freeTempMem();
-            Misc.free(path);
-            LOG.debug().$("closed '").utf8(tableName).$('\'').$();
-        }
+        freeSymbolMapReaders();
+        Misc.free(metadata);
+        Misc.freeObjList(columns);
+        Misc.free(path);
+        LOG.debug().$("closed '").utf8(tableName).$('\'').$();
     }
 
     public MemoryR getColumn(int absoluteIndex) {
         return columns.getQuick(absoluteIndex);
+    }
+
+    public String getTableName() {
+        return tableName;
     }
 
     public String getWalName() {
@@ -123,88 +120,54 @@ public class WalReader implements Closeable, SymbolTableSource {
         try {
             if (ff.exists(path.$())) {
                 path.chop$();
-                openPartitionColumns(path, walRowCount);
+                openSegmentColumns();
                 return walRowCount;
             }
-            LOG.error().$("open partition failed, partition does not exist on the disk. [path=").utf8(path.$()).I$();
-            throw CairoException.instance(0).put("Table '").put(tableName)
-                    .put("' data directory does not exist on the disk at ")
-                    .put(path)
-                    .put(". Restore data on disk or drop the table.");
+            LOG.error().$("open segment failed, segment does not exist on the disk. [path=").utf8(path.$()).I$();
+            throw CairoException.instance(0)
+                    .put("WAL data directory does not exist on disk at ")
+                    .put(path);
         } finally {
             path.trimTo(rootLen);
         }
     }
 
-    private void openPartitionColumns(Path path, long partitionRowCount) {
+    private void openSegmentColumns() {
         for (int i = 0; i < columnCount; i++) {
-            reloadColumnAt(
-                    path,
-                    this.columns,
-                    i,
-                    partitionRowCount
-            );
+            loadColumnAt(i);
         }
     }
 
-    private void reloadColumnAt(
-            Path path,
-            ObjList<MemoryMR> columns,
-            int columnIndex,
-            long partitionRowCount
-    ) {
-        final int plen = path.length();
+    private void loadColumnAt(int columnIndex) {
+        final int pathLen = path.length();
         try {
             final CharSequence name = metadata.getColumnName(columnIndex);
             final int primaryIndex = getPrimaryColumnIndex(columnIndex);
             final int secondaryIndex = primaryIndex + 1;
+            final MemoryMR primaryMem = columns.getQuick(primaryIndex);
 
-            MemoryMR mem1 = columns.getQuick(primaryIndex);
-            MemoryMR mem2 = columns.getQuick(secondaryIndex);
-
-            long columnTxn = COLUMN_NAME_TXN_NONE;
-            final long columnRowCount = partitionRowCount;
-            assert partitionRowCount < 0 || columnRowCount >= 0;
-
-            // When column is added mid-table existence the top record is only
-            // created in the current partition. Older partitions would simply have no
-            // column file. This makes it necessary to check the partition timestamp in Column Version file
-            // of when the column was added.
-            if (partitionRowCount > 0) {
-                final int columnType = metadata.getColumnType(columnIndex);
-
-                if (ColumnType.isVariableLength(columnType)) {
-                    long columnSize = columnRowCount * 8L + 8L;
-                    TableUtils.iFile(path.trimTo(plen), name, columnTxn);
-                    mem2 = openOrCreateMemory(path, columns, secondaryIndex, mem2, columnSize);
-                    columnSize = mem2.getLong(columnRowCount * 8L);
-                    TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
-                } else {
-                    long columnSize = columnRowCount << ColumnType.pow2SizeOf(columnType);
-                    TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(path, columns, primaryIndex, mem1, columnSize);
-                    Misc.free(columns.getAndSetQuick(secondaryIndex, null));
-                }
+            final int columnType = metadata.getColumnType(columnIndex);
+            if (ColumnType.isVariableLength(columnType)) {
+                long columnSize = walRowCount * 8L + 8L;
+                TableUtils.iFile(path.trimTo(pathLen), name);
+                MemoryMR secondaryMem = columns.getQuick(secondaryIndex);
+                secondaryMem = openOrCreateMemory(path, columns, secondaryIndex, secondaryMem, columnSize);
+                columnSize = secondaryMem.getLong(walRowCount * 8L);
+                TableUtils.dFile(path.trimTo(pathLen), name);
+                openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnSize);
             } else {
-                Misc.free(columns.getAndSetQuick(primaryIndex, NullMemoryMR.INSTANCE));
-                Misc.free(columns.getAndSetQuick(secondaryIndex, NullMemoryMR.INSTANCE));
+                long columnSize = walRowCount << ColumnType.pow2SizeOf(columnType);
+                TableUtils.dFile(path.trimTo(pathLen), name);
+                openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnSize);
+                Misc.free(columns.getAndSetQuick(secondaryIndex, null));
             }
         } finally {
-            path.trimTo(plen);
+            path.trimTo(pathLen);
         }
     }
 
     public long size() {
-        return -1;
-    }
-
-    public long getMaxTimestamp() {
-        return -1;
-    }
-
-    public long getMinTimestamp() {
-        return -1;
+        return walRowCount;
     }
 
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
@@ -225,30 +188,6 @@ public class WalReader implements Closeable, SymbolTableSource {
         return getSymbolMapReader(columnIndex).newSymbolTableView();
     }
 
-    public String getTableName() {
-        return tableName;
-    }
-
-    public long getTransientRowCount() {
-        return walRowCount;
-    }
-
-    public long getVersion() {
-        return -1;
-    }
-
-    public boolean isOpen() {
-        return tempMem8b != 0;
-    }
-
-    private static int getColumnBits(int columnCount) {
-        return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
-    }
-
-    private void freeColumns() {
-        Misc.freeObjList(columns);
-    }
-
     private void freeSymbolMapReaders() {
         for (int i = 0, n = symbolMapReaders.size(); i < n; i++) {
             Misc.free(symbolMapReaders.getQuick(i));
@@ -256,37 +195,8 @@ public class WalReader implements Closeable, SymbolTableSource {
         symbolMapReaders.clear();
     }
 
-    private void freeTempMem() {
-        if (tempMem8b != 0) {
-            Unsafe.free(tempMem8b, 8, MemoryTag.NATIVE_TABLE_READER);
-            tempMem8b = 0;
-        }
-    }
-
     int getColumnCount() {
         return columnCount;
-    }
-
-    private void handleMetadataLoadException(long deadline, CairoException ex) {
-        // This is temporary solution until we can get multiple version of metadata not overwriting each other
-        if (isMetaFileMissingFileSystemError(ex)) {
-            if (configuration.getMicrosecondClock().getTicks() < deadline) {
-                LOG.info().$("error reloading metadata [table=").$(tableName)
-                        .$(", errno=").$(ex.getErrno())
-                        .$(", error=").$(ex.getFlyweightMessage()).I$();
-                Os.pause();
-            } else {
-                LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
-                throw CairoException.instance(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
-            }
-        } else {
-            throw ex;
-        }
-    }
-
-    private boolean isMetaFileMissingFileSystemError(CairoException ex) {
-        int errno = ex.getErrno();
-        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.METADATA_VALIDATION;
     }
 
     private WalReaderMetadata openMetaFile() {
@@ -297,7 +207,7 @@ public class WalReader implements Closeable, SymbolTableSource {
                 try {
                     return metadata.of(path, 0);
                 } catch (CairoException ex) {
-                    handleMetadataLoadException(deadline, ex);
+                    TableUtils.handleMetadataLoadException(configuration, tableName, deadline, ex);
                 }
             }
         } finally {
@@ -323,7 +233,6 @@ public class WalReader implements Closeable, SymbolTableSource {
     }
 
     private void openSymbolMaps(IntList walSymbolCounts) {
-        final int columnCount = metadata.getColumnCount();
         int symbolMapIndex = 0;
         for (int i = 0; i < columnCount; i++) {
             if (ColumnType.isSymbol(metadata.getColumnType(i))) {

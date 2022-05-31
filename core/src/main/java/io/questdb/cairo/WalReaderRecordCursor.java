@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 
 public class WalReaderRecordCursor implements RecordCursor {
@@ -37,10 +38,7 @@ public class WalReaderRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        if (reader != null) {
-            reader.close();
-            reader = null;
-        }
+        reader = Misc.free(reader);
     }
 
     @Override
@@ -89,15 +87,12 @@ public class WalReaderRecordCursor implements RecordCursor {
 
     public void of(WalReader reader) {
         close();
-        this.reader = reader;
-        this.recordA.of(reader);
-        this.recordB.of(reader);
-        openSegment();
-    }
 
-    private void openSegment() {
+        this.reader = reader;
+        recordA.of(reader);
+        recordB.of(reader);
+
         final long segmentSize = reader.openSegment();
         maxRecordIndex = segmentSize - 1;
-        recordA.jumpTo(-1);
     }
 }

@@ -49,11 +49,6 @@ public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
         this.symbolMapDiffs = new ObjList<>();
     }
 
-    public WalReaderMetadata(FilesFacade ff, long segmentId, Path path) {
-        this(ff, segmentId);
-        of(path, 0);
-    }
-
     @Override
     public void close() {
         // WalReaderMetadata is re-usable after close, don't assign nulls
@@ -70,7 +65,7 @@ public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
         try {
             metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             columnNameIndexMap.clear();
-            TableUtils.loadWalMeta(metaMem, columnMetadata, columnNameIndexMap, symbolMapDiffs, expectedVersion);
+            TableUtils.loadWalMetadata(metaMem, columnMetadata, columnNameIndexMap, symbolMapDiffs, expectedVersion);
             version = metaMem.getInt(TableUtils.WAL_META_OFFSET_VERSION);
             columnCount = metaMem.getInt(TableUtils.WAL_META_OFFSET_COUNT);
             timestampIndex = -1;
