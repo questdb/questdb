@@ -56,61 +56,6 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testSymSym() throws Exception {
-        // we include byte <-> bool cast to make sure
-        // sym <-> sym cast it not thrown away as redundant
-        compile("create table y as (select rnd_byte() a, rnd_symbol('x','y') c from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\tc\ttypeOf\n" +
-                        "false\ta\tSTRING\n" +
-                        "false\tb\tSTRING\n" +
-                        "true\ta\tSTRING\n" +
-                        "true\tb\tSTRING\n" +
-                        "false\ta\tSTRING\n" +
-                        "76\tx\tSTRING\n" +
-                        "27\ty\tSTRING\n" +
-                        "79\ty\tSTRING\n" +
-                        "122\ty\tSTRING\n" +
-                        "90\tx\tSTRING\n",
-                "select a, c, typeOf(c) from (x union all y)",
-                "create table x as (select rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    @Ignore
-    public void testSymSymErr() throws Exception {
-        // we include byte <-> bool cast to make sure
-        // sym <-> sym cast it not thrown away as redundant
-        compile("create table y as (select rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\tc\n" +
-                        "false\tfalse\n" +
-                        "false\ttrue\n" +
-                        "true\ttrue\n" +
-                        "true\tfalse\n" +
-                        "false\tfalse\n" +
-                        "76\tfalse\n" +
-                        "27\ttrue\n" +
-                        "79\tfalse\n" +
-                        "122\ttrue\n" +
-                        "90\ttrue\n",
-                "select a, c, typeOf(c) from (x union all y)",
-                "create table x as (select rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testByteBool() throws Exception {
         // this is cast to STRING, both columns
         compile("create table y as (select rnd_byte() b from long_sequence(5))");
@@ -266,31 +211,6 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDateLong() throws Exception {
-        compile("create table y as (select rnd_long() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "1970-01-01T02:07:40.373Z\n" +
-                        "1970-01-01T00:18:02.998Z\n" +
-                        "1970-01-01T02:14:51.881Z\n" +
-                        "1970-01-01T00:14:24.006Z\n" +
-                        "1970-01-01T00:10:02.536Z\n" +
-                        "150577-04-03T14:54:03.856Z\n" +
-                        "151857-08-13T01:43:12.366Z\n" +
-                        "245479925-08-06T22:45:29.025Z\n" +
-                        "-220105521-10-27T16:44:58.525Z\n" +
-                        "261756925-02-22T01:56:27.029Z\n",
-                "x union all y",
-                "create table x as (select rnd_date() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testDateByte() throws Exception {
         compile("create table y as (select rnd_byte() b from long_sequence(5))");
         engine.releaseAllWriters();
@@ -341,31 +261,6 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDateShort() throws Exception {
-        compile("create table y as (select rnd_short() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "1970-01-01T02:07:40.373Z\n" +
-                        "1970-01-01T00:18:02.998Z\n" +
-                        "1970-01-01T02:14:51.881Z\n" +
-                        "1970-01-01T00:14:24.006Z\n" +
-                        "1970-01-01T00:10:02.536Z\n" +
-                        "1969-12-31T23:59:32.944Z\n" +
-                        "1970-01-01T00:00:24.814Z\n" +
-                        "1969-12-31T23:59:48.545Z\n" +
-                        "1969-12-31T23:59:46.973Z\n" +
-                        "1969-12-31T23:59:38.773Z\n",
-                "x union all y",
-                "create table x as (select rnd_date() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testDateInt() throws Exception {
         compile("create table y as (select rnd_int() b from long_sequence(5))");
         engine.releaseAllWriters();
@@ -381,6 +276,56 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "1970-01-18T22:13:20.833Z\n" +
                         "1969-12-23T13:51:15.229Z\n" +
                         "1970-01-01T20:26:15.701Z\n",
+                "x union all y",
+                "create table x as (select rnd_date() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDateLong() throws Exception {
+        compile("create table y as (select rnd_long() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "1970-01-01T02:07:40.373Z\n" +
+                        "1970-01-01T00:18:02.998Z\n" +
+                        "1970-01-01T02:14:51.881Z\n" +
+                        "1970-01-01T00:14:24.006Z\n" +
+                        "1970-01-01T00:10:02.536Z\n" +
+                        "150577-04-03T14:54:03.856Z\n" +
+                        "151857-08-13T01:43:12.366Z\n" +
+                        "245479925-08-06T22:45:29.025Z\n" +
+                        "-220105521-10-27T16:44:58.525Z\n" +
+                        "261756925-02-22T01:56:27.029Z\n",
+                "x union all y",
+                "create table x as (select rnd_date() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDateShort() throws Exception {
+        compile("create table y as (select rnd_short() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "1970-01-01T02:07:40.373Z\n" +
+                        "1970-01-01T00:18:02.998Z\n" +
+                        "1970-01-01T02:14:51.881Z\n" +
+                        "1970-01-01T00:14:24.006Z\n" +
+                        "1970-01-01T00:10:02.536Z\n" +
+                        "1969-12-31T23:59:32.944Z\n" +
+                        "1970-01-01T00:00:24.814Z\n" +
+                        "1969-12-31T23:59:48.545Z\n" +
+                        "1969-12-31T23:59:46.973Z\n" +
+                        "1969-12-31T23:59:38.773Z\n",
                 "x union all y",
                 "create table x as (select rnd_date() a from long_sequence(5))",
                 null,
@@ -442,6 +387,106 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDoubleByte() throws Exception {
+        compile("create table y as (select rnd_byte() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "0.2845577791213847\n" +
+                        "0.0843832076262595\n" +
+                        "0.9344604857394011\n" +
+                        "0.13123360041292131\n" +
+                        "0.7905675319675964\n" +
+                        "76.0\n" +
+                        "102.0\n" +
+                        "27.0\n" +
+                        "87.0\n" +
+                        "79.0\n",
+                "x union all y",
+                "create table x as (select rnd_double() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDoubleChar() throws Exception {
+        compile("create table y as (select rnd_char() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "0.2845577791213847\n" +
+                        "0.0843832076262595\n" +
+                        "0.9344604857394011\n" +
+                        "0.13123360041292131\n" +
+                        "0.7905675319675964\n" +
+                        "86.0\n" +
+                        "84.0\n" +
+                        "74.0\n" +
+                        "87.0\n" +
+                        "67.0\n",
+                "x union all y",
+                "create table x as (select rnd_double() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDoubleDate() throws Exception {
+        compile("create table y as (select rnd_date() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "0.2845577791213847\n" +
+                        "0.0843832076262595\n" +
+                        "0.9344604857394011\n" +
+                        "0.13123360041292131\n" +
+                        "0.7905675319675964\n" +
+                        "7643856.0\n" +
+                        "8992366.0\n" +
+                        "6329025.0\n" +
+                        "4501475.0\n" +
+                        "2587029.0\n",
+                "x union all y",
+                "create table x as (select rnd_double() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDoubleInt() throws Exception {
+        compile("create table y as (select rnd_int() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "0.2845577791213847\n" +
+                        "0.0843832076262595\n" +
+                        "0.9344604857394011\n" +
+                        "0.13123360041292131\n" +
+                        "0.7905675319675964\n" +
+                        "-1.14847992E9\n" +
+                        "3.15515118E8\n" +
+                        "1.548800833E9\n" +
+                        "-7.27724771E8\n" +
+                        "7.3575701E7\n",
+                "x union all y",
+                "create table x as (select rnd_double() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDoubleLong() throws Exception {
         compile("create table y as (select rnd_long() b from long_sequence(5))");
         engine.releaseAllWriters();
@@ -457,6 +502,56 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "7.7465360618163292E18\n" +
                         "-6.9459215023845018E18\n" +
                         "8.2601885552325868E18\n",
+                "x union all y",
+                "create table x as (select rnd_double() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDoubleShort() throws Exception {
+        compile("create table y as (select rnd_short() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "0.2845577791213847\n" +
+                        "0.0843832076262595\n" +
+                        "0.9344604857394011\n" +
+                        "0.13123360041292131\n" +
+                        "0.7905675319675964\n" +
+                        "-27056.0\n" +
+                        "24814.0\n" +
+                        "-11455.0\n" +
+                        "-13027.0\n" +
+                        "-21227.0\n",
+                "x union all y",
+                "create table x as (select rnd_double() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDoubleTimestamp() throws Exception {
+        compile("create table y as (select cast(rnd_date() as timestamp) b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "0.2845577791213847\n" +
+                        "0.0843832076262595\n" +
+                        "0.9344604857394011\n" +
+                        "0.13123360041292131\n" +
+                        "0.7905675319675964\n" +
+                        "7.643856E9\n" +
+                        "8.992366E9\n" +
+                        "6.329025E9\n" +
+                        "4.501475E9\n" +
+                        "2.587029E9\n",
                 "x union all y",
                 "create table x as (select rnd_double() a from long_sequence(5))",
                 null,
@@ -485,6 +580,131 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "0.0849\n",
                 "x union all y",
                 "create table x as (select rnd_boolean() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testFloatByte() throws Exception {
+        compile("create table y as (select rnd_float() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "79.0000\n" +
+                        "122.0000\n" +
+                        "83.0000\n" +
+                        "90.0000\n" +
+                        "76.0000\n" +
+                        "0.6608\n" +
+                        "0.8043\n" +
+                        "0.2246\n" +
+                        "0.1297\n" +
+                        "0.0849\n",
+                "x union all y",
+                "create table x as (select rnd_byte() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testFloatChar() throws Exception {
+        compile("create table y as (select rnd_float() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "80.0000\n" +
+                        "83.0000\n" +
+                        "87.0000\n" +
+                        "72.0000\n" +
+                        "89.0000\n" +
+                        "0.6608\n" +
+                        "0.8043\n" +
+                        "0.2246\n" +
+                        "0.1297\n" +
+                        "0.0849\n",
+                "x union all y",
+                "create table x as (select rnd_char() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testFloatDate() throws Exception {
+        compile("create table y as (select rnd_float() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "7660373.0\n" +
+                        "1082998.0\n" +
+                        "8091881.0\n" +
+                        "864006.0\n" +
+                        "602536.0\n" +
+                        "0.6608\n" +
+                        "0.8043\n" +
+                        "0.2246\n" +
+                        "0.1297\n" +
+                        "0.0849\n",
+                "x union all y",
+                "create table x as (select rnd_date() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testFloatDouble() throws Exception {
+        compile("create table y as (select rnd_float() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "0.2845577791213847\n" +
+                        "0.0843832076262595\n" +
+                        "0.9344604857394011\n" +
+                        "0.13123360041292131\n" +
+                        "0.7905675319675964\n" +
+                        "0.660777747631073\n" +
+                        "0.804322361946106\n" +
+                        "0.22463011741638184\n" +
+                        "0.12966656684875488\n" +
+                        "0.0848696231842041\n",
+                "x union all y",
+                "create table x as (select rnd_double() a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testFloatGeoHash() throws Exception {
+        compile("create table y as (select rnd_float() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "0001001\n" +
+                        "0101110\n" +
+                        "0101101\n" +
+                        "0111011\n" +
+                        "0010101\n" +
+                        "0.6608\n" +
+                        "0.8043\n" +
+                        "0.2246\n" +
+                        "0.1297\n" +
+                        "0.0849\n",
+                "x union all y",
+                "create table x as (select rnd_geohash(7) a from long_sequence(5))",
                 null,
                 false,
                 true,
@@ -560,281 +780,6 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "0.0849\n",
                 "x union all y",
                 "create table x as (select rnd_short() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testFloatDate() throws Exception {
-        compile("create table y as (select rnd_float() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "7660373.0\n" +
-                        "1082998.0\n" +
-                        "8091881.0\n" +
-                        "864006.0\n" +
-                        "602536.0\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
-                "x union all y",
-                "create table x as (select rnd_date() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testFloatDouble() throws Exception {
-        compile("create table y as (select rnd_float() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "0.2845577791213847\n" +
-                        "0.0843832076262595\n" +
-                        "0.9344604857394011\n" +
-                        "0.13123360041292131\n" +
-                        "0.7905675319675964\n" +
-                        "0.660777747631073\n" +
-                        "0.804322361946106\n" +
-                        "0.22463011741638184\n" +
-                        "0.12966656684875488\n" +
-                        "0.0848696231842041\n",
-                "x union all y",
-                "create table x as (select rnd_double() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testDoubleByte() throws Exception {
-        compile("create table y as (select rnd_byte() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "0.2845577791213847\n" +
-                        "0.0843832076262595\n" +
-                        "0.9344604857394011\n" +
-                        "0.13123360041292131\n" +
-                        "0.7905675319675964\n" +
-                        "76.0\n" +
-                        "102.0\n" +
-                        "27.0\n" +
-                        "87.0\n" +
-                        "79.0\n",
-                "x union all y",
-                "create table x as (select rnd_double() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testDoubleChar() throws Exception {
-        compile("create table y as (select rnd_char() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "0.2845577791213847\n" +
-                        "0.0843832076262595\n" +
-                        "0.9344604857394011\n" +
-                        "0.13123360041292131\n" +
-                        "0.7905675319675964\n" +
-                        "86.0\n" +
-                        "84.0\n" +
-                        "74.0\n" +
-                        "87.0\n" +
-                        "67.0\n",
-                "x union all y",
-                "create table x as (select rnd_double() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testDoubleShort() throws Exception {
-        compile("create table y as (select rnd_short() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "0.2845577791213847\n" +
-                        "0.0843832076262595\n" +
-                        "0.9344604857394011\n" +
-                        "0.13123360041292131\n" +
-                        "0.7905675319675964\n" +
-                        "-27056.0\n" +
-                        "24814.0\n" +
-                        "-11455.0\n" +
-                        "-13027.0\n" +
-                        "-21227.0\n",
-                "x union all y",
-                "create table x as (select rnd_double() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testDoubleInt() throws Exception {
-        compile("create table y as (select rnd_int() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "0.2845577791213847\n" +
-                        "0.0843832076262595\n" +
-                        "0.9344604857394011\n" +
-                        "0.13123360041292131\n" +
-                        "0.7905675319675964\n" +
-                        "-1.14847992E9\n" +
-                        "3.15515118E8\n" +
-                        "1.548800833E9\n" +
-                        "-7.27724771E8\n" +
-                        "7.3575701E7\n",
-                "x union all y",
-                "create table x as (select rnd_double() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testDoubleDate() throws Exception {
-        compile("create table y as (select rnd_date() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "0.2845577791213847\n" +
-                        "0.0843832076262595\n" +
-                        "0.9344604857394011\n" +
-                        "0.13123360041292131\n" +
-                        "0.7905675319675964\n" +
-                        "7643856.0\n" +
-                        "8992366.0\n" +
-                        "6329025.0\n" +
-                        "4501475.0\n" +
-                        "2587029.0\n",
-                "x union all y",
-                "create table x as (select rnd_double() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testDoubleTimestamp() throws Exception {
-        compile("create table y as (select cast(rnd_date() as timestamp) b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "0.2845577791213847\n" +
-                        "0.0843832076262595\n" +
-                        "0.9344604857394011\n" +
-                        "0.13123360041292131\n" +
-                        "0.7905675319675964\n" +
-                        "7.643856E9\n" +
-                        "8.992366E9\n" +
-                        "6.329025E9\n" +
-                        "4.501475E9\n" +
-                        "2.587029E9\n",
-                "x union all y",
-                "create table x as (select rnd_double() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testFloatChar() throws Exception {
-        compile("create table y as (select rnd_float() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "80.0000\n" +
-                        "83.0000\n" +
-                        "87.0000\n" +
-                        "72.0000\n" +
-                        "89.0000\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
-                "x union all y",
-                "create table x as (select rnd_char() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testFloatByte() throws Exception {
-        compile("create table y as (select rnd_float() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "79.0000\n" +
-                        "122.0000\n" +
-                        "83.0000\n" +
-                        "90.0000\n" +
-                        "76.0000\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
-                "x union all y",
-                "create table x as (select rnd_byte() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testFloatGeoHash() throws Exception {
-        compile("create table y as (select rnd_float() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "0001001\n" +
-                        "0101110\n" +
-                        "0101101\n" +
-                        "0111011\n" +
-                        "0010101\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
-                "x union all y",
-                "create table x as (select rnd_geohash(7) a from long_sequence(5))",
                 null,
                 false,
                 true,
@@ -1051,6 +996,84 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGeoShortGeoByteExact() throws Exception {
+        // long + geohash overlap via string type
+        compile("create table y as (select rnd_geohash(5) b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\ttypeOf\n" +
+                        "w\tGEOHASH(1c)\n" +
+                        "s\tGEOHASH(1c)\n" +
+                        "1\tGEOHASH(1c)\n" +
+                        "m\tGEOHASH(1c)\n" +
+                        "7\tGEOHASH(1c)\n" +
+                        "9\tGEOHASH(1c)\n" +
+                        "4\tGEOHASH(1c)\n" +
+                        "j\tGEOHASH(1c)\n" +
+                        "z\tGEOHASH(1c)\n" +
+                        "h\tGEOHASH(1c)\n",
+                "select a, typeOf(a) from (x union all y)",
+                "create table x as (select rnd_geohash(5) a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testGeoShortGeoIntExact() throws Exception {
+        // long + geohash overlap via string type
+        compile("create table y as (select rnd_geohash(30) b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\ttypeOf\n" +
+                        "wh4b6v\tGEOHASH(6c)\n" +
+                        "s2z2fy\tGEOHASH(6c)\n" +
+                        "1cjjwk\tGEOHASH(6c)\n" +
+                        "mmt894\tGEOHASH(6c)\n" +
+                        "71ftmp\tGEOHASH(6c)\n" +
+                        "9v1s8h\tGEOHASH(6c)\n" +
+                        "46swgj\tGEOHASH(6c)\n" +
+                        "jnw97u\tGEOHASH(6c)\n" +
+                        "zfuqd3\tGEOHASH(6c)\n" +
+                        "hp4muv\tGEOHASH(6c)\n",
+                "select a, typeOf(a) from (x union all y)",
+                "create table x as (select rnd_geohash(30) a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testGeoShortGeoLongExact() throws Exception {
+        // long + geohash overlap via string type
+        compile("create table y as (select rnd_geohash(35) b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\ttypeOf\n" +
+                        "wh4b6vn\tGEOHASH(7c)\n" +
+                        "s2z2fyd\tGEOHASH(7c)\n" +
+                        "1cjjwk6\tGEOHASH(7c)\n" +
+                        "mmt8942\tGEOHASH(7c)\n" +
+                        "71ftmpy\tGEOHASH(7c)\n" +
+                        "9v1s8hm\tGEOHASH(7c)\n" +
+                        "46swgj1\tGEOHASH(7c)\n" +
+                        "jnw97u4\tGEOHASH(7c)\n" +
+                        "zfuqd3b\tGEOHASH(7c)\n" +
+                        "hp4muv5\tGEOHASH(7c)\n",
+                "select a, typeOf(a) from (x union all y)",
+                "create table x as (select rnd_geohash(35) a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testGeoShortStr() throws Exception {
         // long + geohash overlap via string type
         compile("create table y as (select rnd_long() b from long_sequence(5))");
@@ -1204,23 +1227,37 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testBinBin() throws Exception {
+        compile("create table y as (select rnd_int() a, rnd_bin(10,10,1) n from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\tn\ttypeOf\n" +
+                        "32312\t\tBINARY\n" +
+                        "4635\t00000000 f4 c8 39 09 fe d8 9d 30 78 36\tBINARY\n" +
+                        "-22934\t00000000 de e4 7c d2 35 07 42 fc 31 79\tBINARY\n" +
+                        "22367\t\tBINARY\n" +
+                        "-12671\t\tBINARY\n" +
+                        "-1148479920\t00000000 41 1d 15 55 8a 17 fa d8 cc 14\tBINARY\n" +
+                        "-1436881714\t\tBINARY\n" +
+                        "806715481\t00000000 c4 91 3b 72 db f3 04 1b c7 88\tBINARY\n" +
+                        "-1432278050\t00000000 79 3c 77 15 68 61 26 af 19 c4\tBINARY\n" +
+                        "-1975183723\t00000000 36 53 49 b4 59 7e 3b 08 a1 1e\tBINARY\n",
+                "select a, n, typeOf(n) from (x union all y)",
+                "create table x as (select rnd_short() a, rnd_bin(10,10,1) n from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testLongBin() throws Exception {
         compile("create table y as (select rnd_long() b from long_sequence(5))");
         engine.releaseAllWriters();
         assertFailure("x union all y",
                 "create table x as (select rnd_bin(10, 24, 1) a from long_sequence(5))",
                 0,
-                "unsupported cast"
-        );
-    }
-
-    @Test
-    public void testSymBin() throws Exception {
-        compile("create table y as (select rnd_bin(10, 24, 1) b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertFailure("x union all y",
-                "create table x as (select rnd_symbol('aa','bb') a from long_sequence(5))",
-                12,
                 "unsupported cast"
         );
     }
@@ -1480,6 +1517,72 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSymBin() throws Exception {
+        compile("create table y as (select rnd_bin(10, 24, 1) b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertFailure("x union all y",
+                "create table x as (select rnd_symbol('aa','bb') a from long_sequence(5))",
+                12,
+                "unsupported cast"
+        );
+    }
+
+    @Test
+    public void testSymSym() throws Exception {
+        // we include byte <-> bool cast to make sure
+        // sym <-> sym cast it not thrown away as redundant
+        compile("create table y as (select rnd_byte() a, rnd_symbol('x','y') c from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\tc\ttypeOf\n" +
+                        "false\ta\tSTRING\n" +
+                        "false\tb\tSTRING\n" +
+                        "true\ta\tSTRING\n" +
+                        "true\tb\tSTRING\n" +
+                        "false\ta\tSTRING\n" +
+                        "76\tx\tSTRING\n" +
+                        "27\ty\tSTRING\n" +
+                        "79\ty\tSTRING\n" +
+                        "122\ty\tSTRING\n" +
+                        "90\tx\tSTRING\n",
+                "select a, c, typeOf(c) from (x union all y)",
+                "create table x as (select rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    @Ignore
+    public void testSymSymErr() throws Exception {
+        // we include byte <-> bool cast to make sure
+        // sym <-> sym cast it not thrown away as redundant
+        compile("create table y as (select rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\tc\n" +
+                        "false\tfalse\n" +
+                        "false\ttrue\n" +
+                        "true\ttrue\n" +
+                        "true\tfalse\n" +
+                        "false\tfalse\n" +
+                        "76\tfalse\n" +
+                        "27\ttrue\n" +
+                        "79\tfalse\n" +
+                        "122\ttrue\n" +
+                        "90\ttrue\n",
+                "select a, c, typeOf(c) from (x union all y)",
+                "create table x as (select rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testTimestampBool() throws Exception {
         // this is cast to STRING, both columns
         compile("create table y as (select rnd_timestamp(0, 100000, 2) b from long_sequence(5))");
@@ -1498,81 +1601,6 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "\n",
                 "x union all y",
                 "create table x as (select rnd_boolean() a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testTimestampLong() throws Exception {
-        compile("create table y as (select rnd_long() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "284661-01-03T01:19:47.660373Z\n" +
-                        "-239240-04-12T14:04:18.917002Z\n" +
-                        "-167698-05-16T15:46:11.908119Z\n" +
-                        "-82114-11-17T05:49:39.135994Z\n" +
-                        "-51129-02-11T06:38:29.397464Z\n" +
-                        "2118-08-10T16:27:17.643856Z\n" +
-                        "2119-11-21T07:50:58.992366Z\n" +
-                        "247447-12-16T04:43:36.329025Z\n" +
-                        "-218138-07-06T00:26:55.498525Z\n" +
-                        "263724-12-15T04:53:52.587029Z\n",
-                "x union all y",
-                "create table x as (select cast(rnd_long() as timestamp) a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testTimestampInt() throws Exception {
-        compile("create table y as (select rnd_int() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "284661-01-03T01:19:47.660373Z\n" +
-                        "-239240-04-12T14:04:18.917002Z\n" +
-                        "-167698-05-16T15:46:11.908119Z\n" +
-                        "-82114-11-17T05:49:39.135994Z\n" +
-                        "-51129-02-11T06:38:29.397464Z\n" +
-                        "1969-12-31T23:40:51.520080Z\n" +
-                        "1970-01-01T00:05:15.515118Z\n" +
-                        "1970-01-01T00:25:48.800833Z\n" +
-                        "1969-12-31T23:47:52.275229Z\n" +
-                        "1970-01-01T00:01:13.575701Z\n",
-                "x union all y",
-                "create table x as (select cast(rnd_long() as timestamp) a from long_sequence(5))",
-                null,
-                false,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testTimestampShort() throws Exception {
-        compile("create table y as (select rnd_short() b from long_sequence(5))");
-        engine.releaseAllWriters();
-        assertQuery(
-                "a\n" +
-                        "284661-01-03T01:19:47.660373Z\n" +
-                        "-239240-04-12T14:04:18.917002Z\n" +
-                        "-167698-05-16T15:46:11.908119Z\n" +
-                        "-82114-11-17T05:49:39.135994Z\n" +
-                        "-51129-02-11T06:38:29.397464Z\n" +
-                        "1969-12-31T23:59:59.972944Z\n" +
-                        "1970-01-01T00:00:00.024814Z\n" +
-                        "1969-12-31T23:59:59.988545Z\n" +
-                        "1969-12-31T23:59:59.986973Z\n" +
-                        "1969-12-31T23:59:59.978773Z\n",
-                "x union all y",
-                "create table x as (select cast(rnd_long() as timestamp) a from long_sequence(5))",
                 null,
                 false,
                 true,
@@ -1646,6 +1674,81 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "0.2246\n" +
                         "0.1297\n" +
                         "0.0849\n",
+                "x union all y",
+                "create table x as (select cast(rnd_long() as timestamp) a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampInt() throws Exception {
+        compile("create table y as (select rnd_int() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "284661-01-03T01:19:47.660373Z\n" +
+                        "-239240-04-12T14:04:18.917002Z\n" +
+                        "-167698-05-16T15:46:11.908119Z\n" +
+                        "-82114-11-17T05:49:39.135994Z\n" +
+                        "-51129-02-11T06:38:29.397464Z\n" +
+                        "1969-12-31T23:40:51.520080Z\n" +
+                        "1970-01-01T00:05:15.515118Z\n" +
+                        "1970-01-01T00:25:48.800833Z\n" +
+                        "1969-12-31T23:47:52.275229Z\n" +
+                        "1970-01-01T00:01:13.575701Z\n",
+                "x union all y",
+                "create table x as (select cast(rnd_long() as timestamp) a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampLong() throws Exception {
+        compile("create table y as (select rnd_long() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "284661-01-03T01:19:47.660373Z\n" +
+                        "-239240-04-12T14:04:18.917002Z\n" +
+                        "-167698-05-16T15:46:11.908119Z\n" +
+                        "-82114-11-17T05:49:39.135994Z\n" +
+                        "-51129-02-11T06:38:29.397464Z\n" +
+                        "2118-08-10T16:27:17.643856Z\n" +
+                        "2119-11-21T07:50:58.992366Z\n" +
+                        "247447-12-16T04:43:36.329025Z\n" +
+                        "-218138-07-06T00:26:55.498525Z\n" +
+                        "263724-12-15T04:53:52.587029Z\n",
+                "x union all y",
+                "create table x as (select cast(rnd_long() as timestamp) a from long_sequence(5))",
+                null,
+                false,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testTimestampShort() throws Exception {
+        compile("create table y as (select rnd_short() b from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "a\n" +
+                        "284661-01-03T01:19:47.660373Z\n" +
+                        "-239240-04-12T14:04:18.917002Z\n" +
+                        "-167698-05-16T15:46:11.908119Z\n" +
+                        "-82114-11-17T05:49:39.135994Z\n" +
+                        "-51129-02-11T06:38:29.397464Z\n" +
+                        "1969-12-31T23:59:59.972944Z\n" +
+                        "1970-01-01T00:00:00.024814Z\n" +
+                        "1969-12-31T23:59:59.988545Z\n" +
+                        "1969-12-31T23:59:59.986973Z\n" +
+                        "1969-12-31T23:59:59.978773Z\n",
                 "x union all y",
                 "create table x as (select cast(rnd_long() as timestamp) a from long_sequence(5))",
                 null,
