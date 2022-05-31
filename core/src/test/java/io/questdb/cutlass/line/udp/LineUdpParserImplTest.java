@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -752,6 +753,133 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
                 "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\n" +
                 "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\n";
         assertThat(expected, lines, "t_ilp21");
+    }
+
+    @Test
+    public void testCannotAutoCreateColumnWhenDisabledInConfiguration() throws Exception {
+        try {
+            String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+
+            assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
+                @Override
+                public boolean getAutoCreateNewColumns() {
+                    return false;
+                }
+            });
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "creating new columns is disabled [table=t_ilp21]");
+        }
+    }
+
+    @Test
+    public void testCannotAutoCreateTableWhenDisabledInConfiguration() throws Exception {
+        try {
+            String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                    "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+
+            assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
+                @Override
+                public boolean getAutoCreateNewTables() {
+                    return false;
+                }
+            });
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "creating new tables is disabled [table=t_ilp21]");
+        }
+    }
+
+    @Test
+    public void testExistingTableRemovedColumn() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE)
+                        .col("event", ColumnType.SHORT)
+                        .col("id", ColumnType.LONG256)
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT)
+                        .col("date1", ColumnType.DATE)
+                        .col("byte1", ColumnType.BYTE)
+                        .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t_ilp21", "test")) {
+            writer.removeColumn("event");
+        }
+        engine.releaseInactive();
+
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String expected = "id\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\tevent\n" +
+                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\t12\n" +
+                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\t12\n";
+        assertThat(expected, lines, "t_ilp21");
+    }
+
+    @Test
+    public void testExistingTableRemovedColumnAndAddedBack() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE)
+                        .col("event", ColumnType.SHORT)
+                        .col("id", ColumnType.LONG256)
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT)
+                        .col("date1", ColumnType.DATE)
+                        .col("byte1", ColumnType.BYTE)
+                        .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "t_ilp21", "test")) {
+            writer.removeColumn("event");
+            writer.addColumn("event", ColumnType.SHORT);
+        }
+        engine.releaseInactive();
+
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String expected = "id\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\tevent\n" +
+                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\t12\n" +
+                "0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\t12\n";
+        assertThat(expected, lines, "t_ilp21");
+    }
+
+    @Test
+    public void testExistingTableWhenAddingNewTablesAndColumnsDisabled() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE)
+                        .col("event", ColumnType.SHORT)
+                        .col("id", ColumnType.LONG256)
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT)
+                        .col("date1", ColumnType.DATE)
+                        .col("byte1", ColumnType.BYTE)
+                        .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        String expected = "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
+                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1.2000\t23\t2016-06-13T17:43:50.102Z\t-7\t2016-06-13T17:43:50.102800Z\n" +
+                "12\t0x5a9796963abad00001e5f6bbdb38\t2016-06-13T17:43:50.102400Z\t1000.0000\t-500000\t2016-06-13T17:43:50.102Z\t3\t2016-06-13T17:43:50.102800Z\n";
+        assertThat(expected, lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
+            @Override
+            public boolean getAutoCreateNewColumns() {
+                return false;
+            }
+
+            @Override
+            public boolean getAutoCreateNewTables() {
+                return false;
+            }
+        });
     }
 
     private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {

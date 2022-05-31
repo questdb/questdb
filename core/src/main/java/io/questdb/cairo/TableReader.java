@@ -89,6 +89,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.path = new Path();
         this.path.of(configuration.getRoot()).concat(this.tableName);
         this.rootLen = path.length();
+        if (!ff.exists(path.put(Files.SEPARATOR).$())) {
+            throw CairoException.instance(2).put("table does not exist [table=").put(tableName).put(']');
+        }
+        path.trimTo(rootLen);
         try {
             this.metadata = openMetaFile();
             this.columnCount = this.metadata.getColumnCount();
