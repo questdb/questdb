@@ -429,7 +429,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             }
         } else {
             CharSequence colNameAsChars = cache.get(columnName);
-            if (TableUtils.isValidColumnName(colNameAsChars)) {
+            if (TableUtils.isValidColumnName(colNameAsChars, udpConfiguration.getMaxFileNameLength())) {
                 writer.addColumn(colNameAsChars, valueType);
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
                 columnValues.add(value.getCacheAddress());
@@ -537,7 +537,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                 return "timestamp";
             }
             CharSequence colName = cache.get(columnNameType.getQuick(columnIndex * 2));
-            if (TableUtils.isValidColumnName(colName)) {
+            if (TableUtils.isValidColumnName(colName, configuration.getMaxFileNameLength())) {
                 return colName;
             }
             throw CairoException.instance(0).put("column name contains invalid characters [colName=").put(colName).put(']');
