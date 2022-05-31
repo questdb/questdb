@@ -34,6 +34,8 @@ import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -218,6 +220,11 @@ public class ServerMain {
 
         try {
             initQuestDb(workerPool, cairoEngine, log);
+
+            // Register jobs that help parallel execution of queries and column indexing.
+            workerPool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
+            workerPool.assign(new GroupByJob(cairoEngine.getMessageBus()));
+            workerPool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
 
             instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
             instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));

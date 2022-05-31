@@ -52,10 +52,15 @@ public final class MemoryTag {
     public static final int NATIVE_PATH = 24;
     public static final int NATIVE_TABLE_READER = 25;
     public static final int NATIVE_TABLE_WRITER = 26;
-    public static final int MMAP_TABLE_WAL_WRITER = 27;
-    public static final int MMAP_TABLE_WAL_READER = 28;
-    public static final int MMAP_UPDATE = 29;
-    public static final int SIZE = MMAP_UPDATE + 1;
+    public static final int MMAP_UPDATE = 27;
+    public static final int NATIVE_CB1 = 28;
+    public static final int NATIVE_CB2 = 29;
+    public static final int NATIVE_CB3 = 30;
+    public static final int NATIVE_CB4 = 31;
+    public static final int NATIVE_CB5 = 32;
+    public static final int MMAP_TABLE_WAL_READER = 33;
+    public static final int MMAP_TABLE_WAL_WRITER = 34;
+    public static final int SIZE = MMAP_TABLE_WAL_WRITER + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -91,6 +96,12 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_PATH, "NATIVE_PATH");
         tagNameMap.extendAndSet(NATIVE_TABLE_READER, "NATIVE_TABLE_READER");
         tagNameMap.extendAndSet(NATIVE_TABLE_WRITER, "NATIVE_TABLE_WRITER");
+        tagNameMap.extendAndSet(NATIVE_CB1, "NATIVE_CB1");
+        tagNameMap.extendAndSet(NATIVE_CB2, "NATIVE_CB2");
+        tagNameMap.extendAndSet(NATIVE_CB3, "NATIVE_CB3");
+        tagNameMap.extendAndSet(NATIVE_CB4, "NATIVE_CB4");
+        tagNameMap.extendAndSet(NATIVE_CB5, "NATIVE_CB5");
+        tagNameMap.extendAndSet(MMAP_TABLE_WAL_READER, "MMAP_TABLE_WAL_READER");
         tagNameMap.extendAndSet(MMAP_TABLE_WAL_WRITER, "MMAP_TABLE_WALD_WRITER");
     }
 }

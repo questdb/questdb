@@ -377,8 +377,10 @@ public class UpdateOperator implements Closeable {
                     dstFixMem.putChar(masterRecord.getChar(i));
                     break;
                 case ColumnType.BYTE:
-                case ColumnType.BOOLEAN:
                     dstFixMem.putByte(masterRecord.getByte(i));
+                    break;
+                case ColumnType.BOOLEAN:
+                    dstFixMem.putBool(masterRecord.getBool(i));
                     break;
                 case ColumnType.GEOBYTE:
                     dstFixMem.putByte(masterRecord.getGeoByte(i));
