@@ -484,6 +484,11 @@ public final class TableUtils {
                 case '.':
                     if (i == 0 || i == l - 1 || tableName.charAt(i - 1) == '.') {
                         // Single dot in the middle is allowed only
+                        // Starting from . hides directory in Linux
+                        // Ending . can be trimmed by some Windows versions / file systems
+                        // Double, triple dot look suspicious
+                        // Single dot allowed as compatibility,
+                        // when someone uploads 'file_name.csv' the file name used as the table name
                         return false;
                     }
                     break;
@@ -509,8 +514,8 @@ public final class TableUtils {
                 case '\u0006':
                 case '\u0007':
                 case '\u0008':
-                case '\u0009': // Control characters, except \n
-                case '\u000B':
+                case '\u0009': // Control characters, except \n.
+                case '\u000B': // New line allowed for compatibility, there are tests to make sure it works
                 case '\u000c':
                 case '\r':
                 case '\u000e':

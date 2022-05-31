@@ -103,7 +103,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         );
 
         System.out.println("x: " + x);
-        System.out.println("y: " + x);
+        System.out.println("y: " + y);
 
         ECPrivateKey privateKey = (ECPrivateKey) keys.getPrivate();
         System.out.println("s: " +
