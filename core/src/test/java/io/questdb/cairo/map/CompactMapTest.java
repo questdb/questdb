@@ -446,7 +446,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 1024 * 1024,
                 new SingleColumnType(ColumnType.STRING),
                 new SingleColumnType(ColumnType.LONG),
-                (long) (N * loadFactor), loadFactor, MockHash::new, 1, Integer.MAX_VALUE)) {
+                (long) (N * loadFactor), loadFactor, mem -> new MockHash(mem), 1, Integer.MAX_VALUE)) {
 
             // assert that key capacity is what we expect, otherwise this test would be useless
             Assert.assertEquals(N, map.getActualCapacity());
