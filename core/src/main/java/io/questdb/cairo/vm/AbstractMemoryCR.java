@@ -112,8 +112,4 @@ public abstract class AbstractMemoryCR implements MemoryCR {
     public FilesFacade getFilesFacade() {
         return ff;
     }
-
-    public long getGrownLength() {
-        return grownLength;
-    }
 }

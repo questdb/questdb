@@ -42,20 +42,20 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
-public class QMapReadBenchmark {
+public class QMapReadRandomKeyBenchmark {
 
     private static final int N = 5000000;
     private static final double loadFactor = 0.5;
     private static final int M = 25;
     private static final Rnd rnd = new Rnd();
-    private static CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
-    private static FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
+    private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(QMapReadBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(5)
+                .include(QMapReadRandomKeyBenchmark.class.getSimpleName())
+                .warmupIterations(3)
+                .measurementIterations(3)
                 .forks(1)
                 .build();
 
@@ -93,8 +93,7 @@ public class QMapReadBenchmark {
             MapKey key = map.withKey();
             key.putStr(rnd.nextChars(M));
             MapValue values = key.createValue();
-            values.putLong(0, 20);
+            values.putLong(0, i);
         }
-
     }
 }
