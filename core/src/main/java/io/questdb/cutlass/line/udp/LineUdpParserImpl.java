@@ -338,6 +338,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     }
 
     private void parseFieldNameNewTable(CachedCharSequence token) {
+        if (!TableUtils.isValidColumnName(token, udpConfiguration.getMaxFileNameLength())) {
+            LOG.error().$("invalid column name [columnName=").$(token).I$();
+            switchModeToSkipLine();
+            return;
+        }
         columnNameType.add(token.getCacheAddress());
     }
 

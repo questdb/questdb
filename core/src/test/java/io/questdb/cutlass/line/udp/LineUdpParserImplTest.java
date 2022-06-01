@@ -882,6 +882,64 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testFailsToAddAColumnWhenAutoColumnAddDisabled() throws Exception {
+        try (
+                TableModel model = new TableModel(configuration, "t_ilp21",
+                        PartitionBy.NONE)
+                        .col("event", ColumnType.SHORT)
+                        .col("id", ColumnType.LONG256)
+                        .col("ts", ColumnType.TIMESTAMP)
+                        .col("float1", ColumnType.FLOAT)
+                        .col("int1", ColumnType.INT)
+                        .col("date1", ColumnType.DATE)
+                        .timestamp()) {
+            CairoTestUtils.create(model);
+        }
+
+        String lines = "t_ilp21 event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+        try {
+            assertThat("", lines, "t_ilp21", configuration, new DefaultLineUdpReceiverConfiguration() {
+                @Override
+                public boolean getAutoCreateNewColumns() {
+                    return false;
+                }
+            });
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "column does not exist, creating new columns is disabled [table=t_ilp21, columnName=byte1]");
+        }
+    }
+
+    @Test
+    public void testFailsToAddColumnWithInvalidName() throws Exception {
+        String lines = "t_ilp21 ..event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+
+        assertThat(
+                "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
+                        "12\t0x5a9796963abad00001e5f6bbdb38\t1465839830102400\t1000.0\t-500000\t1465839830102\t3\t2016-06-13T17:43:50.102800Z\n",
+                lines,
+                "t_ilp21",
+                configuration
+        );
+    }
+
+    @Test
+    public void testInvalidTableName() throws Exception {
+        String lines = "..\\/db,a=b event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000\n" +
+                "t_ilp21 event=12i,id=0x5a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1e3,int1=-500000i,date1=1465839830102i,byte1=3i 1465839830102800000\n";
+
+        assertThat(
+                "event\tid\tts\tfloat1\tint1\tdate1\tbyte1\ttimestamp\n" +
+                        "12\t0x5a9796963abad00001e5f6bbdb38\t1465839830102400\t1000.0\t-500000\t1465839830102\t3\t2016-06-13T17:43:50.102800Z\n",
+                lines,
+                "t_ilp21",
+                configuration
+        );
+    }
+
     private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
