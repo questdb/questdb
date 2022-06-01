@@ -27,6 +27,7 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
@@ -35,9 +36,10 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 
 //contiguous mapped readable 
-public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
+public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR, MemoryOM {
     private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
+    private long mapFileOffset;
 
     public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size, int memoryTag) {
         of(ff, name, 0, size, memoryTag);
@@ -75,6 +77,28 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
+    public void ofShift(FilesFacade ff, LPSZ name, long lo, long hi, int memoryTag, long opts) {
+        this.memoryTag = memoryTag;
+        openFile(ff, name);
+        if (hi < 0) {
+            hi = ff.length(fd);
+            if (hi < 0) {
+                throw CairoException.instance(ff.errno()).put("Could not get length: ").put(name);
+            }
+        }
+
+        this.mapFileOffset = Files.PAGE_SIZE * (lo / Files.PAGE_SIZE);
+        this.size = hi - mapFileOffset;
+        map(ff, name, this.size, this.mapFileOffset);
+    }
+
+    @Override
+    public long addressOf(long offset) {
+        assert offset - mapFileOffset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        return pageAddress + offset - mapFileOffset;
+    }
+
+    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         this.memoryTag = memoryTag;
         openFile(ff, name);
@@ -84,14 +108,20 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
                 throw CairoException.instance(ff.errno()).put("Could not get length: ").put(name);
             }
         }
-        map(ff, name, size);
+        this.mapFileOffset = 0L;
+        this.map(ff, name, size, mapFileOffset);
     }
 
-    protected void map(FilesFacade ff, LPSZ name, final long size) {
+    @Override
+    public long getOffset() {
+        return mapFileOffset;
+    }
+
+    protected void map(FilesFacade ff, LPSZ name, final long size, final long mapOffset) {
         this.size = size;
         if (size > 0) {
             try {
-                this.pageAddress = TableUtils.mapRO(ff, fd, size, memoryTag);
+                this.pageAddress = TableUtils.mapRO(ff, fd, size, mapOffset, memoryTag);
             } catch (Throwable e) {
                 close();
                 throw e;

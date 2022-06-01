@@ -31,10 +31,7 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.MemoryFCRImpl;
-import io.questdb.cairo.vm.MemoryFMCRImpl;
-import io.questdb.cairo.vm.NullMapWriter;
-import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.*;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.UpdateOperator;
@@ -2796,6 +2793,7 @@ public class TableWriter implements Closeable {
 
         for(int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int type = metadata.getColumnType(columnIndex);
+            o3RowCount = rowHi - rowLo;
             if (type > 0) {
                 int sizeBitsPow2 = ColumnType.pow2SizeOf(type);
                 if (columnIndex == timestampIndex) {
@@ -2803,26 +2801,48 @@ public class TableWriter implements Closeable {
                 }
 
                 if (!ColumnType.isVariableLength(type)) {
-                    MemoryCMR primary = Vm.getCMRInstance();
+                    MemoryCMRImpl primary = new MemoryCMRImpl();
 
                     dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    primary.of(configuration.getFilesFacade(), walPath, 0L, rowHi << sizeBitsPow2, MemoryTag.MMAP_TABLE_WRITER);
+                    primary.ofShift(
+                            configuration.getFilesFacade(),
+                            walPath,
+                            rowLo << sizeBitsPow2,
+                            rowHi << sizeBitsPow2,
+                            MemoryTag.MMAP_TABLE_WRITER,
+                            CairoConfiguration.O_NONE
+                    );
                     walPath.trimTo(walPathLen);
 
                     mappedColumns.add(primary);
                     mappedColumns.add(null);
                 } else {
                     sizeBitsPow2 = 3;
-                    MemoryCMR fixed = Vm.getCMRInstance();
-                    MemoryCMR var = Vm.getCMRInstance();
+                    MemoryCMRImpl fixed = new MemoryCMRImpl();
+                    MemoryCMRImpl var = new MemoryCMRImpl();
 
                     iFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    fixed.of(configuration.getFilesFacade(), walPath, 0L, (rowHi + 1) << sizeBitsPow2, MemoryTag.MMAP_TABLE_WRITER);
+                    fixed.ofShift(
+                            configuration.getFilesFacade(),
+                            walPath,
+                            rowLo << sizeBitsPow2,
+                            (rowHi + 1) << sizeBitsPow2,
+                            MemoryTag.MMAP_TABLE_WRITER,
+                            CairoConfiguration.O_NONE
+                    );
                     walPath.trimTo(walPathLen);
 
-                    long varLen = fixed.getLong(rowHi << sizeBitsPow2) + fixed.getLong(rowLo << sizeBitsPow2);
+                    long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
+                    long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
                     dFile(walPath,  metadata.getColumnName(columnIndex), -1L);
-                    var.of(configuration.getFilesFacade(), walPath, 0L, varLen, MemoryTag.MMAP_TABLE_WRITER);
+                    var.ofShift(
+                            configuration.getFilesFacade(),
+                            walPath,
+                            varOffset,
+                            varOffset + varLen,
+                            MemoryTag.MMAP_TABLE_WRITER,
+                            CairoConfiguration.O_NONE
+                    );
                     walPath.trimTo(walPathLen);
 
                     mappedColumns.add(var);
@@ -2837,12 +2857,14 @@ public class TableWriter implements Closeable {
             o3ColumnSources = mappedColumns;
             MemoryCR walTimestampColumn = mappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
             long timestampAddr;
-            o3RowCount = rowHi - rowLo;
+            long o3Lo = rowLo;
+            long o3Hi = rowHi;
+
             if (!ordered) {
                 final long timestampMemorySize = (rowHi - rowLo) << 4;
                 o3TimestampMem.jumpTo(timestampMemorySize);
                 long destTimestampAddr = o3TimestampMem.getAddress();
-                Vect.memcpy(destTimestampAddr, walTimestampColumn.addressOf(rowLo), timestampMemorySize);
+                Vect.memcpy(destTimestampAddr, walTimestampColumn.addressOf(rowLo << 4), timestampMemorySize);
                 if (rowHi - rowLo > 600 || !o3QuickSortEnabled) {
                     o3TimestampMemCpy.jumpTo(timestampMemorySize);
                     Vect.radixSortLongIndexAscInPlace(destTimestampAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
@@ -2851,11 +2873,16 @@ public class TableWriter implements Closeable {
                 }
 
                 o3Sort(destTimestampAddr, timestampIndex, rowHi - rowLo);
-                timestampAddr = destTimestampAddr - (rowLo << 4); // shift
+                timestampAddr = destTimestampAddr;
+
+                // Sorted data is now sorted in memory copy of the data from mmap files
+                // Row indexes start from 0, not rowLo
+                o3Hi = rowHi - rowLo;
+                o3Lo = 0L;
             } else {
                 timestampAddr = walTimestampColumn.addressOf(0);
             }
-            processO3Append(o3LagRowCount, timestampIndex, timestampAddr, rowHi, o3TimestampMin, o3TimestampMax, !ordered, rowLo);
+            processO3Append(o3LagRowCount, timestampIndex, timestampAddr, o3Hi, o3TimestampMin, o3TimestampMax, !ordered, o3Lo);
         } finally {
             finishO3Append(o3LagRowCount);
             o3ColumnSources = o3Columns;
@@ -3920,8 +3947,8 @@ public class TableWriter implements Closeable {
         final int columnOffset = getPrimaryColumnIndex(columnIndex);
         final MemoryCR mem = o3ColumnSources.getQuick(columnOffset);
         final MemoryCARW mem2 = o3Columns2.getQuick(columnOffset);
-        final long src = mem.addressOf(0);
         final int shl = ColumnType.pow2SizeOf(columnType);
+        final long src = mem.addressOf(0);
         mem2.jumpTo(valueCount << shl);
         final long tgtDataAddr = mem2.addressOf(0);
         switch (shl) {

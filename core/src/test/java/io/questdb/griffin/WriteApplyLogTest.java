@@ -34,127 +34,21 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
-import static io.questdb.griffin.AbstractO3Test.sink2;
-
 public class WriteApplyLogTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(WriteApplyLogTest.class);
 
     @Test
-    public void testApplyInOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            long tsIncrement = 5 * 60 * 1_000_000L;
-            int count1 = 100;
-            int count2 = 140;
-            String startTime1 = "1970-01-06T18:56";
-            compile(
-                    "create table wal_all as (" +
-                            generateTableSelect(tsIncrement, count1, startTime1, 0L) +
-                            ")",
-                    sqlExecutionContext
-            );
-
-            String startTime2 = "1970-01-07T00:32";
-            compile(
-                    "insert into wal_all\n" +
-                            generateTableSelect(tsIncrement, count2, startTime2, count1),
-                    sqlExecutionContext
-            );
-
-            // Create talbe to compare to without Long128 column
-            compile("create table wal_clean as (select * from wal_all)");
-            compile("alter table wal_clean drop column ts");
-            compile("alter table wal_clean rename column ts1 to ts");
-            compile("create table x as (select * from wal_clean where 1 != 1) timestamp(ts) partition by DAY");
-
-            try (
-                    TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
-                    Path walPath = new Path()
-            ) {
-                walPath.of(configuration.getRoot()).concat("wal_all").concat("default");
-                long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
-                long timestampHi = timestampLo + count1 * tsIncrement;
-
-                Log2TableWriter log2TableWriter = new Log2TableWriter();
-
-                LOG.info().$("=== Applying WAL transaction ===").$();
-                log2TableWriter.applyWriteAheadLogData(writer, walPath, 0, count1, true, timestampLo, timestampHi);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "wal_clean limit " + count1, "x", LOG);
-
-                // Apply second WAL segment
-                LOG.info().$("=== Applying WAL transaction 2 ===").$();
-                long timestampLo2 = IntervalUtils.parseFloorPartialDate(startTime2);
-                long timestampHi2 = timestampLo2 + count2 * tsIncrement;
-
-                log2TableWriter.applyWriteAheadLogData(writer, walPath, count1, count1 + count2, true, timestampLo2, timestampHi2);
-
-                compareTables("select * from wal_clean order by ts", "x");
-            }
-        });
+    public void testApplyInOrder100k() throws Exception {
+        testApplyInOrder(100_000);
     }
 
     @Test
-    public void testApplyOutOfOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            long tsIncrement = 50 * 60 * 1_000_000L;
-            int count1 = 10;
-            int count2 = 14;
-            String startTime1 = "1970-01-06T18:56";
-            compile(
-                    "create table wal_all as (" +
-                            generateRandomOrderTableSelect(tsIncrement, count1, startTime1, 0L) +
-                            ")",
-                    sqlExecutionContext
-            );
-
-            String startTime2 = "1970-01-07T00:32";
-            compile(
-                    "insert into wal_all\n" +
-                            generateRandomOrderTableSelect(tsIncrement, count2, startTime2, count1),
-                    sqlExecutionContext
-            );
-
-            // Create talbe to compare to without Long128 column
-            compile("create table wal_clean as (select * from wal_all)");
-            compile("alter table wal_clean drop column ts");
-            compile("alter table wal_clean rename column ts1 to ts");
-            compile("create table x as (select * from wal_clean where 1 != 1) timestamp(ts) partition by DAY");
-
-            try (
-                    TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
-                    Path walPath = new Path()
-            ) {
-                walPath.of(configuration.getRoot()).concat("wal_all").concat("default");
-                long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
-                long timestampHi = timestampLo + count1 * tsIncrement;
-
-                Log2TableWriter log2TableWriter = new Log2TableWriter();
-
-                LOG.info().$("=== Applying WAL transaction ===").$();
-                log2TableWriter.applyWriteAheadLogData(writer, walPath, 0, count1, false, timestampLo, timestampHi);
-
-                compareTables("select * from (wal_clean limit " + count1 + ") order by ts", "x");
-//                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select * from (wal_clean limit " + count1 + ") order by ts", "x", LOG);
-
-                // Apply second WAL segment
-//                LOG.info().$("=== Applying WAL transaction 2 ===").$();
-//                long timestampLo2 = IntervalUtils.parseFloorPartialDate(startTime2);
-//                long timestampHi2 = timestampLo2 + count2 * tsIncrement;
-//
-//                log2TableWriter.applyWriteAheadLogData(writer, walPath, count1, count1 + count2, false, timestampLo2, timestampHi2);
-//
-//                compareTables("select * from wal_clean order by ts", "x");
-            }
-        });
+    public void testApplyOutOfOrder100k() throws Exception {
+        testApplyOutOfOrder(100_000);
     }
 
     private void compareTables(String expected, String actual) throws SqlException {
-        sink.clear();
-        TestUtils.printSql(compiler, sqlExecutionContext, expected, sink);
-
-        sink2.clear();
-        TestUtils.printSql(compiler, sqlExecutionContext, actual, sink2);
-
-        TestUtils.assertEquals(sink, sink2);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expected, actual, LOG);
     }
 
     private String generateRandomOrderTableSelect(long tsIncrement, int count, String startTime, long tsStartSequence) throws SqlException {
@@ -199,7 +93,109 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 " from long_sequence(" + count1 + ")";
     }
 
-    static {
-        LogFactory.configureSync();
+    private void testApplyInOrder(int pointsMultiplier) throws Exception {
+        assertMemoryLeak(() -> {
+            long tsIncrement = 100 * 60 * 1_000_000L / pointsMultiplier;
+            int count1 = 5 * pointsMultiplier;
+            int count2 = 7 * pointsMultiplier;
+            String startTime1 = "1970-01-06T18:56:03";
+            compile(
+                    "create table wal_all as (" +
+                            generateTableSelect(tsIncrement, count1, startTime1, 0L) +
+                            ")",
+                    sqlExecutionContext
+            );
+
+            String startTime2 = "1970-01-07T00:32:31";
+            compile(
+                    "insert into wal_all\n" +
+                            generateTableSelect(tsIncrement, count2, startTime2, count1),
+                    sqlExecutionContext
+            );
+
+            // Create talbe to compare to without Long128 column
+            compile("create table wal_clean as (select * from wal_all)");
+            compile("alter table wal_clean drop column ts");
+            compile("alter table wal_clean rename column ts1 to ts");
+            compile("create table x as (select * from wal_clean where 1 != 1) timestamp(ts) partition by DAY");
+
+            try (
+                    TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
+                    Path walPath = new Path()
+            ) {
+                walPath.of(configuration.getRoot()).concat("wal_all").concat("default");
+                long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
+                long timestampHi = timestampLo + count1 * tsIncrement;
+
+                Log2TableWriter log2TableWriter = new Log2TableWriter();
+
+                LOG.info().$("=== Applying WAL transaction ===").$();
+                log2TableWriter.applyWriteAheadLogData(writer, walPath, 0, count1, true, timestampLo, timestampHi);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "wal_clean limit " + count1, "x", LOG);
+
+                // Apply second WAL segment
+                LOG.info().$("=== Applying WAL transaction 2 ===").$();
+                long timestampLo2 = IntervalUtils.parseFloorPartialDate(startTime2);
+                long timestampHi2 = timestampLo2 + count2 * tsIncrement;
+
+                log2TableWriter.applyWriteAheadLogData(writer, walPath, count1, count1 + count2, true, timestampLo2, timestampHi2);
+
+                compareTables("select * from wal_clean order by ts", "x");
+            }
+        });
+    }
+
+    private void testApplyOutOfOrder(int pointsMultiplier) throws Exception {
+        assertMemoryLeak(() -> {
+            long tsIncrement = 100 * 60 * 1_000_000L / pointsMultiplier;
+            int count1 = 5 * pointsMultiplier;
+            int count2 = 7 * pointsMultiplier;
+            String startTime1 = "1970-01-06T18:56:03";
+            compile(
+                    "create table wal_all as (" +
+                            generateRandomOrderTableSelect(tsIncrement, count1, startTime1, 0L) +
+                            ")",
+                    sqlExecutionContext
+            );
+
+            String startTime2 = "1970-01-07T00:32:31";
+            compile(
+                    "insert into wal_all\n" +
+                            generateRandomOrderTableSelect(tsIncrement, count2, startTime2, count1),
+                    sqlExecutionContext
+            );
+
+            // Create talbe to compare to without Long128 column
+            compile("create table wal_clean as (select * from wal_all)");
+            compile("alter table wal_clean drop column ts");
+            compile("alter table wal_clean rename column ts1 to ts");
+            compile("create table x as (select * from wal_clean where 1 != 1) timestamp(ts) partition by DAY");
+
+            try (
+                    TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "x", "test");
+                    Path walPath = new Path()
+            ) {
+                walPath.of(configuration.getRoot()).concat("wal_all").concat("default");
+                long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
+                long timestampHi = timestampLo + count1 * tsIncrement;
+
+                Log2TableWriter log2TableWriter = new Log2TableWriter();
+
+                LOG.info().$("=== Applying WAL transaction ===").$();
+                log2TableWriter.applyWriteAheadLogData(writer, walPath, 0, count1, false, timestampLo, timestampHi);
+
+                compareTables("select * from (wal_clean limit " + count1 + ") order by ts", "x");
+//                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select * from (wal_clean limit " + count1 + ") order by ts", "x", LOG);
+
+                // Apply second WAL segment
+                LOG.info().$("=== Applying WAL transaction 2 ===").$();
+                long timestampLo2 = IntervalUtils.parseFloorPartialDate(startTime2);
+                long timestampHi2 = timestampLo2 + count2 * tsIncrement;
+
+                log2TableWriter.applyWriteAheadLogData(writer, walPath, count1, count1 + count2, false, timestampLo2, timestampHi2);
+
+                compareTables("select * from wal_clean order by ts", "x");
+            }
+        });
     }
 }

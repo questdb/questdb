@@ -33,17 +33,16 @@ public interface MemoryOM extends MemoryM {
      *
      * @param ff                the files facade - an abstraction used to simulate failures
      * @param name              the name of the file
-     * @param extendSegmentSize for those implementations that can need to extend mapped memory beyond available file size
      *                          should use this parameter as the increment size
      * @param offset            mapped memory file offet
      * @param size              size of the initial mapped memory when smaller than the actual file - offset
      * @param memoryTag         memory tag for diagnostics
      *
      */
-    void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long offset, long size, int memoryTag, long opts);
+    void ofShift(FilesFacade ff, LPSZ name, long offset, long size, int memoryTag, long opts);
 
     default void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
-        of(ff, name, extendSegmentSize, 0L, size, memoryTag, opts);
+        ofShift(ff, name, extendSegmentSize, size, memoryTag, opts);
     }
 
     long getOffset();
