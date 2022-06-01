@@ -1345,6 +1345,37 @@ public class FileSplitterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testImportCsvIntoExistingTableWithSymbol() throws Exception {
+        executeWithPool(8, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+
+            final String tableName = "tableName";
+            compiler.compile("create table " + tableName + " ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
+
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(10);
+                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.parseStructure();
+                indexer.process();
+            }
+            assertQuery("line\tts\td\tdescription\n" +
+                            "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
+                            "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
+                            "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
+                            "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
+                            "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
+                            "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
+                            "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
+                            "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
+                            "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
+                            "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                    "select line, ts, d, description from " + tableName + " limit -10",
+                    "ts", true, false, true);
+        });
+    }
+
+    @Test
     public void testImportCsvIntoNewTable() throws Exception {
         executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();

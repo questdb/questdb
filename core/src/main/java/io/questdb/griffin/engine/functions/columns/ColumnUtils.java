@@ -24,6 +24,17 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.std.Unsafe;
+
 public class ColumnUtils {
     static final int STATIC_COLUMN_COUNT = 32;
+
+    public static void symbolColumnUpdateKeys(long columnMemory, long columnMemorySize, long remapTableMemory, long remapMemorySize) {
+        final sun.misc.Unsafe unsafe = Unsafe.getUnsafe();
+        for (int offset = 0; offset < columnMemorySize; offset += Integer.BYTES) {
+            final int oldKey = unsafe.getInt(columnMemory + offset);
+            assert (long) oldKey * Integer.BYTES < remapMemorySize;
+            unsafe.putInt(columnMemory + offset, unsafe.getInt(remapTableMemory + (long) oldKey * Integer.BYTES));
+        }
+    }
 }

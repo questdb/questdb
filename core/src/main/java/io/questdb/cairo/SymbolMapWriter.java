@@ -281,4 +281,35 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     public void updateNullFlag(boolean flag) {
         offsetMem.putBool(HEADER_NULL_FLAG, flag);
     }
+
+    public static boolean mergeSymbols(final MapWriter dst, final SymbolMapReader src) {
+        boolean remapped = false;
+        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
+            if (dst.put(src.valueOf(srcId)) != srcId) {
+                remapped = true;
+            }
+        }
+        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
+        return remapped;
+    }
+
+    public static boolean mergeSymbols(final MapWriter dst, final SymbolMapReader src, final MemoryMARW map) {
+        boolean remapped = false;
+        map.jumpTo(0);
+        for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
+            final CharSequence v = src.valueOf(srcId);
+            int dstId = dst.put(src.valueOf(srcId));
+            map.putInt(dstId);
+            if (dstId != srcId) {
+                remapped = true;
+            }
+        }
+        dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
+        return remapped;
+    }
+
+    @Override
+    public boolean getNullFlag() {
+        return offsetMem.getBool(HEADER_NULL_FLAG);
+    }
 }

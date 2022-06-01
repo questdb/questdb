@@ -67,6 +67,7 @@ public final class TableUtils {
     public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
+    public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final String DEFAULT_PARTITION_NAME = "default";

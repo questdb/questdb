@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableWriter;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
@@ -33,6 +35,8 @@ public class TextImportTask {
     public static final byte PHASE_BOUNDARY_CHECK = 1;
     public static final byte PHASE_INDEXING = 2;
     public static final byte PHASE_PARTITION_IMPORT = 3;
+    public static final byte PHASE_SYMBOL_TABLE_MERGE = 4;
+    public static final byte PHASE_UPDATE_SYMBOL_KEYS = 5;
 
     private CountDownLatchSPI doneLatch;
     private byte phase;
@@ -44,6 +48,16 @@ public class TextImportTask {
     private LongList chunkStats;
     private LongList partitionKeys;
     private ObjList<CharSequence> partitionNames;
+    private long partitionSize;
+    private long partitionTimestamp;
+    private CharSequence symbolColumnName;
+    private int symbolCount;
+    private CairoConfiguration cfg;
+    private CharSequence tableName;
+    private int columnIndex;
+    private int tmpTableCount;
+    private int partitionBy;
+    private TableWriter writer;
 
     public void of(
             CountDownLatchSPI doneLatch,
@@ -85,6 +99,45 @@ public class TextImportTask {
         this.partitionNames = partitionNames;
     }
 
+    public void of(CountDownLatchSPI doneLatch,
+                   byte phase,
+                   FileIndexer.TaskContext context,
+                   int index,
+                   long partitionSize,
+                   long partitionTimestamp,
+                   CharSequence symbolColumnName,
+                   int symbolCount) {
+        this.doneLatch = doneLatch;
+        this.phase = phase;
+        this.context = context;
+        this.index = index;
+        this.partitionSize = partitionSize;
+        this.partitionTimestamp = partitionTimestamp;
+        this.symbolColumnName = symbolColumnName;
+        this.symbolCount = symbolCount;
+    }
+
+    public void of(CountDownLatchSPI doneLatch,
+                   byte phase,
+                   final CairoConfiguration cfg,
+                   final TableWriter writer,
+                   final CharSequence tableName,
+                   final CharSequence symbolColumnName,
+                   int columnIndex,
+                   int tmpTableCount,
+                   int partitionBy
+    ) {
+        this.doneLatch = doneLatch;
+        this.phase = phase;
+        this.cfg = cfg;
+        this.writer = writer;
+        this.tableName = tableName;
+        this.symbolColumnName = symbolColumnName;
+        this.columnIndex = columnIndex;
+        this.tmpTableCount = tmpTableCount;
+        this.partitionBy = partitionBy;
+    }
+
     public boolean run() {
         try {
             if (phase == PHASE_BOUNDARY_CHECK) {
@@ -93,6 +146,10 @@ public class TextImportTask {
                 context.buildIndexStage(lo, hi, lineNumber, chunkStats, index, partitionKeys);
             } else if (phase == PHASE_PARTITION_IMPORT) {
                 context.importPartitionStage(index, lo, hi, partitionNames);
+            } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
+                FileIndexer.mergeColumnSymbolTables(cfg, writer, tableName, symbolColumnName, columnIndex, tmpTableCount, partitionBy);
+            } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
+                context.updateSymbolKeys(index, partitionSize, partitionTimestamp, symbolColumnName, symbolCount);
             } else {
                 throw new RuntimeException("Unexpected phase " + phase);
             }
@@ -102,7 +159,6 @@ public class TextImportTask {
         } finally {
             doneLatch.countDown();
         }
-        
         return true;
     }
 }

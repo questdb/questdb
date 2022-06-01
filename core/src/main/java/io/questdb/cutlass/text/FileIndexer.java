@@ -28,10 +28,12 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.columns.ColumnUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -49,6 +51,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.io.IOException;
+
 
 /**
  * Class is responsible for pre-processing of large unordered import files meant to go into partitioned tables.
@@ -118,6 +121,7 @@ public class FileIndexer implements Closeable, Mutable {
     private final ObjList<LongList> partitionKeys = new ObjList<>();
     private final StringSink partitionNameSink = new StringSink();
     private final ObjList<CharSequence> partitionNames = new ObjList<>();
+    private final IntList taskDistribution = new IntList();
 
     private final DateLocale defaultDateLocale;
     private final DirectCharSink utf8Sink;
@@ -206,7 +210,44 @@ public class FileIndexer implements Closeable, Mutable {
         this.textDelimiterScanner.close();
     }
 
-    public void importPartitions() {
+    public static void mergeColumnSymbolTables(final CairoConfiguration cfg,
+                                               final TableWriter writer,
+                                               final CharSequence table,
+                                               final CharSequence column,
+                                               int columnIndex,
+                                               int tmpTableCount,
+                                               int partitionBy
+    ) {
+        final CharSequence root = cfg.getInputWorkRoot();
+        final FilesFacade ff = cfg.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(root).concat(table);
+            int plen = path.length();
+            for (int i = 0; i < tmpTableCount; i++) {
+                path.trimTo(plen);
+                path.put("_").put(i);
+                try (TxReader txFile = new TxReader(ff).ofRO(path, partitionBy)) {
+                    txFile.unsafeLoadAll();
+                    int symbolCount = txFile.getSymbolValueCount(columnIndex);
+                    if (symbolCount > 0) {
+                        try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(cfg, path, column, TableUtils.COLUMN_NAME_TXN_NONE, symbolCount)) {
+                            try (MemoryCMARW mem = Vm.getSmallCMARWInstance(
+                                    ff,
+                                    path.concat(column).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),
+                                    MemoryTag.MMAP_DEFAULT,
+                                    cfg.getWriterFileOpenOpts()
+                            )
+                            ) {
+                                SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(columnIndex), reader, mem);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public IntList importPartitions() {
         LOG.info().$("Started index merge and partition load").$();
 
         final int partitionCount = partitionNames.size();
@@ -215,11 +256,11 @@ public class FileIndexer implements Closeable, Mutable {
 
         int queuedCount = 0;
         doneLatch.reset();
+        taskDistribution.clear();
         for (int i = 0; i < taskCount; ++i) {
             final TaskContext context = contextObjList.get(i);
             final int lo = i * chunkSize;
             final int hi = Integer.min(lo + chunkSize, partitionCount);
-
             final long seq = pubSeq.next();
             if (seq < 0) {
                 context.importPartitionStage(i, lo, hi, partitionNames);
@@ -228,11 +269,100 @@ public class FileIndexer implements Closeable, Mutable {
                 pubSeq.done(seq);
                 queuedCount++;
             }
+            taskDistribution.add(i);
+            taskDistribution.add(lo);
+            taskDistribution.add(hi);
         }
 
         waitForWorkers(queuedCount);
 
         LOG.info().$("Finished index merge and partition load").$();
+        return taskDistribution;
+    }
+
+    public void parallelMergeSymbolTables(final int tmpTableCount, final TableWriter writer) {
+        LOG.info().$("Started symbol table merge").$();
+//        createTableDir();
+
+        final ObjList<CharSequence> names = textMetadataDetector.getColumnNames();
+        final ObjList<TypeAdapter> types = textMetadataDetector.getColumnTypes();
+
+        int queuedCount = 0;
+        doneLatch.reset();
+
+        int symbolColumnIndex = -1;
+        for (int c = 0, size = names.size(); c < size; c++) {
+            // run in parallel
+            if (ColumnType.isSymbol(types.get(c).getType())) {
+                symbolColumnIndex++;
+                final CharSequence symbolColumnName = names.get(c);
+                final long seq = pubSeq.next();
+                if (seq < 0) {
+                    FileIndexer.mergeColumnSymbolTables(configuration, writer, tableName, symbolColumnName, symbolColumnIndex, tmpTableCount, partitionBy);
+                } else {
+                    queue.get(seq).of(doneLatch,
+                            TextImportTask.PHASE_SYMBOL_TABLE_MERGE,
+                            configuration,
+                            writer,
+                            tableName,
+                            symbolColumnName,
+                            symbolColumnIndex,
+                            tmpTableCount,
+                            partitionBy);
+                    pubSeq.done(seq);
+                    queuedCount++;
+                }
+            }
+        }
+
+        waitForWorkers(queuedCount);
+        LOG.info().$("Finished symbol table merge").$();
+    }
+
+    public void parallelUpdateSymbolKeys(int tmpTableCount) {
+        LOG.info().$("Started symbol keys update").$();
+        final ObjList<CharSequence> names = textMetadataDetector.getColumnNames();
+        final ObjList<TypeAdapter> types = textMetadataDetector.getColumnTypes();
+
+        int queuedCount = 0;
+        doneLatch.reset();
+        for (int t = 0; t < tmpTableCount; ++t) {
+            final TaskContext context = contextObjList.get(t);
+            tmpPath.of(inputWorkRoot).concat(tableName).put("_").put(t);
+            try (TxReader txFile = new TxReader(ff).ofRO(tmpPath, partitionBy)) {
+                txFile.unsafeLoadAll();
+                final int partitionCount = txFile.getPartitionCount();
+                for (int p = 0; p < partitionCount; p++) {
+                    final long partitionSize = txFile.getPartitionSize(p);
+                    final long partitionTimestamp = txFile.getPartitionTimestamp(p);
+                    int symbolColumnIndex = 0;
+                    for (int c = 0, size = names.size(); c < size; c++) {
+                        if (ColumnType.isSymbol(types.get(c).getType())) {
+                            final CharSequence symbolColumnName = names.get(c);
+                            final int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex++);
+                            final long seq = pubSeq.next();
+                            if (seq < 0) {
+                                context.updateSymbolKeys(t, partitionSize, partitionTimestamp, symbolColumnName, symbolCount);
+                            } else {
+                                queue.get(seq).of(doneLatch,
+                                        TextImportTask.PHASE_UPDATE_SYMBOL_KEYS,
+                                        context,
+                                        t,
+                                        partitionSize,
+                                        partitionTimestamp,
+                                        symbolColumnName,
+                                        symbolCount);
+                                pubSeq.done(seq);
+                                queuedCount++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        waitForWorkers(queuedCount);
+        LOG.info().$("Finished symbol keys update").$();
     }
 
     public void of(CharSequence tableName, CharSequence inputFileName, int partitionBy, byte columnDelimiter, CharSequence timestampColumn, CharSequence tsFormat, boolean forceHeader) {
@@ -285,9 +415,8 @@ public class FileIndexer implements Closeable, Mutable {
                     lexer.of(columnDelimiter);
                     lexer.setSkipLinesWithExtraValues(false);
 
-                    ObjList<CharSequence> names = new ObjList<>();
-                    ObjList<TypeAdapter> types = new ObjList<>();
-
+                    final ObjList<CharSequence> names = new ObjList<>();
+                    final ObjList<TypeAdapter> types = new ObjList<>();
                     if (timestampColumn != null && timestampAdapter != null) {
                         names.add(timestampColumn);
                         types.add(timestampAdapter);
@@ -336,25 +465,46 @@ public class FileIndexer implements Closeable, Mutable {
             throw CairoException.instance(ff.errno()).put("Can't open input file").put(inputFilePath);
         }
 
-        try {
+        try (TableWriter writer = cairoEngine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, LOCK_REASON)) {
             final long fileLength = ff.length(fd);
             if (fileLength < 1) {
                 LOG.info().$("Ignoring file because it's empty. Path=").$(inputFilePath).$();
                 return;
             }
-
-            try (TableWriter writer = cairoEngine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, LOCK_REASON)) {
-                try {
-                    findChunkBoundaries(fd);
-                    indexChunks();
-                    importPartitions();
-                    attachPartititons(writer);
-                } catch (Exception e) {
-                    LOG.error().$(e).$();
-                }
-            }
+            findChunkBoundaries(fd);
+            indexChunks();
+            IntList taskDistribution = importPartitions();
+            int taskCount = taskDistribution.size() / 3;
+            parallelMergeSymbolTables(taskCount, writer);
+            parallelUpdateSymbolKeys(taskCount);
+            movePartitionsToDst(taskDistribution, taskCount);
+            attachPartititons(writer);
+        } catch (Exception e) {
+            LOG.error().$(e).$();
         } finally {
             ff.close(fd);
+        }
+    }
+
+    private void movePartitionsToDst(IntList taskDistribution, int taskCount) {
+        for (int i = 0; i < taskCount; i++) {
+            int index = taskDistribution.getQuick(i * 3);
+            int lo = taskDistribution.getQuick(i * 3 + 1);
+            int hi = taskDistribution.getQuick(i * 3 + 2);
+            final Path srcPath = Path.getThreadLocal(configuration.getInputWorkRoot()).concat(tableName).put("_").put(index);
+            final Path dstPath = Path.getThreadLocal2(configuration.getRoot()).concat(tableName);
+            int srcPlen = srcPath.length();
+            int dstPlen = dstPath.length();
+            for (int j = lo; j < hi; j++) {
+                final CharSequence partitionName = partitionNames.get(j);
+                srcPath.trimTo(srcPlen);
+                srcPath.concat(partitionName).$();
+                dstPath.trimTo(dstPlen);
+                dstPath.concat(partitionName).$();
+                if (!ff.rename(srcPath, dstPath)) {
+                    LOG.error().$("Can't move ").$(srcPath).$(" to ").$(dstPath).$(" errno=").$(ff.errno()).$();
+                }
+            }
         }
     }
 
@@ -884,15 +1034,44 @@ public class FileIndexer implements Closeable, Mutable {
                     lexer.parseLast();
                     writer.commit(CommitMode.SYNC);
                 }
-
             }
-            for (int i = (int) lo; i < hi; i++) {
-                final CharSequence partitionName = partitionNames.get(i);
-                movePartitionToDst(inputWorkRoot,
-                        currentTableName,
-                        partitionName,
-                        cairoEngine.getConfiguration().getRoot(),
-                        tableName);
+        }
+
+        public void updateSymbolKeys(int index, long partitionSize, long partitionTimestamp, CharSequence symbolColumnName, int symbolCount) {
+            Path path = Path.getThreadLocal(inputWorkRoot);
+            path.concat(tableName).put("_").put(index);
+            int plen = path.length();
+            PartitionBy.setSinkForPartition(path.slash(), partitionBy, partitionTimestamp, false);
+            path.concat(symbolColumnName).put(TableUtils.FILE_SUFFIX_D);
+
+            long columnMemory = 0;
+            long columnMemorySize = 0;
+            long remapTableMemory = 0;
+            long remapTableMemorySize = 0;
+            try {
+                long fd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+                columnMemorySize = ff.length(fd);
+                columnMemory = TableUtils.mapRW(ff, fd, columnMemorySize, MemoryTag.MMAP_DEFAULT);
+                ff.close(fd);
+
+                path.trimTo(plen);
+                path.concat(symbolColumnName).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX);
+
+                fd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+                remapTableMemorySize = ff.length(fd);
+                remapTableMemory = TableUtils.mapRW(ff, fd, remapTableMemorySize, MemoryTag.MMAP_DEFAULT);
+                ff.close(fd);
+
+                long columnMemSize = partitionSize * Integer.BYTES;
+                long remapMemSize = (long) symbolCount * Integer.BYTES;
+                ColumnUtils.symbolColumnUpdateKeys(columnMemory, columnMemSize, remapTableMemory, remapMemSize);
+            } finally {
+                if (columnMemory > 0) {
+                    ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_DEFAULT);
+                }
+                if (remapTableMemory > 0) {
+                    ff.munmap(remapTableMemory, remapTableMemorySize, MemoryTag.MMAP_DEFAULT);
+                }
             }
         }
 
@@ -947,20 +1126,6 @@ public class FileIndexer implements Closeable, Mutable {
                     final long size = mergeIndexes.get(2 * i + 1) * FileSplitter.INDEX_ENTRY_SIZE;
                     ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
                 }
-                //todo: remove all index chunks
-            }
-        }
-
-        private void movePartitionToDst(final CharSequence srcRoot,
-                                        final CharSequence srcTableName,
-                                        final CharSequence partitionFolder,
-                                        final CharSequence dstRoot,
-                                        final CharSequence dstTableName) {
-            final CharSequence root = sqlExecutionContext.getCairoEngine().getConfiguration().getRoot();
-            final Path srcPath = Path.getThreadLocal(srcRoot).concat(srcTableName).concat(partitionFolder).$();
-            final Path dstPath = Path.getThreadLocal2(dstRoot).concat(dstTableName).concat(partitionFolder).$();
-            if (!ff.rename(srcPath, dstPath)) {
-                LOG.error().$("Can't move ").$(srcPath).$(" to ").$(dstPath).$(" errno=").$(ff.errno()).$();
             }
         }
 
