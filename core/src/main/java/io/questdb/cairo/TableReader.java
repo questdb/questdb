@@ -697,23 +697,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txnScoreboard;
     }
 
-    private void handleMetadataLoadException(long deadline, CairoException ex) {
-        // This is temporary solution until we can get multiple version of metadata not overwriting each other
-        if (isMetaFileMissingFileSystemError(ex)) {
-            if (configuration.getMicrosecondClock().getTicks() < deadline) {
-                LOG.info().$("error reloading metadata [table=").$(tableName)
-                        .$(", errno=").$(ex.getErrno())
-                        .$(", error=").$(ex.getFlyweightMessage()).I$();
-                Os.pause();
-            } else {
-                LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
-                throw CairoException.instance(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
-            }
-        } else {
-            throw ex;
-        }
-    }
-
     private void insertPartition(int partitionIndex, long timestamp) {
         final int columnBase = getColumnBase(partitionIndex);
         final int columnSlotSize = getColumnBase(1);
@@ -741,11 +724,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return symbolMapReaders.getQuick(columnIndex).isCached();
     }
 
-    private boolean isMetaFileMissingFileSystemError(CairoException ex) {
-        int errno = ex.getErrno();
-        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.METADATA_VALIDATION;
-    }
-
     @NotNull
     // this method is not thread safe
     private SymbolMapReaderImpl newSymbolMapReader(int symbolColumnIndex, int columnIndex) {
@@ -770,7 +748,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 try {
                     return metadata.of(path, ColumnType.VERSION);
                 } catch (CairoException ex) {
-                    handleMetadataLoadException(deadline, ex);
+                    TableUtils.handleMetadataLoadException(configuration, tableName, deadline, ex);
                 }
             }
         } finally {
@@ -1100,7 +1078,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other
-                handleMetadataLoadException(deadline, ex);
+                TableUtils.handleMetadataLoadException(configuration, tableName, deadline, ex);
                 continue;
             }
 

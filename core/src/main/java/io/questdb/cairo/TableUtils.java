@@ -72,7 +72,6 @@ public final class TableUtils {
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
 
-    public static final String FILE_SUFFIX_WALD = ".wald";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final String DEFAULT_PARTITION_NAME = "default";
@@ -365,9 +364,58 @@ public final class TableUtils {
         return path.$();
     }
 
-    public static LPSZ walDFile(Path path, CharSequence columnName) {
-        path.concat(columnName).put(FILE_SUFFIX_WALD);
-        return path.$();
+    public static LPSZ dFile(Path path, CharSequence columnName) {
+        return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
+    }
+
+    public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
+        int l = seq.length();
+        if (l > fsFileNameLimit) {
+            // Most file systems don't support files name longer than 255 bytes
+            return false;
+        }
+
+        for (int i = 0; i < l; i++) {
+            char c = seq.charAt(i);
+            switch (c) {
+                case '?':
+                case '.':
+                case ',':
+                case '\'':
+                case '\"':
+                case '\\':
+                case '/':
+                case ':':
+                case ')':
+                case '(':
+                case '+':
+                case '-':
+                case '*':
+                case '%':
+                case '~':
+                case '\u0000':
+                case '\u0001':
+                case '\u0002':
+                case '\u0003':
+                case '\u0004':
+                case '\u0005':
+                case '\u0006':
+                case '\u0007':
+                case '\u0008':
+                case '\u0009': // Control characters, except \n
+                case '\u000B':
+                case '\u000c':
+                case '\r':
+                case '\u000e':
+                case '\u000f':
+                case '\u007f':
+                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+                    return false;
+                default:
+                    break;
+            }
+        }
+        return l > 0;
     }
 
     public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
@@ -443,39 +491,64 @@ public final class TableUtils {
         return path.$();
     }
 
-    public static LPSZ walDIFile(Path path, CharSequence columnName) {
-        path.concat(columnName).put(FILE_SUFFIX_I);
-        return path.$();
+    public static LPSZ iFile(Path path, CharSequence columnName) {
+        return iFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
-
-    public static boolean isValidColumnName(CharSequence seq) {
-        for (int i = 0, l = seq.length(); i < l; i++) {
-            char c = seq.charAt(i);
+    public static boolean isValidTableName(CharSequence tableName, int fsFileNameLimit) {
+        int l = tableName.length();
+        if (l > fsFileNameLimit) {
+            // Most file systems don't support files name longer than 255 bytes
+            return false;
+        }
+        for (int i = 0; i < l; i++) {
+            char c = tableName.charAt(i);
             switch (c) {
-                case '?':
                 case '.':
+                    if (i == 0 || i == l - 1 || tableName.charAt(i - 1) == '.') {
+                        // Single dot in the middle is allowed only
+                        // Starting from . hides directory in Linux
+                        // Ending . can be trimmed by some Windows versions / file systems
+                        // Double, triple dot look suspicious
+                        // Single dot allowed as compatibility,
+                        // when someone uploads 'file_name.csv' the file name used as the table name
+                        return false;
+                    }
+                    break;
+                case '?':
                 case ',':
                 case '\'':
                 case '\"':
                 case '\\':
                 case '/':
-                case '\0':
                 case ':':
                 case ')':
                 case '(':
                 case '+':
-                case '-':
                 case '*':
                 case '%':
                 case '~':
+                case '\u0000':
+                case '\u0001':
+                case '\u0002':
+                case '\u0003':
+                case '\u0004':
+                case '\u0005':
+                case '\u0006':
+                case '\u0007':
+                case '\u0008':
+                case '\u0009': // Control characters, except \n.
+                case '\u000B': // New line allowed for compatibility, there are tests to make sure it works
+                case '\u000c':
+                case '\r':
+                case '\u000e':
+                case '\u000f':
+                case '\u007f':
                 case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
                     return false;
-                default:
-                    break;
             }
         }
-        return true;
+        return tableName.length() > 0 && tableName.charAt(0) != ' ' && tableName.charAt(l - 1) != ' ';
     }
 
     public static long lock(FilesFacade ff, Path path) {
@@ -850,10 +923,11 @@ public final class TableUtils {
         }
     }
 
-    public static void validateWalMeta(
+    static void loadWalMetadata(
             MemoryMR metaMem,
             ObjList<TableColumnMetadata> columnMetadata,
             LowerCaseCharSequenceIntHashMap nameIndex,
+            ObjList<SymbolMapDiff> symbolMapDiffs,
             int expectedVersion
     ) {
         try {
@@ -875,7 +949,7 @@ public final class TableUtils {
                 throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
             }
 
-            // validate column types and names
+            // load column types and names
             long offset = WAL_META_OFFSET_COLUMNS;
             for (int i = 0; i < columnCount; i++) {
                 if (memSize < offset + 2 * Integer.BYTES) {
@@ -907,6 +981,52 @@ public final class TableUtils {
                     columnMetadata.add(new TableColumnMetadata(name.toString(), -1L, type));
                 }
                 offset += Vm.getStorageLength(name);
+            }
+
+            // load symbol diffs
+            while (true) {
+                if (memSize < offset + Integer.BYTES) {
+                    throw CairoException.instance(0).put(". File is too small ").put(memSize);
+                }
+                final int columnIndex = metaMem.getInt(offset);
+                if (columnIndex == SymbolMapDiff.END_OF_SYMBOL_DIFFS) {
+                    break;
+                }
+                offset += Integer.BYTES;
+
+                final SymbolMapDiff symbolMapDiff = new SymbolMapDiff();
+                symbolMapDiffs.extendAndSet(columnIndex, symbolMapDiff);
+
+                if (memSize < offset + Integer.BYTES) {
+                    throw CairoException.instance(0).put(". File is too small ").put(memSize);
+                }
+                final int numOfNewSymbols = metaMem.getInt(offset);
+                offset += Integer.BYTES;
+
+                for (int i = 0; i < numOfNewSymbols; i++) {
+                    if (memSize < offset + Integer.BYTES) {
+                        throw CairoException.instance(0).put(". File is too small ").put(memSize);
+                    }
+                    final int key = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+
+                    if (memSize < offset + Integer.BYTES) {
+                        throw CairoException.instance(0).put(". File is too small ").put(memSize);
+                    }
+                    final int strLength = metaMem.getInt(offset);
+                    if (strLength < 1 || strLength > 255 || offset + Vm.getStorageLength(strLength) > memSize) {
+                        // EXT4 and many others do not allow file name length > 255 bytes
+                        throw validationException(metaMem)
+                                .put("Symbol value length of ")
+                                .put(strLength).put(" is invalid at offset ")
+                                .put(offset);
+                    }
+
+                    final CharSequence symbol = metaMem.getStr(offset);
+                    offset += Vm.getStorageLength(symbol);
+
+                    symbolMapDiff.add(symbol.toString(), key);
+                }
             }
         } catch (Throwable e) {
             nameIndex.clear();
@@ -1125,5 +1245,27 @@ public final class TableUtils {
             default:
                 break;
         }
+    }
+
+    static void handleMetadataLoadException(CairoConfiguration configuration, CharSequence tableName, long deadline, CairoException ex) {
+        // This is temporary solution until we can get multiple version of metadata not overwriting each other
+        if (isMetaFileMissingFileSystemError(ex)) {
+            if (configuration.getMicrosecondClock().getTicks() < deadline) {
+                LOG.info().$("error reloading metadata [table=").$(tableName)
+                        .$(", errno=").$(ex.getErrno())
+                        .$(", error=").$(ex.getFlyweightMessage()).I$();
+                Os.pause();
+            } else {
+                LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
+                throw CairoException.instance(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
+            }
+        } else {
+            throw ex;
+        }
+    }
+
+    private static boolean isMetaFileMissingFileSystemError(CairoException ex) {
+        int errno = ex.getErrno();
+        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || errno == CairoException.METADATA_VALIDATION;
     }
 }

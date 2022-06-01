@@ -179,8 +179,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return put(symbol, valueCountCollector);
     }
 
+    @Override
     public int put(CharSequence symbol, SymbolValueCountCollector valueCountCollector) {
-
         if (symbol == null) {
             if (!nullValue) {
                 nullValue = true;
@@ -241,6 +241,23 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         offsetMem.putBool(HEADER_CACHE_ENABLED, flag);
     }
 
+    @Override
+    public CharSequence valueOf(int key) {
+        if (key > -1 && key < getSymbolCount()) {
+            return safeValueOf(keyToOffset(key));
+        }
+        return null;
+    }
+
+    @Override
+    public CharSequence valueBOf(int key) {
+        throw new UnsupportedOperationException("use valueOf(key) instead");
+    }
+
+    private CharSequence safeValueOf(long offsetOffset) {
+        return charMem.getStr(offsetMem.getLong(offsetOffset));
+    }
+
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
             this.charMem.jumpTo(this.offsetMem.getLong(keyToOffset(symbolCount)));
@@ -254,7 +271,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         RowCursor cursor = indexWriter.getCursor(hash);
         while (cursor.hasNext()) {
             long offsetOffset = cursor.next();
-            if (Chars.equals(symbol, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
+            if (Chars.equals(symbol, safeValueOf(offsetOffset))) {
                 return offsetToKey(offsetOffset);
             }
         }

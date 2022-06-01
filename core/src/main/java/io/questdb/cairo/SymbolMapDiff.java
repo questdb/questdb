@@ -22,49 +22,37 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.udp;
+package io.questdb.cairo;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
-import io.questdb.network.NetworkFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface LineUdpReceiverConfiguration {
+public class SymbolMapDiff {
+    public static final int END_OF_SYMBOL_DIFFS = -1;
 
-    int getCommitMode();
+    private final IntList keys = new IntList();
+    private final ObjList<CharSequence> symbols = new ObjList<>();
 
-    int getBindIPv4Address();
+    SymbolMapDiff() {
+    }
 
-    int getCommitRate();
+    void add(CharSequence symbol, int key) {
+        keys.add(key);
+        symbols.add(symbol);
+    }
 
-    int getGroupIPv4Address();
+    public int size() {
+        assert keys.size() == symbols.size();
+        return keys.size();
+    }
 
-    int getMaxFileNameLength();
+    public int getKey(int index) {
+        assert index > -1 && index < keys.size();
+        return keys.get(index);
+    }
 
-    int getMsgBufferSize();
-
-    int getMsgCount();
-
-    NetworkFacade getNetworkFacade();
-
-    int getPort();
-
-    int getReceiveBufferSize();
-
-    CairoSecurityContext getCairoSecurityContext();
-
-    boolean isEnabled();
-
-    boolean isUnicast();
-
-    boolean ownThread();
-
-    int ownThreadAffinity();
-
-    LineProtoTimestampAdapter getTimestampAdapter();
-
-    int getDefaultPartitionBy();
-
-    short getDefaultColumnTypeForFloat();
-
-    short getDefaultColumnTypeForInteger();
+    public CharSequence getSymbol(int index) {
+        assert index > -1 && index < symbols.size();
+        return symbols.get(index);
+    }
 }

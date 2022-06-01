@@ -33,9 +33,9 @@ import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.pool.WalWriterSource;
+import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -136,6 +136,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             Path path,
             TableStructure struct
     ) {
+        checkTableName(struct.getTableName());
         CharSequence lockedReason = lock(securityContext, struct.getTableName(), "createTable");
         if (null == lockedReason) {
             boolean newTable = false;
@@ -193,12 +194,12 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return writerPool.getBusyCount();
     }
 
-    public CairoConfiguration getConfiguration() {
-        return configuration;
+    public long getCommandCorrelationId() {
+        return asyncCommandCorrelationId.incrementAndGet();
     }
 
-    public Metrics getMetrics() {
-        return metrics;
+    public CairoConfiguration getConfiguration() {
+        return configuration;
     }
 
     public Job getEngineMaintenanceJob() {
@@ -209,12 +210,12 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return messageBus;
     }
 
-    public PoolListener getPoolListener() {
-        return this.writerPool.getPoolListener();
+    public Metrics getMetrics() {
+        return metrics;
     }
 
-    public long getCommandCorrelationId() {
-        return asyncCommandCorrelationId.incrementAndGet();
+    public PoolListener getPoolListener() {
+        return this.writerPool.getPoolListener();
     }
 
     public IDGenerator getTableIdGenerator() {
@@ -233,17 +234,36 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return getReader(securityContext, tableName, TableUtils.ANY_TABLE_ID, TableUtils.ANY_TABLE_VERSION);
     }
 
+    public TableReader getReader(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            int tableId,
+            long version
+    ) {
+        checkTableName(tableName);
+        TableReader reader = readerPool.get(tableName);
+        if ((version > -1 && reader.getVersion() != version)
+                || tableId > -1 && reader.getMetadata().getId() != tableId) {
+            reader.close();
+            throw ReaderOutOfDateException.of(tableName);
+        }
+        return reader;
+    }
+
     // For testing only
     public WalReader getWalReader(
             CairoSecurityContext securityContext,
             CharSequence tableName,
             CharSequence walName,
-            IntList walSymbolCounts
+            int segmentId,
+            IntList walSymbolCounts,
+            long walRowCount
     ) {
-        return new WalReader(configuration, tableName, walName, walSymbolCounts);
+        return new WalReader(configuration, tableName, walName, segmentId, walSymbolCounts, walRowCount);
     }
 
     public TableReader getReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {
+        checkTableName(tableName);
         try {
             return getReader(executionContext.getCairoSecurityContext(), tableName);
         } catch (CairoException ex) {
@@ -266,21 +286,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
                 throw ex;
             }
         }
-    }
-
-    public TableReader getReader(
-            CairoSecurityContext securityContext,
-            CharSequence tableName,
-            int tableId,
-            long version
-    ) {
-        TableReader reader = readerPool.get(tableName);
-        if ((version > -1 && reader.getVersion() != version)
-                || tableId > -1 && reader.getMetadata().getId() != tableId) {
-            reader.close();
-            throw ReaderOutOfDateException.of(tableName);
-        }
-        return reader;
     }
 
     public int getStatus(
@@ -320,7 +325,18 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             CharSequence lockReason
     ) {
         securityContext.checkWritePermission();
+        checkTableName(tableName);
         return writerPool.get(tableName, lockReason);
+    }
+
+    public TableWriter getWriterOrPublishCommand(
+            CairoSecurityContext securityContext,
+            CharSequence tableName,
+            @NotNull AsyncWriterCommand asyncWriterCommand
+    ) {
+        securityContext.checkWritePermission();
+        checkTableName(tableName);
+        return writerPool.getWriterOrPublishCommand(tableName, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 
     @Override
@@ -339,6 +355,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         assert null != lockReason;
         securityContext.checkWritePermission();
 
+        checkTableName(tableName);
         CharSequence lockedReason = writerPool.lock(tableName, lockReason);
         if (lockedReason == OWNERSHIP_REASON_NONE) {
             boolean locked = readerPool.lock(tableName);
@@ -353,20 +370,13 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     public boolean lockReaders(CharSequence tableName) {
+        checkTableName(tableName);
         return readerPool.lock(tableName);
     }
 
     public CharSequence lockWriter(CharSequence tableName, CharSequence lockReason) {
+        checkTableName(tableName);
         return writerPool.lock(tableName, lockReason);
-    }
-
-    public TableWriter getWriterOrPublishCommand(
-            CairoSecurityContext securityContext,
-            CharSequence tableName,
-            @NotNull AsyncWriterCommand asyncWriterCommand
-    ) {
-        securityContext.checkWritePermission();
-        return writerPool.getWriterOrPublishCommand(tableName, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
 
     @TestOnly
@@ -391,6 +401,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             CharSequence tableName
     ) {
         securityContext.checkWritePermission();
+        checkTableName(tableName);
         CharSequence lockedReason = lock(securityContext, tableName, "removeTable");
         if (null == lockedReason) {
             try {
@@ -422,6 +433,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             CharSequence newName
     ) {
         securityContext.checkWritePermission();
+
+        checkTableName(tableName);
+        checkTableName(newName);
+
         CharSequence lockedReason = lock(securityContext, tableName, "renameTable");
         if (null == lockedReason) {
             try {
@@ -441,17 +456,28 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             @Nullable TableWriter writer,
             boolean newTable
     ) {
+        checkTableName(tableName);
         readerPool.unlock(tableName);
         writerPool.unlock(tableName, writer, newTable);
         LOG.info().$("unlocked [table=`").utf8(tableName).$("`]").$();
     }
 
     public void unlockReaders(CharSequence tableName) {
+        checkTableName(tableName);
         readerPool.unlock(tableName);
     }
 
     public void unlockWriter(CharSequence tableName) {
+        checkTableName(tableName);
         writerPool.unlock(tableName);
+    }
+
+    private void checkTableName(CharSequence tableName) {
+        if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
+            throw CairoException.instance(0)
+                    .put("invalid table name [table=").putAsPrintable(tableName)
+                    .put(']');
+        }
     }
 
     private void rename0(Path path, CharSequence tableName, Path otherPath, CharSequence to) {
