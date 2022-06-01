@@ -51,7 +51,7 @@ public class QMapReadSequentialKeyBenchmark {
     private static final Rnd rnd = new Rnd();
     private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
     private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
-    private static final HashMap<String, Long> hmap = new HashMap<>();
+    private static final HashMap<String, Long> hmap = new HashMap<>(N, (float) loadFactor);
     private static final StringSink sink = new StringSink();
 
     public static void main(String[] args) throws RunnerException {
@@ -71,6 +71,11 @@ public class QMapReadSequentialKeyBenchmark {
     }
 
     @Benchmark
+    public int baseline() {
+        return rnd.nextInt(N);
+    }
+
+    @Benchmark
     public MapValue testDirectMap() {
         MapKey key = map.withKey();
         sink.clear();
@@ -80,17 +85,17 @@ public class QMapReadSequentialKeyBenchmark {
     }
 
     @Benchmark
-    public Long testHashMap() {
-        return hmap.put(String.valueOf(rnd.nextInt(N)), 100L);
-    }
-
-    @Benchmark
     public MapValue testQMap() {
         MapKey key = qmap.withKey();
         sink.clear();
         sink.put(rnd.nextInt(N));
         key.putStr(sink);
         return key.findValue();
+    }
+
+    @Benchmark
+    public Long testHashMap() {
+        return hmap.get(String.valueOf(rnd.nextInt(N)));
     }
 
     static {
@@ -106,6 +111,10 @@ public class QMapReadSequentialKeyBenchmark {
             key.putStr(String.valueOf(i));
             MapValue values = key.createValue();
             values.putLong(0, i);
+        }
+
+        for (int i = 0; i < N; i++) {
+            hmap.put(String.valueOf(i), (long) i);
         }
     }
 }
