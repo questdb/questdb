@@ -25,21 +25,17 @@
 package io.questdb.griffin.engine.union;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
-public class UnionRecord implements Record {
+public class UnionCastRecord extends AbstractUnionRecord {
 
     private final ObjList<Function> castFunctionsA;
     private final ObjList<Function> castFunctionsB;
-    private Record recordA;
-    private Record recordB;
-    private boolean ab = true;
 
-    public UnionRecord(ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
+    public UnionCastRecord(ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         this.castFunctionsA = castFunctionsA;
         this.castFunctionsB = castFunctionsB;
     }
@@ -230,14 +226,5 @@ public class UnionRecord implements Record {
             return castFunctionsA.getQuick(col).getGeoLong(recordA);
         }
         return castFunctionsB.getQuick(col).getGeoLong(recordB);
-    }
-
-    public void of(Record recordA, Record recordB) {
-        this.recordA = recordA;
-        this.recordB = recordB;
-    }
-
-    public void setAb(boolean ab) {
-        this.ab = ab;
     }
 }

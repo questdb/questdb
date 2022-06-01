@@ -88,36 +88,6 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
         return that;
     }
 
-    public static RecordMetadata convertSymbolsToStrings(RecordMetadata that) {
-        boolean hasSymbol = false;
-        for (int i = 0, n = that.getColumnCount(); i < n; i++) {
-            int columnType = that.getColumnType(i);
-            if (ColumnType.isSymbol(columnType)) {
-                hasSymbol = true;
-                break;
-            }
-        }
-
-        if (!hasSymbol) {
-            return removeTimestamp(that);
-        }
-
-        GenericRecordMetadata metaCopy = new GenericRecordMetadata();
-        for (int i = 0, n = that.getColumnCount(); i < n; i++) {
-            int columnType = that.getColumnType(i);
-            metaCopy.add(new TableColumnMetadata(
-                    that.getColumnName(i),
-                    that.getColumnHash(i),
-                    ColumnType.isSymbol(columnType) ? ColumnType.STRING : columnType,
-                    false,
-                    0,
-                    false,
-                    GenericRecordMetadata.copyOf(that.getMetadata(i))
-            ));
-        }
-        return metaCopy;
-    }
-
     public GenericRecordMetadata add(TableColumnMetadata meta) {
         return add(columnCount, meta);
     }

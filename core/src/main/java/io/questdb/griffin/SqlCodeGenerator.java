@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.Vm;
@@ -90,7 +89,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
-    private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = (configuration1, metadata, factoryA, factoryB, castFunctionsB, recordSink, valueTypes1, valueTypes12) -> new ExceptRecordCursorFactory(configuration1, metadata, factoryA, factoryB, recordSink, valueTypes1, valueTypes12);
+    private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = (
+            configuration1,
+            metadata,
+            factoryA,
+            factoryB,
+            castFunctionsA,
+            castFunctionsB,
+            recordSink,
+            valueTypes
+    ) -> new ExceptRecordCursorFactory(configuration1, metadata, factoryA, factoryB, castFunctionsB, recordSink, valueTypes);
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final MemoryCARW jitIRMem;
@@ -335,6 +343,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return true;
+    }
+
+    private boolean checkIfSetCastIsRequired(RecordMetadata metadataA, RecordMetadata metadataB) {
+        int columnCount = metadataA.getColumnCount();
+        assert columnCount == metadataB.getColumnCount();
+
+        for (int i = 0; i < columnCount; i++) {
+            int typeA = metadataA.getColumnType(i);
+            int typeB = metadataB.getColumnType(i);
+            if (typeA != typeB || typeA == ColumnType.SYMBOL) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Nullable
@@ -3017,33 +3039,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordMetadata metadataA = factoryA.getMetadata();
             final RecordMetadata metadataB = factoryB.getMetadata();
             RecordMetadata setMetadata;
+            final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB);
 
             switch (model.getSetOperationType()) {
-                case QueryModel.SET_OPERATION_UNION:
-                    setMetadata = widenSetMetadata(metadataA, metadataB);
+                case SET_OPERATION_UNION:
+                    setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
 
                     return generateUnionFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            generateCastFunctions(setMetadata, metadataA, model.getModelPosition()),
-                            generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()),
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, model.getModelPosition()) : null,
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()) : null,
                             setMetadata,
                             SET_UNION_CONSTRUCTOR
                     );
-                case QueryModel.SET_OPERATION_UNION_ALL:
-                    setMetadata = widenSetMetadata(metadataA, metadataB);
+                case SET_OPERATION_UNION_ALL:
+                    setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     return generateUnionAllFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            generateCastFunctions(setMetadata, metadataA, model.getModelPosition()),
-                            generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()),
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, model.getModelPosition()) : null,
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()) : null,
                             setMetadata
                     );
-                case QueryModel.SET_OPERATION_EXCEPT:
+                case SET_OPERATION_EXCEPT:
                     setMetadata = GenericRecordMetadata.removeTimestamp(metadataA);
                     return generateUnionFactory(
                             model,
@@ -3051,11 +3074,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factoryA,
                             factoryB,
                             null,
-                            generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()),
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()) : null,
                             setMetadata,
                             SET_EXCEPT_CONSTRUCTOR
                     );
-                case QueryModel.SET_OPERATION_INTERSECT:
+                case SET_OPERATION_INTERSECT:
                     setMetadata = GenericRecordMetadata.removeTimestamp(metadataA);
                     return generateUnionFactory(
                             model,
@@ -3063,7 +3086,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             factoryA,
                             factoryB,
                             null,
-                            generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()),
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()) : null,
                             setMetadata,
                             SET_INTERSECT_CONSTRUCTOR
                     );

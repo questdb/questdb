@@ -31,7 +31,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
-    private final UnionRecord record;
+    private final AbstractUnionRecord record;
     private RecordCursor cursorA;
     private RecordCursor cursorB;
     private final NextMethod nextB = this::nextB;
@@ -40,7 +40,11 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     private final NextMethod nextA = this::nextA;
 
     public UnionAllRecordCursor(ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
-        this.record = new UnionRecord(castFunctionsA, castFunctionsB);
+        if (castFunctionsA != null && castFunctionsB != null) {
+            this.record = new UnionCastRecord(castFunctionsA, castFunctionsB);
+        } else {
+            this.record = new UnionDirectRecord();
+        }
     }
 
     @Override

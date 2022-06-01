@@ -28,27 +28,32 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 class IntersectRecordCursor implements RecordCursor {
     private final Map map;
     private final RecordSink recordSink;
+    private final VirtualRecord virtualRecord;
     private RecordCursor cursorA;
     private RecordCursor cursorB;
     private Record recordA;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private final VirtualRecord virtualRecord;
+    private Record activeBRecord;
 
     public IntersectRecordCursor(
             Map map,
             RecordSink recordSink,
-            ObjList<Function> castFunctionB
+            @Nullable ObjList<Function> castFunctionB
     ) {
         this.map = map;
         this.recordSink = recordSink;
-        this.virtualRecord = new VirtualRecord(castFunctionB);
+        if (castFunctionB != null) {
+            this.virtualRecord = new VirtualRecord(castFunctionB);
+        } else {
+            this.virtualRecord = null;
+        }
     }
 
     @Override
@@ -107,10 +112,9 @@ class IntersectRecordCursor implements RecordCursor {
     }
 
     private void hashCursorB(RecordCursor cursorB) {
-        virtualRecord.of(cursorB.getRecord());
         while (cursorB.hasNext()) {
             MapKey key = map.withKey();
-            key.put(virtualRecord, recordSink);
+            key.put(activeBRecord, recordSink);
             key.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
@@ -122,6 +126,12 @@ class IntersectRecordCursor implements RecordCursor {
         this.circuitBreaker = circuitBreaker;
 
         map.clear();
+        if (virtualRecord != null) {
+            virtualRecord.of(cursorB.getRecord());
+            this.activeBRecord = this.virtualRecord;
+        } else {
+            this.activeBRecord = cursorB.getRecord();
+        }
         hashCursorB(cursorB);
         recordA = cursorA.getRecord();
         toTop();

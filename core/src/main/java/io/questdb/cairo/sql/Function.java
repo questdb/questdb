@@ -46,12 +46,22 @@ public interface Function extends Closeable, StatefulAtom {
         }
     }
 
-    @Override
-    default void close() {
+    static void initNc(
+            ObjList<? extends Function> args,
+            SymbolTableSource symbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (args != null) {
+            init(args, symbolTableSource, executionContext);
+        }
     }
 
-    default boolean supportsRandomAccess() {
-        return true;
+    default void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default void close() {
     }
 
     int getArrayLength();
@@ -72,6 +82,14 @@ public interface Function extends Closeable, StatefulAtom {
 
     float getFloat(Record rec);
 
+    byte getGeoByte(Record rec);
+
+    int getGeoInt(Record rec);
+
+    long getGeoLong(Record rec);
+
+    short getGeoShort(Record rec);
+
     int getInt(Record rec);
 
     long getLong(Record rec);
@@ -82,16 +100,16 @@ public interface Function extends Closeable, StatefulAtom {
 
     Long256 getLong256B(Record rec);
 
-    // when function returns factory it becomes factory
-    // on other words this is not a tear-away instance
-    RecordCursorFactory getRecordCursorFactory();
+    default RecordMetadata getMetadata() {
+        return null;
+    }
 
     // function returns a record of values
     Record getRecord(Record rec);
 
-    default RecordMetadata getMetadata() {
-        return null;
-    }
+    // when function returns factory it becomes factory
+    // on other words this is not a tear-away instance
+    RecordCursorFactory getRecordCursorFactory();
 
     short getShort(Record rec);
 
@@ -117,35 +135,13 @@ public interface Function extends Closeable, StatefulAtom {
 
     long getTimestamp(Record rec);
 
-    byte getGeoByte(Record rec);
-
-    short getGeoShort(Record rec);
-
-    int getGeoInt(Record rec);
-
-    long getGeoLong(Record rec);
-
     int getType();
-
-    default boolean isUndefined() {
-        return getType() == ColumnType.UNDEFINED;
-    }
-
-    default void assignType(int type, BindVariableService bindVariableService) throws SqlException {
-        throw new UnsupportedOperationException();
-    }
 
     default boolean isConstant() {
         return false;
     }
 
     default boolean isNullConstant() {
-        return false;
-    }
-
-    // If function is constant for query, e.g. record independent
-    // For example now() and bind variables are Runtime Constants
-    default boolean isRuntimeConstant() {
         return false;
     }
 
@@ -157,6 +153,20 @@ public interface Function extends Closeable, StatefulAtom {
      */
     default boolean isReadThreadSafe() {
         return false;
+    }
+
+    // If function is constant for query, e.g. record independent
+    // For example now() and bind variables are Runtime Constants
+    default boolean isRuntimeConstant() {
+        return false;
+    }
+
+    default boolean isUndefined() {
+        return getType() == ColumnType.UNDEFINED;
+    }
+
+    default boolean supportsRandomAccess() {
+        return true;
     }
 
     default void toTop() {

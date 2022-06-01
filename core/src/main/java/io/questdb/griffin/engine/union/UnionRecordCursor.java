@@ -33,7 +33,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 class UnionRecordCursor implements NoRandomAccessRecordCursor {
-    private final UnionRecord record;
+    private final AbstractUnionRecord record;
     private final Map map;
     private final RecordSink recordSink;
     private RecordCursor cursorA;
@@ -44,7 +44,11 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
     private SqlExecutionCircuitBreaker circuitBreaker;
 
     public UnionRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
-        this.record = new UnionRecord(castFunctionsA, castFunctionsB);
+        if (castFunctionsA != null && castFunctionsB != null) {
+            this.record = new UnionCastRecord(castFunctionsA, castFunctionsB);
+        } else {
+            this.record = new UnionDirectRecord();
+        }
         this.map = map;
         this.recordSink = recordSink;
     }

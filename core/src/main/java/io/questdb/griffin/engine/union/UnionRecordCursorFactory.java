@@ -80,8 +80,8 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
         try {
             cursorA = factoryA.getCursor(executionContext);
             cursorB = factoryB.getCursor(executionContext);
-            Function.init(castFunctionsA, cursorA, executionContext);
-            Function.init(castFunctionsB, cursorB, executionContext);
+            Function.initNc(castFunctionsA, cursorA, executionContext);
+            Function.initNc(castFunctionsB, cursorB, executionContext);
             cursor.of(cursorA, cursorB, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable ex) {

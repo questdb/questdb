@@ -37,6 +37,7 @@ class ExceptRecordCursor implements RecordCursor {
     private final Map map;
     private final RecordSink recordSink;
     private final VirtualRecord virtualRecord;
+    private Record activeBRecord;
     private RecordCursor cursorA;
     private RecordCursor cursorB;
     private Record recordA;
@@ -46,8 +47,12 @@ class ExceptRecordCursor implements RecordCursor {
         this.map = map;
         this.recordSink = recordSink;
         // cursor B has to be cast to the types of cursor A unless types are identical
-        // in which case this is a todo (simplify virtual record)
-        this.virtualRecord = new VirtualRecord(castFunctionsB);
+        // in which case this is virtual record is going to be null
+        if (castFunctionsB != null) {
+            this.virtualRecord = new VirtualRecord(castFunctionsB);
+        } else {
+            this.virtualRecord = null;
+        }
     }
 
     @Override
@@ -109,7 +114,7 @@ class ExceptRecordCursor implements RecordCursor {
     private void hashCursorB() {
         while (cursorB.hasNext()) {
             MapKey key = map.withKey();
-            key.put(virtualRecord, recordSink);
+            key.put(activeBRecord, recordSink);
             key.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
@@ -119,7 +124,12 @@ class ExceptRecordCursor implements RecordCursor {
         this.cursorA = cursorA;
         this.cursorB = cursorB;
         this.circuitBreaker = circuitBreaker;
-        this.virtualRecord.of(cursorB.getRecord());
+        if (virtualRecord != null) {
+            this.virtualRecord.of(cursorB.getRecord());
+            this.activeBRecord = this.virtualRecord;
+        } else {
+            this.activeBRecord = cursorB.getRecord();
+        }
         map.clear();
         hashCursorB();
         toTop();

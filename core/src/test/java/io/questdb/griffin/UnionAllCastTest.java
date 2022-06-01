@@ -837,65 +837,65 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeoShortGeoByteExact() throws Exception {
+    public void testGeoByteExact() throws Exception {
         // long + geohash overlap via string type
         testUnionAll(
-                "a\ttypeOf\n" +
-                        "w\tGEOHASH(1c)\n" +
-                        "s\tGEOHASH(1c)\n" +
-                        "1\tGEOHASH(1c)\n" +
-                        "m\tGEOHASH(1c)\n" +
-                        "7\tGEOHASH(1c)\n" +
-                        "9\tGEOHASH(1c)\n" +
-                        "4\tGEOHASH(1c)\n" +
-                        "j\tGEOHASH(1c)\n" +
-                        "z\tGEOHASH(1c)\n" +
-                        "h\tGEOHASH(1c)\n",
-                "select a, typeOf(a) from (x union all y)",
-                "create table x as (select rnd_geohash(5) a from long_sequence(5))",
-                "create table y as (select rnd_geohash(5) b from long_sequence(5))"
+                "a\ttypeOf\tk\n" +
+                        "q\tGEOHASH(1c)\t-1792928964\n" +
+                        "5\tGEOHASH(1c)\t1404198\n" +
+                        "x\tGEOHASH(1c)\t-1252906348\n" +
+                        "f\tGEOHASH(1c)\t1699553881\n" +
+                        "8\tGEOHASH(1c)\t-938514914\n" +
+                        "9\tGEOHASH(1c)\t8260188555232587029\n" +
+                        "2\tGEOHASH(1c)\t-1675638984090602536\n" +
+                        "w\tGEOHASH(1c)\t-4094902006239100839\n" +
+                        "p\tGEOHASH(1c)\t5408639942391651698\n" +
+                        "w\tGEOHASH(1c)\t-3985256597569472057\n",
+                "select a, typeOf(a), k from (x union all y)",
+                "create table x as (select rnd_geohash(5) a, rnd_int() k from long_sequence(5))",
+                "create table y as (select rnd_geohash(5) a, rnd_long() k from long_sequence(5))"
         );
     }
 
     @Test
-    public void testGeoShortGeoIntExact() throws Exception {
+    public void testIntExact() throws Exception {
         // long + geohash overlap via string type
         testUnionAll(
-                "a\ttypeOf\n" +
-                        "wh4b6v\tGEOHASH(6c)\n" +
-                        "s2z2fy\tGEOHASH(6c)\n" +
-                        "1cjjwk\tGEOHASH(6c)\n" +
-                        "mmt894\tGEOHASH(6c)\n" +
-                        "71ftmp\tGEOHASH(6c)\n" +
-                        "9v1s8h\tGEOHASH(6c)\n" +
-                        "46swgj\tGEOHASH(6c)\n" +
-                        "jnw97u\tGEOHASH(6c)\n" +
-                        "zfuqd3\tGEOHASH(6c)\n" +
-                        "hp4muv\tGEOHASH(6c)\n",
-                "select a, typeOf(a) from (x union all y)",
-                "create table x as (select rnd_geohash(30) a from long_sequence(5))",
-                "create table y as (select rnd_geohash(30) b from long_sequence(5))"
+                "a\ttypeOf\tk\n" +
+                        "qmqxuu\tGEOHASH(6c)\t-1792928964\n" +
+                        "5rshu9\tGEOHASH(6c)\t1404198\n" +
+                        "xn8nmw\tGEOHASH(6c)\t-1252906348\n" +
+                        "fsnj14\tGEOHASH(6c)\t1699553881\n" +
+                        "8nje17\tGEOHASH(6c)\t-938514914\n" +
+                        "9v1s8h\tGEOHASH(6c)\t8260188555232587029\n" +
+                        "29je7k\tGEOHASH(6c)\t-1675638984090602536\n" +
+                        "wszdkr\tGEOHASH(6c)\t-4094902006239100839\n" +
+                        "pn5udk\tGEOHASH(6c)\t5408639942391651698\n" +
+                        "wh4b6v\tGEOHASH(6c)\t-3985256597569472057\n",
+                "select a, typeOf(a), k from (x union all y)",
+                "create table x as (select rnd_geohash(30) a, rnd_int() k from long_sequence(5))",
+                "create table y as (select rnd_geohash(30) a, rnd_long() k from long_sequence(5))"
         );
     }
 
     @Test
-    public void testGeoShortGeoLongExact() throws Exception {
+    public void testGeoLongExact() throws Exception {
         // long + geohash overlap via string type
         testUnionAll(
-                "a\ttypeOf\n" +
-                        "wh4b6vn\tGEOHASH(7c)\n" +
-                        "s2z2fyd\tGEOHASH(7c)\n" +
-                        "1cjjwk6\tGEOHASH(7c)\n" +
-                        "mmt8942\tGEOHASH(7c)\n" +
-                        "71ftmpy\tGEOHASH(7c)\n" +
-                        "9v1s8hm\tGEOHASH(7c)\n" +
-                        "46swgj1\tGEOHASH(7c)\n" +
-                        "jnw97u4\tGEOHASH(7c)\n" +
-                        "zfuqd3b\tGEOHASH(7c)\n" +
-                        "hp4muv5\tGEOHASH(7c)\n",
-                "select a, typeOf(a) from (x union all y)",
-                "create table x as (select rnd_geohash(35) a from long_sequence(5))",
-                "create table y as (select rnd_geohash(35) b from long_sequence(5))"
+                "a\ttypeOf\tk\n" +
+                        "qmqxuuu\tGEOHASH(7c)\t-1792928964\n" +
+                        "5rshu96\tGEOHASH(7c)\t1404198\n" +
+                        "xn8nmwc\tGEOHASH(7c)\t-1252906348\n" +
+                        "fsnj14w\tGEOHASH(7c)\t1699553881\n" +
+                        "8nje17e\tGEOHASH(7c)\t-938514914\n" +
+                        "9v1s8hm\tGEOHASH(7c)\t8260188555232587029\n" +
+                        "29je7k2\tGEOHASH(7c)\t-1675638984090602536\n" +
+                        "wszdkrq\tGEOHASH(7c)\t-4094902006239100839\n" +
+                        "pn5udk1\tGEOHASH(7c)\t5408639942391651698\n" +
+                        "wh4b6vn\tGEOHASH(7c)\t-3985256597569472057\n",
+                "select a, typeOf(a), k from (x union all y)",
+                "create table x as (select rnd_geohash(35) a, rnd_int() k from long_sequence(5))",
+                "create table y as (select rnd_geohash(35) a, rnd_long() k from long_sequence(5))"
         );
     }
 
@@ -920,23 +920,23 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeoShortGeoShortExact() throws Exception {
+    public void testGeoShortExact() throws Exception {
         // long + geohash overlap via string type
         testUnionAll(
-                "a\ttypeOf\n" +
-                        "111001000000\tGEOHASH(12b)\n" +
-                        "110000001011\tGEOHASH(12b)\n" +
-                        "000010101110\tGEOHASH(12b)\n" +
-                        "100111001111\tGEOHASH(12b)\n" +
-                        "001110000101\tGEOHASH(12b)\n" +
-                        "010011101100\tGEOHASH(12b)\n" +
-                        "001000011011\tGEOHASH(12b)\n" +
-                        "100011010011\tGEOHASH(12b)\n" +
-                        "111110111011\tGEOHASH(12b)\n" +
-                        "100001010100\tGEOHASH(12b)\n",
-                "select a, typeOf(a) from (x union all y)",
-                "create table x as (select rnd_geohash(12) a from long_sequence(5))",
-                "create table y as (select rnd_geohash(12) b from long_sequence(5))"
+                "a\ttypeOf\tk\n" +
+                        "101101001110\tGEOHASH(12b)\t-1792928964\n" +
+                        "001011011111\tGEOHASH(12b)\t1404198\n" +
+                        "111011010001\tGEOHASH(12b)\t-1252906348\n" +
+                        "011101100010\tGEOHASH(12b)\t1699553881\n" +
+                        "010001010010\tGEOHASH(12b)\t-938514914\n" +
+                        "010011101100\tGEOHASH(12b)\t8260188555232587029\n" +
+                        "000100100110\tGEOHASH(12b)\t-1675638984090602536\n" +
+                        "111001100011\tGEOHASH(12b)\t-4094902006239100839\n" +
+                        "101011010000\tGEOHASH(12b)\t5408639942391651698\n" +
+                        "111001000000\tGEOHASH(12b)\t-3985256597569472057\n",
+                "select a, typeOf(a), k from (x union all y)",
+                "create table x as (select rnd_geohash(12) a, rnd_int() k from long_sequence(5))",
+                "create table y as (select rnd_geohash(12) a, rnd_long() k from long_sequence(5))"
         );
     }
 
