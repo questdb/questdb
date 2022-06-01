@@ -92,7 +92,6 @@ public class AddIndexTest extends AbstractGriffinTest {
                 "alter table trades alter column sym add index",
                 expected,
                 true
-
         );
     }
 

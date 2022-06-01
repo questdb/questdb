@@ -1166,7 +1166,6 @@ public class SqlCompiler implements Closeable {
                             expectKeyword(lexer, "index");
                             tok = SqlUtil.fetchNext(lexer);
                             int indexValueCapacity = -1;
-
                             if (tok != null && (!isSemicolon(tok))) {
                                 if (!SqlKeywords.isCapacityKeyword(tok)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
@@ -1182,7 +1181,6 @@ public class SqlCompiler implements Closeable {
                                     }
                                 }
                             }
-
                             return alterTableColumnAddIndex(tableNamePosition, tableName, columnNameNamePosition, columnName, tableMetadata, indexValueCapacity);
                         } else if (SqlKeywords.isDropKeyword(tok)) {
                             // alter table <table name> alter column drop index
@@ -1192,14 +1190,12 @@ public class SqlCompiler implements Closeable {
                                 throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
                             }
                             return alterTableColumnDropIndex(tableNamePosition, tableName, columnNameNamePosition, columnName, tableMetadata);
+                        } else if (SqlKeywords.isCacheKeyword(tok)) {
+                            return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, true);
+                        } else if (SqlKeywords.isNoCacheKeyword(tok)) {
+                            return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, false);
                         } else {
-                            if (SqlKeywords.isCacheKeyword(tok)) {
-                                return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, true);
-                            } else if (SqlKeywords.isNoCacheKeyword(tok)) {
-                                return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, false);
-                            } else {
-                                throw SqlException.$(lexer.lastTokenPosition(), "'cache' or 'nocache' expected");
-                            }
+                            throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
                         }
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");

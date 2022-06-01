@@ -24,48 +24,122 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.*;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class DropIndexTest extends AbstractGriffinTest {
+    @Test
+    public void testDropIndexOfNonIndexedColumnShouldFail() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table sensors as (\n" +
+                            "    select \n" +
+                            "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') sensor_id, \n" +
+                            "        rnd_int() temperature, \n" +
+                            "        timestamp_sequence(172800000000, 36000000) ts \n" +
+                            "    from long_sequence(100)\n" +
+                            ") timestamp(ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            try {
+                compile("alter table sensors alter column sensor_id drop index", sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(12, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "column 'sensor_id' is not indexed");
+            }
+        });
+    }
 
     @Test
-    public void testBeforeAndAfterIndex() throws Exception {
-        final String expected = "sym\tprice\tts\n" +
-                "ABB\t0.8043224099968393\t1970-01-03T00:00:00.000000Z\n" +
-                "HBC\t0.6508594025855301\t1970-01-03T00:00:00.001080Z\n" +
-                "HBC\t0.7905675319675964\t1970-01-03T00:00:00.001440Z\n" +
-                "ABB\t0.22452340856088226\t1970-01-03T00:00:00.001800Z\n" +
-                "ABB\t0.3491070363730514\t1970-01-03T00:00:00.002160Z\n" +
-                "ABB\t0.7611029514995744\t1970-01-03T00:00:00.002520Z\n" +
-                "ABB\t0.4217768841969397\t1970-01-03T00:00:00.002880Z\n" +
-                "HBC\t0.0367581207471136\t1970-01-03T00:00:00.003240Z\n" +
-                "HBC\t0.8799634725391621\t1970-01-03T00:00:00.004680Z\n" +
-                "HBC\t0.5249321062686694\t1970-01-03T00:00:00.005040Z\n" +
-                "HBC\t0.1911234617573182\t1970-01-03T00:00:00.006480Z\n" +
-                "ABB\t0.5793466326862211\t1970-01-03T00:00:00.006840Z\n" +
-                "ABB\t0.42281342727402726\t1970-01-03T00:00:00.008280Z\n" +
-                "HBC\t0.810161274171258\t1970-01-03T00:00:00.008640Z\n" +
-                "HBC\t0.022965637512889825\t1970-01-03T00:00:00.009360Z\n" +
-                "ABB\t0.7763904674818695\t1970-01-03T00:00:00.009720Z\n" +
-                "HBC\t0.0011075361080621349\t1970-01-03T00:00:00.010440Z\n";
+    public void testDropIndexOfIndexedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table sensors as (\n" +
+                            "    select \n" +
+                            "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') sensor_id, \n" +
+                            "        rnd_int() temperature, \n" +
+                            "        timestamp_sequence(172800000000, 36000000) ts \n" +
+                            "    from long_sequence(100)\n" +
+                            ") timestamp(ts) partition by DAY",
+                    sqlExecutionContext
+            );
 
-        assertQuery(
-                expected,
-                "select * from trades where (sym = 'ABB' or sym = 'HBC')",
-                "create table trades as (\n" +
+            compile("alter table sensors alter column sensor_id add index capacity 128", sqlExecutionContext);
+
+            try (TableReader tableReader = new TableReader(configuration, "sensors")) {
+                try (TableReaderMetadata metadata = tableReader.getMetadata()) {
+                    final int sensorIdColIdx = metadata.getColumnIndex("sensor_id");
+                    final TableColumnMetadata sensorIdColMetadata = metadata.getColumnQuick(sensorIdColIdx);
+                    Assert.assertTrue(sensorIdColMetadata.isIndexed());
+                    Assert.assertEquals(sensorIdColMetadata.getIndexValueBlockCapacity(), 128);
+                }
+            }
+
+            compile("alter table sensors alter column sensor_id drop index", sqlExecutionContext);
+
+            // TODO: clear a FD leak ...
+
+            try (TableReader tableReader = new TableReader(configuration, "sensors")) {
+                try (TableReaderMetadata metadata = tableReader.getMetadata()) {
+                    final int sensorIdColIdx = metadata.getColumnIndex("sensor_id");
+                    final TableColumnMetadata sensorIdColMetadata = metadata.getColumnQuick(sensorIdColIdx);
+                    Assert.assertFalse(sensorIdColMetadata.isIndexed());
+                    Assert.assertEquals(sensorIdColMetadata.getIndexValueBlockCapacity(), configuration.getIndexValueBlockSize());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableAlterColumnDropIndexSyntaxErrors0() throws Exception {
+        assertFailure(
+                "alter table sensors alter column sensor_id dope index",
+                "create table sensors as (\n" +
                         "    select \n" +
-                        "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360) ts \n" +
-                        "    from long_sequence(30)\n" +
+                        "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') sensor_id, \n" +
+                        "        rnd_int() temperature, \n" +
+                        "        timestamp_sequence(172800000000, 36000000) ts \n" +
+                        "    from long_sequence(100)\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
-                "alter table trades alter column sym add index",
-                expected,
-                true
+                43,
+                "'add', 'drop', 'cache' or 'nocache' expected found 'dope'"
+        );
+    }
 
+    @Test
+    public void testAlterTableAlterColumnDropIndexSyntaxErrors1() throws Exception {
+        assertFailure(
+                "alter table sensors alter column sensor_id drop",
+                "create table sensors as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') sensor_id, \n" +
+                        "        rnd_int() temperature, \n" +
+                        "        timestamp_sequence(172800000000, 36000000) ts \n" +
+                        "    from long_sequence(100)\n" +
+                        ") timestamp(ts) partition by DAY",
+                47,
+                "'index' expected"
+        );
+    }
+
+    @Test
+    public void testAlterTableAlterColumnDropIndexSyntaxErrors2() throws Exception {
+        assertFailure(
+                "alter table sensors alter column sensor_id drop index,",
+                "create table sensors as (\n" +
+                        "    select \n" +
+                        "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') sensor_id, \n" +
+                        "        rnd_int() temperature, \n" +
+                        "        timestamp_sequence(172800000000, 36000000) ts \n" +
+                        "    from long_sequence(100)\n" +
+                        ") timestamp(ts) partition by DAY",
+                53,
+                "unexpected token [,] while trying to drop index"
         );
     }
 }
