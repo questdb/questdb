@@ -1161,7 +1161,7 @@ public class SqlCompiler implements Closeable {
                         final int columnNameNamePosition = lexer.getPosition();
                         tok = expectToken(lexer, "column name");
                         final CharSequence columnName = GenericLexer.immutableOf(tok);
-                        tok = expectToken(lexer, "'add index' or 'cache' or 'nocache'");
+                        tok = expectToken(lexer, "'add index' or 'drop index' or 'cache' or 'nocache'");
                         if (SqlKeywords.isAddKeyword(tok)) {
                             expectKeyword(lexer, "index");
                             tok = SqlUtil.fetchNext(lexer);
@@ -1184,6 +1184,14 @@ public class SqlCompiler implements Closeable {
                             }
 
                             return alterTableColumnAddIndex(tableNamePosition, tableName, columnNameNamePosition, columnName, tableMetadata, indexValueCapacity);
+                        } else if (SqlKeywords.isDropKeyword(tok)) {
+                            // alter table <table name> alter column drop index
+                            expectKeyword(lexer, "index");
+                            tok = SqlUtil.fetchNext(lexer);
+                            if (tok != null && !isSemicolon(tok)) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to drop index");
+                            }
+                            return alterTableColumnDropIndex(tableNamePosition, tableName, columnNameNamePosition, columnName, tableMetadata);
                         } else {
                             if (SqlKeywords.isCacheKeyword(tok)) {
                                 return alterTableColumnCacheFlag(tableNamePosition, tableName, columnName, reader, true);
@@ -1428,7 +1436,6 @@ public class SqlCompiler implements Closeable {
             CharSequence columnName,
             TableReaderMetadata metadata,
             int indexValueBlockSize
-
     ) throws SqlException {
 
         if (metadata.getColumnIndexQuiet(columnName) == -1) {
@@ -1440,6 +1447,23 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofAlter(
                 alterOperationBuilder
                         .ofAddIndex(tableNamePosition, tableName, metadata.getId(), columnName, Numbers.ceilPow2(indexValueBlockSize))
+                        .build()
+        );
+    }
+
+    private CompiledQuery alterTableColumnDropIndex(
+            int tableNamePosition,
+            String tableName,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableReaderMetadata metadata
+    ) throws SqlException {
+        if (metadata.getColumnIndexQuiet(columnName) == -1) {
+            throw SqlException.invalidColumn(columnNamePosition, columnName);
+        }
+        return compiledQuery.ofAlter(
+                alterOperationBuilder
+                        .ofDropIndex(tableNamePosition, tableName, metadata.getId(), columnName)
                         .build()
         );
     }

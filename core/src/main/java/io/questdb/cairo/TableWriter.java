@@ -543,39 +543,11 @@ public class TableWriter implements Closeable {
             throw e;
         }
 
-        // set index flag in metadata
-        // create new _meta.swp
+        // set index flag in metadata and  create new _meta.swp
+        metaSwapIndex = copyMetadataAndSetIndexedFlag(columnIndex, META_FLAG_BIT_INDEXED, indexValueBlockSize);
 
-        metaSwapIndex = copyMetadataAndSetIndexed(columnIndex, indexValueBlockSize);
+        swapMetaFile(columnName);
 
-        // close _meta so we can rename it
-        metaMem.close();
-
-        // validate new meta
-        validateSwapMeta(columnName);
-
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(columnName);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(columnName);
-
-        // rename _meta.swp to -_meta
-        renameSwapMetaToMeta(columnName);
-
-        try {
-            // open _meta file
-            openMetaFile(ff, path, rootLen, metaMem);
-
-            // remove _todo
-            clearTodoLog();
-
-        } catch (CairoException err) {
-            throwDistressException(err);
-        }
-
-        bumpStructureVersion();
         indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
 
@@ -584,6 +556,45 @@ public class TableWriter implements Closeable {
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
+    }
+
+    public void dropColumnIndex(CharSequence colName) {
+        checkDistressed();
+        final int colIdx = getColumnIndexQuiet(metaMem, colName, columnCount);
+        if (colIdx == -1) {
+            throw CairoException.instance(0).put("column '").put(colName).put("' does not exist");
+        }
+        if (!isColumnIndexed(metaMem, colIdx)) {
+            throw CairoException.instance(0).put("column '").put(colName).put("' is not indexed");
+        }
+
+        commit();
+
+        // clear index flag in metadata and create new _meta.swp
+        metaSwapIndex = copyMetadataAndSetIndexedFlag(
+                colIdx,
+                META_FLAG_BIT_NOT_INDEXED,
+                Numbers.ceilPow2(configuration.getIndexValueBlockSize())
+        );
+        swapMetaFile(colName);
+        indexers.remove(colIdx);
+        populateDenseIndexerList();
+        metadata.getColumnQuick(colIdx).setIndexed(false);
+
+        // remove index files
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
+                removeIndexFilesInPartition(
+                        colName,
+                        colIdx,
+                        txWriter.getPartitionTimestamp(i),
+                        txWriter.getPartitionNameTxn(i)
+                );
+            }
+        } else {
+            // TODO
+        }
+        LOG.info().$("DROPPED index for '").utf8(colName).$(" to ").$(path).$();
     }
 
     public void addPhysicallyWrittenRows(long rows) {
@@ -2150,7 +2161,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int copyMetadataAndSetIndexed(int columnIndex, int indexValueBlockSize) {
+    private int copyMetadataAndSetIndexedFlag(int columnIndex, int indexedFlag, int indexValueBlockSize) {
         try {
             int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
             int columnCount = metaMem.getInt(META_OFFSET_COUNT);
@@ -2164,7 +2175,7 @@ public class TableWriter implements Closeable {
                     writeColumnEntry(i, false);
                 } else {
                     ddlMem.putInt(getColumnType(metaMem, i));
-                    long flags = META_FLAG_BIT_INDEXED;
+                    long flags = indexedFlag;
                     if (isSequential(metaMem, i)) {
                         flags |= META_FLAG_BIT_SEQUENTIAL;
                     }
@@ -5164,6 +5175,30 @@ public class TableWriter implements Closeable {
                 }
             }
         }
+    }
+
+    private void swapMetaFile(CharSequence columnName) {
+        // close _meta so we can rename it
+        metaMem.close();
+        // validate new meta
+        validateSwapMeta(columnName);
+        // rename _meta to _meta.prev
+        renameMetaToMetaPrev(columnName);
+        // after we moved _meta to _meta.prev
+        // we have to have _todo to restore _meta should anything go wrong
+        writeRestoreMetaTodo(columnName);
+        // rename _meta.swp to -_meta
+        renameSwapMetaToMeta(columnName);
+        try {
+            // open _meta file
+            openMetaFile(ff, path, rootLen, metaMem);
+            // remove _todo
+            clearTodoLog();
+
+        } catch (CairoException err) {
+            throwDistressException(err);
+        }
+        bumpStructureVersion();
     }
 
     private void validateSwapMeta(CharSequence columnName) {

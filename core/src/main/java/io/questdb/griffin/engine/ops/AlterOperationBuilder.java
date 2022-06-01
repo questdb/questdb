@@ -73,6 +73,15 @@ public class AlterOperationBuilder {
         return this;
     }
 
+    public AlterOperationBuilder ofDropIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
+        this.command = DROP_INDEX;
+        this.tableNamePosition = tableNamePosition;
+        this.tableName = tableName;
+        this.tableId = tableId;
+        this.objCharList.add(columnName);
+        return this;
+    }
+
     public AlterOperationBuilder ofAttachPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = ATTACH_PARTITION;
         this.tableNamePosition = tableNamePosition;

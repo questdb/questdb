@@ -36,17 +36,18 @@ import io.questdb.tasks.TableWriterTask;
 
 public class AlterOperation extends AbstractOperation implements Mutable, QuietClosable {
 
-    public final static short DO_NOTHING = 1;
-    public final static short ADD_COLUMN = 3;
-    public final static short DROP_PARTITION = 4;
-    public final static short ATTACH_PARTITION = 5;
-    public final static short ADD_INDEX = 6;
-    public final static short ADD_SYMBOL_CACHE = 7;
-    public final static short REMOVE_SYMBOL_CACHE = 8;
-    public final static short DROP_COLUMN = 9;
-    public final static short RENAME_COLUMN = 10;
-    public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 11;
-    public final static short SET_PARAM_COMMIT_LAG = 12;
+    public final static short DO_NOTHING = 0;
+    public final static short ADD_COLUMN = 1;
+    public final static short DROP_PARTITION = 2;
+    public final static short ATTACH_PARTITION = 3;
+    public final static short ADD_INDEX = 4;
+    public final static short DROP_INDEX = 5;
+    public final static short ADD_SYMBOL_CACHE = 6;
+    public final static short REMOVE_SYMBOL_CACHE = 7;
+    public final static short DROP_COLUMN = 8;
+    public final static short RENAME_COLUMN = 9;
+    public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
+    public final static short SET_PARAM_COMMIT_LAG = 11;
 
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
 
@@ -75,21 +76,6 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
                 case ADD_COLUMN:
                     applyAddColumn(tableWriter);
                     break;
-                case DROP_PARTITION:
-                    applyDropPartition(tableWriter);
-                    break;
-                case ATTACH_PARTITION:
-                    applyAttachPartition(tableWriter);
-                    break;
-                case ADD_INDEX:
-                    applyAddIndex(tableWriter);
-                    break;
-                case ADD_SYMBOL_CACHE:
-                    applySetSymbolCache(tableWriter, true);
-                    break;
-                case REMOVE_SYMBOL_CACHE:
-                    applySetSymbolCache(tableWriter, false);
-                    break;
                 case DROP_COLUMN:
                     if (!contextAllowsAnyStructureChanges) {
                         throw AlterTableContextException.INSTANCE;
@@ -101,6 +87,24 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
                         throw AlterTableContextException.INSTANCE;
                     }
                     applyRenameColumn(tableWriter);
+                    break;
+                case DROP_PARTITION:
+                    applyDropPartition(tableWriter);
+                    break;
+                case ATTACH_PARTITION:
+                    applyAttachPartition(tableWriter);
+                    break;
+                case ADD_INDEX:
+                    applyAddIndex(tableWriter);
+                    break;
+                case DROP_INDEX:
+                    applyDropIndex(tableWriter);
+                    break;
+                case ADD_SYMBOL_CACHE:
+                    applySetSymbolCache(tableWriter, true);
+                    break;
+                case REMOVE_SYMBOL_CACHE:
+                    applySetSymbolCache(tableWriter, false);
                     break;
                 case SET_PARAM_MAX_UNCOMMITTED_ROWS:
                     applyParamUncommittedRows(tableWriter);
@@ -237,6 +241,16 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
         try {
             int indexValueBlockSize = (int) longList.get(0);
             tableWriter.addIndex(columnName, indexValueBlockSize);
+        } catch (CairoException e) {
+            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
+                    .put("[errno=").put(e.getErrno()).put(']');
+        }
+    }
+
+    private void applyDropIndex(TableWriter tableWriter) throws SqlException {
+        CharSequence columnName = charSequenceList.getStrA(0);
+        try {
+            tableWriter.dropColumnIndex(columnName);
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
                     .put("[errno=").put(e.getErrno()).put(']');
