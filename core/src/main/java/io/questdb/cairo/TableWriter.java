@@ -592,7 +592,12 @@ public class TableWriter implements Closeable {
                 );
             }
         } else {
-            // TODO
+            removeIndexFilesInPartition(
+                    colName,
+                    colIdx,
+                    txWriter.getLastPartitionTimestamp(),
+                    -1L
+            );
         }
         LOG.info().$("DROPPED index for '").utf8(colName).$(" to ").$(path).$();
     }
