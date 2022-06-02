@@ -103,7 +103,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
         }
 
         // override calculated types with user-supplied information
-        //
+
         if (schemaColumns.size() > 0) {
             for (int i = 0, k = columnNames.size(); i < k; i++) {
                 TypeAdapter type = schemaColumns.get(columnNames.getQuick(i));

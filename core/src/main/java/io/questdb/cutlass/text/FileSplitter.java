@@ -232,7 +232,7 @@ public class FileSplitter implements Closeable, Mutable {
             if (ff.exists(path)) {
                 throw CairoException.instance(-1).put("index file already exists [path=").put(path).put(']');
             } else {
-                LOG.info().$("created import index file ").$(path).$();
+                LOG.debug().$("created import index file ").$(path).$();
             }
 
             if (this.memory == null) {
@@ -621,7 +621,7 @@ public class FileSplitter implements Closeable, Mutable {
         }
     }
 
-    public void countQuotes(long chunkStart, long chunkEnd, LongList chunkStats, int chunkIndex) throws SqlException {
+    public void countQuotes(long chunkStart, long chunkEnd, LongList chunkStats, int chunkIndex) throws TextException {
         long offset = chunkStart;
 
         //output vars
@@ -661,7 +661,7 @@ public class FileSplitter implements Closeable, Mutable {
         } while (offset < chunkEnd);
 
         if (read < 0 || offset < chunkEnd) {
-            throw SqlException.$(/*model.getFileName().position*/1, "could not read file [errno=").put(ff.errno()).put(']');
+            throw TextException.$("could not read import file [errno=").put(ff.errno()).put(']');
         }
 
         chunkStats.set(chunkIndex, quotes);

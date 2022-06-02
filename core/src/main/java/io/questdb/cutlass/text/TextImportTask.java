@@ -151,7 +151,7 @@ public class TextImportTask {
             } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
                 context.updateSymbolKeys(index, partitionSize, partitionTimestamp, symbolColumnName, symbolCount);
             } else {
-                throw new RuntimeException("Unexpected phase " + phase);
+                throw TextException.$("Unexpected phase ").put(phase);
             }
         } catch (Throwable t) {
             t.printStackTrace();//TODO: how can we react to job failing

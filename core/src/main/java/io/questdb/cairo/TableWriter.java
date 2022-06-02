@@ -590,6 +590,10 @@ public class TableWriter implements Closeable {
     }
 
     public int attachPartition(long timestamp) {
+        return attachPartition(timestamp, true);
+    }
+
+    public int attachPartition(long timestamp, boolean validateDataFiles) {
         // Partitioned table must have a timestamp
         // SQL compiler will check that table is partitioned
         assert metadata.getTimestampIndex() > -1;
@@ -627,8 +631,9 @@ public class TableWriter implements Closeable {
                                 .$(",partition=").$ts(timestamp).I$();
                         commit();
                     }
-
-                    attachPartitionCheckFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
+                    if (validateDataFiles) {
+                        attachPartitionCheckFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
+                    }
                     long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
                     long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + 8);
 
@@ -787,6 +792,10 @@ public class TableWriter implements Closeable {
 
     public long getO3RowCount() {
         return hasO3() ? getO3RowCount0() : 0;
+    }
+
+    public long getRowCount() {
+        return txWriter.getRowCount();
     }
 
     public int getPartitionBy() {

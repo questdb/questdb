@@ -82,7 +82,7 @@ public class FileIndexer implements Closeable, Mutable {
 
     //holds input for second phase - indexing: offset and start line number for each chunk
     private final LongList indexChunkStats = new LongList();
-    //stats calculated during indexing phase, (maxLineLength:list of partition floors)  for each worker 
+    //stats calculated during indexing phase, maxLineLength for each worker 
     private final LongList indexStats = new LongList();
 
     private final ObjList<TaskContext> contextObjList = new ObjList<>();
@@ -247,7 +247,11 @@ public class FileIndexer implements Closeable, Mutable {
         }
     }
 
-    public IntList importPartitions() {
+    public IntList importPartitions() throws TextException {
+        if (partitionNames.size() == 0) {
+            throw TextException.$("No partitions to merge and load found");
+        }
+
         LOG.info().$("Started index merge and partition load").$();
 
         final int partitionCount = partitionNames.size();
@@ -392,56 +396,59 @@ public class FileIndexer implements Closeable, Mutable {
         }
     }
 
-    public void parseStructure() throws TextException, SqlException {
-        int textAnalysisMaxLines = 10;
+    public void parseStructure() throws TextException {
+        final int textAnalysisMaxLines = 10;
         final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
 
         int len = configuration.getSqlCopyBufferSize();
         long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        long fd = -1;
 
         try (TextLexer lexer = new TextLexer(configuration.getTextConfiguration())) {
             tmpPath.of(inputRoot).concat(inputFileName).$();
-            long fd = ff.openRO(tmpPath);
-            try {
-                if (fd == -1) {
-                    throw SqlException.$(0, "could not open file [errno=").put(Os.errno()).put(", path=").put(tmpPath).put(']');
+            fd = ff.openRO(tmpPath);
+
+            if (fd == -1) {
+                throw TextException.$("could not open file [errno=").put(Os.errno()).put(", path=").put(tmpPath).put(']');
+            }
+            if (ff.length(fd) < 1) {
+                throw TextException.$("Ignoring file because it's empty. Path=").put(inputFilePath);
+            }
+
+            long n = ff.read(fd, buf, len, 0);
+            if (n > 0) {
+                if (columnDelimiter < 0) {
+                    columnDelimiter = textDelimiterScanner.scan(buf, buf + n);
                 }
-                long n = ff.read(fd, buf, len, 0);
-                if (n > 0) {
-                    if (columnDelimiter < 0) {
-                        columnDelimiter = textDelimiterScanner.scan(buf, buf + n);
-                    }
 
-                    lexer.of(columnDelimiter);
-                    lexer.setSkipLinesWithExtraValues(false);
+                lexer.of(columnDelimiter);
+                lexer.setSkipLinesWithExtraValues(false);
 
-                    final ObjList<CharSequence> names = new ObjList<>();
-                    final ObjList<TypeAdapter> types = new ObjList<>();
-                    if (timestampColumn != null && timestampAdapter != null) {
-                        names.add(timestampColumn);
-                        types.add(timestampAdapter);
-                    }
-
-                    textMetadataDetector.of(names, types, forceHeader);
-                    lexer.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
-                    textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
-
-                    final TaskContext context = contextObjList.get(0);
-                    context.prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), tmpPath, typeManager);
+                final ObjList<CharSequence> names = new ObjList<>();
+                final ObjList<TypeAdapter> types = new ObjList<>();
+                if (timestampColumn != null && timestampAdapter != null) {
+                    names.add(timestampColumn);
+                    types.add(timestampAdapter);
                 }
-            } finally {
-                ff.close(fd);
+
+                textMetadataDetector.of(names, types, forceHeader);
+                lexer.parse(buf, buf + n, textAnalysisMaxLines, textMetadataDetector);
+                textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
+                forceHeader = textMetadataDetector.isHeader();
+
+                final TaskContext context = contextObjList.get(0);
+                context.prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), tmpPath, typeManager);
+                prepareContexts();
             }
         } finally {
+            if (fd != -1) {
+                ff.close(fd);
+            }
             Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
         }
-
-        prepareContexts();
     }
 
-    //TODO: we'll' need to lock dir or acquire table lock to make sure there are no two parallel user-issued imports of the same file
     private void createWorkDir() {
-        //TODO: remove file separator and dots from input file name !
         Path workDirPath = tmpPath.of(inputWorkRoot).slash().concat(inputFileName).slash$();
 
         if (ff.exists(workDirPath)) {
@@ -459,18 +466,13 @@ public class FileIndexer implements Closeable, Mutable {
         LOG.info().$("created import dir ").$(workDirPath).$();
     }
 
-    public void process() throws SqlException {
+    public void process() throws SqlException, TextException {
         long fd = ff.openRO(inputFilePath);
         if (fd < 0) {
-            throw CairoException.instance(ff.errno()).put("Can't open input file").put(inputFilePath);
+            throw TextException.$("Can't open input file=").put(inputFilePath).put(", errno=").put(ff.errno());
         }
 
         try (TableWriter writer = cairoEngine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, LOCK_REASON)) {
-            final long fileLength = ff.length(fd);
-            if (fileLength < 1) {
-                LOG.info().$("Ignoring file because it's empty. Path=").$(inputFilePath).$();
-                return;
-            }
             findChunkBoundaries(fd);
             indexChunks();
             IntList taskDistribution = importPartitions();
@@ -479,8 +481,6 @@ public class FileIndexer implements Closeable, Mutable {
             parallelUpdateSymbolKeys(taskCount);
             movePartitionsToDst(taskDistribution, taskCount);
             attachPartititons(writer);
-        } catch (Exception e) {
-            LOG.error().$(e).$();
         } finally {
             ff.close(fd);
         }
@@ -519,16 +519,20 @@ public class FileIndexer implements Closeable, Mutable {
         }
     }
 
-    private void attachPartititons(TableWriter writer) {
+    private void attachPartititons(TableWriter writer) throws TextException {
+        if (partitionNames.size() == 0) {
+            throw TextException.$("No partitions to attach found");
+        }
+
         LOG.info().$("Started attaching partitions").$();
 
         for (int i = 0, sz = partitionNames.size(); i < sz; i++) {
             final CharSequence partitionDirName = partitionNames.get(i);
             try {
                 final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
-                writer.attachPartition(timestamp);
+                writer.attachPartition(timestamp, true); //TODO: change to false to speed up attaching
             } catch (CairoException e) {
-                LOG.error().$("Cannot parse partition directory name=").$(partitionDirName).$();
+                LOG.error().$("Cannot parse partition directory name=").$(partitionDirName).$((Throwable) e).$();
             }
         }
 
@@ -540,14 +544,10 @@ public class FileIndexer implements Closeable, Mutable {
     }
 
     //returns list with N chunk boundaries
-    LongList findChunkBoundaries(long fd) throws SqlException {
-        final long fileLength = ff.length(fd);
-
-        if (fileLength < 1) {
-            return null;
-        }
-
+    LongList findChunkBoundaries(long fd) throws TextException {
         LOG.info().$("Started checking boundaries in file=").$(inputFilePath).$();
+
+        final long fileLength = ff.length(fd);
 
         assert (workerCount > 0 && minChunkSize > 0);
 
@@ -562,7 +562,7 @@ public class FileIndexer implements Closeable, Mutable {
 
         long chunkSize = fileLength / workerCount;
         chunkSize = Math.max(minChunkSize, chunkSize);
-        final int chunks = (int) (fileLength / chunkSize);
+        final int chunks = (int) Math.max(fileLength / chunkSize, 1);
 
         int queuedCount = 0;
         doneLatch.reset();
@@ -593,18 +593,16 @@ public class FileIndexer implements Closeable, Mutable {
         return indexChunkStats;
     }
 
-    void indexChunks() throws SqlException {
+    void indexChunks() throws SqlException, TextException {
         int queuedCount = 0;
         doneLatch.reset();
 
-        LOG.info().$("Started indexing file=").$(inputFilePath).$();
         if (indexChunkStats.size() < 2) {
-            LOG.info().$("No chunks found for indexing in file=").$(inputFilePath).$();
-            return;
+            throw TextException.$("No chunks found for indexing in file=").put(inputFilePath);
         }
 
+        LOG.info().$("Started indexing file=").$(inputFilePath).$();
         createWorkDir();
-
         indexStats.setPos((indexChunkStats.size() - 2) / 2);
         indexStats.zero(0);
 
@@ -739,8 +737,6 @@ public class FileIndexer implements Closeable, Mutable {
         private ObjList<TypeAdapter> types;
         private TimestampAdapter timestampAdapter;
         private TableWriter tableWriterRef;
-
-        private final IntList remapIndex = new IntList();
         private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
 
         public TaskContext() {
@@ -765,8 +761,10 @@ public class FileIndexer implements Closeable, Mutable {
             if (types != null) {
                 types.clear();
             }
-            remapIndex.clear();
             otherToTimestampAdapterPool.clear();
+            timestampAdapter = null;
+            timestampIndex = -1;
+            timestampColumn = null;
         }
 
         @Override
@@ -780,7 +778,7 @@ public class FileIndexer implements Closeable, Mutable {
             memory.close();
         }
 
-        public void countQuotesStage(int index, long lo, long hi, final LongList chunkStats) throws SqlException {
+        public void countQuotesStage(int index, long lo, long hi, final LongList chunkStats) throws TextException {
             splitter.countQuotes(lo, hi, chunkStats, index);
         }
 
@@ -797,15 +795,21 @@ public class FileIndexer implements Closeable, Mutable {
             if (detectedTypes.size() == 0) {
                 throw CairoException.instance(0).put("cannot determine text structure");
             }
-
             if (partitionBy == PartitionBy.NONE) {
                 throw CairoException.instance(-1).put("partition by unit can't be NONE for parallel import");
             }
-
             TableWriter writer = null;
-
             if (partitionBy < 0) {
                 partitionBy = PartitionBy.NONE;
+            }
+
+            if (timestampIndex == -1 && timestampColumn != null) {
+                for (int i = 0, n = names.size(); i < n; i++) {
+                    if (Chars.equalsIgnoreCase(names.get(i), timestampColumn)) {
+                        timestampIndex = i;
+                        break;
+                    }
+                }
             }
 
             try {
@@ -824,7 +828,12 @@ public class FileIndexer implements Closeable, Mutable {
                         partitionBy = writer.getPartitionBy();
                         break;
                     case TableUtils.TABLE_EXISTS:
-                        writer = openWriterAndOverrideImportTypes(names, detectedTypes, cairoSecurityContext, typeManager);
+                        writer = openWriterAndOverrideImportMetadata(names, detectedTypes, cairoSecurityContext, typeManager);
+
+                        if (writer.getRowCount() > 0) {
+                            throw CairoException.instance(0).put("target table must be empty [table=").put(tableName).put(']');
+                        }
+
                         CharSequence designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                         int designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                         if (PartitionBy.isPartitioned(partitionBy) && partitionBy != writer.getPartitionBy()) {
@@ -845,27 +854,12 @@ public class FileIndexer implements Closeable, Mutable {
                 }
             }
 
-            if (timestampAdapter == null && timestampIndex != -1 &&
-                    ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
-                timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
-            }
-
-            timestampIndex = -1;
-            if (timestampColumn != null) {
-                for (int i = 0, n = textMetadataDetector.getColumnNames().size(); i < n; i++) {
-                    if (Chars.equalsIgnoreCase(textMetadataDetector.getColumnNames().get(i), timestampColumn)) {
-                        timestampIndex = i;
-                        break;
-                    }
-                }
-            }
-
             if (timestampIndex == -1) {
                 throw CairoException.instance(-1).put("timestamp column not found");
             }
 
-            if (timestampAdapter == null) {
-                timestampAdapter = (TimestampAdapter) textMetadataDetector.getColumnTypes().getQuick(timestampIndex);
+            if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
+                timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
             }
         }
 
@@ -889,12 +883,12 @@ public class FileIndexer implements Closeable, Mutable {
                 final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
                 final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
                 if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
-                    throw TextException.$("not a timestamp '").put(timestampColumn).put('\'');
+                    throw TextException.$("column no=").put(timestampIndex).put(", name='").put(timestampColumn).put("' is not a timestamp");
                 }
             }
         }
 
-        private TableWriter openWriterAndOverrideImportTypes(
+        private TableWriter openWriterAndOverrideImportMetadata(
                 ObjList<CharSequence> names,
                 ObjList<TypeAdapter> detectedTypes,
                 CairoSecurityContext cairoSecurityContext,
@@ -915,7 +909,9 @@ public class FileIndexer implements Closeable, Mutable {
 
             this.types = detectedTypes;
 
-            // now overwrite detected types with actual table column types
+            //remap index is only needed to adjust names and types
+            //workers will import data into temp tables without remapping
+            IntList remapIndex = new IntList();
             remapIndex.ensureCapacity(this.types.size());
             for (int i = 0, n = this.types.size(); i < n; i++) {
 
@@ -952,6 +948,13 @@ public class FileIndexer implements Closeable, Mutable {
                     }
                 }
             }
+
+            //at this point we've to use target table columns names otherwise partition attach could fail on metadata differences 
+            //(if header names or synthetic names are different from table's)
+            for (int i = 0, n = remapIndex.size(); i < n; i++) {
+                names.set(i, metadata.getColumnName(remapIndex.get(i)));
+            }
+
             return writer;
         }
 
@@ -1090,7 +1093,7 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         private void logError(long line, int i, final DirectByteCharSequence dbcs) {
-            LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(i).getType())).$("]\n\t");
+            LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(i).getType())).$("]\t");
             logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
         }
 
@@ -1131,8 +1134,7 @@ public class FileIndexer implements Closeable, Mutable {
 
         private boolean onField(long line, final DirectByteCharSequence dbcs, TableWriter.Row w, int i) {
             try {
-                final int tableIndex = remapIndex.size() > 0 ? remapIndex.get(i) : i;
-                types.getQuick(i).write(w, tableIndex, dbcs);
+                types.getQuick(i).write(w, i, dbcs);
             } catch (Exception ignore) {
                 logError(line, i, dbcs);
                 switch (atomicity) {
