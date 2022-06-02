@@ -29,6 +29,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
@@ -155,7 +156,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                 Assert.assertEquals(isIndexed, colMetadata.isIndexed());
                 Assert.assertEquals(indexValueBlockSize, colMetadata.getIndexValueBlockCapacity());
 
-                final Path tablePath = Path.of((String) configuration.getRoot(), tableName);
+                final Path tablePath = FileSystems.getDefault().getPath((String) configuration.getRoot(), tableName);
                 final Set<Path> indexFiles = Files.find(
                         tablePath,
                         Integer.MAX_VALUE,
