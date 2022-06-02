@@ -25,10 +25,14 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 public class DropIndexTest extends AbstractGriffinTest {
     @Test
@@ -39,7 +43,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                             "    select \n" +
                             "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') sensor_id, \n" +
                             "        rnd_int() temperature, \n" +
-                            "        timestamp_sequence(172800000000, 36000000) ts \n" +
+                            "        timestamp_sequence(0, 36000000) ts \n" +
                             "    from long_sequence(100)\n" +
                             ") timestamp(ts) partition by DAY",
                     sqlExecutionContext
@@ -56,42 +60,42 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDropIndexOfIndexedColumn() throws Exception {
+    public void testDropIndexOfIndexedColumnPartitionedTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(
                     "create table sensors as (\n" +
-                            "    select \n" +
+                            "    select\n" +
                             "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') sensor_id, \n" +
                             "        rnd_int() temperature, \n" +
-                            "        timestamp_sequence(172800000000, 36000000) ts \n" +
-                            "    from long_sequence(100)\n" +
-                            ") timestamp(ts) partition by DAY",
+                            "        timestamp_sequence(0, 36000000) ts \n" +
+                            "    from long_sequence(1000)\n" +
+                            "), index(sensor_id capacity 32) timestamp(ts) partition by HOUR",
                     sqlExecutionContext
             );
-
-            compile("alter table sensors alter column sensor_id add index capacity 128", sqlExecutionContext);
-
-            try (TableReader tableReader = new TableReader(configuration, "sensors")) {
-                try (TableReaderMetadata metadata = tableReader.getMetadata()) {
-                    final int sensorIdColIdx = metadata.getColumnIndex("sensor_id");
-                    final TableColumnMetadata sensorIdColMetadata = metadata.getColumnQuick(sensorIdColIdx);
-                    Assert.assertTrue(sensorIdColMetadata.isIndexed());
-                    Assert.assertEquals(sensorIdColMetadata.getIndexValueBlockCapacity(), 128);
-                }
-            }
+            verifyIndexMetadata("sensors", "sensor_id", true, 32);
 
             compile("alter table sensors alter column sensor_id drop index", sqlExecutionContext);
+            verifyIndexMetadata("sensors", "sensor_id", false, configuration.getIndexValueBlockSize());
+        });
+    }
 
-            // TODO: clear a FD leak ...
+    @Test
+    public void testDropIndexOfIndexedColumnNonPartitionedTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table sensors as (\n" +
+                            "    select\n" +
+                            "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') sensor_id, \n" +
+                            "        rnd_int() temperature, \n" +
+                            "        timestamp_sequence(0, 36000000) ts \n" +
+                            "    from long_sequence(100)\n" +
+                            "), index(sensor_id capacity 32) timestamp(ts) partition by NONE",
+                    sqlExecutionContext
+            );
+            verifyIndexMetadata("sensors", "sensor_id", true, 32);
 
-            try (TableReader tableReader = new TableReader(configuration, "sensors")) {
-                try (TableReaderMetadata metadata = tableReader.getMetadata()) {
-                    final int sensorIdColIdx = metadata.getColumnIndex("sensor_id");
-                    final TableColumnMetadata sensorIdColMetadata = metadata.getColumnQuick(sensorIdColIdx);
-                    Assert.assertFalse(sensorIdColMetadata.isIndexed());
-                    Assert.assertEquals(sensorIdColMetadata.getIndexValueBlockCapacity(), configuration.getIndexValueBlockSize());
-                }
-            }
+            compile("alter table sensors alter column sensor_id drop index", sqlExecutionContext);
+            verifyIndexMetadata("sensors", "sensor_id", false, configuration.getIndexValueBlockSize());
         });
     }
 
@@ -141,5 +145,37 @@ public class DropIndexTest extends AbstractGriffinTest {
                 53,
                 "unexpected token [,] while trying to drop index"
         );
+    }
+
+    private void verifyIndexMetadata(String tableName, String columnName, boolean isIndexed, int indexValueBlockSize) throws Exception {
+        try (TableReader tableReader = new TableReader(configuration, tableName)) {
+            try (TableReaderMetadata metadata = tableReader.getMetadata()) {
+                final int colIdx = metadata.getColumnIndex(columnName);
+                final TableColumnMetadata colMetadata = metadata.getColumnQuick(colIdx);
+                Assert.assertEquals(isIndexed, colMetadata.isIndexed());
+                Assert.assertEquals(indexValueBlockSize, colMetadata.getIndexValueBlockCapacity());
+
+                final Path tablePath = Path.of((String) configuration.getRoot(), tableName);
+                final Set<Path> indexFiles = Files.find(
+                        tablePath,
+                        Integer.MAX_VALUE,
+                        (path, _attrs) -> isIndexRelatedFile(tablePath, columnName, path)
+                ).collect(Collectors.toSet());
+                if (isIndexed) {
+                    if (PartitionBy.isPartitioned(metadata.getPartitionBy())) {
+                        Assert.assertTrue(indexFiles.size() > 2);
+                    } else {
+                        Assert.assertEquals(2, indexFiles.size());
+                    }
+                } else {
+                    Assert.assertTrue(indexFiles.isEmpty());
+                }
+            }
+        }
+    }
+
+    private static boolean isIndexRelatedFile(Path tablePath, String colName, Path filePath) {
+        final String fn = filePath.getFileName().toString();
+        return (fn.equals(colName + ".k") || fn.equals(colName + ".v")) && !filePath.getParent().equals(tablePath);
     }
 }

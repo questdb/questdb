@@ -570,16 +570,20 @@ public class TableWriter implements Closeable {
 
         commit();
 
-        // clear index flag in metadata and create new _meta.swp
-        metaSwapIndex = copyMetadataAndSetIndexedFlag(
-                colIdx,
-                META_FLAG_BIT_NOT_INDEXED,
-                Numbers.ceilPow2(configuration.getIndexValueBlockSize())
-        );
+        final int idxValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
+        metaSwapIndex = copyMetadataAndSetIndexedFlag(colIdx, META_FLAG_BIT_NOT_INDEXED, idxValueBlockSize);
         swapMetaFile(colName);
-        indexers.remove(colIdx);
-        populateDenseIndexerList();
-        metadata.getColumnQuick(colIdx).setIndexed(false);
+        TableColumnMetadata colMeta = metadata.getColumnQuick(colIdx);
+        colMeta.setIndexed(false);
+        colMeta.setIndexValueBlockCapacity(idxValueBlockSize);
+
+        // remove indexer
+        ColumnIndexer colIndexer = indexers.getQuick(colIdx);
+        if (colIndexer != null) {
+            colIndexer.close();
+            indexers.remove(colIdx);
+            populateDenseIndexerList();
+        }
 
         // remove index files
         if (PartitionBy.isPartitioned(partitionBy)) {

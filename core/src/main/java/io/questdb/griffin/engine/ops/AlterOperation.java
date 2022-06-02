@@ -67,6 +67,7 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
     public AlterOperation(LongList longList, ObjList<CharSequence> charSequenceObjList) {
         this.longList = longList;
         this.objCharList = new ObjCharSequenceList(charSequenceObjList);
+        this.command = DO_NOTHING;
     }
 
     @Override
@@ -177,8 +178,8 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
         objCharList.clear();
         directCharList.clear();
         charSequenceList = objCharList;
-        setCommandCorrelationId(-1);
         longList.clear();
+        clearCommandCorrelationId();
     }
 
     public AlterOperation of(

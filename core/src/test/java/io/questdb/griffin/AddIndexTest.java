@@ -55,8 +55,6 @@ public class AddIndexTest extends AbstractGriffinTest {
         });
     }
 
-
-
     @Test
     public void testBeforeAndAfterIndex() throws Exception {
         final String expected = "sym\tprice\tts\n" +

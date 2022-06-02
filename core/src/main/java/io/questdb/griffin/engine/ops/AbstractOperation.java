@@ -28,6 +28,9 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.tasks.TableWriterTask;
 
 public abstract class AbstractOperation implements AsyncWriterCommand {
+
+    static final long NO_CORRELATION_ID = -1L;
+
     private int cmdType;
     private String cmdName;
     private int tableId;
@@ -51,6 +54,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand {
         this.tableId = tableId;
         this.tableVersion = tableVersion;
         this.tableNamePosition = tableNamePosition;
+        this.correlationId = NO_CORRELATION_ID;
     }
 
     @Override
@@ -86,6 +90,10 @@ public abstract class AbstractOperation implements AsyncWriterCommand {
     @Override
     public void setCommandCorrelationId(long correlationId) {
         this.correlationId = correlationId;
+    }
+
+    public void clearCommandCorrelationId() {
+        setCommandCorrelationId(NO_CORRELATION_ID);
     }
 
     @Override

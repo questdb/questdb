@@ -28,7 +28,9 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.str.Path;
 
-public interface ColumnIndexer {
+import java.io.Closeable;
+
+public interface ColumnIndexer extends Closeable {
     void distress();
 
     long getFd();
@@ -59,4 +61,7 @@ public interface ColumnIndexer {
     void rollback(long maxRow);
 
     boolean tryLock(long expectedSequence);
+
+    @Override
+    void close();
 }
