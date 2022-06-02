@@ -25,8 +25,10 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
@@ -47,6 +49,9 @@ import org.junit.Assert;
 import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+
+import static io.questdb.test.tools.TestUtils.assertEventually;
+import static org.junit.Assert.assertEquals;
 
 class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected static final int WAIT_NO_WAIT = 0x0;
@@ -298,6 +303,16 @@ class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             tlSocket.set(null);
             Net.close(fd);
             Net.freeSockAddr(sockaddr);
+        }
+    }
+
+    public static void assertTableExistsEventually(CairoEngine engine, CharSequence tableName) {
+        assertEventually(() -> assertTableExists(engine, tableName));
+    }
+
+    public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
+        try (Path path = new Path()) {
+            assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName));
         }
     }
 }

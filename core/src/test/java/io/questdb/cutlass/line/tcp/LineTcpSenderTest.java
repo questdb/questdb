@@ -24,20 +24,16 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.std.Os;
-import io.questdb.std.str.Path;
 import org.junit.Test;
 
+import java.net.Inet4Address;
 import java.security.PrivateKey;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
-import static io.questdb.test.tools.TestUtils.assertEventually;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.*;
 
@@ -45,7 +41,8 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     private final static String AUTH_KEY_ID1 = "testUser1";
     private final static String AUTH_KEY_ID2_INVALID = "invalid";
-    private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=");
+    private final static String TOKEN = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
+    private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey(TOKEN);
     private final static int HOST = Net.parseIPv4("127.0.0.1");
 
     @Test
@@ -95,13 +92,75 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         });
     }
 
-    public static void assertTableExistsEventually(CairoEngine engine, CharSequence tableName) {
-        assertEventually(() -> assertTableExists(engine, tableName));
+    @Test
+    public void testBuilderAuthSuccess() throws Exception {
+        authKeyId = AUTH_KEY_ID1;
+        String address = "127.0.0.1:" + bindPort;
+        runInContext(r -> {
+            try (LineTcpSender sender = LineTcpSender.builder()
+                    .address(address)
+                    .enableAuth(AUTH_KEY_ID1).token(TOKEN)
+                    .build()) {
+                sender.metric("mytable").field("my int field", 42).$();
+                sender.flush();
+            }
+            assertTableExistsEventually(engine, "mytable");
+        });
     }
 
-    public static void assertTableExists(CairoEngine engine, CharSequence tableName) {
-        try (Path path = new Path()) {
-            assertEquals(TableUtils.TABLE_EXISTS, engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName));
-        }
+    @Test
+    public void testBuilderPlainText_addressWithIpAndPort() throws Exception {
+        String address = "127.0.0.1:" + bindPort;
+        runInContext(r -> {
+            try (LineTcpSender sender = LineTcpSender.builder()
+                    .address(address)
+                    .build()) {
+                sender.metric("mytable").field("my int field", 42).$();
+                sender.flush();
+            }
+            assertTableExistsEventually(engine, "mytable");
+        });
+    }
+
+    @Test
+    public void testBuilderPlainText_addressWithHostnameAndPort() throws Exception {
+        String address = "localhost:" + bindPort;
+        runInContext(r -> {
+            try (LineTcpSender sender = LineTcpSender.builder()
+                    .address(address)
+                    .build()) {
+                sender.metric("mytable").field("my int field", 42).$();
+                sender.flush();
+            }
+            assertTableExistsEventually(engine, "mytable");
+        });
+    }
+
+    @Test
+    public void testBuilderPlainText_addressWithExplicitIpAndPort() throws Exception {
+        runInContext(r -> {
+            try (LineTcpSender sender = LineTcpSender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+                sender.metric("mytable").field("my int field", 42).$();
+                sender.flush();
+            }
+            assertTableExistsEventually(engine, "mytable");
+        });
+    }
+
+    @Test
+    public void testBuilderPlainText_withExplicitHostnameAndPort() throws Exception {
+        runInContext(r -> {
+            try (LineTcpSender sender = LineTcpSender.builder()
+                    .host(Inet4Address.getByName("localhost"))
+                    .port(bindPort)
+                    .build()) {
+                sender.metric("mytable").field("my int field", 42).$();
+                sender.flush();
+            }
+            assertTableExistsEventually(engine, "mytable");
+        });
     }
 }

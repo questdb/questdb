@@ -24,10 +24,16 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.cutlass.line.tcp.AuthDb;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 
+import javax.security.auth.DestroyFailedException;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.security.PrivateKey;
 
 public class LineTcpSender extends AbstractLineSender {
@@ -75,8 +81,144 @@ public class LineTcpSender extends AbstractLineSender {
         sendAll();
     }
 
+    public static LineSenderBuilder builder() {
+        return new LineSenderBuilder();
+    }
+
     @Override
     protected void send00() {
         sendAll();
+    }
+
+    public static final class LineSenderBuilder {
+        // indicates buffer capacity was not set explicitly
+        private static final byte BUFFER_CAPACITY_DEFAULT = 0;
+
+        private static final int  DEFAULT_BUFFER_CAPACITY = 256 * 1024;
+
+        private int port;
+        private int host;
+        private String keyId;
+        private PrivateKey privateKey;
+        private boolean shouldDestroyPrivKey;
+        private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
+
+        private LineSenderBuilder() {
+
+        }
+
+        public LineSenderBuilder host(InetAddress host) {
+            if (!(host instanceof Inet4Address)) {
+                throw new IllegalArgumentException("only IPv4 addresses are supported");
+            }
+            if (this.host != 0) {
+                throw new IllegalStateException("host address is already configured");
+            }
+            for (byte b : host.getAddress()) {
+                this.host = (this.host << 8 | b);
+            }
+            return this;
+        }
+
+        public LineSenderBuilder address(String address) {
+            if (host != 0) {
+                throw new IllegalStateException("host address is already configured");
+            }
+            try {
+                // optimistically assume it's just IP address
+                host = Net.parseIPv4(address);
+            } catch (NetworkError e) {
+                int portIndex = address.indexOf(':');
+                if (portIndex + 1 == address.length()) {
+                    throw new IllegalArgumentException("cannot parse address " + address + ". address cannot ends with :");
+                }
+                String hostname;
+                if (portIndex != -1) {
+                    if (port != 0) {
+                        throw new IllegalStateException("address " + address + " contains a port, but a port was already set to " + port);
+                    }
+                    hostname = address.substring(0, portIndex);
+                    port = Integer.parseInt(address.substring(portIndex + 1));
+                } else {
+                    hostname = address;
+                }
+                try {
+                    Inet4Address inet4Address = (Inet4Address) Inet4Address.getByName(hostname);
+                    return host(inet4Address);
+                } catch (UnknownHostException ex) {
+                    throw new IllegalArgumentException("cannot parse address " + address, ex);
+                }
+            }
+            return this;
+        }
+
+        public LineSenderBuilder port(int port) {
+            if (this.port != 0) {
+                throw new IllegalStateException("post is already configured to " + this.port);
+            }
+            this.port = port;
+            return this;
+        }
+
+        public AuthBuilder enableAuth(String keyId) {
+            if (this.keyId != null) {
+                throw new IllegalStateException("authentication keyId was already set");
+            }
+            this.keyId = keyId;
+            return new AuthBuilder();
+        }
+
+        public LineSenderBuilder bufferCapacity(int bufferCapacity) {
+            if (this.bufferCapacity != BUFFER_CAPACITY_DEFAULT) {
+                throw new IllegalStateException("buffer capacity was already set to " + this.bufferCapacity);
+            }
+            this.bufferCapacity = bufferCapacity;
+            return this;
+        }
+
+        public LineTcpSender build() {
+            if (host == 0) {
+                throw new IllegalStateException("questdb server host not set");
+            }
+            if (port == 0) {
+                throw new IllegalStateException("questdb server port not set");
+            }
+            if (bufferCapacity == BUFFER_CAPACITY_DEFAULT) {
+                bufferCapacity = DEFAULT_BUFFER_CAPACITY;
+            }
+
+            if (privateKey == null) {
+                return new LineTcpSender(host, port, bufferCapacity);
+            } else {
+                LineTcpSender sender = new LineTcpSender(host, port, bufferCapacity, keyId, privateKey);
+                if (shouldDestroyPrivKey) {
+                    try {
+                        privateKey.destroy();
+                    } catch (DestroyFailedException e) {
+                        // not much we can do
+                    }
+                }
+                return sender;
+            }
+        }
+
+        public class AuthBuilder {
+            public LineSenderBuilder privateKey(PrivateKey privateKey) {
+                if (LineSenderBuilder.this.privateKey != null) {
+                    throw new IllegalStateException("private key was already set");
+                }
+                LineSenderBuilder.this.privateKey = privateKey;
+                return LineSenderBuilder.this;
+            }
+
+            public LineSenderBuilder token(String token) {
+                if (LineSenderBuilder.this.privateKey != null) {
+                    throw new IllegalStateException("token was already set");
+                }
+                LineSenderBuilder.this.privateKey = AuthDb.importPrivateKey(token);
+                LineSenderBuilder.this.shouldDestroyPrivKey = true;
+                return LineSenderBuilder.this;
+            }
+        }
     }
 }
