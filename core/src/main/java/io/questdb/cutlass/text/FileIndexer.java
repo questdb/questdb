@@ -810,10 +810,13 @@ public class FileIndexer implements Closeable, Mutable {
                 switch (cairoEngine.getStatus(cairoSecurityContext, path, tableName)) {
                     case TableUtils.TABLE_DOES_NOT_EXIST:
                         if (partitionBy == PartitionBy.NONE) {
-                            throw CairoException.instance(-1).put("partition by unit must be set when importing to new table");
+                            throw TextException.$("partition by unit must be set when importing to new table");
                         }
                         if (timestampColumn == null) {
-                            throw CairoException.instance(-1).put("timestamp column must be set when importing to new table");
+                            throw TextException.$("timestamp column must be set when importing to new table");
+                        }
+                        if (timestampIndex == -1) {
+                            throw TextException.$("timestamp column '").put(timestampColumn).put("' not found in file header");
                         }
 
                         validate(null, NO_INDEX);
@@ -887,15 +890,13 @@ public class FileIndexer implements Closeable, Mutable {
                 ObjList<TypeAdapter> detectedTypes,
                 CairoSecurityContext cairoSecurityContext,
                 TypeManager typeManager
-        ) {
+        ) throws TextException {
             TableWriter writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
             RecordMetadata metadata = writer.getMetadata();
-            // now, compare column count.
-            // Cannot continue if different
+
             if (metadata.getColumnCount() < detectedTypes.size()) {
                 writer.close();
-                throw CairoException.instance(0)
-                        .put("column count mismatch [textColumnCount=").put(detectedTypes.size())
+                throw TextException.$("column count mismatch [textColumnCount=").put(detectedTypes.size())
                         .put(", tableColumnCount=").put(metadata.getColumnCount())
                         .put(", table=").put(tableName)
                         .put(']');
@@ -947,6 +948,25 @@ public class FileIndexer implements Closeable, Mutable {
             //(if header names or synthetic names are different from table's)
             for (int i = 0, n = remapIndex.size(); i < n; i++) {
                 names.set(i, metadata.getColumnName(remapIndex.get(i)));
+            }
+
+            //add table columns missing in input file 
+            if (names.size() < metadata.getColumnCount()) {
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    boolean unused = true;
+
+                    for (int r = 0, rn = remapIndex.size(); r < rn; r++) {
+                        if (remapIndex.get(r) == i) {
+                            unused = false;
+                            break;
+                        }
+                    }
+
+                    if (unused) {
+                        names.add(metadata.getColumnName(i));
+                        types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
+                    }
+                }
             }
 
             return writer;

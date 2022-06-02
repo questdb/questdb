@@ -98,8 +98,8 @@ public class TypeManager implements Mutable {
                 newAdapter = dateAdapterPool.next();
             } else if (srcAdapter instanceof SymbolAdapter) {
                 newAdapter = srcAdapter.isIndexed() ? indexedSymbolAdapter : notIndexedSymbolAdapter;
-            } else if (srcAdapter instanceof StringAdapter) {
-                newAdapter = stringAdapter.of(srcAdapter);
+            } else if (srcAdapter instanceof DateAdapter) {
+                newAdapter = new DateAdapter();
             } else {
                 newAdapter = getTypeAdapter(types.get(i).getType());
             }

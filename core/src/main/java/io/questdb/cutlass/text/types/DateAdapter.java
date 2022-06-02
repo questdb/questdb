@@ -76,4 +76,10 @@ public class DateAdapter extends AbstractTypeAdapter implements Mutable, Timesta
         this.locale = locale;
         return this;
     }
+
+    public TypeAdapter of(TypeAdapter o) {
+        DateAdapter other = (DateAdapter) o;
+        of(other.format, other.locale);
+        return this;
+    }
 }

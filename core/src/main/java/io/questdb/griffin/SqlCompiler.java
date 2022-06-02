@@ -1962,7 +1962,7 @@ public class SqlCompiler implements Closeable {
                 Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
             }
         } catch (TextException e) {
-            // we do not expect JSON exception here
+            LOG.error().$((Throwable) e).$();
         } finally {
             LOG.info().$("copied").$();
         }
