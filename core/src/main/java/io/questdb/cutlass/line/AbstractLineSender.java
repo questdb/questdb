@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cutlass.line.tcp.AuthDb;
 import io.questdb.log.Log;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
@@ -35,8 +36,15 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.Signature;
+import java.security.SignatureException;
+import java.util.Base64;
 
 public abstract class AbstractLineSender extends AbstractCharSink implements Closeable {
     protected final int capacity;
@@ -105,7 +113,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     @Override
     public void close() {
         if (nf.close(fd) != 0) {
-            log.error().$("could not close UDP socket [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+            log.error().$("could not close network socket [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
         }
         nf.freeSockAddr(sockaddr);
         Unsafe.free(bufA, capacity, MemoryTag.NATIVE_DEFAULT);
@@ -270,6 +278,19 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         }
     }
 
+    protected final void authenticate(String authKey, PrivateKey privateKey) throws NetworkError {
+        encodeUtf8(authKey).put('\n');
+        sendAll();
+
+        byte[] challengeBytes = receiveChallengeBytes();
+        byte[] signature = signAndEncode(privateKey, challengeBytes);
+        for (int n = 0; n < signature.length; n++) {
+            put((char)signature[n]);
+        }
+        put('\n');
+        sendAll();
+    }
+
     protected void sendAll() {
         if (lo < ptr) {
             int len = (int) (ptr - lo);
@@ -279,4 +300,62 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     protected abstract void sendToSocket(long fd, long lo, long sockaddr, int len);
+
+    private static int findEOL(long ptr, int len) {
+        for (int i = 0; i < len; i++) {
+            byte b = Unsafe.getUnsafe().getByte(ptr + i);
+            if (b == (byte) '\n') {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    @NotNull
+    private byte[] receiveChallengeBytes() {
+        int n = 0;
+        for (;;) {
+            int rc = nf.recv(fd, ptr + n, capacity - n);
+            if (rc < 0) {
+                close();
+                throw NetworkError.instance(nf.errno()).put("disconnected during authentication");
+            }
+            int eol = findEOL(ptr + n, rc);
+            if (eol != -1) {
+                n += eol;
+                break;
+            }
+            n += rc;
+            if (n == capacity) {
+                close();
+                throw NetworkError.instance(0).put("challenge did not fit into buffer");
+            }
+        }
+        int sz = n;
+        byte[] challengeBytes = new byte[sz];
+        for (n = 0; n < sz; n++) {
+            challengeBytes[n] = Unsafe.getUnsafe().getByte(ptr + n);
+        }
+        return challengeBytes;
+    }
+
+    private byte[] signAndEncode(PrivateKey privateKey, byte[] challengeBytes) {
+        byte[] rawSignature;
+        try {
+            Signature sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
+            sig.initSign(privateKey);
+            sig.update(challengeBytes);
+            rawSignature = sig.sign();
+        } catch (InvalidKeyException ex) {
+            close();
+            throw NetworkError.instance(0).put("invalid key");
+        } catch (SignatureException ex) {
+            close();
+            throw NetworkError.instance(0).put("cannot sign challenge");
+        } catch (NoSuchAlgorithmException ex) {
+            close();
+            throw NetworkError.instance(0).put("unsupported signing algorithm");
+        }
+        return Base64.getEncoder().encode(rawSignature);
+    }
 }

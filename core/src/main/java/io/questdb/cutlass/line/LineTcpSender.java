@@ -28,11 +28,26 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
 
+import java.security.PrivateKey;
+
 public class LineTcpSender extends AbstractLineSender {
     private static final Log LOG = LogFactory.getLog(LineTcpSender.class);
+    private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
 
     public LineTcpSender(int sendToIPv4Address, int sendToPort, int bufferCapacity) {
         super(0, sendToIPv4Address, sendToPort, bufferCapacity, 0, LOG);
+    }
+
+    private static int checkBufferCapacity(int capacity) {
+        if (capacity < MIN_BUFFER_SIZE_FOR_AUTH) {
+            throw new IllegalArgumentException("Minimal buffer capacity is " + capacity + ". Requested buffer capacity: " + capacity);
+        }
+        return capacity;
+    }
+
+    public LineTcpSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, String authKey, PrivateKey privateKey) {
+        super(0, sendToIPv4Address, sendToPort, checkBufferCapacity(bufferCapacity), 0, LOG);
+        authenticate(authKey, privateKey);
     }
 
     @Override
