@@ -286,20 +286,15 @@ public class FileIndexer implements Closeable, Mutable {
 
     public void parallelMergeSymbolTables(final int tmpTableCount, final TableWriter writer) {
         LOG.info().$("Started symbol table merge").$();
-//        createTableDir();
-
-        final ObjList<CharSequence> names = textMetadataDetector.getColumnNames();
-        final ObjList<TypeAdapter> types = textMetadataDetector.getColumnTypes();
 
         int queuedCount = 0;
         doneLatch.reset();
-
+        TableWriterMetadata metadata = writer.getMetadata();
         int symbolColumnIndex = -1;
-        for (int c = 0, size = names.size(); c < size; c++) {
-            // run in parallel
-            if (ColumnType.isSymbol(types.get(c).getType())) {
+        for (int c = 0, size = metadata.getColumnCount(); c < size; c++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(c))) {
                 symbolColumnIndex++;
-                final CharSequence symbolColumnName = names.get(c);
+                final CharSequence symbolColumnName = metadata.getColumnName(c);
                 final long seq = pubSeq.next();
                 if (seq < 0) {
                     FileIndexer.mergeColumnSymbolTables(configuration, writer, tableName, symbolColumnName, symbolColumnIndex, tmpTableCount, partitionBy);
@@ -323,10 +318,8 @@ public class FileIndexer implements Closeable, Mutable {
         LOG.info().$("Finished symbol table merge").$();
     }
 
-    public void parallelUpdateSymbolKeys(int tmpTableCount) {
+    public void parallelUpdateSymbolKeys(int tmpTableCount, final TableWriter writer) {
         LOG.info().$("Started symbol keys update").$();
-        final ObjList<CharSequence> names = textMetadataDetector.getColumnNames();
-        final ObjList<TypeAdapter> types = textMetadataDetector.getColumnTypes();
 
         int queuedCount = 0;
         doneLatch.reset();
@@ -339,10 +332,11 @@ public class FileIndexer implements Closeable, Mutable {
                 for (int p = 0; p < partitionCount; p++) {
                     final long partitionSize = txFile.getPartitionSize(p);
                     final long partitionTimestamp = txFile.getPartitionTimestamp(p);
+                    TableWriterMetadata metadata = writer.getMetadata();
                     int symbolColumnIndex = 0;
-                    for (int c = 0, size = names.size(); c < size; c++) {
-                        if (ColumnType.isSymbol(types.get(c).getType())) {
-                            final CharSequence symbolColumnName = names.get(c);
+                    for (int c = 0, size = metadata.getColumnCount(); c < size; c++) {
+                        if (ColumnType.isSymbol(metadata.getColumnType(c))) {
+                            final CharSequence symbolColumnName = metadata.getColumnName(c);
                             final int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex++);
                             final long seq = pubSeq.next();
                             if (seq < 0) {
@@ -478,7 +472,7 @@ public class FileIndexer implements Closeable, Mutable {
             IntList taskDistribution = importPartitions();
             int taskCount = taskDistribution.size() / 3;
             parallelMergeSymbolTables(taskCount, writer);
-            parallelUpdateSymbolKeys(taskCount);
+            parallelUpdateSymbolKeys(taskCount, writer);
             movePartitionsToDst(taskDistribution, taskCount);
             attachPartititons(writer);
         } finally {
