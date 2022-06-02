@@ -58,6 +58,7 @@ public class TextImportTask {
     private int tmpTableCount;
     private int partitionBy;
     private TableWriter writer;
+    private int symbolColumnIndex;
 
     public void of(
             CountDownLatchSPI doneLatch,
@@ -124,6 +125,7 @@ public class TextImportTask {
                    final CharSequence tableName,
                    final CharSequence symbolColumnName,
                    int columnIndex,
+                   int symbolColumnIndex,
                    int tmpTableCount,
                    int partitionBy
     ) {
@@ -134,6 +136,7 @@ public class TextImportTask {
         this.tableName = tableName;
         this.symbolColumnName = symbolColumnName;
         this.columnIndex = columnIndex;
+        this.symbolColumnIndex = symbolColumnIndex;
         this.tmpTableCount = tmpTableCount;
         this.partitionBy = partitionBy;
     }
@@ -147,7 +150,7 @@ public class TextImportTask {
             } else if (phase == PHASE_PARTITION_IMPORT) {
                 context.importPartitionStage(index, lo, hi, partitionNames);
             } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
-                FileIndexer.mergeColumnSymbolTables(cfg, writer, tableName, symbolColumnName, columnIndex, tmpTableCount, partitionBy);
+                FileIndexer.mergeColumnSymbolTables(cfg, writer, tableName, symbolColumnName, columnIndex, symbolColumnIndex, tmpTableCount, partitionBy);
             } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
                 context.updateSymbolKeys(index, partitionSize, partitionTimestamp, symbolColumnName, symbolCount);
             } else {

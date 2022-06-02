@@ -215,6 +215,7 @@ public class FileIndexer implements Closeable, Mutable {
                                                final CharSequence table,
                                                final CharSequence column,
                                                int columnIndex,
+                                               int symbolColumnIndex,
                                                int tmpTableCount,
                                                int partitionBy
     ) {
@@ -228,7 +229,7 @@ public class FileIndexer implements Closeable, Mutable {
                 path.put("_").put(i);
                 try (TxReader txFile = new TxReader(ff).ofRO(path, partitionBy)) {
                     txFile.unsafeLoadAll();
-                    int symbolCount = txFile.getSymbolValueCount(columnIndex);
+                    int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex);
                     if (symbolCount > 0) {
                         try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(cfg, path, column, TableUtils.COLUMN_NAME_TXN_NONE, symbolCount)) {
                             try (MemoryCMARW mem = Vm.getSmallCMARWInstance(
@@ -297,7 +298,7 @@ public class FileIndexer implements Closeable, Mutable {
                 final CharSequence symbolColumnName = metadata.getColumnName(c);
                 final long seq = pubSeq.next();
                 if (seq < 0) {
-                    FileIndexer.mergeColumnSymbolTables(configuration, writer, tableName, symbolColumnName, symbolColumnIndex, tmpTableCount, partitionBy);
+                    FileIndexer.mergeColumnSymbolTables(configuration, writer, tableName, symbolColumnName, c, symbolColumnIndex, tmpTableCount, partitionBy);
                 } else {
                     queue.get(seq).of(doneLatch,
                             TextImportTask.PHASE_SYMBOL_TABLE_MERGE,
@@ -305,6 +306,7 @@ public class FileIndexer implements Closeable, Mutable {
                             writer,
                             tableName,
                             symbolColumnName,
+                            c,
                             symbolColumnIndex,
                             tmpTableCount,
                             partitionBy);
