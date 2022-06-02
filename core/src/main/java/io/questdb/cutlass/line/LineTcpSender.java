@@ -114,9 +114,13 @@ public class LineTcpSender extends AbstractLineSender {
             if (this.host != 0) {
                 throw new IllegalStateException("host address is already configured");
             }
-            for (byte b : host.getAddress()) {
-                this.host = (this.host << 8 | b);
-            }
+
+            byte[] addrBytes = host.getAddress();
+            int address  = addrBytes[3] & 0xFF;
+            address |= ((addrBytes[2] << 8) & 0xFF00);
+            address |= ((addrBytes[1] << 16) & 0xFF0000);
+            address |= ((addrBytes[0] << 24) & 0xFF000000);
+            this.host = address;
             return this;
         }
 
