@@ -73,8 +73,9 @@ public class FileSplitter implements Closeable, Mutable {
 
     //work dir path
     private final Path path = new Path();
+
     private final CharSequence inputRoot;
-    private final CharSequence inputWorkRoot;
+    private CharSequence importRoot;
 
     private final FilesFacade ff;
     private final int dirMode;
@@ -150,7 +151,6 @@ public class FileSplitter implements Closeable, Mutable {
         this.dirMode = configuration.getMkDirMode();
 
         this.inputRoot = configuration.getInputRoot();
-        this.inputWorkRoot = configuration.getInputWorkRoot();
         this.maxIndexChunkSize = configuration.getMaxImportIndexChunkSize();
 
         this.bufferLength = configuration.getSqlCopyBufferSize();
@@ -163,8 +163,9 @@ public class FileSplitter implements Closeable, Mutable {
         this.timestampField = new DirectByteCharSequence();
     }
 
-    public void of(CharSequence inputFileName, int index, int partitionBy, byte columnDelimiter, int timestampIndex, TimestampAdapter adapter, boolean ignoreHeader) {
+    public void of(CharSequence inputFileName, CharSequence importRoot, int index, int partitionBy, byte columnDelimiter, int timestampIndex, TimestampAdapter adapter, boolean ignoreHeader) {
         this.inputFileName = inputFileName;
+        this.importRoot = importRoot;
         this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
         this.partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
         this.offset = 0;
@@ -280,7 +281,7 @@ public class FileSplitter implements Closeable, Mutable {
     }
 
     private Path getPartitionIndexDir(long partitionKey) {
-        path.of(inputWorkRoot).slash().concat(inputFileName).slash();
+        path.of(importRoot).slash();
         partitionDirFormatMethod.format(partitionKey, null, null, path);
         return path;
     }

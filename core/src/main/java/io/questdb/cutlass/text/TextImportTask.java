@@ -59,6 +59,7 @@ public class TextImportTask {
     private int partitionBy;
     private TableWriter writer;
     private int symbolColumnIndex;
+    private CharSequence importRoot;
 
     public void of(
             CountDownLatchSPI doneLatch,
@@ -120,6 +121,7 @@ public class TextImportTask {
 
     public void of(CountDownLatchSPI doneLatch,
                    byte phase,
+                   final CharSequence importRoot,
                    final CairoConfiguration cfg,
                    final TableWriter writer,
                    final CharSequence tableName,
@@ -139,6 +141,7 @@ public class TextImportTask {
         this.symbolColumnIndex = symbolColumnIndex;
         this.tmpTableCount = tmpTableCount;
         this.partitionBy = partitionBy;
+        this.importRoot = importRoot;
     }
 
     public boolean run() {
@@ -150,7 +153,7 @@ public class TextImportTask {
             } else if (phase == PHASE_PARTITION_IMPORT) {
                 context.importPartitionStage(index, lo, hi, partitionNames);
             } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
-                FileIndexer.mergeColumnSymbolTables(cfg, writer, tableName, symbolColumnName, columnIndex, symbolColumnIndex, tmpTableCount, partitionBy);
+                FileIndexer.mergeColumnSymbolTables(cfg, importRoot, writer, tableName, symbolColumnName, columnIndex, symbolColumnIndex, tmpTableCount, partitionBy);
             } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
                 context.updateSymbolKeys(index, partitionSize, partitionTimestamp, symbolColumnName, symbolCount);
             } else {

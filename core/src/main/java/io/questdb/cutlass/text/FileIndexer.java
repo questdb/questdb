@@ -101,6 +101,8 @@ public class FileIndexer implements Closeable, Mutable {
 
     private final CharSequence inputRoot;
     private final CharSequence inputWorkRoot;
+    //path to import directory under, usually $inputWorkRoot/$tableName
+    private CharSequence importRoot;
 
     //input params start
     private CharSequence tableName;
@@ -211,6 +213,7 @@ public class FileIndexer implements Closeable, Mutable {
     }
 
     public static void mergeColumnSymbolTables(final CairoConfiguration cfg,
+                                               final CharSequence importRoot,
                                                final TableWriter writer,
                                                final CharSequence table,
                                                final CharSequence column,
@@ -219,10 +222,9 @@ public class FileIndexer implements Closeable, Mutable {
                                                int tmpTableCount,
                                                int partitionBy
     ) {
-        final CharSequence root = cfg.getInputWorkRoot();
         final FilesFacade ff = cfg.getFilesFacade();
         try (Path path = new Path()) {
-            path.of(root).concat(table);
+            path.of(importRoot).concat(table);
             int plen = path.length();
             for (int i = 0; i < tmpTableCount; i++) {
                 path.trimTo(plen);
@@ -298,10 +300,11 @@ public class FileIndexer implements Closeable, Mutable {
                 final CharSequence symbolColumnName = metadata.getColumnName(c);
                 final long seq = pubSeq.next();
                 if (seq < 0) {
-                    FileIndexer.mergeColumnSymbolTables(configuration, writer, tableName, symbolColumnName, c, symbolColumnIndex, tmpTableCount, partitionBy);
+                    FileIndexer.mergeColumnSymbolTables(configuration, importRoot, writer, tableName, symbolColumnName, c, symbolColumnIndex, tmpTableCount, partitionBy);
                 } else {
                     queue.get(seq).of(doneLatch,
                             TextImportTask.PHASE_SYMBOL_TABLE_MERGE,
+                            importRoot,
                             configuration,
                             writer,
                             tableName,
@@ -327,7 +330,7 @@ public class FileIndexer implements Closeable, Mutable {
         doneLatch.reset();
         for (int t = 0; t < tmpTableCount; ++t) {
             final TaskContext context = contextObjList.get(t);
-            tmpPath.of(inputWorkRoot).concat(tableName).put("_").put(t);
+            tmpPath.of(importRoot).concat(tableName).put("_").put(t);
             try (TxReader txFile = new TxReader(ff).ofRO(tmpPath, partitionBy)) {
                 txFile.unsafeLoadAll();
                 final int partitionCount = txFile.getPartitionCount();
@@ -369,6 +372,7 @@ public class FileIndexer implements Closeable, Mutable {
         clear();
 
         this.tableName = tableName;
+        this.importRoot = tmpPath.of(inputWorkRoot).concat(tableName).toString();
         this.inputFileName = inputFileName;
         this.timestampColumn = timestampColumn;
         this.partitionBy = partitionBy;
@@ -444,16 +448,23 @@ public class FileIndexer implements Closeable, Mutable {
         }
     }
 
-    private void createWorkDir() {
-        Path workDirPath = tmpPath.of(inputWorkRoot).slash().concat(inputFileName).slash$();
+    private void removeWorkDir() {
+        Path workDirPath = tmpPath.of(importRoot).slash$();
 
         if (ff.exists(workDirPath)) {
+            LOG.info().$("removing import directory path='").$(workDirPath).$("'").$();
+
             int errno = ff.rmdir(workDirPath);
             if (errno != 0) {
-                throw CairoException.instance(errno).put("Can't remove import pre-existing work dir ").put(workDirPath).put(" errno=").put(errno);
+                throw CairoException.instance(errno).put("Can't remove import directory path='").put(workDirPath).put("' errno=").put(errno);
             }
         }
+    }
 
+    private void createWorkDir() {
+        removeWorkDir();
+
+        Path workDirPath = tmpPath.of(importRoot).slash$();
         int errno = ff.mkdir(workDirPath, dirMode);
         if (errno != 0) {
             throw CairoException.instance(errno).put("Can't create import work dir ").put(workDirPath).put(" errno=").put(errno);
@@ -478,6 +489,7 @@ public class FileIndexer implements Closeable, Mutable {
             movePartitionsToDst(taskDistribution, taskCount);
             attachPartititons(writer);
         } finally {
+            removeWorkDir();
             ff.close(fd);
         }
     }
@@ -487,7 +499,7 @@ public class FileIndexer implements Closeable, Mutable {
             int index = taskDistribution.getQuick(i * 3);
             int lo = taskDistribution.getQuick(i * 3 + 1);
             int hi = taskDistribution.getQuick(i * 3 + 2);
-            final Path srcPath = Path.getThreadLocal(configuration.getInputWorkRoot()).concat(tableName).put("_").put(index);
+            final Path srcPath = Path.getThreadLocal(importRoot).concat(tableName).put("_").put(index);
             final Path dstPath = Path.getThreadLocal2(configuration.getRoot()).concat(tableName);
             int srcPlen = srcPath.length();
             int dstPlen = dstPath.length();
@@ -650,7 +662,7 @@ public class FileIndexer implements Closeable, Mutable {
         DateFormat dirFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
 
         partitionNames.clear();
-        tmpPath.of(inputWorkRoot).concat(inputFileName).slash$();
+        tmpPath.of(importRoot).slash$();
         for (int i = 0, n = uniquePartitionKeys.size(); i < n; i++) {
             partitionNameSink.clear();
             dirFormat.format(uniquePartitionKeys.get(i), null, null, partitionNameSink);
@@ -1029,14 +1041,14 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         public void importPartitionStage(int index, long lo, long hi, final ObjList<CharSequence> partitionNames) {
-            createTable(inputWorkRoot, tableName + "_" + index);
+            createTable(importRoot, tableName + "_" + index);
             try (TableWriter writer = new TableWriter(configuration,
                     currentTableName,
                     cairoEngine.getMessageBus(),
                     null,
                     true,
                     DefaultLifecycleManager.INSTANCE,
-                    inputWorkRoot,
+                    importRoot,
                     cairoEngine.getMetrics())) {
 
                 tableWriterRef = writer;
@@ -1045,7 +1057,7 @@ public class FileIndexer implements Closeable, Mutable {
                     for (int i = (int) lo; i < hi; i++) {
 
                         final CharSequence name = partitionNames.get(i);
-                        path.of(inputWorkRoot).concat(inputFileName).concat(name);
+                        path.of(importRoot).concat(name);
 
                         mergePartitionIndexAndImportData(ff, path, mergeIndexes);
                     }
@@ -1057,7 +1069,7 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         public void updateSymbolKeys(int index, long partitionSize, long partitionTimestamp, CharSequence symbolColumnName, int symbolCount) {
-            Path path = Path.getThreadLocal(inputWorkRoot);
+            Path path = Path.getThreadLocal(importRoot);
             path.concat(tableName).put("_").put(index);
             int plen = path.length();
             PartitionBy.setSinkForPartition(path.slash(), partitionBy, partitionTimestamp, false);
@@ -1100,7 +1112,7 @@ public class FileIndexer implements Closeable, Mutable {
             this.timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
             this.lexer.of(columnDelimiter);
             this.lexer.setSkipLinesWithExtraValues(false);
-            this.splitter.of(inputFileName, index, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader);
+            this.splitter.of(inputFileName, importRoot, index, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader);
         }
 
         public void setCurrentTableName(final CharSequence tableName) {
