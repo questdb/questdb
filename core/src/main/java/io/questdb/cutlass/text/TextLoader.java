@@ -26,7 +26,6 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.types.TypeManager;
@@ -96,21 +95,6 @@ public class TextLoader extends TextLoaderBase {
     public void configureColumnDelimiter(byte columnDelimiter) {
         this.columnDelimiter = columnDelimiter;
         assert this.columnDelimiter > 0;
-    }
-
-    public void configureDestination(CharSequence tableName, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
-        super.configureDestination(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol);
-        textDelimiterScanner.setTableName(tableName);
-        textMetadataParser.setTableName(tableName);
-
-        LOG.info()
-                .$("configured [table=`").$(tableName)
-                .$("`, overwrite=").$(overwrite)
-                .$(", durable=").$(durable)
-                .$(", atomicity=").$(atomicity)
-                .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
-                .$(", timestamp=").$(timestampIndexCol)
-                .$(']').$();
     }
 
     public byte getColumnDelimiter() {
