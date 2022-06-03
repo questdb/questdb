@@ -467,7 +467,7 @@ public final class SqlParser {
                     } else if (isTimestampKeyword(tok)) {
                         tok = tok(lexer, "timestamp column name expected");
                         CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
-                        if (!TableUtils.isValidColumnName(columnName)) {
+                        if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
                             throw SqlException.$(lexer.getPosition(), "timestamp column name contains invalid characters");
                         }
                         model.setTimestampColumnName(columnName);

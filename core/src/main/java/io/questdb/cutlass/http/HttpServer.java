@@ -195,8 +195,6 @@ public class HttpServer implements Closeable {
                 return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
             }
         });
-
-        workerPool.assign(new TextImportJob(cairoEngine.getMessageBus()));
     }
 
     @Nullable

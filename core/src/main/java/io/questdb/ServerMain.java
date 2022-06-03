@@ -31,6 +31,7 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -225,6 +226,7 @@ public class ServerMain {
             workerPool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
             workerPool.assign(new GroupByJob(cairoEngine.getMessageBus()));
             workerPool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
+            workerPool.assign(new TextImportJob(cairoEngine.getMessageBus()));
 
             instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
             instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
