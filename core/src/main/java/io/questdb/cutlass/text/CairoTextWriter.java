@@ -143,10 +143,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         return designatedTimestampColumnName;
     }
 
-    public TimestampAdapter getTimestampAdapter() {
-        return timestampAdapter;
-    }
-
     public int getWarnings() {
         return warnings;
     }

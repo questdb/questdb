@@ -404,7 +404,7 @@ public class FileIndexer implements Closeable, Mutable {
         long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         long fd = -1;
 
-        try (TextLexer lexer = new TextLexer(configuration.getTextConfiguration())) {
+        try (TextLexer lexer = new TextLexer(configuration.getTextConfiguration(), typeManager)) {
             tmpPath.of(inputRoot).concat(inputFileName).$();
             fd = ff.openRO(tmpPath);
 
@@ -752,7 +752,7 @@ public class FileIndexer implements Closeable, Mutable {
             this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
             this.typeManager = new TypeManager(textConfiguration, utf8Sink);
             this.splitter = new FileSplitter(configuration);
-            this.lexer = new TextLexer(textConfiguration);
+            this.lexer = new TextLexer(textConfiguration, typeManager);
         }
 
         public void buildIndexStage(long lo, long hi, long lineNumber, LongList indexStats, int index, LongList partitionKeys) throws SqlException {
