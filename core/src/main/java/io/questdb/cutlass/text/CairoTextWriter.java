@@ -46,7 +46,9 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final CairoEngine engine;
     private final LongList columnErrorCounts = new LongList();
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
+    private final Path path;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
+    private final TypeManager typeManager;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
     private CharSequence tableName;
     private TableWriter writer;
@@ -68,9 +70,15 @@ public class CairoTextWriter implements Closeable, Mutable {
     private int warnings;
     private final IntList remapIndex = new IntList();
 
-    public CairoTextWriter(CairoEngine engine) {
+    public CairoTextWriter(
+            CairoEngine engine,
+            Path path,
+            TypeManager typeManager
+    ) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
+        this.path = path;
+        this.typeManager = typeManager;
     }
 
     @Override
@@ -196,8 +204,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private void createTable(
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
-            CairoSecurityContext cairoSecurityContext,
-            Path path
+            CairoSecurityContext cairoSecurityContext
     ) throws TextException {
         engine.createTable(
                 cairoSecurityContext,
@@ -246,8 +253,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private TableWriter openWriterAndOverrideImportTypes(
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
-            CairoSecurityContext cairoSecurityContext,
-            TypeManager typeManager
+            CairoSecurityContext cairoSecurityContext
     ) {
 
         TableWriter writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
@@ -310,9 +316,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     void prepareTable(
             CairoSecurityContext cairoSecurityContext,
             ObjList<CharSequence> names,
-            ObjList<TypeAdapter> detectedTypes,
-            Path path,
-            TypeManager typeManager
+            ObjList<TypeAdapter> detectedTypes
     ) throws TextException {
         assert writer == null;
 
@@ -323,7 +327,7 @@ public class CairoTextWriter implements Closeable, Mutable {
         boolean canUpdateMetadata = true;
         switch (engine.getStatus(cairoSecurityContext, path, tableName)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
-                createTable(names, detectedTypes, cairoSecurityContext, path);
+                createTable(names, detectedTypes, cairoSecurityContext);
                 writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
                 designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                 designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
@@ -332,11 +336,11 @@ public class CairoTextWriter implements Closeable, Mutable {
             case TableUtils.TABLE_EXISTS:
                 if (overwrite) {
                     engine.remove(cairoSecurityContext, path, tableName);
-                    createTable(names, detectedTypes, cairoSecurityContext, path);
+                    createTable(names, detectedTypes, cairoSecurityContext);
                     writer = engine.getWriter(cairoSecurityContext, tableName, WRITER_LOCK_REASON);
                 } else {
                     canUpdateMetadata = false;
-                    writer = openWriterAndOverrideImportTypes(names, detectedTypes, cairoSecurityContext, typeManager);
+                    writer = openWriterAndOverrideImportTypes(names, detectedTypes, cairoSecurityContext);
                     designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                     designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                     if (importedTimestampColumnName != null &&

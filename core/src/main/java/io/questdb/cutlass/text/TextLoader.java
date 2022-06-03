@@ -26,23 +26,30 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 
-public class TextLoader extends TextLoaderBase {
-    private static final Log LOG = LogFactory.getLog(TextLoader.class);
+import java.io.Closeable;
+
+public class TextLoader implements Closeable, Mutable {
     public static final int LOAD_JSON_METADATA = 0;
     public static final int ANALYZE_STRUCTURE = 1;
     public static final int LOAD_DATA = 2;
-    private final TextMetadataDetector textMetadataDetector;
+    private static final Log LOG = LogFactory.getLog(TextLoader.class);
+    private final CairoTextWriter textWriter;
     private final TextMetadataParser textMetadataParser;
+    private final TextLexer textLexer;
     private final JsonLexer jsonLexer;
     private final Path path = new Path();
     private final int textAnalysisMaxLines;
@@ -55,25 +62,28 @@ public class TextLoader extends TextLoaderBase {
     private byte columnDelimiter = -1;
 
     public TextLoader(CairoEngine engine) {
-        super(engine);
-
         final TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
+        jsonLexer = new JsonLexer(
+                textConfiguration.getJsonCacheSize(),
+                textConfiguration.getJsonCacheLimit()
+        );
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
-        jsonLexer = new JsonLexer(textConfiguration.getJsonCacheSize(), textConfiguration.getJsonCacheLimit());
-
-        textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
+        textLexer = new TextLexer(textConfiguration, typeManager);
+        textWriter = new CairoTextWriter(engine, path, typeManager);
         textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
         textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
         textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
         parseMethods.extendAndSet(LOAD_JSON_METADATA, this::parseJsonMetadata);
         parseMethods.extendAndSet(ANALYZE_STRUCTURE, this::parseStructure);
         parseMethods.extendAndSet(LOAD_DATA, this::parseData);
+        textLexer.setSkipLinesWithExtraValues(true);
     }
 
     @Override
     public void clear() {
-        super.clear();
+        textWriter.clear();
+        textLexer.clear();
         textMetadataParser.clear();
         jsonLexer.clear();
         forceHeaders = false;
@@ -83,8 +93,8 @@ public class TextLoader extends TextLoaderBase {
 
     @Override
     public void close() {
-        super.close();
-        Misc.free(textMetadataDetector);
+        Misc.free(textWriter);
+        Misc.free(textLexer);
         Misc.free(textMetadataParser);
         Misc.free(jsonLexer);
         Misc.free(path);
@@ -92,13 +102,77 @@ public class TextLoader extends TextLoaderBase {
         Misc.free(utf8Sink);
     }
 
+    public void closeWriter() {
+        textWriter.closeWriter();
+    }
+
     public void configureColumnDelimiter(byte columnDelimiter) {
         this.columnDelimiter = columnDelimiter;
         assert this.columnDelimiter > 0;
     }
 
+    public void configureDestination(CharSequence tableName, boolean overwrite, boolean durable, int atomicity, int partitionBy, CharSequence timestampIndexCol) {
+        textWriter.of(tableName, overwrite, durable, atomicity, partitionBy, timestampIndexCol);
+        textDelimiterScanner.setTableName(tableName);
+        textMetadataParser.setTableName(tableName);
+        textLexer.setTableName(tableName);
+
+        LOG.info()
+                .$("configured [table=`").$(tableName)
+                .$("`, overwrite=").$(overwrite)
+                .$(", durable=").$(durable)
+                .$(", atomicity=").$(atomicity)
+                .$(", partitionBy=").$(PartitionBy.toString(partitionBy))
+                .$(", timestamp=").$(timestampIndexCol)
+                .$(']').$();
+    }
+
     public byte getColumnDelimiter() {
         return columnDelimiter;
+    }
+
+    public LongList getColumnErrorCounts() {
+        return textWriter.getColumnErrorCounts();
+    }
+
+    public RecordMetadata getMetadata() {
+        return textWriter.getMetadata();
+    }
+
+    public long getParsedLineCount() {
+        return textLexer.getLineCount();
+    }
+
+    public long getErrorLineCount() {
+        return textLexer.getErrorCount();
+    }
+
+    public int getPartitionBy() {
+        return textWriter.getPartitionBy();
+    }
+
+    public void setCommitLag(long commitLag) {
+        textWriter.setCommitLag(commitLag);
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        textWriter.setMaxUncommittedRows(maxUncommittedRows);
+    }
+
+    public CharSequence getTableName() {
+        return textWriter.getTableName();
+    }
+
+    public CharSequence getTimestampCol() {
+        return textWriter.getTimestampCol();
+    }
+
+    public int getWarnings() {
+        return textWriter.getWarnings();
+    }
+
+    public long getWrittenLineCount() {
+        return textWriter.getWrittenLineCount();
     }
 
     public boolean isForceHeaders() {
@@ -107,6 +181,10 @@ public class TextLoader extends TextLoaderBase {
 
     public void setForceHeaders(boolean forceHeaders) {
         this.forceHeaders = forceHeaders;
+    }
+
+    public void setSkipRowsWithExtraValues(boolean skipRowsWithExtraValues) {
+        this.textLexer.setSkipLinesWithExtraValues(skipRowsWithExtraValues);
     }
 
     public void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
@@ -130,11 +208,16 @@ public class TextLoader extends TextLoaderBase {
                 break;
             case ANALYZE_STRUCTURE:
             case LOAD_DATA:
-                super.wrapUp();
+                textLexer.parseLast();
+                textWriter.commit();
                 break;
             default:
                 break;
         }
+    }
+
+    private void parseData(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
+        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter.getTextListener());
     }
 
     private void parseJsonMetadata(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
@@ -145,25 +228,27 @@ public class TextLoader extends TextLoaderBase {
         }
     }
 
-    private void parseData(long lo, long hi, CairoSecurityContext cairoSecurityContext) {
-        parse(lo, hi, Integer.MAX_VALUE);
-    }
-
     private void parseStructure(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException {
         if (columnDelimiter > 0) {
-            setDelimiter(columnDelimiter);
+            textLexer.of(columnDelimiter);
         } else {
-            setDelimiter(textDelimiterScanner.scan(lo, hi));
+            textLexer.of(textDelimiterScanner.scan(lo, hi));
         }
-
-        textMetadataDetector.of(textMetadataParser.getColumnNames(), textMetadataParser.getColumnTypes(), forceHeaders);
-        parse(lo, hi, textAnalysisMaxLines, textMetadataDetector);
-        textMetadataDetector.evaluateResults(getParsedLineCount(), getErrorLineCount());
-        restart(textMetadataDetector.isHeader());
-
-        prepareTable(cairoSecurityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), path, typeManager);
-        parse(lo, hi, Integer.MAX_VALUE);
+        textLexer.analyseStructure(
+                lo,
+                hi,
+                textAnalysisMaxLines,
+                forceHeaders,
+                textMetadataParser.getColumnNames(),
+                textMetadataParser.getColumnTypes()
+        );
+        textWriter.prepareTable(cairoSecurityContext, textLexer.getColumnNames(), textLexer.getColumnTypes());
+        textLexer.parse(lo, hi, Integer.MAX_VALUE, textWriter.getTextListener());
         state = LOAD_DATA;
     }
 
+    @FunctionalInterface
+    private interface ParserMethod {
+        void parse(long lo, long hi, CairoSecurityContext cairoSecurityContext) throws TextException;
+    }
 }
