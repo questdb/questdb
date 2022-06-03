@@ -1868,7 +1868,7 @@ public class TableWriter implements Closeable {
                             .put(']');
                 }
                 int minKey = Vect.minInt(address, partitionSize);
-                if (minKey < 0) {
+                if (minKey != SymbolTable.VALUE_IS_NULL && minKey < 0) {
                     throw CairoException.instance(0)
                             .put("Symbol file does not match symbol column, invalid key [file=")
                             .put(path)

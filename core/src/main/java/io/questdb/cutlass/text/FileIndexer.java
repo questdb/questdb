@@ -232,17 +232,15 @@ public class FileIndexer implements Closeable, Mutable {
                 try (TxReader txFile = new TxReader(ff).ofRO(path, partitionBy)) {
                     txFile.unsafeLoadAll();
                     int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex);
-                    if (symbolCount > 0) {
-                        try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(cfg, path, column, TableUtils.COLUMN_NAME_TXN_NONE, symbolCount)) {
-                            try (MemoryCMARW mem = Vm.getSmallCMARWInstance(
-                                    ff,
-                                    path.concat(column).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),
-                                    MemoryTag.MMAP_DEFAULT,
-                                    cfg.getWriterFileOpenOpts()
-                            )
-                            ) {
-                                SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(columnIndex), reader, mem);
-                            }
+                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(cfg, path, column, TableUtils.COLUMN_NAME_TXN_NONE, symbolCount)) {
+                        try (MemoryCMARW mem = Vm.getSmallCMARWInstance(
+                                ff,
+                                path.concat(column).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),
+                                MemoryTag.MMAP_DEFAULT,
+                                cfg.getWriterFileOpenOpts()
+                        )
+                        ) {
+                            SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(columnIndex), reader, mem);
                         }
                     }
                 }
@@ -1079,24 +1077,31 @@ public class FileIndexer implements Closeable, Mutable {
             long columnMemorySize = 0;
             long remapTableMemory = 0;
             long remapTableMemorySize = 0;
+            long columnFd = -1;
+            long remapFd = -1;
             try {
-                long fd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
-                columnMemorySize = ff.length(fd);
-                columnMemory = TableUtils.mapRW(ff, fd, columnMemorySize, MemoryTag.MMAP_DEFAULT);
-                ff.close(fd);
+                columnFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+                columnMemorySize = ff.length(columnFd);
 
                 path.trimTo(plen);
                 path.concat(symbolColumnName).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX);
+                remapFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+                remapTableMemorySize = ff.length(remapFd);
 
-                fd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
-                remapTableMemorySize = ff.length(fd);
-                remapTableMemory = TableUtils.mapRW(ff, fd, remapTableMemorySize, MemoryTag.MMAP_DEFAULT);
-                ff.close(fd);
-
-                long columnMemSize = partitionSize * Integer.BYTES;
-                long remapMemSize = (long) symbolCount * Integer.BYTES;
-                ColumnUtils.symbolColumnUpdateKeys(columnMemory, columnMemSize, remapTableMemory, remapMemSize);
+                if (columnMemorySize >= Integer.BYTES && remapTableMemorySize >= Integer.BYTES) {
+                    columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_DEFAULT);
+                    remapTableMemory = TableUtils.mapRW(ff, remapFd, remapTableMemorySize, MemoryTag.MMAP_DEFAULT);
+                    long columnMemSize = partitionSize * Integer.BYTES;
+                    long remapMemSize = (long) symbolCount * Integer.BYTES;
+                    ColumnUtils.symbolColumnUpdateKeys(columnMemory, columnMemSize, remapTableMemory, remapMemSize);
+                }
             } finally {
+                if (columnFd != -1) {
+                    ff.close(columnFd);
+                }
+                if (remapFd != -1) {
+                    ff.close(remapFd);
+                }
                 if (columnMemory > 0) {
                     ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_DEFAULT);
                 }

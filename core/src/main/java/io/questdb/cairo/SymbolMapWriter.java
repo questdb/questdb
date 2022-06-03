@@ -297,7 +297,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         boolean remapped = false;
         map.jumpTo(0);
         for (int srcId = 0, symbolCount = src.getSymbolCount(); srcId < symbolCount; srcId++) {
-            final CharSequence v = src.valueOf(srcId);
             int dstId = dst.put(src.valueOf(srcId));
             map.putInt(dstId);
             if (dstId != srcId) {
