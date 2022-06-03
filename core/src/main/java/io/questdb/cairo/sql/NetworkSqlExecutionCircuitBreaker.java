@@ -26,7 +26,6 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 
@@ -44,13 +43,15 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private int testCount;
     private long fd = -1;
     private long powerUpTimestampUs;
+    private final int memoryTag;
 
-    public NetworkSqlExecutionCircuitBreaker(SqlExecutionCircuitBreakerConfiguration configuration) {
+    public NetworkSqlExecutionCircuitBreaker(SqlExecutionCircuitBreakerConfiguration configuration, int memoryTag) {
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.throttle = configuration.getCircuitBreakerThrottle();
         this.bufferSize = configuration.getBufferSize();
-        this.buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.memoryTag = memoryTag;
+        this.buffer = Unsafe.malloc(bufferSize, this.memoryTag);
         this.microsecondClock = configuration.getClock();
         long maxTime = configuration.getMaxTime();
         if (maxTime > 0) {
@@ -63,7 +64,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public void close() {
-        Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(buffer, bufferSize, this.memoryTag);
         buffer = 0;
         fd = -1;
     }

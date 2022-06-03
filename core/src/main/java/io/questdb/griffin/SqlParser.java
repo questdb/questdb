@@ -686,7 +686,7 @@ public final class SqlParser {
             final CharSequence name = GenericLexer.immutableOf(GenericLexer.unquote(notTermTok(lexer)));
             final int type = toColumnType(lexer, notTermTok(lexer));
 
-            if (!TableUtils.isValidColumnName(name)) {
+            if (!TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength())) {
                 throw SqlException.$(position, " new column name contains invalid characters");
             }
 

@@ -688,11 +688,6 @@ public class MemoryPARWImpl implements MemoryARW {
         return (int) (offset >> extendSegmentMsb);
     }
 
-    @Override
-    public long getGrownLength() {
-        throw new UnsupportedOperationException();
-    }
-
     public final CharSequence getStr0(long offset, CharSequenceView view) {
         final int len = getInt(offset);
         if (len == TableUtils.NULL_LEN) {

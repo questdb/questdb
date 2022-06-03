@@ -164,6 +164,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMaxFileNameLength() {
+        return 127;
+    }
+
+    @Override
     public CharSequence getSnapshotRoot() {
         return snapshotRoot;
     }

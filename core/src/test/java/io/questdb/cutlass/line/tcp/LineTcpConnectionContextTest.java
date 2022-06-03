@@ -35,6 +35,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -797,6 +798,57 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\t\n" +
                     "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\t\n" +
                     "us-westcost\t82.0\t2016-06-13T17:43:50.102500Z\t\n";
+            assertTable(expected, table);
+        });
+    }
+
+    @Test
+    public void testInvalidTableName() throws Exception {
+        String table = "testInvalidEmptyTableName";
+        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TXN_FILE_NAME).$());
+        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.META_FILE_NAME).$());
+        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
+
+        runInContext(() -> {
+            recvBuffer =
+                    table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
+                            table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                            table + ",location=us-eastcoast temperature=81 1465839830101600200\n" +
+                            table + ",location=us-midwest temperature=85 1465839830102300200\n" +
+                            table + ",location=us-eastcoast temperature=89 1465839830102400200\n" +
+                            table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+        });
+
+        engine.releaseInactive();
+
+        runInContext(() -> {
+            recvBuffer = ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+
+            recvBuffer = ".,location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+
+            recvBuffer = "..\\/dbRoot,location=us-midwest temperature=82,timestamp=1465839830100200200t\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+
+
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100200Z\n" +
+                    "us-midwest\t83.0\t2016-06-13T17:43:50.100500Z\n" +
+                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101600Z\n" +
+                    "us-midwest\t85.0\t2016-06-13T17:43:50.102300Z\n" +
+                    "us-eastcoast\t89.0\t2016-06-13T17:43:50.102400Z\n" +
+                    "us-eastcoast\t80.0\t2016-06-13T17:43:50.102400Z\n";
             assertTable(expected, table);
         });
     }

@@ -31,6 +31,7 @@ import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -43,19 +44,19 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
-public class QMapWriteBenchmark {
+public class QMapReadSequentialKeyBenchmark {
 
+    private static final int N = 300_000;
     private static final double loadFactor = 0.5;
-    private static final int M = 25;
-    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024, Integer.MAX_VALUE);
-    private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
-    private static final HashMap<String, Long> hmap = new HashMap<>(64, (float) loadFactor);
-
-    private final Rnd rnd = new Rnd();
+    private static final Rnd rnd = new Rnd();
+    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
+    private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    private static final HashMap<String, Long> hmap = new HashMap<>(N, (float) loadFactor);
+    private static final StringSink sink = new StringSink();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(QMapWriteBenchmark.class.getSimpleName())
+                .include(QMapReadSequentialKeyBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
@@ -64,37 +65,56 @@ public class QMapWriteBenchmark {
         new Runner(opt).run();
     }
 
-    @Benchmark
-    public CharSequence baseline() {
-        return rnd.nextChars(M);
-    }
-
     @Setup(Level.Iteration)
     public void reset() {
         System.out.print(" [q=" + qmap.size() + ", l=" + map.size() + ", cap=" + qmap.getKeyCapacity() + "] ");
-        map.clear();
-        qmap.clear();
-        rnd.reset();
     }
 
     @Benchmark
-    public void testDirectMap() {
+    public int baseline() {
+        return rnd.nextInt(N);
+    }
+
+    @Benchmark
+    public MapValue testDirectMap() {
         MapKey key = map.withKey();
-        key.putStr(rnd.nextChars(M));
-        MapValue values = key.createValue();
-        values.putLong(0, 20);
+        sink.clear();
+        sink.put(rnd.nextInt(N));
+        key.putStr(sink);
+        return key.findValue();
     }
 
     @Benchmark
-    public void testQMap() {
+    public MapValue testQMap() {
         MapKey key = qmap.withKey();
-        key.putStr(rnd.nextChars(M));
-        MapValue value = key.createValue();
-        value.putLong(0, 20);
+        sink.clear();
+        sink.put(rnd.nextInt(N));
+        key.putStr(sink);
+        return key.findValue();
     }
 
     @Benchmark
-    public void testHashMap() {
-        hmap.put(rnd.nextChars(M).toString(), 20L);
+    public Long testHashMap() {
+        return hmap.get(String.valueOf(rnd.nextInt(N)));
+    }
+
+    static {
+        for (int i = 0; i < N; i++) {
+            MapKey key = qmap.withKey();
+            key.putStr(String.valueOf(i));
+            MapValue value = key.createValue();
+            value.putLong(0, i);
+        }
+
+        for (int i = 0; i < N; i++) {
+            MapKey key = map.withKey();
+            key.putStr(String.valueOf(i));
+            MapValue values = key.createValue();
+            values.putLong(0, i);
+        }
+
+        for (int i = 0; i < N; i++) {
+            hmap.put(String.valueOf(i), (long) i);
+        }
     }
 }

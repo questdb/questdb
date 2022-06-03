@@ -139,6 +139,37 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateBoolean() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table up as" +
+                            " (select timestamp_sequence(0, 1000000) ts," +
+                            " cast(x as int) xint," +
+                            " cast(x as boolean) xbool" +
+                            " from long_sequence(5))" +
+                            " timestamp(ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            assertSql("up", "ts\txint\txbool\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\ttrue\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\tfalse\n" +
+                    "1970-01-01T00:00:02.000000Z\t3\tfalse\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\tfalse\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\tfalse\n");
+
+            executeUpdate("UPDATE up SET xbool = true WHERE xint > 2");
+
+            assertSql("up", "ts\txint\txbool\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\ttrue\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\tfalse\n" +
+                    "1970-01-01T00:00:02.000000Z\t3\ttrue\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\ttrue\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\ttrue\n");
+        });
+    }
+
+    @Test
     public void testSymbolIndexCopyOnWrite() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +

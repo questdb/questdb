@@ -349,6 +349,7 @@ public class TableWriter implements Closeable {
     }
 
     public void addColumn(CharSequence name, int type) {
+        checkColumnName(name);
         addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getDefaultSymbolCacheFlag(), false, 0, false);
     }
 
@@ -394,9 +395,9 @@ public class TableWriter implements Closeable {
 
         assert indexValueBlockCapacity == Numbers.ceilPow2(indexValueBlockCapacity) : "power of 2 expected";
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
-        assert TableUtils.isValidColumnName(name) : "invalid column name";
 
         checkDistressed();
+        checkColumnName(name);
 
         if (getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
@@ -999,6 +1000,7 @@ public class TableWriter implements Closeable {
 
     public void removeColumn(CharSequence name) {
         checkDistressed();
+        checkColumnName(name);
 
         final int index = getColumnIndex(name);
         final int type = metadata.getColumnType(index);
@@ -1133,6 +1135,7 @@ public class TableWriter implements Closeable {
     public void renameColumn(CharSequence currentName, CharSequence newName) {
 
         checkDistressed();
+        checkColumnName(newName);
 
         final int index = getColumnIndex(currentName);
         final int type = metadata.getColumnType(index);
@@ -1921,6 +1924,12 @@ public class TableWriter implements Closeable {
     private void cancelRowAndBump() {
         rowCancel();
         masterRef++;
+    }
+
+    private void checkColumnName(CharSequence name) {
+        if (!TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength())) {
+            throw CairoException.instance(0).put("invalid column name [table=").put(tableName).put(", column=").putAsPrintable(name).put(']');
+        }
     }
 
     private void checkDistressed() {
@@ -4431,8 +4440,11 @@ public class TableWriter implements Closeable {
                 }
             } catch (NumericException ignore) {
                 // not a date?
-                // ignore exception and remove directory
-                // we rely on this behaviour to remove leftover directories created by OOO processing
+                // ignore exception and leave the directory
+                path.trimTo(rootLen);
+                path.concat(pUtf8NameZ).$();
+                LOG.error().$("invalid partition directory inside table folder: ").utf8(path).$();
+                return;
             }
             path.trimTo(rootLen);
             path.concat(pUtf8NameZ).$();

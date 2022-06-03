@@ -397,6 +397,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
     private final int columnPurgeTaskPoolCapacity;
+    private final int maxFileNameLength;
 
     public PropServerConfiguration(
             String root,
@@ -412,6 +413,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         validateProperties(properties, configValidationStrict);
 
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
+        this.maxFileNameLength = getInt(properties, env, PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 127);
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         if (new File(this.dbDirectory).isAbsolute()) {
@@ -1886,6 +1888,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMaxFileNameLength() {
+            return maxFileNameLength;
+        }
+
+        @Override
         public CharSequence getSnapshotRoot() {
             return snapshotRoot;
         }
@@ -2522,6 +2529,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMaxFileNameLength() {
+            return maxFileNameLength;
+        }
+
+        @Override
         public int getMsgBufferSize() {
             return lineUdpMsgBufferSize;
         }
@@ -2778,6 +2790,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getCommitIntervalDefault() {
             return lineTcpCommitIntervalDefault;
+        }
+
+        @Override
+        public int getMaxFileNameLength() {
+            return maxFileNameLength;
         }
 
         @Override

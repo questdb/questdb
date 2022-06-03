@@ -93,6 +93,8 @@ public interface CairoConfiguration {
 
     long getColumnPurgeRetryDelay();
 
+    int getMaxFileNameLength();
+
     CharSequence getSnapshotRoot(); // same as root/../snapshot
 
     /**

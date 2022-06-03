@@ -353,7 +353,8 @@ public enum PropertyKey {
     CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY("cairo.sql.column.purge.retry.delay"),
     CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER("cairo.sql.column.purge.retry.delay.multiplier"),
     CAIRO_SQL_COLUMN_PURGE_RETRY_LIMIT_DAYS("cairo.sql.column.purge.retry.limit.days"),
-    CAIRO_SQL_SYSTEM_TABLE_PREFIX("cairo.system.table.prefix");
+    CAIRO_SQL_SYSTEM_TABLE_PREFIX("cairo.system.table.prefix"),
+    CAIRO_MAX_FILE_NAME_LENGTH("cairo.max.file.name.length");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;
