@@ -42,9 +42,21 @@ public class LineTcpSender extends AbstractLineSender {
         super(LineChannel.newTcpChannel(NetworkFacadeImpl.INSTANCE, sendToIPv4Address, sendToPort, bufferCapacity * 2), bufferCapacity);
     }
 
+    public LineTcpSender(LineChannel channel, int bufferCapacity) {
+        super(channel, bufferCapacity);
+    }
+
     public static LineTcpSender authenticatedSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, String authKey, PrivateKey privateKey) {
         checkBufferCapacity(bufferCapacity);
         LineTcpSender sender = new LineTcpSender(sendToIPv4Address, sendToPort, bufferCapacity);
+        sender.authenticate(authKey, privateKey);
+        return sender;
+    }
+
+    public static LineTcpSender tlsSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, String authKey, PrivateKey privateKey) {
+        checkBufferCapacity(bufferCapacity);
+        LineChannel tlsChannel = LineChannel.newTlsChannel(sendToIPv4Address, sendToPort, bufferCapacity * 2);
+        LineTcpSender sender = new LineTcpSender(tlsChannel, bufferCapacity);
         sender.authenticate(authKey, privateKey);
         return sender;
     }
@@ -81,6 +93,7 @@ public class LineTcpSender extends AbstractLineSender {
         private PrivateKey privateKey;
         private boolean shouldDestroyPrivKey;
         private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
+        private boolean tlsEnabled;
 
         private LineSenderBuilder() {
 
@@ -151,6 +164,11 @@ public class LineTcpSender extends AbstractLineSender {
             return new AuthBuilder();
         }
 
+        public LineSenderBuilder enableTls() {
+            tlsEnabled = true;
+            return this;
+        }
+
         public LineSenderBuilder bufferCapacity(int bufferCapacity) {
             if (this.bufferCapacity != BUFFER_CAPACITY_DEFAULT) {
                 throw new IllegalStateException("buffer capacity was already set to " + this.bufferCapacity);
@@ -171,9 +189,17 @@ public class LineTcpSender extends AbstractLineSender {
             }
 
             if (privateKey == null) {
+                if (tlsEnabled) {
+                    throw new IllegalStateException("tls is only supported together with authentication. for now.");
+                }
                 return new LineTcpSender(host, port, bufferCapacity);
             } else {
-                LineTcpSender sender = LineTcpSender.authenticatedSender(host, port, bufferCapacity, keyId, privateKey);
+                LineTcpSender sender;
+                if (tlsEnabled) {
+                    sender = LineTcpSender.tlsSender(host, port, bufferCapacity, keyId, privateKey);
+                } else {
+                    sender = LineTcpSender.authenticatedSender(host, port, bufferCapacity, keyId, privateKey);
+                }
                 if (shouldDestroyPrivKey) {
                     try {
                         privateKey.destroy();
