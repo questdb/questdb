@@ -26,12 +26,10 @@ package io.questdb.cutlass.line;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.AuthDb;
-import io.questdb.log.Log;
 import io.questdb.network.NetworkError;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.AbstractCharSink;
@@ -48,11 +46,8 @@ import java.util.Base64;
 
 public abstract class AbstractLineSender extends AbstractCharSink implements Closeable {
     protected final int capacity;
-    protected final long fd;
-    protected final NetworkFacade nf;
     private final long bufA;
     private final long bufB;
-    private final long sockaddr;
     private boolean quoted = false;
 
     private long lo;
@@ -61,33 +56,11 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     private long lineStart;
     private boolean hasMetric = false;
     private boolean noFields = true;
-    private final Log log;
+    protected final LineChannel lineChannel;
 
-    public AbstractLineSender(
-            int interfaceIPv4Address,
-            int sendToIPv4Address,
-            int sendToPort,
-            int bufferCapacity,
-            int ttl,
-            Log log
-    ) {
-        this(NetworkFacadeImpl.INSTANCE, interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, ttl, log);
-    }
-
-    public AbstractLineSender(
-            NetworkFacade nf,
-            int interfaceIPv4Address,
-            int sendToIPv4Address,
-            int sendToPort,
-            int capacity,
-            int ttl,
-            Log log
-    ) {
-        this.nf = nf;
+    public AbstractLineSender(LineChannel lineChannel, int capacity) {
+        this.lineChannel = lineChannel;
         this.capacity = capacity;
-        this.log = log;
-        sockaddr = nf.sockaddr(sendToIPv4Address, sendToPort);
-        fd = createSocket(interfaceIPv4Address, ttl, sockaddr);
 
         bufA = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
         bufB = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
@@ -112,10 +85,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     @Override
     public void close() {
-        if (nf.close(fd) != 0) {
-            log.error().$("could not close network socket [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-        }
-        nf.freeSockAddr(sockaddr);
+        Misc.free(lineChannel);
         Unsafe.free(bufA, capacity, MemoryTag.NATIVE_DEFAULT);
         Unsafe.free(bufB, capacity, MemoryTag.NATIVE_DEFAULT);
     }
@@ -210,8 +180,6 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         throw CairoException.instance(0).put("metric expected");
     }
 
-    protected abstract long createSocket(int interfaceIPv4Address, int ttl, long sockaddr);
-
     private CharSink field(CharSequence name) {
         if (hasMetric) {
             if (noFields) {
@@ -257,7 +225,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     private void sendLine() {
         if (lo < lineStart) {
             int len = (int) (lineStart - lo);
-            sendToSocket(fd, lo, sockaddr, len);
+            lineChannel.send(lo, len);
         }
     }
 
@@ -294,12 +262,10 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     protected void sendAll() {
         if (lo < ptr) {
             int len = (int) (ptr - lo);
-            sendToSocket(fd, lo, sockaddr, len);
+            lineChannel.send(lo, len);
             lineStart = ptr = lo;
         }
     }
-
-    protected abstract void sendToSocket(long fd, long lo, long sockaddr, int len);
 
     private static int findEOL(long ptr, int len) {
         for (int i = 0; i < len; i++) {
@@ -315,10 +281,10 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     private byte[] receiveChallengeBytes() {
         int n = 0;
         for (;;) {
-            int rc = nf.recv(fd, ptr + n, capacity - n);
+            int rc = lineChannel.receive(ptr + n, capacity - n);
             if (rc < 0) {
                 close();
-                throw NetworkError.instance(nf.errno()).put("disconnected during authentication");
+                throw NetworkError.instance(lineChannel.errno()).put("disconnected during authentication");
             }
             int eol = findEOL(ptr + n, rc);
             if (eol != -1) {

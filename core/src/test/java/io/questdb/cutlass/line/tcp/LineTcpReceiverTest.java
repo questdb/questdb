@@ -216,16 +216,14 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             }
                             Unsafe.getUnsafe().putByte(buffer + n, (byte) '\n');
                             n++;
-                            if (nf.send(fd, buffer, n) != n) {
-                                throw NetworkError.instance(nf.errno()).put("send error");
-                            }
+                            lineChannel.send(buffer, n);
 
                             // Receive challenge
                             n = 0;
                             while (true) {
-                                int rc = nf.recv(fd, buffer + n, 1);
+                                int rc = lineChannel.receive(buffer + n, 1);
                                 if (rc < 0) {
-                                    throw NetworkError.instance(nf.errno()).put("disconnected during authentication");
+                                    throw NetworkError.instance(lineChannel.errno()).put("disconnected during authentication");
                                 }
                                 byte b = Unsafe.getUnsafe().getByte(buffer + n);
                                 if (b == (byte) '\n') {
@@ -244,9 +242,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             }
                             Unsafe.getUnsafe().putByte(buffer + n, (byte) '\n');
                             n++;
-                            if (nf.send(fd, buffer, n) != n) {
-                                throw NetworkError.instance(nf.errno()).put("send error");
-                            }
+                            lineChannel.send(buffer, n);
                             LOG.info().$("authenticated").$();
                         } finally {
                             Unsafe.free(buffer, 1024, MemoryTag.NATIVE_DEFAULT);

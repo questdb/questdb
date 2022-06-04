@@ -47,8 +47,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testMinBufferSizeWhenAuth() {
+        authKeyId = AUTH_KEY_ID1;
+        int tinyCapacity = 42;
         try {
-            new LineTcpSender(HOST, bindPort, 42, AUTH_KEY_ID1, AUTH_PRIVATE_KEY1);
+            LineTcpSender.authenticatedSender(HOST, bindPort, tinyCapacity, AUTH_KEY_ID1, AUTH_PRIVATE_KEY1);
             fail();
         } catch (IllegalArgumentException e) {
             assertContains(e.getMessage(), "buffer capacity");
@@ -61,7 +63,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             int bufferCapacity = 256 * 1024;
 
-            try (LineTcpSender sender = new LineTcpSender(HOST, bindPort, bufferCapacity, AUTH_KEY_ID1, AUTH_PRIVATE_KEY1)) {
+            try (LineTcpSender sender = LineTcpSender.authenticatedSender(HOST, bindPort, bufferCapacity, AUTH_KEY_ID1, AUTH_PRIVATE_KEY1)) {
                 sender.metric("mytable").field("my int field", 42).$();
                 sender.flush();
             }
@@ -76,7 +78,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             int bufferCapacity = 2048;
 
-            try (LineTcpSender sender = new LineTcpSender(HOST, bindPort, bufferCapacity, AUTH_KEY_ID2_INVALID, AUTH_PRIVATE_KEY1)) {
+            try (LineTcpSender sender = LineTcpSender.authenticatedSender(HOST, bindPort, bufferCapacity, AUTH_KEY_ID2_INVALID, AUTH_PRIVATE_KEY1)) {
                 //30 seconds should be enough even on a slow CI server
                 long deadline = Os.currentTimeNanos() + SECONDS.toNanos(30);
                 try {

@@ -25,10 +25,9 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.cutlass.line.tcp.AuthDb;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
+import io.questdb.network.NetworkFacadeImpl;
 
 import javax.security.auth.DestroyFailedException;
 import java.net.Inet4Address;
@@ -37,11 +36,17 @@ import java.net.UnknownHostException;
 import java.security.PrivateKey;
 
 public class LineTcpSender extends AbstractLineSender {
-    private static final Log LOG = LogFactory.getLog(LineTcpSender.class);
     private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
 
     public LineTcpSender(int sendToIPv4Address, int sendToPort, int bufferCapacity) {
-        super(0, sendToIPv4Address, sendToPort, bufferCapacity, 0, LOG);
+        super(LineChannel.newTcpChannel(NetworkFacadeImpl.INSTANCE, sendToIPv4Address, sendToPort, bufferCapacity * 2), bufferCapacity);
+    }
+
+    public static LineTcpSender authenticatedSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, String authKey, PrivateKey privateKey) {
+        checkBufferCapacity(bufferCapacity);
+        LineTcpSender sender = new LineTcpSender(sendToIPv4Address, sendToPort, bufferCapacity);
+        sender.authenticate(authKey, privateKey);
+        return sender;
     }
 
     private static int checkBufferCapacity(int capacity) {
@@ -51,43 +56,18 @@ public class LineTcpSender extends AbstractLineSender {
         return capacity;
     }
 
-    public LineTcpSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, String authKey, PrivateKey privateKey) {
-        super(0, sendToIPv4Address, sendToPort, checkBufferCapacity(bufferCapacity), 0, LOG);
-        authenticate(authKey, privateKey);
-    }
-
-    @Override
-    protected long createSocket(int interfaceIPv4Address, int ttl, long sockaddr) throws NetworkError {
-        long fd = nf.socketTcp(true);
-        if (nf.connect(fd, sockaddr) != 0) {
-            throw NetworkError.instance(nf.errno(), "could not connect to ").ip(interfaceIPv4Address);
-        }
-        int orgSndBufSz = nf.getSndBuf(fd);
-        nf.setSndBuf(fd, 2 * capacity);
-        int newSndBufSz = nf.getSndBuf(fd);
-        LOG.info().$("Send buffer size change from ").$(orgSndBufSz).$(" to ").$(newSndBufSz).$();
-        return fd;
-    }
-
-    @Override
-    protected void sendToSocket(long fd, long lo, long sockaddr, int len) throws NetworkError {
-        if (nf.send(fd, lo, len) != len) {
-            throw NetworkError.instance(nf.errno()).put("send error");
-        }
-    }
-
     @Override
     public void flush() {
         sendAll();
     }
 
-    public static LineSenderBuilder builder() {
-        return new LineSenderBuilder();
-    }
-
     @Override
     protected void send00() {
         sendAll();
+    }
+
+    public static LineSenderBuilder builder() {
+        return new LineSenderBuilder();
     }
 
     public static final class LineSenderBuilder {
@@ -194,7 +174,7 @@ public class LineTcpSender extends AbstractLineSender {
             if (privateKey == null) {
                 return new LineTcpSender(host, port, bufferCapacity);
             } else {
-                LineTcpSender sender = new LineTcpSender(host, port, bufferCapacity, keyId, privateKey);
+                LineTcpSender sender = LineTcpSender.authenticatedSender(host, port, bufferCapacity, keyId, privateKey);
                 if (shouldDestroyPrivKey) {
                     try {
                         privateKey.destroy();
