@@ -22,8 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.udp;
 
+import io.questdb.cutlass.line.LineChannel;
+import io.questdb.cutlass.line.tcp.PlanTcpLineChannel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
@@ -36,7 +38,7 @@ public final class UdpLineChannel implements LineChannel {
     private final long fd;
     private final long sockaddr;
 
-    UdpLineChannel(NetworkFacade nf, int interfaceIPv4Address, int sendToAddress, int port, int ttl) throws NetworkError {
+    public UdpLineChannel(NetworkFacade nf, int interfaceIPv4Address, int sendToAddress, int port, int ttl) throws NetworkError {
         this.nf = nf;
         this.fd = nf.socketUdp();
         this.sockaddr = nf.sockaddr(sendToAddress, port);

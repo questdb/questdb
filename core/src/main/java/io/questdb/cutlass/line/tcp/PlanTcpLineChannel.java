@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cutlass.line.LineChannel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
@@ -36,7 +37,7 @@ public final class PlanTcpLineChannel implements LineChannel {
     private final long fd;
     private final long sockaddr;
 
-    PlanTcpLineChannel(NetworkFacade nf, int address, int port, int sndBufferSize) {
+    public PlanTcpLineChannel(NetworkFacade nf, int address, int port, int sndBufferSize) {
         this.nf = nf;
         this.sockaddr = nf.sockaddr(address, port);
 

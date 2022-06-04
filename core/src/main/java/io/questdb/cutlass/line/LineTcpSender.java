@@ -49,11 +49,10 @@ public class LineTcpSender extends AbstractLineSender {
         return sender;
     }
 
-    private static int checkBufferCapacity(int capacity) {
+    private static void checkBufferCapacity(int capacity) {
         if (capacity < MIN_BUFFER_SIZE_FOR_AUTH) {
             throw new IllegalArgumentException("Minimal buffer capacity is " + capacity + ". Requested buffer capacity: " + capacity);
         }
-        return capacity;
     }
 
     @Override

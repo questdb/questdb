@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.cutlass.line.tcp.PlanTcpLineChannel;
+import io.questdb.cutlass.line.udp.UdpLineChannel;
 import io.questdb.network.NetworkFacade;
 
 import java.io.Closeable;
