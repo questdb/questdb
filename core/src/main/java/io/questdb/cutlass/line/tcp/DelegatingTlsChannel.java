@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 import javax.net.ssl.SSLContext;
@@ -43,11 +44,12 @@ import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
-import java.util.Arrays;
 
 public final class DelegatingTlsChannel implements LineChannel {
     private static final int INITIAL_BUFFER_CAPACITY = 64 * 1024;
     private static final long ADDRESS_FIELD_OFFSET;
+    private static final long LIMIT_FIELD_OFFSET;
+    private static final long CAPACITY_FIELD_OFFSET;
 
     private final LineChannel upstream;
     private final SSLEngine sslEngine;
@@ -60,6 +62,7 @@ public final class DelegatingTlsChannel implements LineChannel {
 
     private long wrapOutputBufferPtr;
     private long unwrapInputBufferPtr;
+    private long unwrapOutputBufferPtr;
 
     private boolean initialized;
 
@@ -71,7 +74,7 @@ public final class DelegatingTlsChannel implements LineChannel {
 
         @Override
         public void checkServerTrusted(X509Certificate[] chain, String authType) {
-            System.out.println(Arrays.toString(chain));
+
         }
 
         @Override
@@ -82,24 +85,34 @@ public final class DelegatingTlsChannel implements LineChannel {
 
     static {
         Field addressField;
+        Field limitField;
+        Field capacityField;
         try {
-            // todo: is this a good idea? we could implement our own ByteBuffer
+            // todo: is this a good idea?
             addressField = Buffer.class.getDeclaredField("address");
+            limitField = Buffer.class.getDeclaredField("limit");
+            capacityField = Buffer.class.getDeclaredField("capacity");
         } catch (NoSuchFieldException e) {
             throw new RuntimeException(e);
         }
         ADDRESS_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(addressField);
+        LIMIT_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(limitField);
+        CAPACITY_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(capacityField);
     }
 
     public DelegatingTlsChannel(LineChannel upstream) {
         this.upstream = upstream;
         this.sslEngine = createSslEngine();
-        this.wrapInputBuffer = ByteBuffer.allocateDirect(INITIAL_BUFFER_CAPACITY);
+
+        // wrapInputBuffer is just a placeholder, we set the internal address, capacity and limit in send()
+        this.wrapInputBuffer = ByteBuffer.allocateDirect(0);
+
         this.wrapOutputBuffer = ByteBuffer.allocateDirect(INITIAL_BUFFER_CAPACITY);
         this.unwrapInputBuffer = ByteBuffer.allocateDirect(INITIAL_BUFFER_CAPACITY);
         this.unwrapOutputBuffer = ByteBuffer.allocateDirect(INITIAL_BUFFER_CAPACITY);
         this.wrapOutputBufferPtr = Unsafe.getUnsafe().getLong(wrapOutputBuffer, ADDRESS_FIELD_OFFSET);
         this.unwrapInputBufferPtr = Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET);
+        this.unwrapOutputBufferPtr = Unsafe.getUnsafe().getLong(unwrapOutputBuffer, ADDRESS_FIELD_OFFSET);
         this.dummyBuffer = ByteBuffer.allocate(0);
     }
 
@@ -127,22 +140,21 @@ public final class DelegatingTlsChannel implements LineChannel {
     public void send(long ptr, int len) {
         try {
             handshakeIfNeeded();
-
-            while (len != 0) {
-                int i = ptrToByteBuffer(ptr, len, wrapInputBuffer);
-                ptr += i;
-                len -= i;
-                wrapInputBuffer.flip();
-
-                wrapLoop(wrapInputBuffer);
-                assert !wrapInputBuffer.hasRemaining();
-                wrapInputBuffer.clear();
-
-                sendWrapOutputBufferAndClear();
-            }
+            setBufferToPointer(wrapInputBuffer, ptr, len);
+            wrapLoop(wrapInputBuffer);
+            assert !wrapInputBuffer.hasRemaining();
+            writeToUpstreamAndClear();
         } catch (SSLException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private static void setBufferToPointer(ByteBuffer buffer, long ptr, int len) {
+        assert buffer.isDirect();
+        Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
+        Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
+        Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
+        buffer.position(0);
     }
 
     private void handshakeIfNeeded() throws SSLException {
@@ -150,7 +162,7 @@ public final class DelegatingTlsChannel implements LineChannel {
             return;
         }
 
-        // trigger handshaking
+        // trigger handshaking - otherwise the initial state is NOT_HANDSHAKING
         sslEngine.beginHandshake();
         for (;;) {
             SSLEngineResult.HandshakeStatus status = sslEngine.getHandshakeStatus();
@@ -165,7 +177,7 @@ public final class DelegatingTlsChannel implements LineChannel {
                     break;
                 case NEED_WRAP:
                     wrapLoop(dummyBuffer);
-                    sendWrapOutputBufferAndClear();
+                    writeToUpstreamAndClear();
                     break;
                 case NEED_UNWRAP:
                     unwrapLoop();
@@ -178,20 +190,14 @@ public final class DelegatingTlsChannel implements LineChannel {
         }
     }
 
-    private void sendWrapOutputBufferAndClear() {
-        int len = wrapOutputBuffer.position();
-        assert Unsafe.getUnsafe().getLong(wrapOutputBuffer, ADDRESS_FIELD_OFFSET) == wrapOutputBufferPtr;
-        upstream.send(wrapOutputBufferPtr, len);
-        wrapOutputBuffer.clear();
-    }
-
     private void growWrapOutputBuffer() {
-        wrapOutputBuffer = expandBuffer(wrapInputBuffer);
+        wrapOutputBuffer = expandBuffer(wrapOutputBuffer);
         wrapOutputBufferPtr = Unsafe.getUnsafe().getLong(wrapOutputBuffer, ADDRESS_FIELD_OFFSET);
     }
 
     private void growUnwrapOutputBuffer() {
         unwrapOutputBuffer = expandBuffer(unwrapOutputBuffer);
+        unwrapOutputBufferPtr = Unsafe.getUnsafe().getLong(unwrapOutputBuffer, ADDRESS_FIELD_OFFSET);
     }
 
     private void growUnwrapInputBuffer() {
@@ -261,6 +267,21 @@ public final class DelegatingTlsChannel implements LineChannel {
         }
     }
 
+    private void writeToUpstreamAndClear() {
+        assert wrapOutputBuffer.limit() == wrapOutputBuffer.capacity();
+
+        // we don't flip the wrapOutputBuffer before reading from it
+        // hence the writer position is the actual length to be sent to the upstream channel
+        int len = wrapOutputBuffer.position();
+
+        assert Unsafe.getUnsafe().getLong(wrapOutputBuffer, ADDRESS_FIELD_OFFSET) == wrapOutputBufferPtr;
+        upstream.send(wrapOutputBufferPtr, len);
+
+        // we know limit == capacity
+        // thus setting the position to 0 is equivalent to clearing
+        wrapOutputBuffer.position(0);
+    }
+
     private void readFromUpstream(boolean force) {
         if (unwrapInputBuffer.position() != 0 && !force) {
             // we don't want to block on receive() if there are still data to be processed
@@ -291,7 +312,7 @@ public final class DelegatingTlsChannel implements LineChannel {
 
             unwrapLoop();
             unwrapOutputBuffer.flip();
-            int i = byteBufferToPtr(unwrapOutputBuffer, ptr, len);
+            int i = unwrapOutputBufferToPtr(ptr, len);
             unwrapOutputBuffer.compact();
             return i;
         } catch (SSLException e) {
@@ -299,20 +320,16 @@ public final class DelegatingTlsChannel implements LineChannel {
         }
     }
 
-    private static int byteBufferToPtr(ByteBuffer src, long ptr, int len) {
-        int i;
-        for (i = 0; i < len && src.hasRemaining(); i++) {
-            Unsafe.getUnsafe().putByte(ptr + i, src.get());
-        }
-        return i;
-    }
+    private int unwrapOutputBufferToPtr(long dstPtr, int dstLen) {
+        int oldPosition = unwrapOutputBuffer.position();
 
-    private static int ptrToByteBuffer(long ptr, int len, ByteBuffer dst) {
-        int i;
-        for (i = 0; i < len && dst.hasRemaining(); i++) {
-            dst.put(Unsafe.getUnsafe().getByte(ptr + i));
-        }
-        return i;
+        assert Unsafe.getUnsafe().getLong(unwrapOutputBufferPtr, ADDRESS_FIELD_OFFSET) == unwrapOutputBufferPtr;
+        long srcPtr = unwrapOutputBufferPtr + oldPosition;
+        int srcLen = unwrapOutputBuffer.remaining();
+        int len = Math.min(dstLen, srcLen);
+        Vect.memcpy(dstPtr, srcPtr, len);
+        unwrapOutputBuffer.position(oldPosition + len);
+        return len;
     }
 
     @Override
@@ -326,7 +343,7 @@ public final class DelegatingTlsChannel implements LineChannel {
         sslEngine.closeOutbound();
         sslEngine.closeInbound();
         wrapLoop(dummyBuffer);
-        sendWrapOutputBufferAndClear();
+        writeToUpstreamAndClear();
 
         Misc.free(upstream);
     }
