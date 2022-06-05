@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
@@ -45,7 +46,7 @@ import java.security.cert.X509Certificate;
 import java.util.Arrays;
 
 public final class DelegatingTlsChannel implements LineChannel {
-    private static final int BUFFER_CAPACITY = 64 * 1024;
+    private static final int INITIAL_BUFFER_CAPACITY = 64 * 1024;
     private static final long ADDRESS_FIELD_OFFSET;
 
     private final LineChannel upstream;
@@ -93,10 +94,10 @@ public final class DelegatingTlsChannel implements LineChannel {
     public DelegatingTlsChannel(LineChannel upstream) {
         this.upstream = upstream;
         this.sslEngine = createSslEngine();
-        this.wrapInputBuffer = ByteBuffer.allocateDirect(BUFFER_CAPACITY);
-        this.wrapOutputBuffer = ByteBuffer.allocateDirect(BUFFER_CAPACITY);
-        this.unwrapInputBuffer = ByteBuffer.allocateDirect(BUFFER_CAPACITY);
-        this.unwrapOutputBuffer = ByteBuffer.allocateDirect(BUFFER_CAPACITY);
+        this.wrapInputBuffer = ByteBuffer.allocateDirect(INITIAL_BUFFER_CAPACITY);
+        this.wrapOutputBuffer = ByteBuffer.allocateDirect(INITIAL_BUFFER_CAPACITY);
+        this.unwrapInputBuffer = ByteBuffer.allocateDirect(INITIAL_BUFFER_CAPACITY);
+        this.unwrapOutputBuffer = ByteBuffer.allocateDirect(INITIAL_BUFFER_CAPACITY);
         this.wrapOutputBufferPtr = Unsafe.getUnsafe().getLong(wrapOutputBuffer, ADDRESS_FIELD_OFFSET);
         this.unwrapInputBufferPtr = Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET);
         this.dummyBuffer = ByteBuffer.allocate(0);
@@ -170,6 +171,7 @@ public final class DelegatingTlsChannel implements LineChannel {
                     unwrapLoop();
                     break;
                 case NEED_UNWRAP_AGAIN:
+                    // fall-through
                 default:
                     throw new UnsupportedOperationException(status + "not implemented yet");
             }
@@ -184,26 +186,25 @@ public final class DelegatingTlsChannel implements LineChannel {
     }
 
     private void growWrapOutputBuffer() {
-        ByteBuffer newBuffer = ByteBuffer.allocateDirect(wrapOutputBuffer.capacity() * 2);
-        wrapOutputBuffer.flip();
-        newBuffer.put(wrapOutputBuffer);
-        wrapOutputBuffer = newBuffer;
+        wrapOutputBuffer = expandBuffer(wrapInputBuffer);
         wrapOutputBufferPtr = Unsafe.getUnsafe().getLong(wrapOutputBuffer, ADDRESS_FIELD_OFFSET);
     }
 
     private void growUnwrapOutputBuffer() {
-        ByteBuffer newBuffer = ByteBuffer.allocateDirect(unwrapOutputBuffer.capacity() * 2);
-        unwrapOutputBuffer.flip();
-        newBuffer.put(unwrapOutputBuffer);
-        unwrapOutputBuffer = newBuffer;
+        unwrapOutputBuffer = expandBuffer(unwrapOutputBuffer);
     }
 
     private void growUnwrapInputBuffer() {
-        ByteBuffer newBuffer = ByteBuffer.allocateDirect(unwrapInputBuffer.capacity() * 2);
-        unwrapInputBuffer.flip();
-        newBuffer.put(unwrapInputBuffer);
-        unwrapInputBuffer = newBuffer;
+        unwrapInputBuffer = expandBuffer(unwrapInputBuffer);
         unwrapInputBufferPtr = Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET);
+    }
+
+    @NotNull
+    private static ByteBuffer expandBuffer(ByteBuffer buffer) {
+        // do we need a cap on max size?
+        ByteBuffer newBuffer = ByteBuffer.allocateDirect(buffer.capacity() * 2);
+        buffer.flip();
+        return newBuffer.put(buffer);
     }
 
     private void wrapLoop(ByteBuffer src) throws SSLException {
