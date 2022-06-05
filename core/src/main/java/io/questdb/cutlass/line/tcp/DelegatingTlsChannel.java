@@ -178,6 +178,7 @@ public final class DelegatingTlsChannel implements LineChannel {
 
     private void sendWrapOutputBufferAndClear() {
         int len = wrapOutputBuffer.position();
+        assert Unsafe.getUnsafe().getLong(wrapOutputBuffer, ADDRESS_FIELD_OFFSET) == wrapOutputBufferPtr;
         upstream.send(wrapOutputBufferPtr, len);
         wrapOutputBuffer.clear();
     }
@@ -272,6 +273,7 @@ public final class DelegatingTlsChannel implements LineChannel {
             growUnwrapInputBuffer();
             remainingLen = unwrapInputBuffer.remaining();
         }
+        assert Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET) == unwrapInputBufferPtr;
         long adjustedPtr = unwrapInputBufferPtr + unwrapInputBuffer.position();
 
         int receive = upstream.receive(adjustedPtr, remainingLen);
