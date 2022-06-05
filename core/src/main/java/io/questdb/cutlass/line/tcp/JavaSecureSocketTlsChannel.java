@@ -31,15 +31,21 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 
-public final class OldTlsChannel implements LineChannel {
+public final class JavaSecureSocketTlsChannel implements LineChannel {
     private static final Log LOG = LogFactory.getLog(PlanTcpLineChannel.class);
 
     private final byte[] arr;
@@ -48,9 +54,29 @@ public final class OldTlsChannel implements LineChannel {
     private final InputStream inputStream;
     private final OutputStream outputStream;
 
-    public OldTlsChannel(int address, int port, int sndBufferSize) {
+
+    private static final TrustManager ALLOW_ALL_TRUSTMANAGER = new X509TrustManager() {
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+
+        }
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+
+        }
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() {
+            return new X509Certificate[0];
+        }
+    };
+
+    public JavaSecureSocketTlsChannel(int address, int port, int sndBufferSize) {
         try {
-            SSLContext sslContext = SSLContext.getDefault();
+            SSLContext sslContext = SSLContext.getInstance("SSL");
+            TrustManager[] trustManagers = new TrustManager[]{ALLOW_ALL_TRUSTMANAGER};
+            sslContext.init(null, trustManagers, new SecureRandom());
 
             InetAddress inetAddress = addrToInetAddress(address);
 
@@ -62,7 +88,7 @@ public final class OldTlsChannel implements LineChannel {
             this.inputStream = socket.getInputStream();
             this.outputStream = socket.getOutputStream();
             this.arr = new byte[64 * 1024];
-        } catch (NoSuchAlgorithmException | IOException e) {
+        } catch (NoSuchAlgorithmException | IOException | KeyManagementException e) {
             throw new RuntimeException(e);
         }
     }

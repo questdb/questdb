@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.cutlass.line.udp.UdpLineChannel;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 
@@ -34,6 +35,6 @@ public class LineUdpSender extends AbstractLineSender {
     }
 
     public LineUdpSender(NetworkFacade nf, int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int capacity, int ttl) {
-        super(LineChannel.newUdpChannel(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, ttl), capacity);
+        super(new UdpLineChannel(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, ttl), capacity);
     }
 }

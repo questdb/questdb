@@ -25,6 +25,8 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.cutlass.line.tcp.AuthDb;
+import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
+import io.questdb.cutlass.line.tcp.PlanTcpLineChannel;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacadeImpl;
@@ -39,23 +41,24 @@ public class LineTcpSender extends AbstractLineSender {
     private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
 
     public LineTcpSender(int sendToIPv4Address, int sendToPort, int bufferCapacity) {
-        super(LineChannel.newTcpChannel(NetworkFacadeImpl.INSTANCE, sendToIPv4Address, sendToPort, bufferCapacity * 2), bufferCapacity);
+        super(new PlanTcpLineChannel(NetworkFacadeImpl.INSTANCE, sendToIPv4Address, sendToPort, bufferCapacity * 2), bufferCapacity);
     }
 
-    public LineTcpSender(LineChannel channel, int bufferCapacity) {
+    private LineTcpSender(LineChannel channel, int bufferCapacity) {
         super(channel, bufferCapacity);
     }
 
-    public static LineTcpSender authenticatedSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, String authKey, PrivateKey privateKey) {
+    public static LineTcpSender authenticatedPlainTextSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, String authKey, PrivateKey privateKey) {
         checkBufferCapacity(bufferCapacity);
         LineTcpSender sender = new LineTcpSender(sendToIPv4Address, sendToPort, bufferCapacity);
         sender.authenticate(authKey, privateKey);
         return sender;
     }
 
-    public static LineTcpSender tlsSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, String authKey, PrivateKey privateKey) {
+    public static LineTcpSender authenticatedTlsSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, String authKey, PrivateKey privateKey) {
         checkBufferCapacity(bufferCapacity);
-        LineChannel tlsChannel = LineChannel.newTlsChannel(sendToIPv4Address, sendToPort, bufferCapacity * 2);
+        LineChannel plainTcpChannel = new PlanTcpLineChannel(NetworkFacadeImpl.INSTANCE, sendToIPv4Address, sendToPort, bufferCapacity * 2);
+        LineChannel tlsChannel = new DelegatingTlsChannel(plainTcpChannel);
         LineTcpSender sender = new LineTcpSender(tlsChannel, bufferCapacity);
         sender.authenticate(authKey, privateKey);
         return sender;
@@ -196,9 +199,9 @@ public class LineTcpSender extends AbstractLineSender {
             } else {
                 LineTcpSender sender;
                 if (tlsEnabled) {
-                    sender = LineTcpSender.tlsSender(host, port, bufferCapacity, keyId, privateKey);
+                    sender = LineTcpSender.authenticatedTlsSender(host, port, bufferCapacity, keyId, privateKey);
                 } else {
-                    sender = LineTcpSender.authenticatedSender(host, port, bufferCapacity, keyId, privateKey);
+                    sender = LineTcpSender.authenticatedPlainTextSender(host, port, bufferCapacity, keyId, privateKey);
                 }
                 if (shouldDestroyPrivKey) {
                     try {

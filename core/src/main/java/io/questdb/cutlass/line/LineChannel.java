@@ -24,11 +24,6 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.cutlass.line.tcp.PlanTcpLineChannel;
-import io.questdb.cutlass.line.tcp.OldTlsChannel;
-import io.questdb.cutlass.line.udp.UdpLineChannel;
-import io.questdb.network.NetworkFacade;
-
 import java.io.Closeable;
 
 public interface LineChannel extends Closeable {
@@ -36,16 +31,4 @@ public interface LineChannel extends Closeable {
     int receive(long ptr, int len);
 
     int errno();
-
-    static LineChannel newTcpChannel(NetworkFacade nf, int address, int port, int sndBufferSize) {
-        return new PlanTcpLineChannel(nf, address, port, sndBufferSize);
-    }
-
-    static LineChannel newTlsChannel(int address, int port, int sndBufferSize) {
-        return new OldTlsChannel(address, port, sndBufferSize);
-    }
-
-    static LineChannel newUdpChannel(NetworkFacade nf, int interfaceIPv4Address, int sendToAddress, int port, int ttl) {
-        return new UdpLineChannel(nf, interfaceIPv4Address, sendToAddress, port, ttl);
-    }
 }
