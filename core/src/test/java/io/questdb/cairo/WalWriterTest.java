@@ -44,25 +44,21 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testBootstrapWal() {
-        String tableName = "testtable";
-        String walName;
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                     .col("a", ColumnType.BYTE)
-                     .col("b", ColumnType.STRING)
-        ) {
-            int plen = path.length();
-            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
-            path.trimTo(plen);
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walName = walWriter.getWalName();
-                for (int i = 0; i < 100; i++) {
-                    WalWriter.Row row = walWriter.newRow();
-                    row.putByte(0, (byte) i);
-                    row.putStr(1, String.valueOf(i));
-                    row.append();
-                }
+        final String tableName = "testTable";
+        createTable(tableName);
+
+        final String walName;
+        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            walName = walWriter.getWalName();
+            for (int i = 0; i < 100; i++) {
+                WalWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) i);
+                row.putStr(1, String.valueOf(i));
+                row.append();
             }
+        }
+
+        try (Path path = new Path().of(configuration.getRoot())) {
             assertWalFileExist(tableName, walName, "a", 0, path);
             assertWalFileExist(tableName, walName, "b", 0, path);
         }
@@ -70,116 +66,115 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testSymbolWal() {
-        String tableName = "testtable";
-        String walName;
-        IntList walSymbolCounts = new IntList();
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+        final String tableName = "testSymTable";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
                      .col("b", ColumnType.SYMBOL)
                      .col("c", ColumnType.SYMBOL)
                      .col("d", ColumnType.SYMBOL)
         ) {
-            int plen = path.length();
-            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
-            path.trimTo(plen);
+            createTable(model);
+        }
 
-            try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "symbolTest")) {
-                for (int i = 0; i < 5; i++) {
-                    TableWriter.Row row = tableWriter.newRow();
-                    row.putByte(0, (byte) i);
-                    row.putSym(1, "sym" + i);
-                    row.putSym(2, "s" + i % 2);
-                    row.putSym(3, "symbol" + i % 2);
-                    row.append();
-                }
-                tableWriter.commit();
+        try (TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "symbolTest")) {
+            for (int i = 0; i < 5; i++) {
+                TableWriter.Row row = tableWriter.newRow();
+                row.putByte(0, (byte) i);
+                row.putSym(1, "sym" + i);
+                row.putSym(2, "s" + i % 2);
+                row.putSym(3, "symbol" + i % 2);
+                row.append();
+            }
+            tableWriter.commit();
+        }
+
+        final String walName;
+        final IntList walSymbolCounts = new IntList();
+        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            walName = walWriter.getWalName();
+            for (int i = 0; i < 10; i++) {
+                WalWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) i);
+                row.putSym(1, "sym" + i);
+                row.putSym(2, "s" + i % 2);
+                row.putSym(3, "symbol" + i % 3);
+                row.append();
             }
 
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walName = walWriter.getWalName();
-                for (int i = 0; i < 10; i++) {
-                    WalWriter.Row row = walWriter.newRow();
-                    row.putByte(0, (byte) i);
-                    row.putSym(1, "sym" + i);
-                    row.putSym(2, "s" + i % 2);
-                    row.putSym(3, "symbol" + i % 3);
-                    row.append();
-                }
+            walSymbolCounts.add(walWriter.getSymbolMapWriter(1).getSymbolCount());
+            walSymbolCounts.add(walWriter.getSymbolMapWriter(2).getSymbolCount());
+            walSymbolCounts.add(walWriter.getSymbolMapWriter(3).getSymbolCount());
+            walWriter.commit();
+        }
 
-                walSymbolCounts.add(walWriter.getSymbolMapWriter(1).getSymbolCount());
-                walSymbolCounts.add(walWriter.getSymbolMapWriter(2).getSymbolCount());
-                walSymbolCounts.add(walWriter.getSymbolMapWriter(3).getSymbolCount());
-                walWriter.commit();
+        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            assertEquals(4, reader.getColumnCount());
+            assertEquals(5, reader.getTransientRowCount());
+            RecordCursor cursor = reader.getCursor();
+            Record record = cursor.getRecord();
+            int i = 0;
+            while (cursor.hasNext()) {
+                assertEquals(i, record.getByte(0));
+                assertEquals(i, record.getInt(1));
+                assertEquals("sym" + i, record.getSym(1));
+                assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
+                assertEquals(i % 2, record.getInt(2));
+                assertEquals("s" + i % 2, record.getSym(2));
+                assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
+                assertEquals(i % 2, record.getInt(3));
+                assertEquals("symbol" + i % 2, record.getSym(3));
+                assertEquals("symbol" + i % 2, reader.getSymbolMapReader(3).valueOf(i % 2));
+                i++;
             }
+            assertEquals(i, reader.getTransientRowCount());
+            assertNull(reader.getSymbolMapReader(1).valueOf(5));
+            assertNull(reader.getSymbolMapReader(2).valueOf(2));
+            assertNull(reader.getSymbolMapReader(3).valueOf(2));
+        }
 
-            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                assertEquals(4, reader.getColumnCount());
-                assertEquals(5, reader.getTransientRowCount());
-                RecordCursor cursor = reader.getCursor();
-                Record record = cursor.getRecord();
-                int i = 0;
-                while (cursor.hasNext()) {
-                    assertEquals(i, record.getByte(0));
-                    assertEquals(i, record.getInt(1));
-                    assertEquals("sym" + i, record.getSym(1));
-                    assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
-                    assertEquals(i % 2, record.getInt(2));
-                    assertEquals("s" + i % 2, record.getSym(2));
-                    assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
-                    assertEquals(i % 2, record.getInt(3));
-                    assertEquals("symbol" + i % 2, record.getSym(3));
-                    assertEquals("symbol" + i % 2, reader.getSymbolMapReader(3).valueOf(i % 2));
-                    i++;
-                }
-                assertEquals(i, reader.getTransientRowCount());
-                assertNull(reader.getSymbolMapReader(1).valueOf(5));
-                assertNull(reader.getSymbolMapReader(2).valueOf(2));
-                assertNull(reader.getSymbolMapReader(3).valueOf(2));
+        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, walSymbolCounts, 10L)) {
+            assertEquals(4, reader.getColumnCount());
+            assertEquals(10, reader.size());
+            RecordCursor cursor = reader.getCursor();
+            Record record = cursor.getRecord();
+            int i = 0;
+            while (cursor.hasNext()) {
+                assertEquals(i, record.getByte(0));
+                assertEquals(i, record.getInt(1));
+                assertEquals("sym" + i, record.getSym(1));
+                assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
+                assertEquals(i % 2, record.getInt(2));
+                assertEquals("s" + i % 2, record.getSym(2));
+                assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
+                assertEquals(i % 3, record.getInt(3));
+                assertEquals("symbol" + i % 3, record.getSym(3));
+                assertEquals("symbol" + i % 3, reader.getSymbolMapReader(3).valueOf(i % 3));
+                i++;
             }
+            assertEquals(i, reader.size());
+            assertNull(reader.getSymbolMapReader(1).valueOf(10));
+            assertNull(reader.getSymbolMapReader(2).valueOf(2));
+            assertNull(reader.getSymbolMapReader(3).valueOf(3));
 
-            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, walSymbolCounts, 10L)) {
-                assertEquals(4, reader.getColumnCount());
-                assertEquals(10, reader.size());
-                RecordCursor cursor = reader.getCursor();
-                Record record = cursor.getRecord();
-                int i = 0;
-                while (cursor.hasNext()) {
-                    assertEquals(i, record.getByte(0));
-                    assertEquals(i, record.getInt(1));
-                    assertEquals("sym" + i, record.getSym(1));
-                    assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
-                    assertEquals(i % 2, record.getInt(2));
-                    assertEquals("s" + i % 2, record.getSym(2));
-                    assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
-                    assertEquals(i % 3, record.getInt(3));
-                    assertEquals("symbol" + i % 3, record.getSym(3));
-                    assertEquals("symbol" + i % 3, reader.getSymbolMapReader(3).valueOf(i % 3));
-                    i++;
-                }
-                assertEquals(i, reader.size());
-                assertNull(reader.getSymbolMapReader(1).valueOf(10));
-                assertNull(reader.getSymbolMapReader(2).valueOf(2));
-                assertNull(reader.getSymbolMapReader(3).valueOf(3));
-
-                assertNull(reader.getSymbolMapDiff(0));
-                final SymbolMapDiff symbolMapDiff1 = reader.getSymbolMapDiff(1);
-                assertEquals(5, symbolMapDiff1.size());
-                for (int k = 0; k < symbolMapDiff1.size(); k++) {
-                    final int expectedKey = k + 5;
-                    assertEquals(expectedKey, symbolMapDiff1.getKey(k));
-                    assertEquals("sym" + expectedKey, symbolMapDiff1.getSymbol(k));
-                }
-                assertNull(reader.getSymbolMapDiff(2));
-                final SymbolMapDiff symbolMapDiff3 = reader.getSymbolMapDiff(3);
-                assertEquals(1, symbolMapDiff3.size());
-                for (int k = 0; k < symbolMapDiff3.size(); k++) {
-                    final int expectedKey = k + 2;
-                    assertEquals(expectedKey, symbolMapDiff3.getKey(k));
-                    assertEquals("symbol" + expectedKey, symbolMapDiff3.getSymbol(k));
-                }
+            assertNull(reader.getSymbolMapDiff(0));
+            final SymbolMapDiff symbolMapDiff1 = reader.getSymbolMapDiff(1);
+            assertEquals(5, symbolMapDiff1.size());
+            for (int k = 0; k < symbolMapDiff1.size(); k++) {
+                final int expectedKey = k + 5;
+                assertEquals(expectedKey, symbolMapDiff1.getKey(k));
+                assertEquals("sym" + expectedKey, symbolMapDiff1.getSymbol(k));
             }
+            assertNull(reader.getSymbolMapDiff(2));
+            final SymbolMapDiff symbolMapDiff3 = reader.getSymbolMapDiff(3);
+            assertEquals(1, symbolMapDiff3.size());
+            for (int k = 0; k < symbolMapDiff3.size(); k++) {
+                final int expectedKey = k + 2;
+                assertEquals(expectedKey, symbolMapDiff3.getKey(k));
+                assertEquals("symbol" + expectedKey, symbolMapDiff3.getSymbol(k));
+            }
+        }
 
+        try (Path path = new Path().of(configuration.getRoot())) {
             assertWalFileExist(tableName, walName, "a", 0, path);
             assertWalFileExist(tableName, walName, "b", 0, path);
             assertWalSymbolFileExist(tableName, walName, "b", ".c", path);
@@ -191,61 +186,55 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testRowCount_simple() {
-        String tableName = "testtable";
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
+        final String tableName = "testTable";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                      .col("a", ColumnType.BYTE)
                      .col("b", ColumnType.STRING)
                      .col("c", ColumnType.INT)
         ) {
-            int plen = path.length();
-            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
-            path.trimTo(plen);
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                for (int i = 0; i < 100; i++) {
-                    WalWriter.Row row = walWriter.newRow();
-                    row.putByte(0, (byte) i);
-                    row.putStr(1, String.valueOf(i));
-                    row.putInt(2, 42);
-                    row.append();
-                }
-                assertEquals(100, walWriter.getCurrentWalDSegmentRowCount());
-                walWriter.newRow().cancel(); // force a new WAL-D segment
-                assertEquals(0, walWriter.getCurrentWalDSegmentRowCount());
-                for (int i = 0; i < 50; i++) {
-                    WalWriter.Row row = walWriter.newRow();
-                    row.putByte(0, (byte) i);
-                    row.putStr(1, String.valueOf(i));
-                    row.putInt(2, 42);
-                    row.append();
-                }
-                assertEquals(50, walWriter.getCurrentWalDSegmentRowCount());
+            createTable(model);
+        }
+
+        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            for (int i = 0; i < 100; i++) {
+                WalWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) i);
+                row.putStr(1, String.valueOf(i));
+                row.putInt(2, 42);
+                row.append();
             }
+            assertEquals(100, walWriter.getCurrentWalDSegmentRowCount());
+            walWriter.newRow().cancel(); // force a new WAL-D segment
+            assertEquals(0, walWriter.getCurrentWalDSegmentRowCount());
+            for (int i = 0; i < 50; i++) {
+                WalWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) i);
+                row.putStr(1, String.valueOf(i));
+                row.putInt(2, 42);
+                row.append();
+            }
+            assertEquals(50, walWriter.getCurrentWalDSegmentRowCount());
         }
     }
 
     @Test
     public void cancelRowStartsANewSegment_for_now() {
-        String tableName = "testtable";
-        String walName;
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                     .col("a", ColumnType.BYTE)
-                     .col("b", ColumnType.STRING)
-        ) {
-            int plen = path.length();
-            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
-            path.trimTo(plen);
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow();
-                row.putByte(0, (byte) 1);
-                row.cancel();
+        final String tableName = "testTable";
+        createTable(tableName);
 
-                row = walWriter.newRow();
-                row.putByte(0, (byte) 1);
-                row.append();
-            }
+        final String walName;
+        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            walName = walWriter.getWalName();
+            WalWriter.Row row = walWriter.newRow();
+            row.putByte(0, (byte) 1);
+            row.cancel();
+
+            row = walWriter.newRow();
+            row.putByte(0, (byte) 1);
+            row.append();
+        }
+
+        try (Path path = new Path().of(configuration.getRoot())) {
             assertWalFileExist(tableName, walName, "a", 0, path);
             assertWalFileExist(tableName, walName, "a", 1, path);
         }
@@ -253,26 +242,23 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testDdlMetadataReadable() {
-        String tableName = "testtable";
-        String walName;
+        final String tableName = "testTable";
+        createTable(tableName);
+
+        final String walName;
+        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            walName = walWriter.getWalName();
+            WalWriter.Row row = walWriter.newRow();
+            row.putByte(0, (byte) 1);
+            row.append();
+            walWriter.newRow().cancel(); // new segment
+            row = walWriter.newRow();
+            row.putByte(0, (byte) 1);
+            row.append();
+        }
+
         try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                     .col("a", ColumnType.BYTE)
-                     .col("b", ColumnType.STRING)
-        ) {
-            int plen = path.length();
-            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
-            path.trimTo(plen);
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow();
-                row.putByte(0, (byte) 1);
-                row.append();
-                walWriter.newRow().cancel(); // new segment
-                row = walWriter.newRow();
-                row.putByte(0, (byte) 1);
-                row.append();
-            }
+             TableModel model = defaultModel(tableName, false)) {
             assertValidMetadataFileCreated(model, walName, 0, path);
             assertValidMetadataFileCreated(model, walName, 1, path);
         }
@@ -280,70 +266,58 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testDdlMetadataCreated() {
-        String tableName = "testtable";
-        String walName;
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                     .col("a", ColumnType.BYTE)
-                     .col("b", ColumnType.STRING)
-        ) {
-            int plen = path.length();
-            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
-            path.trimTo(plen);
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow();
-                row.putByte(0, (byte) 1);
-                row.append();
-            }
+        final String tableName = "testTable";
+        createTable(tableName);
+
+        final String walName;
+        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            walName = walWriter.getWalName();
+            WalWriter.Row row = walWriter.newRow();
+            row.putByte(0, (byte) 1);
+            row.append();
+        }
+
+        try (Path path = new Path().of(configuration.getRoot())) {
             assertMetadataFileExist(tableName, walName, 0, path);
         }
     }
 
     @Test
     public void testDdlMetadataForNewSegmentReadable() {
-        String tableName = "testtable";
-        String walName;
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                     .col("a", ColumnType.BYTE)
-                     .col("b", ColumnType.STRING)
-        ) {
-            int plen = path.length();
-            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
-            path.trimTo(plen);
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow();
-                row.putByte(0, (byte) 1);
-                row.append();
-            }
+        final String tableName = "testTable";
+        createTable(tableName);
+
+        final String walName;
+        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            walName = walWriter.getWalName();
+            WalWriter.Row row = walWriter.newRow();
+            row.putByte(0, (byte) 1);
+            row.append();
+        }
+
+        try (Path path = new Path().of(configuration.getRoot())) {
             assertMetadataFileExist(tableName, walName, 0, path);
         }
     }
 
     @Test
     public void testDdlMetadataCreatedForNewSegment() {
-        String tableName = "testtable";
-        String walName;
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                     .col("a", ColumnType.BYTE)
-                     .col("b", ColumnType.STRING)
-        ) {
-            int plen = path.length();
-            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
-            path.trimTo(plen);
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow();
-                row.putByte(0, (byte) 1);
-                row.append();
-                walWriter.newRow().cancel(); // force new segment
-                row = walWriter.newRow();
-                row.putByte(0, (byte) 1);
-                row.append();
-            }
+        final String tableName = "testTable";
+        createTable(tableName);
+
+        final String walName;
+        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            walName = walWriter.getWalName();
+            WalWriter.Row row = walWriter.newRow();
+            row.putByte(0, (byte) 1);
+            row.append();
+            walWriter.newRow().cancel(); // force new segment
+            row = walWriter.newRow();
+            row.putByte(0, (byte) 1);
+            row.append();
+        }
+
+        try (Path path = new Path().of(configuration.getRoot())) {
             assertMetadataFileExist(tableName, walName, 0, path);
             assertMetadataFileExist(tableName, walName, 1, path);
         }
@@ -351,23 +325,21 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testAddingColumnStartsNewSegment() {
-        String tableName = "testtable";
-        String walName;
+        final String tableName = "testTableAddCol";
+        createTable(tableName);
+
+        final String walName;
+        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            walName = walWriter.getWalName();
+            WalWriter.Row row = walWriter.newRow();
+            row.putByte(0, (byte) 1);
+            row.append();
+            walWriter.addColumn("c", ColumnType.INT);
+        }
+
         try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                     .col("a", ColumnType.BYTE)
-                     .col("b", ColumnType.STRING)
+             TableModel model = defaultModel(tableName, false)
         ) {
-            int plen = path.length();
-            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
-            path.trimTo(plen);
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow();
-                row.putByte(0, (byte) 1);
-                row.append();
-                walWriter.addColumn("c", ColumnType.INT);
-            }
             assertValidMetadataFileCreated(model, walName, 0, path);
             assertValidMetadataFileCreated(model.col("c", ColumnType.INT), walName, 1, path);
         }
@@ -375,68 +347,61 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testRemovingColumnStartsNewSegment() {
-        String tableName = "testtable";
-        String walName;
+        final String tableName = "testTableRemoveCol";
+        createTable(tableName);
+
+        final String walName;
+        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            walName = walWriter.getWalName();
+            WalWriter.Row row = walWriter.newRow();
+            row.putByte(0, (byte) 1);
+            row.append();
+            walWriter.removeColumn("b");
+        }
+
         try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                     .col("a", ColumnType.BYTE)
-                     .col("b", ColumnType.STRING)
+             TableModel model = defaultModel(tableName, false)
         ) {
-            int plen = path.length();
-            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
-            path.trimTo(plen);
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow();
-                row.putByte(0, (byte) 1);
-                row.append();
-                walWriter.removeColumn("b");
-            }
             assertValidMetadataFileCreated(model, walName, 0, path);
-            try (TableModel updatedModel = new TableModel(configuration, tableName, PartitionBy.NONE)
-                    .col("a", ColumnType.BYTE)) {
-                assertValidMetadataFileCreated(updatedModel, walName, 1, path);
-            }
+        }
+        try (Path path = new Path().of(configuration.getRoot());
+             TableModel updatedModel = new TableModel(configuration, tableName, PartitionBy.NONE)
+                .col("a", ColumnType.BYTE)) {
+            assertValidMetadataFileCreated(updatedModel, walName, 1, path);
         }
     }
 
     @Test
     public void testDesignatedTimestampsIncludesSegmentRowNumber() {
-        String tableName = "testtable";
-        String walName;
+        final String tableName = "testTable";
+        createTable(tableName, true);
+
+        final String walName;
+        final long ts = Os.currentTimeMicros();
+        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+            walName = walWriter.getWalName();
+            WalWriter.Row row = walWriter.newRow(ts);
+            row.putByte(0, (byte) 1);
+            row.append();
+        }
+
         try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                     .col("a", ColumnType.BYTE)
-                     .col("b", ColumnType.STRING)
-                     .timestamp("ts")
+             TableModel model = defaultModel(tableName, true)
         ) {
-            int plen = path.length();
-            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
-            path.trimTo(plen);
-            long ts = Os.currentTimeMicros();
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow(ts);
-                row.putByte(0, (byte) 1);
-                row.append();
-            }
             assertValidMetadataFileCreated(model, walName, 0, path);
-            try (WalSegmentDataReader segmentReader = new WalSegmentDataReader(configuration.getFilesFacade(),toWalPath(tableName, walName, 0, path))) {
-                int tsIndex = segmentReader.getColumnIndex("ts");
-                assertDesignatedTimestamp(segmentReader, tsIndex, 0, ts);
-            }
+        }
+        try (Path path = new Path().of(configuration.getRoot());
+             WalSegmentDataReader segmentReader = new WalSegmentDataReader(configuration.getFilesFacade(), toWalPath(tableName, walName, 0, path))) {
+            int tsIndex = segmentReader.getColumnIndex("ts");
+            assertDesignatedTimestamp(segmentReader, tsIndex, 0, ts);
         }
     }
 
     @Test
     public void testReadAndWriteAllTypes() {
         // todo: geohash
-        String tableName = "testtable";
-        String walName;
-        int rowsToInsertTotal = 100;
-
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+        final String tableName = "testTableAllTypes";
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                      .col("int", ColumnType.INT)
                      .col("byte", ColumnType.BYTE)
                      .col("long", ColumnType.LONG)
@@ -458,119 +423,152 @@ public class WalWriterTest extends AbstractGriffinTest {
                      .col("long256b", ColumnType.LONG256) // putLong256(int columnIndex, Long256 value)
                      .col("long256c", ColumnType.LONG256) // putLong256(int columnIndex, CharSequence hexString)
                      .col("long256d", ColumnType.LONG256) // putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end)
-
                      .timestamp("ts")
         ) {
-            int plen = path.length();
-            TableUtils.createTable(configuration, Vm.getMARWInstance(), path, model, 0);
-            path.trimTo(plen);
-            long ts = Os.currentTimeMicros();
-            long pointer = Unsafe.getUnsafe().allocateMemory(rowsToInsertTotal);
-            Long256Impl long256 = new Long256Impl();
-            StringSink stringSink = new StringSink();
-            try {
-                DirectBinarySequence binSeq = new DirectBinarySequence();
-                try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                    walName = walWriter.getWalName();
-                    for (int i = 0; i < rowsToInsertTotal; i++) {
-                        stringSink.clear();
-                        WalWriter.Row row = walWriter.newRow(ts);
-                        row.putInt(0, i);
-                        row.putByte(1, (byte) i);
-                        row.putLong(2, i);
-                        row.putLong256(3, i, i + 1, i + 2, i + 3);
-                        row.putDouble(4, i + .5);
-                        row.putFloat(5, i + .5f);
-                        row.putShort(6, (short) i);
-                        row.putTimestamp(7, i);
-                        row.putChar(8, (char) i);
-                        row.putBool(9, i % 2 == 0);
-                        row.putDate(10, i);
-                        row.putStr(11, String.valueOf(i));
-                        row.putGeoHash(12, i); // geo byte
-                        row.putGeoHash(13, i); // geo int
-                        row.putGeoHash(14, i); // geo short
-                        row.putGeoHash(15, i); // geo long
-                        prepareBinPayload(pointer, i);
-                        row.putBin(16, binSeq.of(pointer, i));
-                        // putBin(address, length) treats length 0 the same as null.
-                        // so let's start from 1 to avoid that edge-case
-                        prepareBinPayload(pointer, i + 1);
-                        row.putBin(17, pointer, i + 1);
-
-                        long256.setAll(i, i + 1, i + 2, i + 3);
-                        row.putLong256(18, long256);
-
-                        long256.toSink(stringSink);
-                        row.putLong256(19, stringSink);
-
-                        int l = stringSink.length();
-                        stringSink.put("some rubbish to be ignored");
-                        row.putLong256(20, stringSink, 2, l);
-
-                        row.append();
-                    }
-                    walWriter.commit();
-                }
-
-                try (WalSegmentDataReader segmentReader = new WalSegmentDataReader(configuration.getFilesFacade(), toWalPath(tableName, walName, 0, path))) {
-                    int intIndex = segmentReader.getColumnIndex("int");
-                    int byteIndex = segmentReader.getColumnIndex("byte");
-                    int longIndex = segmentReader.getColumnIndex("long");
-                    int long256Index = segmentReader.getColumnIndex("long256");
-                    int long256bIndex = segmentReader.getColumnIndex("long256b");
-                    int long256cIndex = segmentReader.getColumnIndex("long256c");
-                    int long256dIndex = segmentReader.getColumnIndex("long256d");
-                    int tsIndex = segmentReader.getColumnIndex("ts");
-                    int doubleIndex = segmentReader.getColumnIndex("double");
-                    int floatIndex = segmentReader.getColumnIndex("float");
-                    int shortIndex = segmentReader.getColumnIndex("short");
-                    int timestampIndex = segmentReader.getColumnIndex("timestamp");
-                    int charIndex = segmentReader.getColumnIndex("char");
-                    int booleanIndex = segmentReader.getColumnIndex("boolean");
-                    int dateIndex = segmentReader.getColumnIndex("date");
-                    int stringIndex = segmentReader.getColumnIndex("string");
-
-                    int geoByteIndex = segmentReader.getColumnIndex("geoByte");
-                    int geoIntIndex = segmentReader.getColumnIndex("geoInt");
-                    int geoShortIndex = segmentReader.getColumnIndex("geoShort");
-                    int geoLongIndex = segmentReader.getColumnIndex("geoLong");
-                    int binIndex = segmentReader.getColumnIndex("bin");
-                    int bin2Index = segmentReader.getColumnIndex("bin2");
-                    for (int i = 0; i < rowsToInsertTotal; i++) {
-                        stringSink.clear();
-                        assertEquals(i, segmentReader.nextInt(intIndex));
-                        assertEquals(i, segmentReader.nextByte(byteIndex));
-                        assertEquals(i, segmentReader.nextLong(longIndex));
-                        segmentReader.nextLong256(long256Index, assertingAcceptor(i, i + 1, i + 2, i + 3));
-                        segmentReader.nextLong256(long256bIndex, assertingAcceptor(i, i + 1, i + 2, i + 3));
-                        segmentReader.nextLong256(long256cIndex, assertingAcceptor(i, i + 1, i + 2, i + 3));
-                        segmentReader.nextLong256(long256dIndex, assertingAcceptor(i, i + 1, i + 2, i + 3));
-                        assertDesignatedTimestamp(segmentReader, tsIndex, i, ts);
-                        assertEquals(i + 0.5, segmentReader.nextDouble(doubleIndex), 0.1);
-                        assertEquals(i + 0.5, segmentReader.nextFloat(floatIndex), 0.1);
-                        assertEquals(i, segmentReader.nextShort(shortIndex));
-                        assertEquals(i, segmentReader.nextTimestamp(timestampIndex));
-                        assertEquals(i, segmentReader.nextChar(charIndex));
-                        assertEquals(i % 2 == 0, segmentReader.nextBool(booleanIndex));
-                        assertEquals(i, segmentReader.nextDate(dateIndex));
-                        assertCharsEquals(String.valueOf(i), segmentReader.nextString(stringIndex));
-                        assertEquals(i, segmentReader.nextGeoByte(geoByteIndex));
-                        assertEquals(i, segmentReader.nextGeoInt(geoIntIndex));
-                        assertEquals(i, segmentReader.nextGeoShort(geoShortIndex));
-                        assertEquals(i, segmentReader.nextGeoLong(geoLongIndex));
-
-                        prepareBinPayload(pointer, i);
-                        assertBinSeqEquals(binSeq.of(pointer, i), segmentReader.nextBin(binIndex));
-
-                        prepareBinPayload(pointer, i + 1);
-                        assertBinSeqEquals(binSeq.of(pointer, i + 1), segmentReader.nextBin(bin2Index));
-                    }
-                }
-            } finally {
-                Unsafe.getUnsafe().freeMemory(pointer);
-            }
+            createTable(model);
         }
+
+        final int rowsToInsertTotal = 100;
+        final long pointer = Unsafe.getUnsafe().allocateMemory(rowsToInsertTotal);
+        try {
+            final long ts = Os.currentTimeMicros();
+            final Long256Impl long256 = new Long256Impl();
+            final StringSink stringSink = new StringSink();
+            final DirectBinarySequence binSeq = new DirectBinarySequence();
+
+            final String walName;
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                walName = walWriter.getWalName();
+                for (int i = 0; i < rowsToInsertTotal; i++) {
+                    stringSink.clear();
+                    WalWriter.Row row = walWriter.newRow(ts);
+                    row.putInt(0, i);
+                    row.putByte(1, (byte) i);
+                    row.putLong(2, i);
+                    row.putLong256(3, i, i + 1, i + 2, i + 3);
+                    row.putDouble(4, i + .5);
+                    row.putFloat(5, i + .5f);
+                    row.putShort(6, (short) i);
+                    row.putTimestamp(7, i);
+                    row.putChar(8, (char) i);
+                    row.putBool(9, i % 2 == 0);
+                    row.putDate(10, i);
+                    row.putStr(11, String.valueOf(i));
+                    row.putGeoHash(12, i); // geo byte
+                    row.putGeoHash(13, i); // geo int
+                    row.putGeoHash(14, i); // geo short
+                    row.putGeoHash(15, i); // geo long
+                    prepareBinPayload(pointer, i);
+                    row.putBin(16, binSeq.of(pointer, i));
+                    // putBin(address, length) treats length 0 the same as null.
+                    // so let's start from 1 to avoid that edge-case
+                    prepareBinPayload(pointer, i + 1);
+                    row.putBin(17, pointer, i + 1);
+
+                    long256.setAll(i, i + 1, i + 2, i + 3);
+                    row.putLong256(18, long256);
+
+                    long256.toSink(stringSink);
+                    row.putLong256(19, stringSink);
+
+                    int l = stringSink.length();
+                    stringSink.put("some rubbish to be ignored");
+                    row.putLong256(20, stringSink, 2, l);
+
+                    row.append();
+                }
+                walWriter.commit();
+            }
+
+            try (Path path = new Path().of(configuration.getRoot());
+                 WalSegmentDataReader segmentReader = new WalSegmentDataReader(configuration.getFilesFacade(), toWalPath(tableName, walName, 0, path))) {
+                int intIndex = segmentReader.getColumnIndex("int");
+                int byteIndex = segmentReader.getColumnIndex("byte");
+                int longIndex = segmentReader.getColumnIndex("long");
+                int long256Index = segmentReader.getColumnIndex("long256");
+                int long256bIndex = segmentReader.getColumnIndex("long256b");
+                int long256cIndex = segmentReader.getColumnIndex("long256c");
+                int long256dIndex = segmentReader.getColumnIndex("long256d");
+                int tsIndex = segmentReader.getColumnIndex("ts");
+                int doubleIndex = segmentReader.getColumnIndex("double");
+                int floatIndex = segmentReader.getColumnIndex("float");
+                int shortIndex = segmentReader.getColumnIndex("short");
+                int timestampIndex = segmentReader.getColumnIndex("timestamp");
+                int charIndex = segmentReader.getColumnIndex("char");
+                int booleanIndex = segmentReader.getColumnIndex("boolean");
+                int dateIndex = segmentReader.getColumnIndex("date");
+                int stringIndex = segmentReader.getColumnIndex("string");
+
+                int geoByteIndex = segmentReader.getColumnIndex("geoByte");
+                int geoIntIndex = segmentReader.getColumnIndex("geoInt");
+                int geoShortIndex = segmentReader.getColumnIndex("geoShort");
+                int geoLongIndex = segmentReader.getColumnIndex("geoLong");
+                int binIndex = segmentReader.getColumnIndex("bin");
+                int bin2Index = segmentReader.getColumnIndex("bin2");
+                for (int i = 0; i < rowsToInsertTotal; i++) {
+                    stringSink.clear();
+                    assertEquals(i, segmentReader.nextInt(intIndex));
+                    assertEquals(i, segmentReader.nextByte(byteIndex));
+                    assertEquals(i, segmentReader.nextLong(longIndex));
+                    segmentReader.nextLong256(long256Index, assertingAcceptor(i, i + 1, i + 2, i + 3));
+                    segmentReader.nextLong256(long256bIndex, assertingAcceptor(i, i + 1, i + 2, i + 3));
+                    segmentReader.nextLong256(long256cIndex, assertingAcceptor(i, i + 1, i + 2, i + 3));
+                    segmentReader.nextLong256(long256dIndex, assertingAcceptor(i, i + 1, i + 2, i + 3));
+                    assertDesignatedTimestamp(segmentReader, tsIndex, i, ts);
+                    assertEquals(i + 0.5, segmentReader.nextDouble(doubleIndex), 0.1);
+                    assertEquals(i + 0.5, segmentReader.nextFloat(floatIndex), 0.1);
+                    assertEquals(i, segmentReader.nextShort(shortIndex));
+                    assertEquals(i, segmentReader.nextTimestamp(timestampIndex));
+                    assertEquals(i, segmentReader.nextChar(charIndex));
+                    assertEquals(i % 2 == 0, segmentReader.nextBool(booleanIndex));
+                    assertEquals(i, segmentReader.nextDate(dateIndex));
+                    assertCharsEquals(String.valueOf(i), segmentReader.nextString(stringIndex));
+                    assertEquals(i, segmentReader.nextGeoByte(geoByteIndex));
+                    assertEquals(i, segmentReader.nextGeoInt(geoIntIndex));
+                    assertEquals(i, segmentReader.nextGeoShort(geoShortIndex));
+                    assertEquals(i, segmentReader.nextGeoLong(geoLongIndex));
+
+                    prepareBinPayload(pointer, i);
+                    assertBinSeqEquals(binSeq.of(pointer, i), segmentReader.nextBin(binIndex));
+
+                    prepareBinPayload(pointer, i + 1);
+                    assertBinSeqEquals(binSeq.of(pointer, i + 1), segmentReader.nextBin(bin2Index));
+                }
+            }
+        } finally {
+            Unsafe.getUnsafe().freeMemory(pointer);
+        }
+    }
+
+    private void createTable(String tableName) {
+        createTable(tableName, false);
+    }
+
+    private void createTable(String tableName, boolean withTimestamp) {
+        try (TableModel model = defaultModel(tableName, withTimestamp)) {
+            createTable(model);
+        }
+    }
+
+    private void createTable(TableModel model) {
+        TableUtils.createTable(
+                configuration,
+                model.getMem(),
+                model.getPath(),
+                model,
+                1
+        );
+    }
+
+    private TableModel defaultModel(String tableName, boolean withTimestamp) {
+        return withTimestamp
+                ? new TableModel(configuration, tableName, PartitionBy.HOUR)
+                        .col("a", ColumnType.BYTE)
+                        .col("b", ColumnType.STRING)
+                        .timestamp("ts")
+                : new TableModel(configuration, tableName, PartitionBy.NONE)
+                        .col("a", ColumnType.BYTE)
+                        .col("b", ColumnType.STRING);
     }
 
     private static void prepareBinPayload(long pointer, int limit) {
@@ -604,44 +602,44 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     private void assertValidMetadataFileCreated(TableModel model, String walName, long segment, Path path) {
-        int plen = path.length();
+        final int pathLen = path.length();
         try {
             toMetadataPath(model.getTableName(), walName, segment, path);
             WalMetadataReader walMetadataReader = new WalMetadataReader(configuration.getFilesFacade(), path);
             assertMetadataMatchesModel(model, walMetadataReader);
         } finally {
-            path.trimTo(plen);
+            path.trimTo(pathLen);
         }
     }
 
     private void assertWalFileExist(String tableName, String walName, String columnName, int segment, Path path) {
-        int plen = path.length();
+        final int pathLen = path.length();
         try {
             path.concat(tableName).slash().concat(walName)
                     .slash().put(segment)
                     .slash().concat(columnName + TableUtils.FILE_SUFFIX_D).$();
             assertPathExists(path);
         } finally {
-            path.trimTo(plen);
+            path.trimTo(pathLen);
         }
     }
 
     private void assertWalSymbolFileExist(String tableName, String walName, String columnName, String extension, Path path) {
-        int plen = path.length();
+        final int pathLen = path.length();
         try {
             path.concat(tableName).slash().concat(walName).slash().concat(columnName + extension).$();
             assertPathExists(path);
         } finally {
-            path.trimTo(plen);
+            path.trimTo(pathLen);
         }
     }
 
     private void assertMetadataFileExist(String tableName, CharSequence walName, int segment, Path path) {
-        int plen = path.length();
+        final int pathLen = path.length();
         try {
             assertPathExists(toMetadataPath(tableName, walName, segment, path));
         } finally {
-            path.trimTo(plen);
+            path.trimTo(pathLen);
         }
     }
 
@@ -655,7 +653,6 @@ public class WalWriterTest extends AbstractGriffinTest {
                 .concat(walName).slash()
                 .put(segment).slash();
     }
-
 
     private static void assertPathExists(Path path) {
         if (!Files.exists(path)) {
