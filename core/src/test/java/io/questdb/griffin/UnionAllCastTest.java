@@ -83,6 +83,31 @@ public class UnionAllCastTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testBoolNull() throws Exception {
+        testUnionAll("a\tc\n" +
+                        "false\tfalse\n" +
+                        "true\tfalse\n" +
+                        "true\tfalse\n" +
+                        "true\tfalse\n" +
+                        "true\tfalse\n" +
+                        "false\tfalse\n" +
+                        "false\tfalse\n" +
+                        "false\tfalse\n" +
+                        "false\ttrue\n" +
+                        "false\tfalse\n",
+                "create table x as (select rnd_boolean() a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_boolean() c from long_sequence(5))",
+                false
+        );
+
+        testUnion(
+                "a\tc\n" +
+                        "false\tfalse\n" +
+                        "true\tfalse\n" +
+                        "false\ttrue\n"
+        );
+    }
 
     @Test
     public void testByteBool() throws Exception {
@@ -138,6 +163,25 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testByteNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "79\t0\n" +
+                        "122\t0\n" +
+                        "83\t0\n" +
+                        "90\t0\n" +
+                        "76\t0\n" +
+                        "0\t76\n" +
+                        "0\t102\n" +
+                        "0\t27\n" +
+                        "0\t87\n" +
+                        "0\t79\n",
+                "create table x as (select rnd_byte() a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_byte() c from long_sequence(5))"
+        );
+    }
+
+    @Test
     public void testCharBool() throws Exception {
         // this is cast to STRING, both columns
         testUnionAll(
@@ -184,6 +228,25 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "C\n",
                 "create table x as (select rnd_byte() a from long_sequence(5))",
                 "create table y as (select rnd_char() b from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testCharNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "P\t\n" +
+                        "S\t\n" +
+                        "W\t\n" +
+                        "H\t\n" +
+                        "Y\t\n" +
+                        "\tV\n" +
+                        "\tT\n" +
+                        "\tJ\n" +
+                        "\tW\n" +
+                        "\tC\n",
+                "create table x as (select rnd_char() a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_char() c from long_sequence(5))"
         );
     }
 
@@ -310,6 +373,25 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "261756925-02-22T01:56:27.029Z\n",
                 "create table x as (select rnd_date() a from long_sequence(5))",
                 "create table y as (select rnd_long() b from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testDateNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "1970-01-01T02:07:40.373Z\t\n" +
+                        "1970-01-01T00:18:02.998Z\t\n" +
+                        "1970-01-01T02:14:51.881Z\t\n" +
+                        "1970-01-01T00:14:24.006Z\t\n" +
+                        "1970-01-01T00:10:02.536Z\t\n" +
+                        "\t1970-01-01T02:07:23.856Z\n" +
+                        "\t1970-01-01T02:29:52.366Z\n" +
+                        "\t1970-01-01T01:45:29.025Z\n" +
+                        "\t1970-01-01T01:15:01.475Z\n" +
+                        "\t1970-01-01T00:43:07.029Z\n",
+                "create table x as (select rnd_date() a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_date() c from long_sequence(5))"
         );
     }
 
@@ -476,6 +558,101 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "8.2601885552325868E18\n",
                 "create table x as (select rnd_double() a from long_sequence(5))",
                 "create table y as (select rnd_long() b from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testDoubleNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "0.6508594025855301\tNaN\n" +
+                        "0.8423410920883345\tNaN\n" +
+                        "0.9856290845874263\tNaN\n" +
+                        "0.22452340856088226\tNaN\n" +
+                        "0.5093827001617407\tNaN\n" +
+                        "NaN\t0.6607777894187332\n" +
+                        "NaN\t0.2246301342497259\n" +
+                        "NaN\t0.08486964232560668\n" +
+                        "NaN\t0.299199045961845\n" +
+                        "NaN\t0.20447441837877756\n",
+                "create table x as (select rnd_double() a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_double() c from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testGeoByteNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "1110010\t\n" +
+                        "1100000\t\n" +
+                        "0000101\t\n" +
+                        "1001110\t\n" +
+                        "0011100\t\n" +
+                        "\t0100111\n" +
+                        "\t0010000\n" +
+                        "\t1000110\n" +
+                        "\t1111101\n" +
+                        "\t1000010\n",
+                "create table x as (select rnd_geohash(7) a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_geohash(7) c from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testGeoShortNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "wh4\t\n" +
+                        "s2z\t\n" +
+                        "1cj\t\n" +
+                        "mmt\t\n" +
+                        "71f\t\n" +
+                        "\t9v1\n" +
+                        "\t46s\n" +
+                        "\tjnw\n" +
+                        "\tzfu\n" +
+                        "\thp4\n",
+                "create table x as (select rnd_geohash(15) a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_geohash(15) c from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testGeoIntNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "wh4b6v\t\n" +
+                        "s2z2fy\t\n" +
+                        "1cjjwk\t\n" +
+                        "mmt894\t\n" +
+                        "71ftmp\t\n" +
+                        "\t9v1s8h\n" +
+                        "\t46swgj\n" +
+                        "\tjnw97u\n" +
+                        "\tzfuqd3\n" +
+                        "\thp4muv\n",
+                "create table x as (select rnd_geohash(30) a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_geohash(30) c from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testGeoLongNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "wh4b6vnt\t\n" +
+                        "s2z2fyds\t\n" +
+                        "1cjjwk6r\t\n" +
+                        "mmt89425\t\n" +
+                        "71ftmpy5\t\n" +
+                        "\t9v1s8hm7\n" +
+                        "\t46swgj10\n" +
+                        "\tjnw97u4y\n" +
+                        "\tzfuqd3bf\n" +
+                        "\thp4muv5t\n",
+                "create table x as (select rnd_geohash(40) a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_geohash(40) c from long_sequence(5))"
         );
     }
 
@@ -683,6 +860,25 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFloatNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "0.2846\tNaN\n" +
+                        "0.2992\tNaN\n" +
+                        "0.0844\tNaN\n" +
+                        "0.2045\tNaN\n" +
+                        "0.9345\tNaN\n" +
+                        "NaN\t0.6608\n" +
+                        "NaN\t0.8043\n" +
+                        "NaN\t0.2246\n" +
+                        "NaN\t0.1297\n" +
+                        "NaN\t0.0849\n",
+                "create table x as (select rnd_float() a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_float() c from long_sequence(5))"
+        );
+    }
+
+    @Test
     public void testFloatShort() throws Exception {
         testUnionAll(
                 "a\n" +
@@ -698,6 +894,27 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "0.0849\n",
                 "create table x as (select rnd_short() a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testGeoByteExact() throws Exception {
+        // long + geohash overlap via string type
+        testUnionAll(
+                "a\ttypeOf\tk\n" +
+                        "q\tGEOHASH(1c)\t-1792928964\n" +
+                        "5\tGEOHASH(1c)\t1404198\n" +
+                        "x\tGEOHASH(1c)\t-1252906348\n" +
+                        "f\tGEOHASH(1c)\t1699553881\n" +
+                        "8\tGEOHASH(1c)\t-938514914\n" +
+                        "9\tGEOHASH(1c)\t8260188555232587029\n" +
+                        "2\tGEOHASH(1c)\t-1675638984090602536\n" +
+                        "w\tGEOHASH(1c)\t-4094902006239100839\n" +
+                        "p\tGEOHASH(1c)\t5408639942391651698\n" +
+                        "w\tGEOHASH(1c)\t-3985256597569472057\n",
+                "select a, typeOf(a), k from (x union all y)",
+                "create table x as (select rnd_geohash(5) a, rnd_int() k from long_sequence(5))",
+                "create table y as (select rnd_geohash(5) a, rnd_long() k from long_sequence(5))"
         );
     }
 
@@ -776,6 +993,27 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGeoLongExact() throws Exception {
+        // long + geohash overlap via string type
+        testUnionAll(
+                "a\ttypeOf\tk\n" +
+                        "qmqxuuu\tGEOHASH(7c)\t-1792928964\n" +
+                        "5rshu96\tGEOHASH(7c)\t1404198\n" +
+                        "xn8nmwc\tGEOHASH(7c)\t-1252906348\n" +
+                        "fsnj14w\tGEOHASH(7c)\t1699553881\n" +
+                        "8nje17e\tGEOHASH(7c)\t-938514914\n" +
+                        "9v1s8hm\tGEOHASH(7c)\t8260188555232587029\n" +
+                        "29je7k2\tGEOHASH(7c)\t-1675638984090602536\n" +
+                        "wszdkrq\tGEOHASH(7c)\t-4094902006239100839\n" +
+                        "pn5udk1\tGEOHASH(7c)\t5408639942391651698\n" +
+                        "wh4b6vn\tGEOHASH(7c)\t-3985256597569472057\n",
+                "select a, typeOf(a), k from (x union all y)",
+                "create table x as (select rnd_geohash(35) a, rnd_int() k from long_sequence(5))",
+                "create table y as (select rnd_geohash(35) a, rnd_long() k from long_sequence(5))"
+        );
+    }
+
+    @Test
     public void testGeoLongGeoShort() throws Exception {
         // long + geohash overlap via string type
         testUnionAll(
@@ -836,65 +1074,23 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGeoByteExact() throws Exception {
+    public void testGeoShortExact() throws Exception {
         // long + geohash overlap via string type
         testUnionAll(
                 "a\ttypeOf\tk\n" +
-                        "q\tGEOHASH(1c)\t-1792928964\n" +
-                        "5\tGEOHASH(1c)\t1404198\n" +
-                        "x\tGEOHASH(1c)\t-1252906348\n" +
-                        "f\tGEOHASH(1c)\t1699553881\n" +
-                        "8\tGEOHASH(1c)\t-938514914\n" +
-                        "9\tGEOHASH(1c)\t8260188555232587029\n" +
-                        "2\tGEOHASH(1c)\t-1675638984090602536\n" +
-                        "w\tGEOHASH(1c)\t-4094902006239100839\n" +
-                        "p\tGEOHASH(1c)\t5408639942391651698\n" +
-                        "w\tGEOHASH(1c)\t-3985256597569472057\n",
+                        "101101001110\tGEOHASH(12b)\t-1792928964\n" +
+                        "001011011111\tGEOHASH(12b)\t1404198\n" +
+                        "111011010001\tGEOHASH(12b)\t-1252906348\n" +
+                        "011101100010\tGEOHASH(12b)\t1699553881\n" +
+                        "010001010010\tGEOHASH(12b)\t-938514914\n" +
+                        "010011101100\tGEOHASH(12b)\t8260188555232587029\n" +
+                        "000100100110\tGEOHASH(12b)\t-1675638984090602536\n" +
+                        "111001100011\tGEOHASH(12b)\t-4094902006239100839\n" +
+                        "101011010000\tGEOHASH(12b)\t5408639942391651698\n" +
+                        "111001000000\tGEOHASH(12b)\t-3985256597569472057\n",
                 "select a, typeOf(a), k from (x union all y)",
-                "create table x as (select rnd_geohash(5) a, rnd_int() k from long_sequence(5))",
-                "create table y as (select rnd_geohash(5) a, rnd_long() k from long_sequence(5))"
-        );
-    }
-
-    @Test
-    public void testIntExact() throws Exception {
-        // long + geohash overlap via string type
-        testUnionAll(
-                "a\ttypeOf\tk\n" +
-                        "qmqxuu\tGEOHASH(6c)\t-1792928964\n" +
-                        "5rshu9\tGEOHASH(6c)\t1404198\n" +
-                        "xn8nmw\tGEOHASH(6c)\t-1252906348\n" +
-                        "fsnj14\tGEOHASH(6c)\t1699553881\n" +
-                        "8nje17\tGEOHASH(6c)\t-938514914\n" +
-                        "9v1s8h\tGEOHASH(6c)\t8260188555232587029\n" +
-                        "29je7k\tGEOHASH(6c)\t-1675638984090602536\n" +
-                        "wszdkr\tGEOHASH(6c)\t-4094902006239100839\n" +
-                        "pn5udk\tGEOHASH(6c)\t5408639942391651698\n" +
-                        "wh4b6v\tGEOHASH(6c)\t-3985256597569472057\n",
-                "select a, typeOf(a), k from (x union all y)",
-                "create table x as (select rnd_geohash(30) a, rnd_int() k from long_sequence(5))",
-                "create table y as (select rnd_geohash(30) a, rnd_long() k from long_sequence(5))"
-        );
-    }
-
-    @Test
-    public void testGeoLongExact() throws Exception {
-        // long + geohash overlap via string type
-        testUnionAll(
-                "a\ttypeOf\tk\n" +
-                        "qmqxuuu\tGEOHASH(7c)\t-1792928964\n" +
-                        "5rshu96\tGEOHASH(7c)\t1404198\n" +
-                        "xn8nmwc\tGEOHASH(7c)\t-1252906348\n" +
-                        "fsnj14w\tGEOHASH(7c)\t1699553881\n" +
-                        "8nje17e\tGEOHASH(7c)\t-938514914\n" +
-                        "9v1s8hm\tGEOHASH(7c)\t8260188555232587029\n" +
-                        "29je7k2\tGEOHASH(7c)\t-1675638984090602536\n" +
-                        "wszdkrq\tGEOHASH(7c)\t-4094902006239100839\n" +
-                        "pn5udk1\tGEOHASH(7c)\t5408639942391651698\n" +
-                        "wh4b6vn\tGEOHASH(7c)\t-3985256597569472057\n",
-                "select a, typeOf(a), k from (x union all y)",
-                "create table x as (select rnd_geohash(35) a, rnd_int() k from long_sequence(5))",
-                "create table y as (select rnd_geohash(35) a, rnd_long() k from long_sequence(5))"
+                "create table x as (select rnd_geohash(12) a, rnd_int() k from long_sequence(5))",
+                "create table y as (select rnd_geohash(12) a, rnd_long() k from long_sequence(5))"
         );
     }
 
@@ -915,27 +1111,6 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "hp\n",
                 "create table x as (select rnd_geohash(12) a from long_sequence(5))",
                 "create table y as (select rnd_geohash(10) b from long_sequence(5))"
-        );
-    }
-
-    @Test
-    public void testGeoShortExact() throws Exception {
-        // long + geohash overlap via string type
-        testUnionAll(
-                "a\ttypeOf\tk\n" +
-                        "101101001110\tGEOHASH(12b)\t-1792928964\n" +
-                        "001011011111\tGEOHASH(12b)\t1404198\n" +
-                        "111011010001\tGEOHASH(12b)\t-1252906348\n" +
-                        "011101100010\tGEOHASH(12b)\t1699553881\n" +
-                        "010001010010\tGEOHASH(12b)\t-938514914\n" +
-                        "010011101100\tGEOHASH(12b)\t8260188555232587029\n" +
-                        "000100100110\tGEOHASH(12b)\t-1675638984090602536\n" +
-                        "111001100011\tGEOHASH(12b)\t-4094902006239100839\n" +
-                        "101011010000\tGEOHASH(12b)\t5408639942391651698\n" +
-                        "111001000000\tGEOHASH(12b)\t-3985256597569472057\n",
-                "select a, typeOf(a), k from (x union all y)",
-                "create table x as (select rnd_geohash(12) a, rnd_int() k from long_sequence(5))",
-                "create table y as (select rnd_geohash(12) a, rnd_long() k from long_sequence(5))"
         );
     }
 
@@ -1050,6 +1225,46 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIntExact() throws Exception {
+        // long + geohash overlap via string type
+        testUnionAll(
+                "a\ttypeOf\tk\n" +
+                        "qmqxuu\tGEOHASH(6c)\t-1792928964\n" +
+                        "5rshu9\tGEOHASH(6c)\t1404198\n" +
+                        "xn8nmw\tGEOHASH(6c)\t-1252906348\n" +
+                        "fsnj14\tGEOHASH(6c)\t1699553881\n" +
+                        "8nje17\tGEOHASH(6c)\t-938514914\n" +
+                        "9v1s8h\tGEOHASH(6c)\t8260188555232587029\n" +
+                        "29je7k\tGEOHASH(6c)\t-1675638984090602536\n" +
+                        "wszdkr\tGEOHASH(6c)\t-4094902006239100839\n" +
+                        "pn5udk\tGEOHASH(6c)\t5408639942391651698\n" +
+                        "wh4b6v\tGEOHASH(6c)\t-3985256597569472057\n",
+                "select a, typeOf(a), k from (x union all y)",
+                "create table x as (select rnd_geohash(30) a, rnd_int() k from long_sequence(5))",
+                "create table y as (select rnd_geohash(30) a, rnd_long() k from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testIntNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "-948263339\tNaN\n" +
+                        "1326447242\tNaN\n" +
+                        "592859671\tNaN\n" +
+                        "1868723706\tNaN\n" +
+                        "-847531048\tNaN\n" +
+                        "NaN\t-1148479920\n" +
+                        "NaN\t315515118\n" +
+                        "NaN\t1548800833\n" +
+                        "NaN\t-727724771\n" +
+                        "NaN\t73575701\n",
+                "create table x as (select rnd_int() a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_int() c from long_sequence(5))"
+        );
+    }
+
+    @Test
     public void testIntShort() throws Exception {
         testUnionAll(
                 "a\n" +
@@ -1085,6 +1300,25 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                 "select a, n, typeOf(n) from (x union all y)",
                 "create table x as (select rnd_short() a, rnd_long256() n from long_sequence(5))",
                 "create table y as (select rnd_int() a, rnd_long256() n from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testLong256Null() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\t\n" +
+                        "0xa0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88c8b1863d4316f9c7\t\n" +
+                        "0x61b1a0b0a559551538b73d329210d2774cdfb9e29522133c87aa0968faec6879\t\n" +
+                        "0x523eb59d99c647af9840ad8800156d26c718ab5cbb3fd261c1bf6c24be538768\t\n" +
+                        "0x5b9832d4b5522a9474ce62a98a4516952705e02c613acfc405374f5fbcef4819\t\n" +
+                        "\t0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n" +
+                        "\t0xb5b2159a23565217965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad15\n" +
+                        "\t0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\n" +
+                        "\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\n" +
+                        "\t0x4b0f595f143e5d722f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4\n",
+                "create table x as (select rnd_long256() a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_long256() c from long_sequence(5))"
         );
     }
 
@@ -1208,6 +1442,25 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testLongNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "8920866532787660373\tNaN\n" +
+                        "-7611843578141082998\tNaN\n" +
+                        "-5354193255228091881\tNaN\n" +
+                        "-2653407051020864006\tNaN\n" +
+                        "-1675638984090602536\tNaN\n" +
+                        "NaN\t4689592037643856\n" +
+                        "NaN\t4729996258992366\n" +
+                        "NaN\t7746536061816329025\n" +
+                        "NaN\t-6945921502384501475\n" +
+                        "NaN\t8260188555232587029\n",
+                "create table x as (select rnd_long() a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_long() c from long_sequence(5))"
+        );
+    }
+
+    @Test
     public void testLongShort() throws Exception {
         testUnionAll(
                 "a\n" +
@@ -1309,6 +1562,25 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testShortNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "-22955\t0\n" +
+                        "-1398\t0\n" +
+                        "21015\t0\n" +
+                        "30202\t0\n" +
+                        "-19496\t0\n" +
+                        "0\t-27056\n" +
+                        "0\t24814\n" +
+                        "0\t-11455\n" +
+                        "0\t-13027\n" +
+                        "0\t-21227\n",
+                "create table x as (select rnd_short() a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_short() c from long_sequence(5))"
+        );
+    }
+
+    @Test
     public void testStrStr() throws Exception {
         // we include byte <-> bool cast to make sure
         // bool <-> bool cast it not thrown away as redundant
@@ -1330,6 +1602,39 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testStringNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "\t\n" +
+                        "ZSX\t\n" +
+                        "XIB\t\n" +
+                        "TGP\t\n" +
+                        "WFF\t\n" +
+                        "\tTJW\n" +
+                        "\t\n" +
+                        "\tSWH\n" +
+                        "\tRXP\n" +
+                        "\tHNR\n",
+                "create table x as (select rnd_str(3,3,1) a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_str(3,3,1) c from long_sequence(5))",
+                false
+        );
+
+        testUnion(
+                "a\tc\n" +
+                        "\t\n" +
+                        "ZSX\t\n" +
+                        "XIB\t\n" +
+                        "TGP\t\n" +
+                        "WFF\t\n" +
+                        "\tTJW\n" +
+                        "\tSWH\n" +
+                        "\tRXP\n" +
+                        "\tHNR\n"
+        );
+    }
+
+    @Test
     public void testSymBin() throws Exception {
         compile("create table y as (select rnd_bin(10, 24, 1) b from long_sequence(5))");
         engine.releaseAllWriters();
@@ -1337,6 +1642,33 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                 "create table x as (select rnd_symbol('aa','bb') a from long_sequence(5))",
                 12,
                 "unsupported cast"
+        );
+    }
+
+    @Test
+    public void testSymNull() throws Exception {
+        testUnionAll("a\tc\n" +
+                        "bb\t\n" +
+                        "aa\t\n" +
+                        "bb\t\n" +
+                        "aa\t\n" +
+                        "aa\t\n" +
+                        "\taa\n" +
+                        "\taa\n" +
+                        "\tbb\n" +
+                        "\tbb\n" +
+                        "\tbb\n",
+                "create table x as (select rnd_symbol('aa','bb') a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_symbol('aa','bb') c from long_sequence(5))",
+                false
+        );
+
+        testUnion(
+                "a\tc\n" +
+                        "bb\t\n" +
+                        "aa\t\n" +
+                        "\taa\n" +
+                        "\tbb\n"
         );
     }
 
@@ -1532,6 +1864,38 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                         "263724-12-15T04:53:52.587029Z\n",
                 "create table x as (select cast(rnd_long() as timestamp) a from long_sequence(5))",
                 "create table y as (select rnd_long() b from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testTimestampNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "1970-01-01T00:00:00.023853Z\t\n" +
+                        "1970-01-01T00:00:00.083620Z\t\n" +
+                        "1970-01-01T00:00:00.084025Z\t\n" +
+                        "\t\n" +
+                        "1970-01-01T00:00:00.008228Z\t\n" +
+                        "\t1970-01-01T00:00:00.002771Z\n" +
+                        "\t\n" +
+                        "\t1970-01-01T00:00:00.045299Z\n" +
+                        "\t1970-01-01T00:00:00.078334Z\n" +
+                        "\t\n",
+                "create table x as (select rnd_timestamp(0, 100000, 2) a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_timestamp(0, 100000, 2) c from long_sequence(5))",
+                false
+        );
+
+        testUnion(
+                "a\tc\n" +
+                        "1970-01-01T00:00:00.023853Z\t\n" +
+                        "1970-01-01T00:00:00.083620Z\t\n" +
+                        "1970-01-01T00:00:00.084025Z\t\n" +
+                        "\t\n" +
+                        "1970-01-01T00:00:00.008228Z\t\n" +
+                        "\t1970-01-01T00:00:00.002771Z\n" +
+                        "\t1970-01-01T00:00:00.045299Z\n" +
+                        "\t1970-01-01T00:00:00.078334Z\n"
         );
     }
 

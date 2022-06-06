@@ -763,322 +763,326 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int fromType = castFromMetadata.getColumnType(i);
             int toTag = ColumnType.tagOf(toType);
             int fromTag = ColumnType.tagOf(fromType);
-            switch (toTag) {
-                case ColumnType.BOOLEAN:
-                    castFunctions.add(new BooleanColumn(i));
-                    break;
-                case ColumnType.BYTE:
-                    castFunctions.add(new ByteColumn(i));
-                    break;
-                case ColumnType.SHORT:
-                    switch (fromTag) {
-                        // BOOLEAN will not be cast to CHAR
-                        // in cast of BOOLEAN -> CHAR combination both will be cast to STRING
-                        case ColumnType.BYTE:
-                            castFunctions.add(new ByteColumn(i));
-                            break;
-                        case ColumnType.CHAR:
-                            castFunctions.add(new CharColumn(i));
-                            break;
-                        case ColumnType.SHORT:
-                            castFunctions.add(new ShortColumn(i));
-                            break;
-                        // wider types are not possible here
-                        // CHAR will be cast to wider types, not other way around
-                        // Winder types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
-                        // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
-                    }
-                    break;
-                case ColumnType.CHAR:
-                    switch (fromTag) {
-                        // BOOLEAN will not be cast to CHAR
-                        // in cast of BOOLEAN -> CHAR combination both will be cast to STRING
-                        case ColumnType.BYTE:
-                            castFunctions.add(new CastByteToCharFunctionFactory.CastByteToCharFunction(new ByteColumn(i)));
-                            break;
-                        case ColumnType.CHAR:
-                            castFunctions.add(new CharColumn(i));
-                            break;
-                        // wider types are not possible here
-                        // CHAR will be cast to wider types, not other way around
-                        // Winder types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
-                        // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
-                    }
-                    break;
-                case ColumnType.INT:
-                    switch (fromTag) {
-                        // BOOLEAN will not be cast to INT
-                        // in cast of BOOLEAN -> INT combination both will be cast to STRING
-                        case ColumnType.BYTE:
-                            castFunctions.add(new ByteColumn(i));
-                            break;
-                        case ColumnType.SHORT:
-                            castFunctions.add(new ShortColumn(i));
-                            break;
-                        case ColumnType.CHAR:
-                            castFunctions.add(new CharColumn(i));
-                            break;
-                        case ColumnType.INT:
-                            castFunctions.add(new IntColumn(i));
-                            break;
-                        // wider types are not possible here
-                        // INT will be cast to wider types, not other way around
-                        // Winder types tested are: LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
-                        // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
-                    }
-                    break;
-                case ColumnType.LONG:
-                    switch (fromTag) {
-                        // BOOLEAN will not be cast to LONG
-                        // in cast of BOOLEAN -> LONG combination both will be cast to STRING
-                        case ColumnType.BYTE:
-                            castFunctions.add(new ByteColumn(i));
-                            break;
-                        case ColumnType.SHORT:
-                            castFunctions.add(new ShortColumn(i));
-                            break;
-                        case ColumnType.CHAR:
-                            castFunctions.add(new CharColumn(i));
-                            break;
-                        case ColumnType.INT:
-                            castFunctions.add(new IntColumn(i));
-                            break;
-                        case ColumnType.LONG:
-                            castFunctions.add(new LongColumn(i));
-                            break;
-                        // wider types are not possible here
-                        // LONG will be cast to wider types, not other way around
-                        // Winder types tested are: FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
-                        // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
-                    }
-                    break;
-                case ColumnType.DATE:
-                    switch (fromTag) {
-                        case ColumnType.BYTE:
-                            castFunctions.add(new CastByteToDateFunctionFactory.CastByteToDateFunction(new ByteColumn(i)));
-                            break;
-                        case ColumnType.SHORT:
-                            castFunctions.add(new CastShortToDateFunctionFactory.CastShortToDateFunction(new ShortColumn(i)));
-                            break;
-                        case ColumnType.CHAR:
-                            castFunctions.add(new CastCharToDateFunctionFactory.CastCharToDateFunction(new CharColumn(i)));
-                            break;
-                        case ColumnType.INT:
-                            castFunctions.add(new CastIntToDateFunctionFactory.CastIntToDateFunction(new IntColumn(i)));
-                            break;
-                        case ColumnType.LONG:
-                            castFunctions.add(new CastLongToDateFunctionFactory.CastLongToDateFunction(new LongColumn(i)));
-                            break;
-                        case ColumnType.DATE:
-                            castFunctions.add(new DateColumn(i));
-                            break;
-                    }
-                    break;
-                case ColumnType.TIMESTAMP:
-                    switch (fromTag) {
-                        case ColumnType.BYTE:
-                            castFunctions.add(new CastByteToTimestampFunctionFactory.CastByteToTimestampFunction(new ByteColumn(i)));
-                            break;
-                        case ColumnType.CHAR:
-                            castFunctions.add(new CastCharToTimestampFunctionFactory.CastCharToTimestampFunction(new CharColumn(i)));
-                            break;
-                        case ColumnType.SHORT:
-                            castFunctions.add(new CastShortToTimestampFunctionFactory.CastShortToTimestampFunction(new ShortColumn(i)));
-                            break;
-                        case ColumnType.INT:
-                            castFunctions.add(new CastIntToTimestampFunctionFactory.CastIntToTimestampFunction(new IntColumn(i)));
-                            break;
-                        case ColumnType.LONG:
-                            castFunctions.add(new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new LongColumn(i)));
-                            break;
-                        case ColumnType.DATE:
-                            castFunctions.add(new CastDateToTimestampFunctionFactory.CastDateToTimestampFunction(new DateColumn(i)));
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            castFunctions.add(new TimestampColumn(i));
-                            break;
-                    }
-                    break;
-                case ColumnType.FLOAT:
-                    switch (fromTag) {
-                        case ColumnType.BYTE:
-                            castFunctions.add(new ByteColumn(i));
-                            break;
-                        case ColumnType.SHORT:
-                            castFunctions.add(new ShortColumn(i));
-                            break;
-                        case ColumnType.CHAR:
-                            castFunctions.add(new CharColumn(i));
-                            break;
-                        case ColumnType.INT:
-                            castFunctions.add(new IntColumn(i));
-                            break;
-                        case ColumnType.LONG:
-                            castFunctions.add(new LongColumn(i));
-                            break;
-                        case ColumnType.DATE:
-                            castFunctions.add(new DateColumn(i));
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            castFunctions.add(new TimestampColumn(i));
-                            break;
-                        case ColumnType.FLOAT:
-                            castFunctions.add(new FloatColumn(i));
-                            break;
-                    }
-                    break;
-                case ColumnType.DOUBLE:
-                    switch (fromTag) {
-                        case ColumnType.BYTE:
-                            castFunctions.add(new ByteColumn(i));
-                            break;
-                        case ColumnType.SHORT:
-                            castFunctions.add(new ShortColumn(i));
-                            break;
-                        case ColumnType.CHAR:
-                            castFunctions.add(new CharColumn(i));
-                            break;
-                        case ColumnType.INT:
-                            castFunctions.add(new IntColumn(i));
-                            break;
-                        case ColumnType.LONG:
-                            castFunctions.add(new LongColumn(i));
-                            break;
-                        case ColumnType.DATE:
-                            castFunctions.add(new DateColumn(i));
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            castFunctions.add(new TimestampColumn(i));
-                            break;
-                        case ColumnType.FLOAT:
-                            castFunctions.add(new FloatColumn(i));
-                            break;
-                        case ColumnType.DOUBLE:
-                            castFunctions.add(new DoubleColumn(i));
-                            break;
-                    }
-                    break;
-                case ColumnType.STRING:
-                    switch (fromTag) {
-                        case ColumnType.BOOLEAN:
-                            castFunctions.add(new BooleanColumn(i));
-                            break;
-                        case ColumnType.BYTE:
-                            castFunctions.add(new CastByteToStrFunctionFactory.CastByteToStrFunction(new ByteColumn(i)));
-                            break;
-                        case ColumnType.SHORT:
-                            castFunctions.add(new CastShortToStrFunctionFactory.CastShortToStrFunction(new ShortColumn(i)));
-                            break;
-                        case ColumnType.CHAR:
-                            // CharFunction has built-in cast to String
-                            castFunctions.add(new CharColumn(i));
-                            break;
-                        case ColumnType.INT:
-                            castFunctions.add(new CastIntToStrFunctionFactory.CastIntToStrFunction(new IntColumn(i)));
-                            break;
-                        case ColumnType.LONG:
-                            castFunctions.add(new CastLongToStrFunctionFactory.CastLongToStrFunction(new LongColumn(i)));
-                            break;
-                        case ColumnType.DATE:
-                            castFunctions.add(new CastDateToStrFunctionFactory.CastDateToStrFunction(new DateColumn(i)));
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            castFunctions.add(new CastTimestampToStrFunctionFactory.CastTimestampToStrFunction(new TimestampColumn(i)));
-                            break;
-                        case ColumnType.FLOAT:
-                            castFunctions.add(new CastFloatToStrFunctionFactory.CastFloatToStrFunction(
-                                    new FloatColumn(i),
-                                    configuration.getFloatToStrCastScale()
-                            ));
-                            break;
-                        case ColumnType.DOUBLE:
-                            castFunctions.add(new CastDoubleToStrFunctionFactory.CastDoubleToStrFunction(
-                                    new DoubleColumn(i),
-                                    configuration.getDoubleToStrCastScale()
-                            ));
-                            break;
-                        case ColumnType.STRING:
-                            castFunctions.add(new StrColumn(i));
-                            break;
-                        case ColumnType.SYMBOL:
-                            castFunctions.add(
-                                    new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(
-                                            new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))
-                                    )
-                            );
-                            break;
-                        case ColumnType.LONG256:
-                            castFunctions.add(
-                                    new CastLong256ToStrFunctionFactory.CastLong256ToStrFunction(
-                                            new Long256Column(i)
-                                    )
-                            );
-                            break;
-                        case ColumnType.GEOBYTE:
-                            castFunctions.add(
-                                    CastGeoHashToGeoHashFunctionFactory.getGeoByteToStrCastFunction(
-                                            new GeoByteColumn(i, toTag),
-                                            ColumnType.getGeoHashBits(fromType)
-                                    )
-                            );
-                            break;
-                        case ColumnType.GEOSHORT:
-                            castFunctions.add(
-                                    CastGeoHashToGeoHashFunctionFactory.getGeoShortToStrCastFunction(
-                                            new GeoShortColumn(i, toTag),
-                                            ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
-                                    )
-                            );
-                            break;
-                        case ColumnType.GEOINT:
-                            castFunctions.add(
-                                    CastGeoHashToGeoHashFunctionFactory.getGeoIntToStrCastFunction(
-                                            new GeoIntColumn(i, toTag),
-                                            ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
-                                    )
-                            );
-                            break;
-                        case ColumnType.GEOLONG:
-                            castFunctions.add(
-                                    CastGeoHashToGeoHashFunctionFactory.getGeoLongToStrCastFunction(
-                                            new GeoLongColumn(i, toTag),
-                                            ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
-                                    )
-                            );
-                            break;
-                        case ColumnType.BINARY:
-                            throw SqlException
-                                    .$(modelPosition, "unsupported cast [column=").put(castFromMetadata.getColumnName(i))
-                                    .put(", from=").put(ColumnType.nameOf(fromType))
-                                    .put(", to=").put(ColumnType.nameOf(toType))
-                                    .put(']');
-                    }
-                    break;
-                case ColumnType.SYMBOL:
-                    castFunctions.add(new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(
-                            new SymbolColumn(
-                                    i,
-                                    castFromMetadata.isSymbolTableStatic(i)
-                            )));
-                    break;
-                case ColumnType.LONG256:
-                    castFunctions.add(new Long256Column(i));
-                    break;
-                case ColumnType.GEOBYTE:
-                    castFunctions.add(new GeoByteColumn(i, toType));
-                    break;
-                case ColumnType.GEOSHORT:
-                    castFunctions.add(new GeoShortColumn(i, toType));
-                    break;
-                case ColumnType.GEOINT:
-                    castFunctions.add(new GeoIntColumn(i, toType));
-                    break;
-                case ColumnType.GEOLONG:
-                    castFunctions.add(new GeoLongColumn(i, toType));
-                    break;
-                case ColumnType.BINARY:
-                    castFunctions.add(new BinColumn(i));
-                    break;
+            if (fromTag == ColumnType.NULL) {
+                castFunctions.add(NullConstant.NULL);
+            } else {
+                switch (toTag) {
+                    case ColumnType.BOOLEAN:
+                        castFunctions.add(new BooleanColumn(i));
+                        break;
+                    case ColumnType.BYTE:
+                        castFunctions.add(new ByteColumn(i));
+                        break;
+                    case ColumnType.SHORT:
+                        switch (fromTag) {
+                            // BOOLEAN will not be cast to CHAR
+                            // in cast of BOOLEAN -> CHAR combination both will be cast to STRING
+                            case ColumnType.BYTE:
+                                castFunctions.add(new ByteColumn(i));
+                                break;
+                            case ColumnType.CHAR:
+                                castFunctions.add(new CharColumn(i));
+                                break;
+                            case ColumnType.SHORT:
+                                castFunctions.add(new ShortColumn(i));
+                                break;
+                            // wider types are not possible here
+                            // CHAR will be cast to wider types, not other way around
+                            // Winder types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                            // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+                        }
+                        break;
+                    case ColumnType.CHAR:
+                        switch (fromTag) {
+                            // BOOLEAN will not be cast to CHAR
+                            // in cast of BOOLEAN -> CHAR combination both will be cast to STRING
+                            case ColumnType.BYTE:
+                                castFunctions.add(new CastByteToCharFunctionFactory.CastByteToCharFunction(new ByteColumn(i)));
+                                break;
+                            case ColumnType.CHAR:
+                                castFunctions.add(new CharColumn(i));
+                                break;
+                            // wider types are not possible here
+                            // CHAR will be cast to wider types, not other way around
+                            // Winder types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                            // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+                        }
+                        break;
+                    case ColumnType.INT:
+                        switch (fromTag) {
+                            // BOOLEAN will not be cast to INT
+                            // in cast of BOOLEAN -> INT combination both will be cast to STRING
+                            case ColumnType.BYTE:
+                                castFunctions.add(new ByteColumn(i));
+                                break;
+                            case ColumnType.SHORT:
+                                castFunctions.add(new ShortColumn(i));
+                                break;
+                            case ColumnType.CHAR:
+                                castFunctions.add(new CharColumn(i));
+                                break;
+                            case ColumnType.INT:
+                                castFunctions.add(new IntColumn(i));
+                                break;
+                            // wider types are not possible here
+                            // INT will be cast to wider types, not other way around
+                            // Winder types tested are: LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                            // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+                        }
+                        break;
+                    case ColumnType.LONG:
+                        switch (fromTag) {
+                            // BOOLEAN will not be cast to LONG
+                            // in cast of BOOLEAN -> LONG combination both will be cast to STRING
+                            case ColumnType.BYTE:
+                                castFunctions.add(new ByteColumn(i));
+                                break;
+                            case ColumnType.SHORT:
+                                castFunctions.add(new ShortColumn(i));
+                                break;
+                            case ColumnType.CHAR:
+                                castFunctions.add(new CharColumn(i));
+                                break;
+                            case ColumnType.INT:
+                                castFunctions.add(new IntColumn(i));
+                                break;
+                            case ColumnType.LONG:
+                                castFunctions.add(new LongColumn(i));
+                                break;
+                            // wider types are not possible here
+                            // LONG will be cast to wider types, not other way around
+                            // Winder types tested are: FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                            // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+                        }
+                        break;
+                    case ColumnType.DATE:
+                        switch (fromTag) {
+                            case ColumnType.BYTE:
+                                castFunctions.add(new CastByteToDateFunctionFactory.CastByteToDateFunction(new ByteColumn(i)));
+                                break;
+                            case ColumnType.SHORT:
+                                castFunctions.add(new CastShortToDateFunctionFactory.CastShortToDateFunction(new ShortColumn(i)));
+                                break;
+                            case ColumnType.CHAR:
+                                castFunctions.add(new CastCharToDateFunctionFactory.CastCharToDateFunction(new CharColumn(i)));
+                                break;
+                            case ColumnType.INT:
+                                castFunctions.add(new CastIntToDateFunctionFactory.CastIntToDateFunction(new IntColumn(i)));
+                                break;
+                            case ColumnType.LONG:
+                                castFunctions.add(new CastLongToDateFunctionFactory.CastLongToDateFunction(new LongColumn(i)));
+                                break;
+                            case ColumnType.DATE:
+                                castFunctions.add(new DateColumn(i));
+                                break;
+                        }
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        switch (fromTag) {
+                            case ColumnType.BYTE:
+                                castFunctions.add(new CastByteToTimestampFunctionFactory.CastByteToTimestampFunction(new ByteColumn(i)));
+                                break;
+                            case ColumnType.CHAR:
+                                castFunctions.add(new CastCharToTimestampFunctionFactory.CastCharToTimestampFunction(new CharColumn(i)));
+                                break;
+                            case ColumnType.SHORT:
+                                castFunctions.add(new CastShortToTimestampFunctionFactory.CastShortToTimestampFunction(new ShortColumn(i)));
+                                break;
+                            case ColumnType.INT:
+                                castFunctions.add(new CastIntToTimestampFunctionFactory.CastIntToTimestampFunction(new IntColumn(i)));
+                                break;
+                            case ColumnType.LONG:
+                                castFunctions.add(new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new LongColumn(i)));
+                                break;
+                            case ColumnType.DATE:
+                                castFunctions.add(new CastDateToTimestampFunctionFactory.CastDateToTimestampFunction(new DateColumn(i)));
+                                break;
+                            case ColumnType.TIMESTAMP:
+                                castFunctions.add(new TimestampColumn(i));
+                                break;
+                        }
+                        break;
+                    case ColumnType.FLOAT:
+                        switch (fromTag) {
+                            case ColumnType.BYTE:
+                                castFunctions.add(new ByteColumn(i));
+                                break;
+                            case ColumnType.SHORT:
+                                castFunctions.add(new ShortColumn(i));
+                                break;
+                            case ColumnType.CHAR:
+                                castFunctions.add(new CharColumn(i));
+                                break;
+                            case ColumnType.INT:
+                                castFunctions.add(new IntColumn(i));
+                                break;
+                            case ColumnType.LONG:
+                                castFunctions.add(new LongColumn(i));
+                                break;
+                            case ColumnType.DATE:
+                                castFunctions.add(new DateColumn(i));
+                                break;
+                            case ColumnType.TIMESTAMP:
+                                castFunctions.add(new TimestampColumn(i));
+                                break;
+                            case ColumnType.FLOAT:
+                                castFunctions.add(new FloatColumn(i));
+                                break;
+                        }
+                        break;
+                    case ColumnType.DOUBLE:
+                        switch (fromTag) {
+                            case ColumnType.BYTE:
+                                castFunctions.add(new ByteColumn(i));
+                                break;
+                            case ColumnType.SHORT:
+                                castFunctions.add(new ShortColumn(i));
+                                break;
+                            case ColumnType.CHAR:
+                                castFunctions.add(new CharColumn(i));
+                                break;
+                            case ColumnType.INT:
+                                castFunctions.add(new IntColumn(i));
+                                break;
+                            case ColumnType.LONG:
+                                castFunctions.add(new LongColumn(i));
+                                break;
+                            case ColumnType.DATE:
+                                castFunctions.add(new DateColumn(i));
+                                break;
+                            case ColumnType.TIMESTAMP:
+                                castFunctions.add(new TimestampColumn(i));
+                                break;
+                            case ColumnType.FLOAT:
+                                castFunctions.add(new FloatColumn(i));
+                                break;
+                            case ColumnType.DOUBLE:
+                                castFunctions.add(new DoubleColumn(i));
+                                break;
+                        }
+                        break;
+                    case ColumnType.STRING:
+                        switch (fromTag) {
+                            case ColumnType.BOOLEAN:
+                                castFunctions.add(new BooleanColumn(i));
+                                break;
+                            case ColumnType.BYTE:
+                                castFunctions.add(new CastByteToStrFunctionFactory.CastByteToStrFunction(new ByteColumn(i)));
+                                break;
+                            case ColumnType.SHORT:
+                                castFunctions.add(new CastShortToStrFunctionFactory.CastShortToStrFunction(new ShortColumn(i)));
+                                break;
+                            case ColumnType.CHAR:
+                                // CharFunction has built-in cast to String
+                                castFunctions.add(new CharColumn(i));
+                                break;
+                            case ColumnType.INT:
+                                castFunctions.add(new CastIntToStrFunctionFactory.CastIntToStrFunction(new IntColumn(i)));
+                                break;
+                            case ColumnType.LONG:
+                                castFunctions.add(new CastLongToStrFunctionFactory.CastLongToStrFunction(new LongColumn(i)));
+                                break;
+                            case ColumnType.DATE:
+                                castFunctions.add(new CastDateToStrFunctionFactory.CastDateToStrFunction(new DateColumn(i)));
+                                break;
+                            case ColumnType.TIMESTAMP:
+                                castFunctions.add(new CastTimestampToStrFunctionFactory.CastTimestampToStrFunction(new TimestampColumn(i)));
+                                break;
+                            case ColumnType.FLOAT:
+                                castFunctions.add(new CastFloatToStrFunctionFactory.CastFloatToStrFunction(
+                                        new FloatColumn(i),
+                                        configuration.getFloatToStrCastScale()
+                                ));
+                                break;
+                            case ColumnType.DOUBLE:
+                                castFunctions.add(new CastDoubleToStrFunctionFactory.CastDoubleToStrFunction(
+                                        new DoubleColumn(i),
+                                        configuration.getDoubleToStrCastScale()
+                                ));
+                                break;
+                            case ColumnType.STRING:
+                                castFunctions.add(new StrColumn(i));
+                                break;
+                            case ColumnType.SYMBOL:
+                                castFunctions.add(
+                                        new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(
+                                                new SymbolColumn(i, castFromMetadata.isSymbolTableStatic(i))
+                                        )
+                                );
+                                break;
+                            case ColumnType.LONG256:
+                                castFunctions.add(
+                                        new CastLong256ToStrFunctionFactory.CastLong256ToStrFunction(
+                                                new Long256Column(i)
+                                        )
+                                );
+                                break;
+                            case ColumnType.GEOBYTE:
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.getGeoByteToStrCastFunction(
+                                                new GeoByteColumn(i, toTag),
+                                                ColumnType.getGeoHashBits(fromType)
+                                        )
+                                );
+                                break;
+                            case ColumnType.GEOSHORT:
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.getGeoShortToStrCastFunction(
+                                                new GeoShortColumn(i, toTag),
+                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                        )
+                                );
+                                break;
+                            case ColumnType.GEOINT:
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.getGeoIntToStrCastFunction(
+                                                new GeoIntColumn(i, toTag),
+                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                        )
+                                );
+                                break;
+                            case ColumnType.GEOLONG:
+                                castFunctions.add(
+                                        CastGeoHashToGeoHashFunctionFactory.getGeoLongToStrCastFunction(
+                                                new GeoLongColumn(i, toTag),
+                                                ColumnType.getGeoHashBits(castFromMetadata.getColumnType(i))
+                                        )
+                                );
+                                break;
+                            case ColumnType.BINARY:
+                                throw SqlException
+                                        .$(modelPosition, "unsupported cast [column=").put(castFromMetadata.getColumnName(i))
+                                        .put(", from=").put(ColumnType.nameOf(fromType))
+                                        .put(", to=").put(ColumnType.nameOf(toType))
+                                        .put(']');
+                        }
+                        break;
+                    case ColumnType.SYMBOL:
+                        castFunctions.add(new CastSymbolToStrFunctionFactory.CastSymbolToStrFunction(
+                                new SymbolColumn(
+                                        i,
+                                        castFromMetadata.isSymbolTableStatic(i)
+                                )));
+                        break;
+                    case ColumnType.LONG256:
+                        castFunctions.add(new Long256Column(i));
+                        break;
+                    case ColumnType.GEOBYTE:
+                        castFunctions.add(new GeoByteColumn(i, toType));
+                        break;
+                    case ColumnType.GEOSHORT:
+                        castFunctions.add(new GeoShortColumn(i, toType));
+                        break;
+                    case ColumnType.GEOINT:
+                        castFunctions.add(new GeoIntColumn(i, toType));
+                        break;
+                    case ColumnType.GEOLONG:
+                        castFunctions.add(new GeoLongColumn(i, toType));
+                        break;
+                    case ColumnType.BINARY:
+                        castFunctions.add(new BinColumn(i));
+                        break;
+                }
             }
         }
         return castFunctions;

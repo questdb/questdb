@@ -58,7 +58,7 @@ public class RecordSinkFactory {
         final int rGetByte = asm.poolInterfaceMethod(Record.class, "getByte", "(I)B");
         final int rGetGeoByte = asm.poolInterfaceMethod(Record.class, "getGeoByte", "(I)B");
         final int rGetShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
-        final int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getShort", "(I)S");
+        final int rGetGeoShort = asm.poolInterfaceMethod(Record.class, "getGeoShort", "(I)S");
         final int rGetChar = asm.poolInterfaceMethod(Record.class, "getChar", "(I)C");
         final int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         final int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
