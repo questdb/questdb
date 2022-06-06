@@ -47,6 +47,7 @@ class UnionRecordCursor implements NoRandomAccessRecordCursor {
         if (castFunctionsA != null && castFunctionsB != null) {
             this.record = new UnionCastRecord(castFunctionsA, castFunctionsB);
         } else {
+            assert castFunctionsA == null && castFunctionsB == null;
             this.record = new UnionDirectRecord();
         }
         this.map = map;

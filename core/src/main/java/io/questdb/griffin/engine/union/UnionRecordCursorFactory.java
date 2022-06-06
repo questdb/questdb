@@ -72,9 +72,13 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
         Misc.free(factoryB);
         Misc.free(map);
         Misc.freeObjList(castFunctionsA);
-        castFunctionsA.clear();
+        if (castFunctionsA != null) {
+            castFunctionsA.clear();
+        }
         Misc.freeObjList(castFunctionsB);
-        castFunctionsB.clear();
+        if (castFunctionsB != null) {
+            castFunctionsB.clear();
+        }
     }
 
     @Override

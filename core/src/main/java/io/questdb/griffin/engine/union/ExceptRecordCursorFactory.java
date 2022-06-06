@@ -70,7 +70,9 @@ public class ExceptRecordCursorFactory implements RecordCursorFactory {
         Misc.free(factoryB);
         Misc.free(map);
         Misc.freeObjList(castFunctionsB);
-        castFunctionsB.clear();
+        if (castFunctionsB != null) {
+            castFunctionsB.clear();
+        }
     }
 
     @Override

@@ -3060,7 +3060,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             setMetadata
                     );
                 case SET_OPERATION_EXCEPT:
-                    setMetadata = GenericRecordMetadata.removeTimestamp(metadataA);
+                    setMetadata = metadataA;
                     return generateUnionFactory(
                             model,
                             executionContext,
@@ -3072,7 +3072,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             SET_EXCEPT_CONSTRUCTOR
                     );
                 case SET_OPERATION_INTERSECT:
-                    setMetadata = GenericRecordMetadata.removeTimestamp(metadataA);
+                    setMetadata = metadataA;
                     return generateUnionFactory(
                             model,
                             executionContext,
