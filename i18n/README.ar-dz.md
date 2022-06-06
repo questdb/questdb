@@ -72,6 +72,9 @@ docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```bash
 brew install questdb
 brew services start questdb
+
+questdb start // To start questdb
+questdb stop  // To stop questdb
 ```
 
 <div dir="rtl">
