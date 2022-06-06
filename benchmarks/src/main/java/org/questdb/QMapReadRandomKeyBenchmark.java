@@ -37,6 +37,7 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
+import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
@@ -50,6 +51,7 @@ public class QMapReadRandomKeyBenchmark {
     private static final Rnd rnd = new Rnd();
     private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024, Integer.MAX_VALUE);
     private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N, loadFactor, 1024);
+    private static final HashMap<String, Long> hmap = new HashMap<>(N, (float) loadFactor);
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -68,6 +70,11 @@ public class QMapReadRandomKeyBenchmark {
     }
 
     @Benchmark
+    public CharSequence baseline() {
+        return rnd.nextChars(M);
+    }
+
+    @Benchmark
     public MapValue testDirectMap() {
         MapKey key = map.withKey();
         key.putStr(rnd.nextChars(M));
@@ -79,6 +86,11 @@ public class QMapReadRandomKeyBenchmark {
         MapKey key = qmap.withKey();
         key.putStr(rnd.nextChars(M));
         return key.findValue();
+    }
+
+    @Benchmark
+    public Long testHashMap() {
+        return hmap.get(rnd.nextChars(M).toString());
     }
 
     static {
@@ -94,6 +106,10 @@ public class QMapReadRandomKeyBenchmark {
             key.putStr(rnd.nextChars(M));
             MapValue values = key.createValue();
             values.putLong(0, i);
+        }
+
+        for (int i = 0; i < N; i++) {
+            hmap.put(rnd.nextChars(M).toString(), (long) i);
         }
     }
 }
