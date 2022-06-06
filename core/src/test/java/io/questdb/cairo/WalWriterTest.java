@@ -104,6 +104,14 @@ public class WalWriterTest extends AbstractGriffinTest {
             walSymbolCounts.add(walWriter.getSymbolMapWriter(1).getSymbolCount());
             walSymbolCounts.add(walWriter.getSymbolMapWriter(2).getSymbolCount());
             walSymbolCounts.add(walWriter.getSymbolMapWriter(3).getSymbolCount());
+
+            assertNull(walWriter.getSymbolMapWriter(1).valueOf(10));
+            try {
+                walWriter.getSymbolMapWriter(1).valueBOf(0);
+                fail("UnsupportedOperationException expected");
+            } catch(UnsupportedOperationException e) {
+                // ignore, this is expected
+            }
             walWriter.commit();
         }
 
@@ -123,6 +131,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
                 assertEquals(i % 2, record.getInt(3));
                 assertEquals("symbol" + i % 2, record.getSym(3));
+                assertEquals(record.getSymB(3), record.getSym(3));
                 assertEquals("symbol" + i % 2, reader.getSymbolMapReader(3).valueOf(i % 2));
                 i++;
             }
@@ -142,13 +151,14 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertEquals(i, record.getByte(0));
                 assertEquals(i, record.getInt(1));
                 assertEquals("sym" + i, record.getSym(1));
-                assertEquals("sym" + i, reader.getSymbolMapReader(1).valueOf(i));
+                assertEquals("sym" + i, cursor.getSymbolTable(1).valueOf(i));
                 assertEquals(i % 2, record.getInt(2));
                 assertEquals("s" + i % 2, record.getSym(2));
                 assertEquals("s" + i % 2, reader.getSymbolMapReader(2).valueOf(i % 2));
                 assertEquals(i % 3, record.getInt(3));
                 assertEquals("symbol" + i % 3, record.getSym(3));
-                assertEquals("symbol" + i % 3, reader.getSymbolMapReader(3).valueOf(i % 3));
+                assertEquals(record.getSymB(3), record.getSym(3));
+                assertEquals("symbol" + i % 3, cursor.newSymbolTable(3).valueOf(i % 3).toString());
                 i++;
             }
             assertEquals(i, reader.size());
@@ -438,6 +448,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                assertEquals(tableName, walWriter.getTableName());
                 walName = walWriter.getWalName();
                 for (int i = 0; i < rowsToInsertTotal; i++) {
                     stringSink.clear();
@@ -458,6 +469,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     row.putGeoHash(13, i); // geo int
                     row.putGeoHash(14, i); // geo short
                     row.putGeoHash(15, i); // geo long
+
                     prepareBinPayload(pointer, i);
                     row.putBin(16, binSeq.of(pointer, i));
                     // putBin(address, length) treats length 0 the same as null.
@@ -467,73 +479,85 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     long256.setAll(i, i + 1, i + 2, i + 3);
                     row.putLong256(18, long256);
-
                     long256.toSink(stringSink);
                     row.putLong256(19, stringSink);
-
-                    int l = stringSink.length();
+                    int strLen = stringSink.length();
                     stringSink.put("some rubbish to be ignored");
-                    row.putLong256(20, stringSink, 2, l);
+                    row.putLong256(20, stringSink, 2, strLen);
 
                     row.append();
                 }
                 walWriter.commit();
+                assertEquals(rowsToInsertTotal, walWriter.size());
+                assertEquals("WalWriter{name=" + tableName + "}", walWriter.toString());
             }
 
-            try (Path path = new Path().of(configuration.getRoot());
-                 WalSegmentDataReader segmentReader = new WalSegmentDataReader(configuration.getFilesFacade(), toWalPath(tableName, walName, 0, path))) {
-                int intIndex = segmentReader.getColumnIndex("int");
-                int byteIndex = segmentReader.getColumnIndex("byte");
-                int longIndex = segmentReader.getColumnIndex("long");
-                int long256Index = segmentReader.getColumnIndex("long256");
-                int long256bIndex = segmentReader.getColumnIndex("long256b");
-                int long256cIndex = segmentReader.getColumnIndex("long256c");
-                int long256dIndex = segmentReader.getColumnIndex("long256d");
-                int tsIndex = segmentReader.getColumnIndex("ts");
-                int doubleIndex = segmentReader.getColumnIndex("double");
-                int floatIndex = segmentReader.getColumnIndex("float");
-                int shortIndex = segmentReader.getColumnIndex("short");
-                int timestampIndex = segmentReader.getColumnIndex("timestamp");
-                int charIndex = segmentReader.getColumnIndex("char");
-                int booleanIndex = segmentReader.getColumnIndex("boolean");
-                int dateIndex = segmentReader.getColumnIndex("date");
-                int stringIndex = segmentReader.getColumnIndex("string");
-
-                int geoByteIndex = segmentReader.getColumnIndex("geoByte");
-                int geoIntIndex = segmentReader.getColumnIndex("geoInt");
-                int geoShortIndex = segmentReader.getColumnIndex("geoShort");
-                int geoLongIndex = segmentReader.getColumnIndex("geoLong");
-                int binIndex = segmentReader.getColumnIndex("bin");
-                int bin2Index = segmentReader.getColumnIndex("bin2");
-                for (int i = 0; i < rowsToInsertTotal; i++) {
-                    stringSink.clear();
-                    assertEquals(i, segmentReader.nextInt(intIndex));
-                    assertEquals(i, segmentReader.nextByte(byteIndex));
-                    assertEquals(i, segmentReader.nextLong(longIndex));
-                    segmentReader.nextLong256(long256Index, assertingAcceptor(i, i + 1, i + 2, i + 3));
-                    segmentReader.nextLong256(long256bIndex, assertingAcceptor(i, i + 1, i + 2, i + 3));
-                    segmentReader.nextLong256(long256cIndex, assertingAcceptor(i, i + 1, i + 2, i + 3));
-                    segmentReader.nextLong256(long256dIndex, assertingAcceptor(i, i + 1, i + 2, i + 3));
-                    assertDesignatedTimestamp(segmentReader, tsIndex, i, ts);
-                    assertEquals(i + 0.5, segmentReader.nextDouble(doubleIndex), 0.1);
-                    assertEquals(i + 0.5, segmentReader.nextFloat(floatIndex), 0.1);
-                    assertEquals(i, segmentReader.nextShort(shortIndex));
-                    assertEquals(i, segmentReader.nextTimestamp(timestampIndex));
-                    assertEquals(i, segmentReader.nextChar(charIndex));
-                    assertEquals(i % 2 == 0, segmentReader.nextBool(booleanIndex));
-                    assertEquals(i, segmentReader.nextDate(dateIndex));
-                    assertCharsEquals(String.valueOf(i), segmentReader.nextString(stringIndex));
-                    assertEquals(i, segmentReader.nextGeoByte(geoByteIndex));
-                    assertEquals(i, segmentReader.nextGeoInt(geoIntIndex));
-                    assertEquals(i, segmentReader.nextGeoShort(geoShortIndex));
-                    assertEquals(i, segmentReader.nextGeoLong(geoLongIndex));
-
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), rowsToInsertTotal)) {
+                assertEquals(22, reader.getColumnCount());
+                assertEquals(walName, reader.getWalName());
+                assertEquals(tableName, reader.getTableName());
+                assertEquals(rowsToInsertTotal, reader.size());
+                final RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
+                final StringSink testSink = new StringSink();
+                int i = 0;
+                while (cursor.hasNext()) {
+                    assertEquals(i, record.getInt(0));
+                    assertEquals(i, record.getByte(1));
+                    assertEquals(i, record.getLong(2));
+                    long256.setAll(i, i + 1, i + 2, i + 3);
+                    assertEquals(long256, record.getLong256A(3));
+                    assertEquals(long256, record.getLong256B(3));
+                    assertEquals(i + 0.5, record.getDouble(4), 0.1);
+                    assertEquals(i + 0.5, record.getFloat(5), 0.1);
+                    assertEquals(i, record.getShort(6));
+                    assertEquals(i, record.getTimestamp(7));
+                    assertEquals(i, record.getChar(8));
+                    assertEquals(i % 2 == 0, record.getBool(9));
+                    assertEquals(i, record.getDate(10));
+                    assertEquals(String.valueOf(i), record.getStr(11).toString());
+                    assertEquals(record.getStr(11).toString(), record.getStrB(11).toString());
+                    assertEquals(String.valueOf(i).length(), record.getStrLen(11));
+                    assertEquals(i, record.getGeoByte(12));
+                    assertEquals(i, record.getGeoInt(13));
+                    assertEquals(i, record.getGeoShort(14));
+                    assertEquals(i, record.getGeoLong(15));
                     prepareBinPayload(pointer, i);
-                    assertBinSeqEquals(binSeq.of(pointer, i), segmentReader.nextBin(binIndex));
-
+                    assertBinSeqEquals(binSeq.of(pointer, i), record.getBin(16));
                     prepareBinPayload(pointer, i + 1);
-                    assertBinSeqEquals(binSeq.of(pointer, i + 1), segmentReader.nextBin(bin2Index));
+                    assertBinSeqEquals(binSeq.of(pointer, i + 1), record.getBin(17));
+                    assertEquals(i + 1, record.getBinLen(17));
+                    testSink.clear();
+                    long256.toSink(testSink);
+                    stringSink.clear();
+                    record.getLong256(18, stringSink);
+                    assertEquals(testSink.toString(), stringSink.toString());
+                    stringSink.clear();
+                    record.getLong256(19, stringSink);
+                    assertEquals(testSink.toString(), stringSink.toString());
+                    stringSink.clear();
+                    record.getLong256(20, stringSink);
+                    assertEquals(testSink.toString(), stringSink.toString());
+                    assertEquals(i, record.getRowId());
+                    testSink.clear();
+                    ((Sinkable) record).toSink(testSink);
+                    assertEquals("WalReaderRecord [recordIndex=" + i + "]", testSink.toString());
+                    try {
+                        cursor.getRecordB();
+                        fail("UnsupportedOperationException expected");
+                    } catch(UnsupportedOperationException e) {
+                        // ignore, this is expected
+                    }
+                    try {
+                        record.getUpdateRowId();
+                        fail("UnsupportedOperationException expected");
+                    } catch(UnsupportedOperationException e) {
+                        // ignore, this is expected
+                    }
+                    i++;
                 }
+                assertEquals(i, cursor.size());
+                assertEquals(i, reader.size());
             }
         } finally {
             Unsafe.getUnsafe().freeMemory(pointer);

@@ -32,7 +32,6 @@ import io.questdb.std.Rows;
 
 public class WalReaderRecordCursor implements RecordCursor {
     private final WalReaderRecord recordA = new WalReaderRecord();
-    private final WalReaderRecord recordB = new WalReaderRecord();
     private WalReader reader;
     private long maxRecordIndex = -1;
 
@@ -48,7 +47,7 @@ public class WalReaderRecordCursor implements RecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndex);
+        return reader.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -67,7 +66,7 @@ public class WalReaderRecordCursor implements RecordCursor {
 
     @Override
     public Record getRecordB() {
-        return recordB;
+        throw new UnsupportedOperationException("No B record for WAL");
     }
 
     @Override
@@ -90,7 +89,6 @@ public class WalReaderRecordCursor implements RecordCursor {
 
         this.reader = reader;
         recordA.of(reader);
-        recordB.of(reader);
 
         final long segmentSize = reader.openSegment();
         maxRecordIndex = segmentSize - 1;

@@ -26,9 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.std.*;
 
-import java.io.Closeable;
-
-public class WalWriterMetadataCache extends BaseRecordMetadata implements Closeable {
+public class WalWriterMetadataCache extends BaseRecordMetadata {
     private final CairoConfiguration configuration;
 
     public WalWriterMetadataCache(CairoConfiguration configuration) {
@@ -83,9 +81,5 @@ public class WalWriterMetadataCache extends BaseRecordMetadata implements Closea
                 columnNameIndexMap.put(columnMeta.getName(), i);
             }
         }
-    }
-
-    @Override
-    public void close() {
     }
 }

@@ -134,14 +134,13 @@ public class WalWriter implements Closeable {
     }
 
     public void addColumn(CharSequence name, int type) {
-        addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getDefaultSymbolCacheFlag());
+        addColumn(name, type, configuration.getDefaultSymbolCapacity());
     }
 
     public void addColumn(
             CharSequence name,
             int type,
-            int symbolCapacity,
-            boolean symbolCacheFlag
+            int symbolCapacity
     ) {
 
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
@@ -238,8 +237,9 @@ public class WalWriter implements Closeable {
 
         try {
             removeColumnFiles(name, type);
-        } catch (CairoException err) {
-            throwDistressException(err);
+        } catch (CairoException e) {
+            distressed = true;
+            throw new CairoError(e);
         }
 
         openNewSegment(metadataCache);
@@ -445,7 +445,8 @@ public class WalWriter implements Closeable {
     }
 
     private void doClose(boolean truncate) {
-        freeMetaMem();
+        writeSymbolMapDiffs();
+        Misc.free(metaMem);
         freeSymbolMapWriters();
         Misc.free(symbolMapMem);
         Misc.free(other);
@@ -598,7 +599,7 @@ public class WalWriter implements Closeable {
         }
     }
 
-    private void freeMetaMem() {
+    private void writeSymbolMapDiffs() {
         for (int i = 0; i < columnCount; i++) {
             final int initSymbolCount = initSymbolCounts.get(i);
             if (initSymbolCount > -1) {
@@ -615,7 +616,6 @@ public class WalWriter implements Closeable {
             }
         }
         metaMem.putInt(SymbolMapDiff.END_OF_SYMBOL_DIFFS);
-        Misc.free(metaMem);
     }
 
     private void releaseLock(boolean distressed) {
@@ -752,11 +752,6 @@ public class WalWriter implements Closeable {
                 m2.sync(false);
             }
         }
-    }
-
-    private void throwDistressException(Throwable cause) {
-        distressed = true;
-        throw new CairoError(cause);
     }
 
     public interface Row {
