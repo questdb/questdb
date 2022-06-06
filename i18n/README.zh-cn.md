@@ -74,6 +74,9 @@ macOS 用户可以使用 Homebrew 来启动：
 ```bash
 brew install questdb
 brew services start questdb
+
+questdb start // To start questdb
+questdb stop  // To stop questdb
 ```
 
 [QuestDB 下载页面](https://questdb.io/get-questdb/) 提供二进制文件的直接下载，并
