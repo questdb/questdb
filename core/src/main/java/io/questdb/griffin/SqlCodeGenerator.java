@@ -28,7 +28,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -806,6 +805,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // CHAR will be cast to wider types, not other way around
                             // Winder types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
                             // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+                            default:
+
                         }
                         break;
                     case ColumnType.INT:
@@ -849,6 +850,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.LONG:
                                 castFunctions.add(new LongColumn(i));
                                 break;
+                            default:
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
                             // wider types are not possible here
                             // LONG will be cast to wider types, not other way around
                             // Winder types tested are: FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
@@ -856,50 +864,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         break;
                     case ColumnType.DATE:
-                        switch (fromTag) {
-                            case ColumnType.BYTE:
-                                castFunctions.add(new CastByteToDateFunctionFactory.CastByteToDateFunction(new ByteColumn(i)));
-                                break;
-                            case ColumnType.SHORT:
-                                castFunctions.add(new CastShortToDateFunctionFactory.CastShortToDateFunction(new ShortColumn(i)));
-                                break;
-                            case ColumnType.CHAR:
-                                castFunctions.add(new CastCharToDateFunctionFactory.CastCharToDateFunction(new CharColumn(i)));
-                                break;
-                            case ColumnType.INT:
-                                castFunctions.add(new CastIntToDateFunctionFactory.CastIntToDateFunction(new IntColumn(i)));
-                                break;
-                            case ColumnType.LONG:
-                                castFunctions.add(new CastLongToDateFunctionFactory.CastLongToDateFunction(new LongColumn(i)));
-                                break;
-                            case ColumnType.DATE:
-                                castFunctions.add(new DateColumn(i));
-                                break;
+                        if (fromTag == ColumnType.DATE) {
+                            castFunctions.add(new DateColumn(i));
+                        } else {
+                            throw SqlException.unsupportedCast(
+                                    modelPosition,
+                                    castFromMetadata.getColumnName(i),
+                                    fromType,
+                                    toType
+                            );
                         }
                         break;
                     case ColumnType.TIMESTAMP:
                         switch (fromTag) {
-                            case ColumnType.BYTE:
-                                castFunctions.add(new CastByteToTimestampFunctionFactory.CastByteToTimestampFunction(new ByteColumn(i)));
-                                break;
-                            case ColumnType.CHAR:
-                                castFunctions.add(new CastCharToTimestampFunctionFactory.CastCharToTimestampFunction(new CharColumn(i)));
-                                break;
-                            case ColumnType.SHORT:
-                                castFunctions.add(new CastShortToTimestampFunctionFactory.CastShortToTimestampFunction(new ShortColumn(i)));
-                                break;
-                            case ColumnType.INT:
-                                castFunctions.add(new CastIntToTimestampFunctionFactory.CastIntToTimestampFunction(new IntColumn(i)));
-                                break;
-                            case ColumnType.LONG:
-                                castFunctions.add(new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new LongColumn(i)));
-                                break;
                             case ColumnType.DATE:
                                 castFunctions.add(new CastDateToTimestampFunctionFactory.CastDateToTimestampFunction(new DateColumn(i)));
                                 break;
                             case ColumnType.TIMESTAMP:
                                 castFunctions.add(new TimestampColumn(i));
                                 break;
+                            default:
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
                         }
                         break;
                     case ColumnType.FLOAT:
@@ -910,24 +900,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.SHORT:
                                 castFunctions.add(new ShortColumn(i));
                                 break;
-                            case ColumnType.CHAR:
-                                castFunctions.add(new CharColumn(i));
-                                break;
                             case ColumnType.INT:
                                 castFunctions.add(new IntColumn(i));
                                 break;
                             case ColumnType.LONG:
                                 castFunctions.add(new LongColumn(i));
                                 break;
-                            case ColumnType.DATE:
-                                castFunctions.add(new DateColumn(i));
-                                break;
-                            case ColumnType.TIMESTAMP:
-                                castFunctions.add(new TimestampColumn(i));
-                                break;
                             case ColumnType.FLOAT:
                                 castFunctions.add(new FloatColumn(i));
                                 break;
+                            default:
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
                         }
                         break;
                     case ColumnType.DOUBLE:
@@ -938,20 +926,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.SHORT:
                                 castFunctions.add(new ShortColumn(i));
                                 break;
-                            case ColumnType.CHAR:
-                                castFunctions.add(new CharColumn(i));
-                                break;
                             case ColumnType.INT:
                                 castFunctions.add(new IntColumn(i));
                                 break;
                             case ColumnType.LONG:
                                 castFunctions.add(new LongColumn(i));
-                                break;
-                            case ColumnType.DATE:
-                                castFunctions.add(new DateColumn(i));
-                                break;
-                            case ColumnType.TIMESTAMP:
-                                castFunctions.add(new TimestampColumn(i));
                                 break;
                             case ColumnType.FLOAT:
                                 castFunctions.add(new FloatColumn(i));
@@ -959,6 +938,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case ColumnType.DOUBLE:
                                 castFunctions.add(new DoubleColumn(i));
                                 break;
+                            default:
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
                         }
                         break;
                     case ColumnType.STRING:
@@ -1050,11 +1036,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                                 break;
                             case ColumnType.BINARY:
-                                throw SqlException
-                                        .$(modelPosition, "unsupported cast [column=").put(castFromMetadata.getColumnName(i))
-                                        .put(", from=").put(ColumnType.nameOf(fromType))
-                                        .put(", to=").put(ColumnType.nameOf(toType))
-                                        .put(']');
+                                throw SqlException.unsupportedCast(
+                                        modelPosition,
+                                        castFromMetadata.getColumnName(i),
+                                        fromType,
+                                        toType
+                                );
                         }
                         break;
                     case ColumnType.SYMBOL:
@@ -3952,7 +3939,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (typeA == typeB && typeA != ColumnType.SYMBOL) {
                 metadata.add(BaseRecordMetadata.copyOf(typesA, i));
-            } else if (ColumnType.isToSameOrWider(typeA, typeB) && typeA != ColumnType.SYMBOL) {
+            } else if (ColumnType.isToSameOrWider(typeA, typeB) && typeA != ColumnType.SYMBOL && typeA != ColumnType.CHAR) {
+                // CHAR is "specially" assignable from SHORT, but we don't want that
                 metadata.add(BaseRecordMetadata.copyOf(typesA, i));
             } else if (ColumnType.isToSameOrWider(typeB, typeA) && typeB != ColumnType.SYMBOL) {
                 // even though A is assignable to B (e.g. A union B)

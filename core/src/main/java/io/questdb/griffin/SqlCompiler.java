@@ -2905,8 +2905,7 @@ public class SqlCompiler implements Closeable {
             if (isCompatibleCase(from, to)) {
                 typeCast.put(index, to);
             } else {
-                throw SqlException.$(ccm.getColumnTypePos(),
-                        "unsupported cast [from=").put(ColumnType.nameOf(from)).put(",to=").put(ColumnType.nameOf(to)).put(']');
+                throw SqlException.unsupportedCast(ccm.getColumnTypePos(), columnName, from, to);
             }
         }
 

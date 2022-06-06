@@ -163,7 +163,8 @@ public final class ColumnType {
                 || fromType == NULL
                 // char can be short and short can be char for symmetry
                 || (fromType == CHAR && toType == SHORT)
-                || (fromType == TIMESTAMP && toType == LONG);
+                || (fromType == TIMESTAMP && toType == LONG)
+                ;
     }
 
     public static boolean isChar(int columnType) {
