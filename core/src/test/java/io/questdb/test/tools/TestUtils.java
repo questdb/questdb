@@ -740,7 +740,6 @@ public final class TestUtils {
     public static Rnd generateRandom() {
         long s0 = System.nanoTime();
         long s1 = System.currentTimeMillis();
-        System.out.println("random seed " + s0 + ", " + s1);
         return new Rnd(s0, s1);
     }
 

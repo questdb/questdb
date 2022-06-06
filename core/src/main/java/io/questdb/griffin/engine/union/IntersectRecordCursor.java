@@ -59,8 +59,9 @@ class IntersectRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        Misc.free(this.cursorA);
-        Misc.free(this.cursorB);
+        this.cursorA = Misc.free(this.cursorA);
+        this.cursorB = Misc.free(this.cursorB);
+        this.map.clear();
         circuitBreaker = null;
     }
 
@@ -112,13 +113,17 @@ class IntersectRecordCursor implements RecordCursor {
         return -1;
     }
 
-    private void hashCursorB(RecordCursor cursorB) {
+    private void hashCursorB() {
         while (cursorB.hasNext()) {
             MapKey key = map.withKey();
             key.put(activeBRecord, recordSink);
             key.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
+        // this is an optimisation to release TableReader in case "this"
+        // cursor lingers around. If there is exception or circuit breaker fault
+        // we will rely on close() method to release reader.
+        this.cursorB = Misc.free(this.cursorB);
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -133,7 +138,7 @@ class IntersectRecordCursor implements RecordCursor {
         } else {
             this.activeBRecord = cursorB.getRecord();
         }
-        hashCursorB(cursorB);
+        hashCursorB();
         recordA = cursorA.getRecord();
         toTop();
     }

@@ -60,6 +60,10 @@ public class UnionAllRecordCursorFactory implements RecordCursorFactory {
     public void close() {
         Misc.free(factoryA);
         Misc.free(factoryB);
+        Misc.freeObjList(castFunctionsA);
+        castFunctionsA.clear();
+        Misc.freeObjList(castFunctionsB);
+        castFunctionsB.clear();
     }
 
     @Override

@@ -42,7 +42,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public BinarySequence getBin(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getBin(recordA);
         }
         return castFunctionsB.getQuick(col).getBin(recordB);
@@ -50,7 +50,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public long getBinLen(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getBinLen(recordA);
         }
         return castFunctionsB.getQuick(col).getBinLen(recordB);
@@ -58,7 +58,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public boolean getBool(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getBool(recordA);
         }
         return castFunctionsB.getQuick(col).getBool(recordB);
@@ -66,7 +66,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public byte getByte(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getByte(recordA);
         }
         return castFunctionsB.getQuick(col).getByte(recordB);
@@ -74,7 +74,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public char getChar(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getChar(recordA);
         }
         return castFunctionsB.getQuick(col).getChar(recordB);
@@ -82,7 +82,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public long getDate(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getDate(recordA);
         }
         return castFunctionsB.getQuick(col).getDate(recordB);
@@ -90,7 +90,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public double getDouble(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getDouble(recordA);
         }
         return castFunctionsB.getQuick(col).getDouble(recordB);
@@ -98,7 +98,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public float getFloat(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getFloat(recordA);
         }
         return castFunctionsB.getQuick(col).getFloat(recordB);
@@ -106,7 +106,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public int getInt(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getInt(recordA);
         }
         return castFunctionsB.getQuick(col).getInt(recordB);
@@ -114,7 +114,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public long getLong(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getLong(recordA);
         }
         return castFunctionsB.getQuick(col).getLong(recordB);
@@ -122,7 +122,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public void getLong256(int col, CharSink sink) {
-        if (ab) {
+        if (useA) {
             castFunctionsA.getQuick(col).getLong256(recordA, sink);
         } else {
             castFunctionsB.getQuick(col).getLong256(recordB, sink);
@@ -131,7 +131,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public Long256 getLong256A(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getLong256A(recordA);
         }
         return castFunctionsB.getQuick(col).getLong256A(recordB);
@@ -141,7 +141,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public Long256 getLong256B(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getLong256B(recordA);
         }
         return castFunctionsB.getQuick(col).getLong256B(recordB);
@@ -149,7 +149,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public short getShort(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getShort(recordA);
         }
         return castFunctionsB.getQuick(col).getShort(recordB);
@@ -157,7 +157,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public CharSequence getStr(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getStr(recordA);
         }
         return castFunctionsB.getQuick(col).getStr(recordB);
@@ -165,7 +165,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public void getStr(int col, CharSink sink) {
-        if (ab) {
+        if (useA) {
             castFunctionsA.getQuick(col).getStr(recordA, sink);
         } else {
             castFunctionsB.getQuick(col).getStr(recordB, sink);
@@ -174,7 +174,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public CharSequence getStrB(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getStrB(recordA);
         }
         return castFunctionsB.getQuick(col).getStrB(recordB);
@@ -182,7 +182,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public int getStrLen(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getStrLen(recordA);
         }
         return castFunctionsB.getQuick(col).getStrLen(recordB);
@@ -190,7 +190,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public long getTimestamp(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getTimestamp(recordA);
         }
         return castFunctionsB.getQuick(col).getTimestamp(recordB);
@@ -198,7 +198,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public byte getGeoByte(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getGeoByte(recordA);
         }
         return castFunctionsB.getQuick(col).getGeoByte(recordB);
@@ -206,7 +206,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public short getGeoShort(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getGeoShort(recordA);
         }
         return castFunctionsB.getQuick(col).getGeoShort(recordB);
@@ -214,7 +214,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public int getGeoInt(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getGeoInt(recordA);
         }
         return castFunctionsB.getQuick(col).getGeoInt(recordB);
@@ -222,7 +222,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
 
     @Override
     public long getGeoLong(int col) {
-        if (ab) {
+        if (useA) {
             return castFunctionsA.getQuick(col).getGeoLong(recordA);
         }
         return castFunctionsB.getQuick(col).getGeoLong(recordB);

@@ -57,8 +57,9 @@ class ExceptRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        Misc.free(this.cursorA);
-        Misc.free(this.cursorB);
+        this.cursorA = Misc.free(this.cursorA);
+        this.cursorB = Misc.free(this.cursorB);
+        this.map.clear();
         circuitBreaker = null;
     }
 
@@ -118,6 +119,10 @@ class ExceptRecordCursor implements RecordCursor {
             key.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
+        // this is an optimisation to release TableReader in case "this"
+        // cursor lingers around. If there is exception or circuit breaker fault
+        // we will rely on close() method to release reader.
+        this.cursorB = Misc.free(this.cursorB);
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {

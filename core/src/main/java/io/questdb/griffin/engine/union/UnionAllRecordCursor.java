@@ -36,13 +36,13 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     private RecordCursor cursorB;
     private final NextMethod nextB = this::nextB;
     private NextMethod nextMethod;
-    private RecordCursor symbolCursor;
     private final NextMethod nextA = this::nextA;
 
     public UnionAllRecordCursor(ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         if (castFunctionsA != null && castFunctionsB != null) {
             this.record = new UnionCastRecord(castFunctionsA, castFunctionsB);
         } else {
+            assert castFunctionsA == null && castFunctionsB == null;
             this.record = new UnionDirectRecord();
         }
     }
@@ -59,16 +59,6 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return symbolCursor.getSymbolTable(columnIndex);
-    }
-
-    @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return symbolCursor.newSymbolTable(columnIndex);
-    }
-
-    @Override
     public boolean hasNext() {
         return nextMethod.next();
     }
@@ -77,7 +67,6 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     public void toTop() {
         record.setAb(true);
         nextMethod = nextA;
-        symbolCursor = cursorA;
         cursorA.toTop();
         cursorB.toTop();
     }
@@ -110,7 +99,6 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
     private boolean switchToSlaveCursor() {
         record.setAb(false);
         nextMethod = nextB;
-        symbolCursor = cursorB;
         return nextMethod.next();
     }
 

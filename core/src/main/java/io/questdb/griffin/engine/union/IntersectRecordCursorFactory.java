@@ -69,6 +69,8 @@ public class IntersectRecordCursorFactory implements RecordCursorFactory {
         Misc.free(factoryA);
         Misc.free(factoryB);
         Misc.free(map);
+        Misc.freeObjList(castFunctionsB);
+        castFunctionsB.clear();
     }
 
     @Override

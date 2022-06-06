@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.sql.Record;
 
 public class AbstractUnionRecord implements Record {
-    protected boolean ab = true;
+    protected boolean useA = true;
     protected Record recordA;
     protected Record recordB;
 
@@ -36,7 +36,7 @@ public class AbstractUnionRecord implements Record {
         this.recordB = recordB;
     }
 
-    public void setAb(boolean ab) {
-        this.ab = ab;
+    public void setAb(boolean useA) {
+        this.useA = useA;
     }
 }

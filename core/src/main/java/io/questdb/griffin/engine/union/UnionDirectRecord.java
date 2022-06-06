@@ -32,7 +32,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public BinarySequence getBin(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getBin(col);
         }
         return recordB.getBin(col);
@@ -40,7 +40,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public long getBinLen(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getBinLen(col);
         }
         return recordB.getBinLen(col);
@@ -48,7 +48,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public boolean getBool(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getBool(col);
         }
         return recordB.getBool(col);
@@ -56,7 +56,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public byte getByte(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getByte(col);
         }
         return recordB.getByte(col);
@@ -64,7 +64,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public char getChar(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getChar(col);
         }
         return recordB.getChar(col);
@@ -72,7 +72,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public long getDate(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getDate(col);
         }
         return recordB.getDate(col);
@@ -80,7 +80,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public double getDouble(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getDouble(col);
         }
         return recordB.getDouble(col);
@@ -88,7 +88,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public float getFloat(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getFloat(col);
         }
         return recordB.getFloat(col);
@@ -96,7 +96,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public int getInt(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getInt(col);
         }
         return recordB.getInt(col);
@@ -104,7 +104,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public long getLong(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getLong(col);
         }
         return recordB.getLong(col);
@@ -112,7 +112,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public void getLong256(int col, CharSink sink) {
-        if (ab) {
+        if (useA) {
             recordA.getLong256(col, sink);
         } else {
             recordB.getLong256(col, sink);
@@ -121,7 +121,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public Long256 getLong256A(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getLong256A(col);
         }
         return recordB.getLong256A(col);
@@ -131,7 +131,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public Long256 getLong256B(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getLong256B(col);
         }
         return recordB.getLong256B(col);
@@ -139,7 +139,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public short getShort(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getShort(col);
         }
         return recordB.getShort(col);
@@ -147,7 +147,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public CharSequence getStr(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getStr(col);
         }
         return recordB.getStr(col);
@@ -155,7 +155,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public void getStr(int col, CharSink sink) {
-        if (ab) {
+        if (useA) {
             recordA.getStr(col, sink);
         } else {
             recordB.getStr(col, sink);
@@ -164,7 +164,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public CharSequence getStrB(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getStrB(col);
         }
         return recordB.getStrB(col);
@@ -172,7 +172,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public int getStrLen(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getStrLen(col);
         }
         return recordB.getStrLen(col);
@@ -180,7 +180,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public long getTimestamp(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getTimestamp(col);
         }
         return recordB.getTimestamp(col);
@@ -188,7 +188,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public byte getGeoByte(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getGeoByte(col);
         }
         return recordB.getGeoByte(col);
@@ -196,7 +196,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public short getGeoShort(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getGeoShort(col);
         }
         return recordB.getGeoShort(col);
@@ -204,7 +204,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public int getGeoInt(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getGeoInt(col);
         }
         return recordB.getGeoInt(col);
@@ -212,7 +212,7 @@ public class UnionDirectRecord extends AbstractUnionRecord {
 
     @Override
     public long getGeoLong(int col) {
-        if (ab) {
+        if (useA) {
             return recordA.getGeoLong(col);
         }
         return recordB.getGeoLong(col);
