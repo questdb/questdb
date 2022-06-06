@@ -786,8 +786,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new ShortColumn(i));
                                 break;
                             // wider types are not possible here
-                            // CHAR will be cast to wider types, not other way around
-                            // Winder types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                            // SHORT will be cast to wider types, not other way around
+                            // Wider types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
                             // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
                         }
                         break;
@@ -803,7 +803,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             // wider types are not possible here
                             // CHAR will be cast to wider types, not other way around
-                            // Winder types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                            // Wider types tested are: SHORT, INT, LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
                             // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
                             default:
 
@@ -827,7 +827,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             // wider types are not possible here
                             // INT will be cast to wider types, not other way around
-                            // Winder types tested are: LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                            // Wider types tested are: LONG, FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
                             // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
                         }
                         break;
@@ -859,7 +859,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 );
                             // wider types are not possible here
                             // LONG will be cast to wider types, not other way around
-                            // Winder types tested are: FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                            // Wider types tested are: FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
                             // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
                         }
                         break;
