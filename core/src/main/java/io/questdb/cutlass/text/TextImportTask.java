@@ -26,7 +26,9 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
@@ -37,6 +39,7 @@ public class TextImportTask {
     public static final byte PHASE_PARTITION_IMPORT = 3;
     public static final byte PHASE_SYMBOL_TABLE_MERGE = 4;
     public static final byte PHASE_UPDATE_SYMBOL_KEYS = 5;
+    public static final byte PHASE_BUILD_INDEX = 6;
 
     private CountDownLatchSPI doneLatch;
     private byte phase;
@@ -60,6 +63,7 @@ public class TextImportTask {
     private TableWriter writer;
     private int symbolColumnIndex;
     private CharSequence importRoot;
+    private RecordMetadata metadata;
 
     public void of(
             CountDownLatchSPI doneLatch,
@@ -144,6 +148,14 @@ public class TextImportTask {
         this.importRoot = importRoot;
     }
 
+    public void of(SOUnboundedCountDownLatch doneLatch, byte phase, FileIndexer.TaskContext context, int index, RecordMetadata metadata) {
+        this.doneLatch = doneLatch;
+        this.phase = phase;
+        this.context = context;
+        this.index = index;
+        this.metadata = metadata;
+    }
+
     public boolean run() {
         try {
             if (phase == PHASE_BOUNDARY_CHECK) {
@@ -156,6 +168,8 @@ public class TextImportTask {
                 FileIndexer.mergeColumnSymbolTables(cfg, importRoot, writer, tableName, symbolColumnName, columnIndex, symbolColumnIndex, tmpTableCount, partitionBy);
             } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
                 context.updateSymbolKeys(index, partitionSize, partitionTimestamp, symbolColumnName, symbolCount);
+            } else if (phase == PHASE_BUILD_INDEX) {
+                context.buildColumnIndexesStage(index, metadata);
             } else {
                 throw TextException.$("Unexpected phase ").put(phase);
             }

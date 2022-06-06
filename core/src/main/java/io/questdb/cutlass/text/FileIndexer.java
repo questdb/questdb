@@ -435,6 +435,7 @@ public class FileIndexer implements Closeable, Mutable {
                 forceHeader = textMetadataDetector.isHeader();
 
                 final TaskContext context = contextObjList.get(0);
+                context.setIgnoreColumnIndexedFlad(false);
                 context.prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), tmpPath, typeManager);
                 prepareContexts();
             }
@@ -484,11 +485,42 @@ public class FileIndexer implements Closeable, Mutable {
             int taskCount = taskDistribution.size() / 3;
             parallelMergeSymbolTables(taskCount, writer);
             parallelUpdateSymbolKeys(taskCount, writer);
+            parallelBuildColumnIndexes(taskCount, writer);
             movePartitionsToDst(taskDistribution, taskCount);
             attachPartititons(writer);
         } finally {
             removeWorkDir();
             ff.close(fd);
+        }
+    }
+
+    private void parallelBuildColumnIndexes(int tmpTableCount, TableWriter writer) {
+        final RecordMetadata metadata = writer.getMetadata();
+        final int columnCount = metadata.getColumnCount();
+
+        boolean isAnyIndexed = false;
+        for (int i = 0; i < columnCount; i++) {
+            isAnyIndexed |= metadata.isColumnIndexed(i);
+        }
+
+        if (isAnyIndexed) {
+            LOG.info().$("Started build column indexes").$();
+
+            int queuedCount = 0;
+            doneLatch.reset();
+            for (int t = 0; t < tmpTableCount; ++t) {
+                final TaskContext context = contextObjList.get(t);
+                final long seq = pubSeq.next();
+                if (seq < 0) {
+                    context.buildColumnIndexesStage(t, metadata);
+                } else {
+                    queue.get(seq).of(doneLatch, TextImportTask.PHASE_BUILD_INDEX, context, t, metadata);
+                    pubSeq.done(seq);
+                    queuedCount++;
+                }
+            }
+            waitForWorkers(queuedCount);
+            LOG.info().$("Finished build column indexes").$();
         }
     }
 
@@ -519,6 +551,7 @@ public class FileIndexer implements Closeable, Mutable {
         for (int i = 0; i < contextObjList.size(); i++) {
             TaskContext context = contextObjList.get(i);
             context.of(i, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), forceHeader);
+            context.setIgnoreColumnIndexedFlad(true);
             if (forceHeader) {
                 forceHeader = false;//Assumption: only first splitter will process file with header
             }
@@ -743,6 +776,8 @@ public class FileIndexer implements Closeable, Mutable {
         private ObjList<TypeAdapter> types;
         private TimestampAdapter timestampAdapter;
         private TableWriter tableWriterRef;
+        private boolean ignoreColumnIndexedFlad = true;
+
         private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
 
         public TaskContext() {
@@ -1066,6 +1101,25 @@ public class FileIndexer implements Closeable, Mutable {
             }
         }
 
+        public void buildColumnIndexesStage(int index, RecordMetadata metadata) {
+            setCurrentTableName(tableName + "_" + index);
+            final int columnCount = metadata.getColumnCount();
+            try (TableWriter w = new TableWriter(configuration,
+                    currentTableName,
+                    cairoEngine.getMessageBus(),
+                    null,
+                    true,
+                    DefaultLifecycleManager.INSTANCE,
+                    importRoot,
+                    cairoEngine.getMetrics())) {
+                for (int i = 0; i < columnCount; i++) {
+                    if (metadata.isColumnIndexed(i)) {
+                        w.addIndex(metadata.getColumnName(i), metadata.getIndexValueBlockCapacity(i));
+                    }
+                }
+            }
+        }
+
         public void updateSymbolKeys(int index, long partitionSize, long partitionTimestamp, CharSequence symbolColumnName, int symbolCount) {
             Path path = Path.getThreadLocal(importRoot);
             path.concat(tableName).put("_").put(index);
@@ -1232,6 +1286,10 @@ public class FileIndexer implements Closeable, Mutable {
             return mergedIndexSize;
         }
 
+        public void setIgnoreColumnIndexedFlad(boolean flag) {
+            this.ignoreColumnIndexedFlad = flag;
+        }
+
         private class TableStructureAdapter implements TableStructure {
 
             @Override
@@ -1261,7 +1319,11 @@ public class FileIndexer implements Closeable, Mutable {
 
             @Override
             public boolean isIndexed(int columnIndex) {
-                return types.getQuick(columnIndex).isIndexed();
+                if (ignoreColumnIndexedFlad) {
+                    return false;
+                } else {
+                    return types.getQuick(columnIndex).isIndexed();
+                }
             }
 
             @Override
