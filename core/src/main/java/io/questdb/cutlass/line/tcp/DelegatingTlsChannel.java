@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cutlass.line.LineChannel;
+import io.questdb.network.NetworkError;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -35,14 +36,21 @@ import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLEngineResult;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
+import java.io.BufferedInputStream;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.security.KeyManagementException;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 
 public final class DelegatingTlsChannel implements LineChannel {
@@ -50,6 +58,12 @@ public final class DelegatingTlsChannel implements LineChannel {
     private static final long ADDRESS_FIELD_OFFSET;
     private static final long LIMIT_FIELD_OFFSET;
     private static final long CAPACITY_FIELD_OFFSET;
+
+    private static final int INITIAL_STATE = 0;
+    private static final int AFTER_HANDSHAKE = 1;
+    private static final int CLOSING = 2;
+    private static final int CLOSED = 3;
+
 
     private final LineChannel upstream;
     private final SSLEngine sslEngine;
@@ -64,7 +78,7 @@ public final class DelegatingTlsChannel implements LineChannel {
     private long unwrapInputBufferPtr;
     private long unwrapOutputBufferPtr;
 
-    private boolean initialized;
+    private int state = INITIAL_STATE;
 
     private static final TrustManager ALLOW_ALL_TRUSTMANAGER = new X509TrustManager() {
         @Override
@@ -88,7 +102,7 @@ public final class DelegatingTlsChannel implements LineChannel {
         Field limitField;
         Field capacityField;
         try {
-            // todo: is this a good idea?
+            // todo: is reflection a good idea?
             addressField = Buffer.class.getDeclaredField("address");
             limitField = Buffer.class.getDeclaredField("limit");
             capacityField = Buffer.class.getDeclaredField("capacity");
@@ -101,8 +115,12 @@ public final class DelegatingTlsChannel implements LineChannel {
     }
 
     public DelegatingTlsChannel(LineChannel upstream) {
+        this(upstream, null, null);
+    }
+
+    public DelegatingTlsChannel(LineChannel upstream, String trustStorePath, char[] password) {
         this.upstream = upstream;
-        this.sslEngine = createSslEngine();
+        this.sslEngine = createSslEngine(trustStorePath, password);
 
         // wrapInputBuffer is just a placeholder, we set the internal address, capacity and limit in send()
         this.wrapInputBuffer = ByteBuffer.allocateDirect(0);
@@ -116,14 +134,35 @@ public final class DelegatingTlsChannel implements LineChannel {
         this.dummyBuffer = ByteBuffer.allocate(0);
     }
 
-    private static SSLEngine createSslEngine() {
+    private static SSLEngine createSslEngine(String trustStorePath, char[] trustStorePassword) {
         try {
             SSLContext sslContext;
             // intentionally not exposed to end user as an option
             // it's used for testing, but dangerous in prod
-            if (Boolean.getBoolean("questdb.dangerous.tls.trust.all")) {
+            if (trustStorePath != null) {
                 sslContext = SSLContext.getInstance("SSL");
-                TrustManager[] trustManagers = new TrustManager[]{ALLOW_ALL_TRUSTMANAGER};
+                TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+                KeyStore jks = KeyStore.getInstance("JKS");
+
+                InputStream trustStoreStream = null;
+                try {
+                    if (trustStorePath.startsWith("classpath:")) {
+                        String adjustedPath = trustStorePath.substring("classpath:".length());
+                        trustStoreStream = DelegatingTlsChannel.class.getResourceAsStream(adjustedPath);
+                        if (trustStoreStream == null) {
+                            throw new IllegalStateException("Configured trust at classpath:" + trustStorePath + " is unavailable on a classpath");
+                        }
+                    } else {
+                        trustStoreStream = new BufferedInputStream(new FileInputStream(trustStorePath));
+                    }
+                    jks.load(trustStoreStream, trustStorePassword);
+                } finally {
+                    if (trustStoreStream != null) {
+                        trustStoreStream.close();
+                    }
+                }
+                tmf.init(jks);
+                TrustManager[] trustManagers = tmf.getTrustManagers();
                 sslContext.init(null, trustManagers, new SecureRandom());
             } else {
                 sslContext = SSLContext.getDefault();
@@ -131,7 +170,8 @@ public final class DelegatingTlsChannel implements LineChannel {
             SSLEngine sslEngine = sslContext.createSSLEngine();
             sslEngine.setUseClientMode(true);
             return sslEngine;
-        } catch (NoSuchAlgorithmException | KeyManagementException e) {
+        } catch (NoSuchAlgorithmException | KeyManagementException | CertificateException | KeyStoreException |
+                 IOException e) {
             throw new RuntimeException(e);
         }
     }
@@ -158,7 +198,7 @@ public final class DelegatingTlsChannel implements LineChannel {
     }
 
     private void handshakeIfNeeded() throws SSLException {
-        if (initialized) {
+        if (state != INITIAL_STATE) {
             return;
         }
 
@@ -168,7 +208,7 @@ public final class DelegatingTlsChannel implements LineChannel {
             SSLEngineResult.HandshakeStatus status = sslEngine.getHandshakeStatus();
             switch (status) {
                 case NOT_HANDSHAKING:
-                    initialized = true;
+                    state = AFTER_HANDSHAKE;
                     return;
                 case FINISHED:
                     throw new IllegalStateException("getHandshakeStatus() returns FINISHED. This is not possible.");
@@ -226,7 +266,10 @@ public final class DelegatingTlsChannel implements LineChannel {
                     assert !src.hasRemaining();
                     return;
                 case CLOSED:
-                    throw new IllegalStateException("Connection closed");
+                    if (state != CLOSING) {
+                        throw new IllegalStateException("Connection closed");
+                    }
+                    return;
             }
         }
     }
@@ -340,11 +383,15 @@ public final class DelegatingTlsChannel implements LineChannel {
 
     @Override
     public void close() throws IOException {
+        state = CLOSING;
         sslEngine.closeOutbound();
-        sslEngine.closeInbound();
         wrapLoop(dummyBuffer);
-        writeToUpstreamAndClear();
-
+        try {
+            writeToUpstreamAndClear();
+        } catch (NetworkError e) {
+            // best effort TLS close
+        }
         Misc.free(upstream);
+        state = CLOSED;
     }
 }

@@ -55,12 +55,16 @@ public class LineTcpSender extends AbstractLineSender {
         return sender;
     }
 
-    public static LineTcpSender authenticatedTlsSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, String authKey, PrivateKey privateKey) {
-        checkBufferCapacity(bufferCapacity);
+    public static LineTcpSender tlsSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, String trustStorePath, char[] trustStorePassword) {
         LineChannel plainTcpChannel = new PlanTcpLineChannel(NetworkFacadeImpl.INSTANCE, sendToIPv4Address, sendToPort, bufferCapacity * 2);
-        LineChannel tlsChannel = new DelegatingTlsChannel(plainTcpChannel);
-        LineTcpSender sender = new LineTcpSender(tlsChannel, bufferCapacity);
-        sender.authenticate(authKey, privateKey);
+        LineChannel tlsChannel = new DelegatingTlsChannel(plainTcpChannel, trustStorePath, trustStorePassword);
+        return new LineTcpSender(tlsChannel, bufferCapacity);
+    }
+
+    public static LineTcpSender authenticatedTlsSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, String username, PrivateKey token, String trustStorePath, char[] trustStorePassword) {
+        checkBufferCapacity(bufferCapacity);
+        LineTcpSender sender = tlsSender(sendToIPv4Address, sendToPort, bufferCapacity, trustStorePath, trustStorePassword);
+        sender.authenticate(username, token);
         return sender;
     }
 
@@ -97,6 +101,8 @@ public class LineTcpSender extends AbstractLineSender {
         private boolean shouldDestroyPrivKey;
         private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
         private boolean tlsEnabled;
+        private String trustStorePath;
+        private char[] trustStorePassword;
 
         private LineSenderBuilder() {
 
@@ -180,6 +186,15 @@ public class LineTcpSender extends AbstractLineSender {
             return this;
         }
 
+        public LineSenderBuilder customTrustStore(String trustStorePath, char[] trustStorePassword) {
+            if (this.trustStorePath != null) {
+                throw new IllegalStateException("custom trust store was already set to " + this.trustStorePath);
+            }
+            this.trustStorePath = trustStorePath;
+            this.trustStorePassword = trustStorePassword;
+            return this;
+        }
+
         public LineTcpSender build() {
             if (host == 0) {
                 throw new IllegalStateException("questdb server host not set");
@@ -192,14 +207,20 @@ public class LineTcpSender extends AbstractLineSender {
             }
 
             if (privateKey == null) {
+                // unauthenticated path
                 if (tlsEnabled) {
-                    throw new IllegalStateException("tls is only supported together with authentication. for now.");
+                    LineChannel plainTcpChannel = new PlanTcpLineChannel(NetworkFacadeImpl.INSTANCE, host, port, bufferCapacity * 2);
+                    assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
+                    LineChannel tlsChannel = new DelegatingTlsChannel(plainTcpChannel, trustStorePath, trustStorePassword);
+                    return new LineTcpSender(tlsChannel, bufferCapacity);
                 }
                 return new LineTcpSender(host, port, bufferCapacity);
             } else {
+                // authenticated path
                 LineTcpSender sender;
                 if (tlsEnabled) {
-                    sender = LineTcpSender.authenticatedTlsSender(host, port, bufferCapacity, keyId, privateKey);
+                    assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
+                    sender = LineTcpSender.authenticatedTlsSender(host, port, bufferCapacity, keyId, privateKey, trustStorePath, trustStorePassword);
                 } else {
                     sender = LineTcpSender.authenticatedPlainTextSender(host, port, bufferCapacity, keyId, privateKey);
                 }
