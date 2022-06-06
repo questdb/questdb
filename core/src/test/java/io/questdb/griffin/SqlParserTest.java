@@ -5980,7 +5980,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectNoFromUnion() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(b) sum from (select-virtual [1 a, 1 b] 1 a, 1 b from (long_sequence(1)) union all select-virtual 333 333, 1 1 from (long_sequence(1))) x",
+                "select-group-by a, sum(b) sum from (select-virtual [1 a, 1 b] 1 a, 1 b from (long_sequence(1)) union all select-virtual [333 333, 1 1] 333 333, 1 1 from (long_sequence(1))) x",
                 "select a, sum(b) from (select 1 a, 1 b union all select 333, 1) x"
         );
     }

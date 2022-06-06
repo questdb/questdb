@@ -295,7 +295,7 @@ public class GroupByUtils {
                     final int dotIndex = Chars.indexOf(key.token, '.');
 
                     if (dotIndex > -1) {
-                        int aliasIndex = model.getAliasIndex(key.token, 0, dotIndex);
+                        int aliasIndex = model.getModelAliasIndex(key.token, 0, dotIndex);
                         if (aliasIndex > -1) {
                             // we should now check against main model
                             int refColumn = model.getAliasToColumnMap().keyIndex(key.token);

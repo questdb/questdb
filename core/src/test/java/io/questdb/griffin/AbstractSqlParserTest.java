@@ -199,7 +199,7 @@ public class AbstractSqlParserTest extends AbstractGriffinTest {
             }
 
             for (int i = 0, n = columns.size(); i < n; i++) {
-                AbstractSqlParserTest.checkLiteralIsInSet(columns.getQuick(i).getAst(), nameSets, nested.getAliasIndexes());
+                AbstractSqlParserTest.checkLiteralIsInSet(columns.getQuick(i).getAst(), nameSets, nested.getModelAliasIndexes());
             }
 
             columns = nested.getTopDownColumns();

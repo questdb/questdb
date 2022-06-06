@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class UnionAllCastTest extends AbstractGriffinTest {
@@ -1364,25 +1363,49 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testSymSymErr() throws Exception {
         // we include byte <-> bool cast to make sure
         // sym <-> sym cast it not thrown away as redundant
         testUnionAll(
-                "a\tc\n" +
-                        "false\tfalse\n" +
-                        "false\ttrue\n" +
-                        "true\ttrue\n" +
-                        "true\tfalse\n" +
-                        "false\tfalse\n" +
-                        "76\tfalse\n" +
-                        "27\ttrue\n" +
-                        "79\tfalse\n" +
-                        "122\ttrue\n" +
-                        "90\ttrue\n",
+                "a\tc\ttypeOf\n" +
+                        "false\tb\tSTRING\n" +
+                        "false\ta\tSTRING\n" +
+                        "false\tb\tSTRING\n" +
+                        "true\tb\tSTRING\n" +
+                        "false\ta\tSTRING\n" +
+                        "27\ty\tSTRING\n" +
+                        "122\ty\tSTRING\n" +
+                        "84\tx\tSTRING\n" +
+                        "83\tx\tSTRING\n" +
+                        "91\tx\tSTRING\n",
                 "select a, c, typeOf(c) from (x union all y)",
-                "create table x as (select rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))",
-                "create table y as (select rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))"
+                // column "u" is not ultimately selected from neither X nor Y
+                // we expect this column to be ignored by optimiser, and also
+                // we expect optimiser to correctly select column "b" from Y as
+                // a match against column "a" in the union
+                "create table x as (select rnd_double() u, rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))",
+                "create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testSymSymPickColumnFromWhere() throws Exception {
+        // we include byte <-> bool cast to make sure
+        // sym <-> sym cast it not thrown away as redundant
+        // column "u" is not ultimately selected from neither X nor Y
+        // we expect this column to be ignored by optimiser, and also
+        // we expect optimiser to correctly select column "b" from Y as
+        // a match against column "a" in the union
+        compile("create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
+        engine.releaseAllWriters();
+        assertQuery(
+                "u\ta\tc\n" +
+                        "0.6607777894187332\t27\ty\n",
+                "(x union all y) where a = '27'", "create table x as (select rnd_double() u, rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))",
+                null,
+                false,
+                true,
+                false
         );
     }
 
