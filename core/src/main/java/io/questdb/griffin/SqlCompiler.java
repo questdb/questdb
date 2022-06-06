@@ -2307,7 +2307,7 @@ public class SqlCompiler implements Closeable {
 
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(index);
-                    if (ColumnType.isAssignableFrom(toType, fromType)) {
+                    if (ColumnType.isAssignableFrom(fromType, toType)) {
                         listColumnFilter.add(index + 1);
                     } else {
                         throw SqlException.inconvertibleTypes(
@@ -2359,7 +2359,7 @@ public class SqlCompiler implements Closeable {
                 for (int i = 0; i < n; i++) {
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(i);
-                    if (ColumnType.isAssignableFrom(toType, fromType)) {
+                    if (ColumnType.isAssignableFrom(fromType, toType)) {
                         continue;
                     }
 
@@ -2836,7 +2836,7 @@ public class SqlCompiler implements Closeable {
             function.assignType(columnType, bindVariableService);
         }
 
-        if (ColumnType.isAssignableFrom(columnType, function.getType())) {
+        if (ColumnType.isAssignableFrom(function.getType(), columnType)) {
             if (metadataColumnIndex == writerTimestampIndex) {
                 return function;
             }

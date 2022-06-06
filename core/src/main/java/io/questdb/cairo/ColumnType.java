@@ -126,20 +126,20 @@ public final class ColumnType {
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
     }
 
-    public static boolean isAssignableFrom(int to, int from) {
-        final int toTag = tagOf(to);
-        final int fromTag = tagOf(from);
-        return (toTag == fromTag && (getGeoHashBits(from) >= getGeoHashBits(to) || getGeoHashBits(from) == 0))
-                || isBuiltInWideningCast(to, from)
-                || isStringCast(to, from)
-                || isGeoHashWideningCast(to, from)
-                || isImplicitParsingCast(to, toTag, fromTag)
-                || isNarrowingCast(to, from)
+    public static boolean isAssignableFrom(int fromType, int toType) {
+        final int toTag = tagOf(toType);
+        final int fromTag = tagOf(fromType);
+        return (toTag == fromTag && (getGeoHashBits(fromType) >= getGeoHashBits(toType) || getGeoHashBits(fromType) == 0))
+                || isBuiltInWideningCast(toType, fromType)
+                || isStringCast(fromType, toType)
+                || isGeoHashWideningCast(fromType, toType)
+                || isImplicitParsingCast(fromTag, toTag, toType)
+                || isNarrowingCast(fromType, toType)
                 ;
     }
 
     public static boolean isToSameOrWider(int to, int from) {
-        return to == from || isBuiltInWideningCast(to, from) || isStringCast(to, from);
+        return to == from || isBuiltInWideningCast(to, from) || isStringCast(from, to);
     }
 
     public static boolean isBinary(int columnType) {
@@ -298,16 +298,16 @@ public final class ColumnType {
         return -1;
     }
 
-    private static boolean isStringCast(int toType, int fromType) {
+    private static boolean isStringCast(int fromType, int toType) {
         return (fromType == STRING && toType == SYMBOL)
                 || (fromType == SYMBOL && toType == STRING)
                 || (fromType == CHAR && toType == SYMBOL)
                 || (fromType == CHAR && toType == STRING);
     }
 
-    private static boolean isGeoHashWideningCast(int to, int from) {
-        final int toTag = tagOf(to);
-        final int fromTag = tagOf(from);
+    private static boolean isGeoHashWideningCast(int fromType, int toType) {
+        final int toTag = tagOf(toType);
+        final int fromTag = tagOf(fromType);
         return (fromTag == GEOLONG && toTag == GEOINT)
                 || (fromTag == GEOLONG && toTag == GEOSHORT)
                 || (fromTag == GEOLONG && toTag == GEOBYTE)
@@ -316,8 +316,8 @@ public final class ColumnType {
                 || (fromTag == GEOSHORT && toTag == GEOBYTE);
     }
 
-    private static boolean isImplicitParsingCast(int to, int toTag, int fromTag) {
-        return (fromTag == CHAR && toTag == GEOBYTE && getGeoHashBits(to) < 6)
+    private static boolean isImplicitParsingCast(int fromTag, int toTag, int toType) {
+        return (fromTag == CHAR && toTag == GEOBYTE && getGeoHashBits(toType) < 6)
                 || (fromTag == STRING && toTag == GEOBYTE)
                 || (fromTag == STRING && toTag == GEOSHORT)
                 || (fromTag == STRING && toTag == GEOINT)
@@ -327,7 +327,7 @@ public final class ColumnType {
                 ;
     }
 
-    private static boolean isNarrowingCast(int toType, int fromType) {
+    private static boolean isNarrowingCast(int fromType, int toType) {
         return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
                 || (fromType == FLOAT && toType >= BYTE && toType <= LONG)
                 || (fromType == LONG && toType >= BYTE && toType <= INT)

@@ -73,7 +73,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 throw SqlException.$(argPositions.getQuick(i), "constant expected");
             }
 
-            if (!ColumnType.isAssignableFrom(keyType, keyArgType)) {
+            if (!ColumnType.isAssignableFrom(keyArgType, keyType)) {
                 throw SqlException.position(argPositions.getQuick(i))
                         .put("type mismatch [expected=").put(ColumnType.nameOf(keyType))
                         .put(", actual=").put(ColumnType.nameOf(keyArgType))

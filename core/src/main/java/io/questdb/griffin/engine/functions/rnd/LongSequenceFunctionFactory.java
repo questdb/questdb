@@ -52,7 +52,7 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         final Function seedHiFunc;
         if (args != null) {
             final int argCount = args.size();
-            if (argCount == 1 && ColumnType.isAssignableFrom(ColumnType.LONG, (countFunc = args.getQuick(0)).getType())) {
+            if (argCount == 1 && ColumnType.isAssignableFrom((countFunc = args.getQuick(0)).getType(), ColumnType.LONG)) {
                 return new CursorFunction(
                         new LongSequenceCursorFactory(METADATA, countFunc.getLong(null))
                 );
@@ -60,9 +60,9 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
 
             if (
                     argCount > 2
-                            && ColumnType.isAssignableFrom(ColumnType.LONG, (countFunc = args.getQuick(0)).getType())
-                            && ColumnType.isAssignableFrom(ColumnType.LONG, (seedLoFunc = args.getQuick(1)).getType())
-                            && ColumnType.isAssignableFrom(ColumnType.LONG, (seedHiFunc = args.getQuick(2)).getType())
+                            && ColumnType.isAssignableFrom((countFunc = args.getQuick(0)).getType(), ColumnType.LONG)
+                            && ColumnType.isAssignableFrom((seedLoFunc = args.getQuick(1)).getType(), ColumnType.LONG)
+                            && ColumnType.isAssignableFrom((seedHiFunc = args.getQuick(2)).getType(), ColumnType.LONG)
             ) {
                 return new CursorFunction(
                         new SeedingLongSequenceCursorFactory(
