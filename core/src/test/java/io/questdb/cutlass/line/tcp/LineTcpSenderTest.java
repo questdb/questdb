@@ -101,7 +101,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             try (LineTcpSender sender = LineTcpSender.builder()
                     .address(address)
-                    .enableAuth(AUTH_KEY_ID1).token(TOKEN)
+                    .user(AUTH_KEY_ID1).token(TOKEN)
                     .build()) {
                 sender.metric("mytable").field("my int field", 42).$();
                 sender.flush();

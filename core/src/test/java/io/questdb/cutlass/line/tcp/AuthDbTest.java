@@ -24,12 +24,17 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.net.URL;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
+
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 
 public class AuthDbTest {
     @Test
@@ -52,5 +57,58 @@ public class AuthDbTest {
         sig.update(challenge);
         boolean verified = sig.verify(sig2);
         Assert.assertTrue(verified);
+    }
+
+    @Test
+    public void testGetPublicKey_givenSinglePublicKeyConfigured_whenEmptyKeyIdRequested_thenReturnTheSingleKey() {
+        LineTcpReceiverConfiguration configuration = configForAuthDB("authDb.txt");
+        AuthDb authDb = new AuthDb(configuration);
+
+        PublicKey publicKey = authDb.getPublicKey("");
+
+        assertNotNull(publicKey);
+    }
+
+    @Test
+    public void testGetPublicKey_givenMultiplePublicKeyConfigured_whenEmptyKeyIdRequested_thenReturnNull() {
+        LineTcpReceiverConfiguration configuration = configForAuthDB("authDbWith2Keys.txt");
+        AuthDb authDb = new AuthDb(configuration);
+
+        PublicKey publicKey = authDb.getPublicKey("");
+
+        assertNull(publicKey);
+    }
+
+    @Test
+    public void testGetPublicKey_givenSinglePublicKeyConfigured_whenTheRightKeyIdRequested_thenReturnTheRightKey() {
+        LineTcpReceiverConfiguration configuration = configForAuthDB("authDb.txt");
+        AuthDb authDb = new AuthDb(configuration);
+
+        PublicKey publicKey = authDb.getPublicKey("testUser1");
+
+        assertNotNull(publicKey);
+    }
+
+    @Test
+    public void testGetPublicKey_givenSinglePublicKeyConfigured_whenWrongKeyIdRequested_thenReturnNull() {
+        LineTcpReceiverConfiguration configuration = configForAuthDB("authDb.txt");
+        AuthDb authDb = new AuthDb(configuration);
+
+        PublicKey publicKey = authDb.getPublicKey("notUser");
+
+        assertNull(publicKey);
+    }
+
+
+    @NotNull
+    private static LineTcpReceiverConfiguration configForAuthDB(String dbFile) {
+        return new DefaultLineTcpReceiverConfiguration() {
+            @Override
+            public String getAuthDbPath() {
+                URL u = getClass().getResource(dbFile);
+                assert u != null;
+                return u.getFile();
+            }
+        };
     }
 }

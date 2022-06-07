@@ -93,16 +93,16 @@ public class LineTcpSender extends AbstractLineSender {
         private static final byte BUFFER_CAPACITY_DEFAULT = 0;
 
         private static final int  DEFAULT_BUFFER_CAPACITY = 256 * 1024;
+        private static final String DEFAULT_USER = "";
 
         private int port;
         private int host;
-        private String keyId;
-        private PrivateKey privateKey;
-        private boolean shouldDestroyPrivKey;
         private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
         private boolean tlsEnabled;
         private String trustStorePath;
         private char[] trustStorePassword;
+        private String token;
+        private String user = DEFAULT_USER;
 
         private LineSenderBuilder() {
 
@@ -165,12 +165,20 @@ public class LineTcpSender extends AbstractLineSender {
             return this;
         }
 
-        public AuthBuilder enableAuth(String keyId) {
-            if (this.keyId != null) {
-                throw new IllegalStateException("authentication keyId was already set");
+        public LineSenderBuilder token(String token) {
+            if (this.token != null) {
+                throw new IllegalStateException("authentication token was already set");
             }
-            this.keyId = keyId;
-            return new AuthBuilder();
+            this.token = token;
+            return this;
+        }
+
+        public LineSenderBuilder user(String user) {
+            if (!DEFAULT_USER.equals(this.user)) {
+                throw new IllegalStateException("user was already set");
+            }
+            this.user = user;
+            return this;
         }
 
         public LineSenderBuilder enableTls() {
@@ -206,7 +214,7 @@ public class LineTcpSender extends AbstractLineSender {
                 bufferCapacity = DEFAULT_BUFFER_CAPACITY;
             }
 
-            if (privateKey == null) {
+            if (token == null) {
                 // unauthenticated path
                 if (tlsEnabled) {
                     return LineTcpSender.tlsSender(host, port, bufferCapacity * 2, trustStorePath, trustStorePassword);
@@ -214,40 +222,20 @@ public class LineTcpSender extends AbstractLineSender {
                 return new LineTcpSender(host, port, bufferCapacity);
             } else {
                 // authenticated path
+                PrivateKey privateKey = AuthDb.importPrivateKey(token);
                 LineTcpSender sender;
                 if (tlsEnabled) {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
-                    sender = LineTcpSender.authenticatedTlsSender(host, port, bufferCapacity, keyId, privateKey, trustStorePath, trustStorePassword);
+                    sender = LineTcpSender.authenticatedTlsSender(host, port, bufferCapacity, user, privateKey, trustStorePath, trustStorePassword);
                 } else {
-                    sender = LineTcpSender.authenticatedPlainTextSender(host, port, bufferCapacity, keyId, privateKey);
+                    sender = LineTcpSender.authenticatedPlainTextSender(host, port, bufferCapacity, user, privateKey);
                 }
-                if (shouldDestroyPrivKey) {
-                    try {
-                        privateKey.destroy();
-                    } catch (DestroyFailedException e) {
-                        // not much we can do
-                    }
+                try {
+                    privateKey.destroy();
+                } catch (DestroyFailedException e) {
+                    // not much we can do
                 }
                 return sender;
-            }
-        }
-
-        public class AuthBuilder {
-            public LineSenderBuilder privateKey(PrivateKey privateKey) {
-                if (LineSenderBuilder.this.privateKey != null) {
-                    throw new IllegalStateException("private key was already set");
-                }
-                LineSenderBuilder.this.privateKey = privateKey;
-                return LineSenderBuilder.this;
-            }
-
-            public LineSenderBuilder token(String token) {
-                if (LineSenderBuilder.this.privateKey != null) {
-                    throw new IllegalStateException("token was already set");
-                }
-                LineSenderBuilder.this.privateKey = AuthDb.importPrivateKey(token);
-                LineSenderBuilder.this.shouldDestroyPrivKey = true;
-                return LineSenderBuilder.this;
             }
         }
     }

@@ -55,7 +55,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .enableTls()
                     .address(haProxy.getHost())
                     .port(haProxy.getMappedPort(8443))
-                    .enableAuth(AUTH_KEY_ID1).token(TOKEN)
+                    .token(TOKEN)
                     .customTrustStore("classpath:/keystore/haproxy_ca.jks", "questdb".toCharArray())
                     .build()) {
                 sender.metric("mytable").field("value", 42).$();
