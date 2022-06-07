@@ -106,9 +106,12 @@ public final class DelegatingTlsChannel implements LineChannel {
         // wrapInputBuffer is just a placeholder, we set the internal address, capacity and limit in send()
         this.wrapInputBuffer = ByteBuffer.allocateDirect(0);
 
-        this.wrapOutputBuffer = ByteBuffer.allocateDirect(INITIAL_BUFFER_CAPACITY);
-        this.unwrapInputBuffer = ByteBuffer.allocateDirect(INITIAL_BUFFER_CAPACITY);
-        this.unwrapOutputBuffer = ByteBuffer.allocateDirect(INITIAL_BUFFER_CAPACITY);
+        // allows to override in tests, but we dont neccessary want to expose this to users.
+        int initialCapacity = Integer.getInteger("questdb.experimental.tls.buffersize", INITIAL_BUFFER_CAPACITY);
+
+        this.wrapOutputBuffer = ByteBuffer.allocateDirect(initialCapacity);
+        this.unwrapInputBuffer = ByteBuffer.allocateDirect(initialCapacity);
+        this.unwrapOutputBuffer = ByteBuffer.allocateDirect(initialCapacity);
         this.wrapOutputBufferPtr = Unsafe.getUnsafe().getLong(wrapOutputBuffer, ADDRESS_FIELD_OFFSET);
         this.unwrapInputBufferPtr = Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET);
         this.unwrapOutputBufferPtr = Unsafe.getUnsafe().getLong(unwrapOutputBuffer, ADDRESS_FIELD_OFFSET);
@@ -160,8 +163,8 @@ public final class DelegatingTlsChannel implements LineChannel {
     @Override
     public void send(long ptr, int len) {
         try {
-            handshakeIfNeeded();
-            setBufferToPointer(wrapInputBuffer, ptr, len);
+            handshakeLoop();
+            resetBufferToPointer(wrapInputBuffer, ptr, len);
             wrapLoop(wrapInputBuffer);
             assert !wrapInputBuffer.hasRemaining();
             writeToUpstreamAndClear();
@@ -170,15 +173,7 @@ public final class DelegatingTlsChannel implements LineChannel {
         }
     }
 
-    private static void setBufferToPointer(ByteBuffer buffer, long ptr, int len) {
-        assert buffer.isDirect();
-        Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
-        Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
-        Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
-        buffer.position(0);
-    }
-
-    private void handshakeIfNeeded() throws SSLException {
+    private void handshakeLoop() throws SSLException {
         if (state != INITIAL_STATE) {
             return;
         }
@@ -191,8 +186,6 @@ public final class DelegatingTlsChannel implements LineChannel {
                 case NOT_HANDSHAKING:
                     state = AFTER_HANDSHAKE;
                     return;
-                case FINISHED:
-                    throw new IllegalStateException("getHandshakeStatus() returns FINISHED. This is not possible.");
                 case NEED_TASK:
                     sslEngine.getDelegatedTask().run();
                     break;
@@ -203,35 +196,14 @@ public final class DelegatingTlsChannel implements LineChannel {
                 case NEED_UNWRAP:
                     unwrapLoop();
                     break;
+                case FINISHED:
+                    throw new IllegalStateException("getHandshakeStatus() returns FINISHED. It should not be possible.");
                 case NEED_UNWRAP_AGAIN:
                     // fall-through
                 default:
                     throw new UnsupportedOperationException(status + "not supported");
             }
         }
-    }
-
-    private void growWrapOutputBuffer() {
-        wrapOutputBuffer = expandBuffer(wrapOutputBuffer);
-        wrapOutputBufferPtr = Unsafe.getUnsafe().getLong(wrapOutputBuffer, ADDRESS_FIELD_OFFSET);
-    }
-
-    private void growUnwrapOutputBuffer() {
-        unwrapOutputBuffer = expandBuffer(unwrapOutputBuffer);
-        unwrapOutputBufferPtr = Unsafe.getUnsafe().getLong(unwrapOutputBuffer, ADDRESS_FIELD_OFFSET);
-    }
-
-    private void growUnwrapInputBuffer() {
-        unwrapInputBuffer = expandBuffer(unwrapInputBuffer);
-        unwrapInputBufferPtr = Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET);
-    }
-
-    @NotNull
-    private static ByteBuffer expandBuffer(ByteBuffer buffer) {
-        // do we need a cap on max size?
-        ByteBuffer newBuffer = ByteBuffer.allocateDirect(buffer.capacity() * 2);
-        buffer.flip();
-        return newBuffer.put(buffer);
     }
 
     private void wrapLoop(ByteBuffer src) throws SSLException {
@@ -332,8 +304,7 @@ public final class DelegatingTlsChannel implements LineChannel {
     @Override
     public int receive(long ptr, int len) {
         try {
-            handshakeIfNeeded();
-
+            handshakeLoop();
             unwrapLoop();
             unwrapOutputBuffer.flip();
             int i = unwrapOutputBufferToPtr(ptr, len);
@@ -354,6 +325,37 @@ public final class DelegatingTlsChannel implements LineChannel {
         Vect.memcpy(dstPtr, srcPtr, len);
         unwrapOutputBuffer.position(oldPosition + len);
         return len;
+    }
+
+    private void growWrapOutputBuffer() {
+        wrapOutputBuffer = expandBuffer(wrapOutputBuffer);
+        wrapOutputBufferPtr = Unsafe.getUnsafe().getLong(wrapOutputBuffer, ADDRESS_FIELD_OFFSET);
+    }
+
+    private void growUnwrapOutputBuffer() {
+        unwrapOutputBuffer = expandBuffer(unwrapOutputBuffer);
+        unwrapOutputBufferPtr = Unsafe.getUnsafe().getLong(unwrapOutputBuffer, ADDRESS_FIELD_OFFSET);
+    }
+
+    private void growUnwrapInputBuffer() {
+        unwrapInputBuffer = expandBuffer(unwrapInputBuffer);
+        unwrapInputBufferPtr = Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET);
+    }
+
+    @NotNull
+    private static ByteBuffer expandBuffer(ByteBuffer buffer) {
+        // do we need a cap on max size?
+        ByteBuffer newBuffer = ByteBuffer.allocateDirect(buffer.capacity() * 2);
+        buffer.flip();
+        return newBuffer.put(buffer);
+    }
+
+    private static void resetBufferToPointer(ByteBuffer buffer, long ptr, int len) {
+        assert buffer.isDirect();
+        Unsafe.getUnsafe().putLong(buffer, ADDRESS_FIELD_OFFSET, ptr);
+        Unsafe.getUnsafe().putLong(buffer, LIMIT_FIELD_OFFSET, len);
+        Unsafe.getUnsafe().putLong(buffer, CAPACITY_FIELD_OFFSET, len);
+        buffer.position(0);
     }
 
     @Override

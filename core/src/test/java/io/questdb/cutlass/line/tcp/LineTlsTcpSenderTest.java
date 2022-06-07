@@ -32,11 +32,16 @@ import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
 
+import java.util.UUID;
+
 public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
 
-    private final static String AUTH_KEY_ID1 = "testUser1";
-    private final static String TOKEN = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
-    public static final DockerImageName HA_PROXY_IMAGE = DockerImageName.parse("haproxy:2.6.0");
+    private static final String AUTH_KEY_ID1 = "testUser1";
+    private static final String TOKEN = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
+    private static final DockerImageName HA_PROXY_IMAGE = DockerImageName.parse("haproxy:2.6.0");
+    private static final String TRUSTSTORE_PATH = "/keystore/haproxy_ca.jks";
+    private static final char[] TRUSTSTORE_PASSWORD = "questdb".toCharArray();
+
 
     @ClassRule
     public static GenericContainer<?> haProxy = new GenericContainer<>(HA_PROXY_IMAGE)
@@ -48,6 +53,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void simpleTest() throws Exception {
         authKeyId = AUTH_KEY_ID1;
+        String tableName = UUID.randomUUID().toString();
         runInContext(c -> {
             Testcontainers.exposeHostPorts(9002);
 
@@ -56,12 +62,75 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .address(haProxy.getHost())
                     .port(haProxy.getMappedPort(8443))
                     .token(TOKEN)
-                    .customTrustStore("classpath:/keystore/haproxy_ca.jks", "questdb".toCharArray())
+                    .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
-                sender.metric("mytable").field("value", 42).$();
+                sender.metric(tableName).field("value", 42).$();
                 sender.flush();
             }
-            assertTableExistsEventually(engine, "mytable");
+            assertTableExistsEventually(engine, tableName);
         });
+    }
+
+    @Test
+    public void testWithCustomTruststoreByFilename() throws Exception {
+        authKeyId = AUTH_KEY_ID1;
+        String tableName = UUID.randomUUID().toString();
+        String truststore = LineTlsTcpSenderTest.class.getResource(TRUSTSTORE_PATH).getFile();
+        runInContext(c -> {
+            Testcontainers.exposeHostPorts(9002);
+
+            try (LineTcpSender sender = LineTcpSender.builder()
+                    .enableTls()
+                    .address(haProxy.getHost())
+                    .port(haProxy.getMappedPort(8443))
+                    .token(TOKEN)
+                    .customTrustStore(truststore, TRUSTSTORE_PASSWORD)
+                    .build()) {
+                sender.metric(tableName).field("value", 42).$();
+                sender.flush();
+            }
+            assertTableExistsEventually(engine, tableName);
+        });
+    }
+
+    @Test
+    public void testTinyTlsBuffers() throws Exception {
+        String tableName = UUID.randomUUID().toString();
+        withCustomProperty(() -> {
+            authKeyId = AUTH_KEY_ID1;
+            runInContext(c -> {
+                Testcontainers.exposeHostPorts(9002);
+
+                try (LineTcpSender sender = LineTcpSender.builder()
+                        .enableTls()
+                        .address(haProxy.getHost())
+                        .port(haProxy.getMappedPort(8443))
+                        .token(TOKEN)
+                        .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
+                        .build()) {
+                    sender.metric(tableName).field("value", 42).$();
+                    sender.flush();
+                }
+                assertTableExistsEventually(engine, tableName);
+            });
+        }, "questdb.experimental.tls.buffersize", "1");
+    }
+
+    private interface RunnableWithException {
+        void run() throws Exception;
+    }
+
+    private static void withCustomProperty(RunnableWithException runnable, String key, String value) throws Exception {
+        String orig = System.getProperty(key);
+        System.setProperty(key, value);
+        try {
+            runnable.run();
+        } finally {
+            if (orig != null) {
+                System.setProperty(key, orig);
+            } else {
+                System.clearProperty(key);
+            }
+        }
     }
 }
