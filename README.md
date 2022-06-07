@@ -61,6 +61,9 @@ macOS users can use Homebrew:
 ```bash
 brew install questdb
 brew services start questdb
+
+questdb start // To start questdb
+questdb stop  // To stop questdb
 ```
 
 The [QuestDB downloads page](https://questdb.io/get-questdb/) provides direct
