@@ -148,10 +148,10 @@ public class LineTcpSender extends AbstractLineSender {
                     hostname = address;
                 }
                 try {
-                    Inet4Address inet4Address = (Inet4Address) Inet4Address.getByName(hostname);
+                    InetAddress inet4Address = Inet4Address.getByName(hostname);
                     return host(inet4Address);
                 } catch (UnknownHostException ex) {
-                    throw new IllegalArgumentException("cannot parse address " + address, ex);
+                    throw new IllegalArgumentException("bad address " + address, ex);
                 }
             }
             return this;
@@ -209,10 +209,7 @@ public class LineTcpSender extends AbstractLineSender {
             if (privateKey == null) {
                 // unauthenticated path
                 if (tlsEnabled) {
-                    LineChannel plainTcpChannel = new PlanTcpLineChannel(NetworkFacadeImpl.INSTANCE, host, port, bufferCapacity * 2);
-                    assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
-                    LineChannel tlsChannel = new DelegatingTlsChannel(plainTcpChannel, trustStorePath, trustStorePassword);
-                    return new LineTcpSender(tlsChannel, bufferCapacity);
+                    return LineTcpSender.tlsSender(host, port, bufferCapacity * 2, trustStorePath, trustStorePassword);
                 }
                 return new LineTcpSender(host, port, bufferCapacity);
             } else {

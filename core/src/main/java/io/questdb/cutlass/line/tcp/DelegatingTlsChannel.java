@@ -37,7 +37,6 @@ import javax.net.ssl.SSLEngineResult;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
 import java.io.BufferedInputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -51,7 +50,6 @@ import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.cert.CertificateException;
-import java.security.cert.X509Certificate;
 
 public final class DelegatingTlsChannel implements LineChannel {
     private static final int INITIAL_BUFFER_CAPACITY = 64 * 1024;
@@ -79,23 +77,6 @@ public final class DelegatingTlsChannel implements LineChannel {
     private long unwrapOutputBufferPtr;
 
     private int state = INITIAL_STATE;
-
-    private static final TrustManager ALLOW_ALL_TRUSTMANAGER = new X509TrustManager() {
-        @Override
-        public void checkClientTrusted(X509Certificate[] chain, String authType) {
-
-        }
-
-        @Override
-        public void checkServerTrusted(X509Certificate[] chain, String authType) {
-
-        }
-
-        @Override
-        public X509Certificate[] getAcceptedIssuers() {
-            return new X509Certificate[0];
-        }
-    };
 
     static {
         Field addressField;
@@ -225,7 +206,7 @@ public final class DelegatingTlsChannel implements LineChannel {
                 case NEED_UNWRAP_AGAIN:
                     // fall-through
                 default:
-                    throw new UnsupportedOperationException(status + "not implemented yet");
+                    throw new UnsupportedOperationException(status + "not supported");
             }
         }
     }
