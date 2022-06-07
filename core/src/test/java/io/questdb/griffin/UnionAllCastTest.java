@@ -539,6 +539,52 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExceptFloatDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table events1 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
+            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
+
+            compiler.compile("create table events2 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
+            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+
+            assertQuery(
+                    // Empty table expected
+                    "contact\tgroupid\teventid\n",
+                    "events1\n" +
+                            "except\n" +
+                            "events2",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testExceptDoubleFloat() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table events1 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
+            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
+
+            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
+            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+
+            assertQuery(
+                    // Empty table expected
+                    "contact\tgroupid\teventid\n",
+                    "events1\n" +
+                            "except\n" +
+                            "events2",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testFloatBool() throws Exception {
         // this is cast to STRING, both columns
         testUnionAll(
