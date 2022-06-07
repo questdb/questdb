@@ -585,25 +585,45 @@ public class TableWriter implements Closeable {
             populateDenseIndexerList();
         }
 
+        LOG.info().$("DROPPED index for '").utf8(colName).$(" to ").$(path).$();
+
         // remove index files
-        if (PartitionBy.isPartitioned(partitionBy)) {
-            for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
+        final long txn = txWriter.getTxn();
+        boolean canDeleteIndexFiles = false;
+        try {
+            if (txnScoreboard.acquireTxn(txn)) {
+                txnScoreboard.releaseTxn(txn);
+                canDeleteIndexFiles = txnScoreboard.getMin() == txn && txnScoreboard.getActiveReaderCount(txn) == 0;
+            }
+        } catch (CairoException ignore) {
+            // max transactions in-flight, bad time to delete files
+            System.out.printf("CairoException!!: %s%n", ignore.getFlyweightMessage());
+        }
+        if (canDeleteIndexFiles) {
+            if (PartitionBy.isPartitioned(partitionBy)) {
+                for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
+                    removeIndexFilesInPartition(
+                            colName,
+                            colIdx,
+                            txWriter.getPartitionTimestamp(i),
+                            txWriter.getPartitionNameTxn(i)
+                    );
+                }
+            } else {
                 removeIndexFilesInPartition(
                         colName,
                         colIdx,
-                        txWriter.getPartitionTimestamp(i),
-                        txWriter.getPartitionNameTxn(i)
+                        txWriter.getLastPartitionTimestamp(),
+                        -1L
                 );
             }
         } else {
-            removeIndexFilesInPartition(
-                    colName,
-                    colIdx,
-                    txWriter.getLastPartitionTimestamp(),
-                    -1L
-            );
+            LOG.error()
+                    .$("column index is being read concurrently, index files ")
+                    .$("cannot be deleted now. Manually issue a [VACUUM TABLE ")
+                    .$(tableName)
+                    .$(" ] command at a quieter time.");
         }
-        LOG.info().$("DROPPED index for '").utf8(colName).$(" to ").$(path).$();
     }
 
     public void addPhysicallyWrittenRows(long rows) {
