@@ -207,7 +207,7 @@ public final class DelegatingTlsChannel implements LineChannel {
     }
 
     private void wrapLoop(ByteBuffer src) throws SSLException {
-        for (;;) {
+        do {
             SSLEngineResult result = sslEngine.wrap(src, wrapOutputBuffer);
             switch (result.getStatus()) {
                 case BUFFER_UNDERFLOW:
@@ -216,15 +216,14 @@ public final class DelegatingTlsChannel implements LineChannel {
                     growWrapOutputBuffer();
                     break;
                 case OK:
-                    assert !src.hasRemaining();
-                    return;
+                    break;
                 case CLOSED:
                     if (state != CLOSING) {
                         throw new IllegalStateException("Connection closed");
                     }
                     return;
             }
-        }
+        } while (src.hasRemaining());
     }
 
     private void unwrapLoop() throws SSLException {
