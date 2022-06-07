@@ -73,13 +73,5 @@ public class WalWriterMetadataCache extends BaseRecordMetadata {
         final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         deletedMeta.markDeleted();
         columnNameIndexMap.remove(deletedMeta.getName());
-
-        // enumerate columns that would have moved up after column deletion
-        for (int i = columnIndex + 1; i < columnCount; i++) {
-            TableColumnMetadata columnMeta = columnMetadata.getQuick(i);
-            if (columnMeta.getType() > 0) {
-                columnNameIndexMap.put(columnMeta.getName(), i);
-            }
-        }
     }
 }

@@ -62,6 +62,17 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
     }
 
     @Override
+    public int remove(CharSequence key) {
+        int index = keyIndex(key);
+        if (index < 0) {
+            int value = valueAt(index);
+            removeAt(index);
+            return value;
+        }
+        return noEntryValue;
+    }
+
+    @Override
     public void removeAt(int index) {
         if (index < 0) {
             int index1 = -index - 1;

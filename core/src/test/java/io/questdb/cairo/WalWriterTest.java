@@ -366,7 +366,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             WalWriter.Row row = walWriter.newRow();
             row.putByte(0, (byte) 1);
             row.append();
-            walWriter.removeColumn("b");
+            walWriter.removeColumn("a");
         }
 
         try (Path path = new Path().of(configuration.getRoot());
@@ -376,7 +376,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
         try (Path path = new Path().of(configuration.getRoot());
              TableModel updatedModel = new TableModel(configuration, tableName, PartitionBy.NONE)
-                .col("a", ColumnType.BYTE)) {
+                .col("b", ColumnType.STRING)) {
             assertValidMetadataFileCreated(updatedModel, walName, 1, path);
         }
     }
@@ -616,12 +616,6 @@ public class WalWriterTest extends AbstractGriffinTest {
             assertEquals("Binary sequences not equals at offset " + i
                     + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte +".",
                     expectedByte, actualByte);
-        }
-    }
-
-    private static void assertCharsEquals(CharSequence expected, CharSequence actual) {
-        if (!Chars.equals(expected, actual)) {
-            throw new AssertionError("CharSequence not equal. Expected: '" + expected + "', actual: '" + " actual '");
         }
     }
 

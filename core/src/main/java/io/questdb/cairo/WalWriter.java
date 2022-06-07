@@ -40,7 +40,6 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
-import static io.questdb.cairo.BitmapIndexUtils.*;
 import static io.questdb.cairo.TableUtils.*;
 
 public class WalWriter implements Closeable {
@@ -142,18 +141,14 @@ public class WalWriter implements Closeable {
             int type,
             int symbolCapacity
     ) {
-
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
         assert TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength()) : "invalid column name";
-
-        checkDistressed();
 
         if (metadataCache.getColumnIndexQuiet(name) != -1) {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
         }
 
-        commit();
-
+        closeCurrentSegment();
         LOG.info().$("adding column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
 
         metadataCache.addColumn(name, type, columnCount);
@@ -169,16 +164,14 @@ public class WalWriter implements Closeable {
         // add column objects
         configureColumn(type, columnCount);
         columnCount++;
-        // create column files
-        openColumnFiles(name, columnCount - 1, path.length());
 
         openNewSegment(metadataCache);
-
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
     }
 
     @Override
     public void close() {
+        closeCurrentSegment();
         doClose(true);
     }
 
@@ -214,36 +207,21 @@ public class WalWriter implements Closeable {
     }
 
     public void removeColumn(CharSequence name) {
-        checkDistressed();
+        closeCurrentSegment();
+        LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
 
         final int index = metadataCache.getColumnIndex(name);
         final int type = metadataCache.getColumnType(index);
-
-        commit();
-
-        LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
-
+        if (ColumnType.isSymbol(type)) {
+            removeSymbolMapWriter(index);
+        }
         metadataCache.removeColumn(index);
-        initSymbolCounts.removeIndex(index);
+        initSymbolCounts.setQuick(index, -1);
 
         // remove column objects
         removeColumn(index);
-        columnCount--;
-
-        if (ColumnType.isSymbol(type)) {
-            // remove symbol map writer or entry for such
-            removeSymbolMapWriter(index);
-        }
-
-        try {
-            removeColumnFiles(name, type);
-        } catch (CairoException e) {
-            distressed = true;
-            throw new CairoError(e);
-        }
 
         openNewSegment(metadataCache);
-
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
     }
 
@@ -256,16 +234,6 @@ public class WalWriter implements Closeable {
         return "WalWriter{" +
                 "name=" + tableName +
                 '}';
-    }
-
-    private static void removeFileAndOrLog(FilesFacade ff, LPSZ name) {
-        if (ff.exists(name)) {
-            if (ff.remove(name)) {
-                LOG.info().$("removed: ").$(name).$();
-            } else {
-                LOG.error().$("cannot remove: ").utf8(name).$(" [errno=").$(ff.errno()).$(']').$();
-            }
-        }
     }
 
     private static void removeOrException(FilesFacade ff, LPSZ path) {
@@ -445,7 +413,6 @@ public class WalWriter implements Closeable {
     }
 
     private void doClose(boolean truncate) {
-        writeSymbolMapDiffs();
         Misc.free(metaMem);
         freeSymbolMapWriters();
         Misc.free(symbolMapMem);
@@ -542,6 +509,11 @@ public class WalWriter implements Closeable {
         }
     }
 
+    private void closeCurrentSegment() {
+        commit();
+        writeSymbolMapDiffs();
+    }
+
     private void openNewSegment(BaseRecordMetadata metadata) {
         waldSegmentCounter++;
         walDRowCounter = 0;
@@ -555,11 +527,11 @@ public class WalWriter implements Closeable {
             path.trimTo(pathLen);
             assert columnCount > 0;
 
-            int liveColumnCounter = 0;
+            int liveColumnCount = 0;
             for (int i = 0; i < columnCount; i++) {
                 int type = metadata.getColumnType(i);
                 if (type > 0) {
-                    liveColumnCounter++;
+                    liveColumnCount++;
                     final CharSequence name = metadata.getColumnName(i);
                     openColumnFiles(name, i, pathLen);
                     if (ColumnType.isSymbol(type)) {
@@ -576,7 +548,7 @@ public class WalWriter implements Closeable {
                     }
                 }
             }
-            writeMetadata(metadata, pathLen, liveColumnCounter);
+            writeMetadata(metadata, pathLen, liveColumnCount);
             LOG.info().$("switched WAL-D segment [path='").$(path).$('\'').I$();
         } catch (Throwable e) {
             distressed = true;
@@ -586,10 +558,10 @@ public class WalWriter implements Closeable {
         }
     }
 
-    private void writeMetadata(BaseRecordMetadata metadata, int pathLen, int columnCount) {
+    private void writeMetadata(BaseRecordMetadata metadata, int pathLen, int liveColumnCount) {
         openMetaFile(ff, path, pathLen, metaMem);
         metaMem.putInt(WAL_FORMAT_VERSION);
-        metaMem.putInt(columnCount);
+        metaMem.putInt(liveColumnCount);
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
             if (type > 0) {
@@ -641,30 +613,6 @@ public class WalWriter implements Closeable {
         freeAndRemoveColumnPair(columns, pi, si);
     }
 
-    private void removeColumnFiles(CharSequence columnName, int columnType) {
-        try {
-            removeColumnFilesInPartition(columnName, waldSegmentCounter);
-            if (ColumnType.isSymbol(columnType)) {
-                removeFileAndOrLog(ff, offsetFileName(path.trimTo(rootLen), columnName, COLUMN_NAME_TXN_NONE));
-                removeFileAndOrLog(ff, charFileName(path.trimTo(rootLen), columnName, COLUMN_NAME_TXN_NONE));
-                removeFileAndOrLog(ff, keyFileName(path.trimTo(rootLen), columnName, COLUMN_NAME_TXN_NONE));
-                removeFileAndOrLog(ff, valueFileName(path.trimTo(rootLen), columnName, COLUMN_NAME_TXN_NONE));
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
-    private void removeColumnFilesInPartition(CharSequence columnName, long segmentId) {
-        path.slash().put(segmentId);
-        final int pathLen = path.length();
-        removeFileAndOrLog(ff, dFile(path, columnName, COLUMN_NAME_TXN_NONE));
-        removeFileAndOrLog(ff, iFile(path.trimTo(pathLen), columnName, COLUMN_NAME_TXN_NONE));
-        removeFileAndOrLog(ff, keyFileName(path.trimTo(pathLen), columnName, COLUMN_NAME_TXN_NONE));
-        removeFileAndOrLog(ff, valueFileName(path.trimTo(pathLen), columnName, COLUMN_NAME_TXN_NONE));
-        path.trimTo(rootLen);
-    }
-
     private void removeSymbolMapWriter(int index) {
         MapWriter writer = symbolMapWriters.getAndSetQuick(index, NullMapWriter.INSTANCE);
         if (writer != null && writer != NullMapWriter.INSTANCE) {
@@ -689,6 +637,7 @@ public class WalWriter implements Closeable {
     }
 
     void rowCancel() {
+        closeCurrentSegment();
         openNewSegment(metadataCache);
     }
 
