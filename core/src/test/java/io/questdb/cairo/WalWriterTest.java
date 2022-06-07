@@ -26,17 +26,11 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.junit.Test;
-
-import java.io.Closeable;
-import java.util.ArrayList;
-import java.util.List;
 
 import static org.junit.Assert.*;
 
@@ -59,8 +53,9 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
 
         try (Path path = new Path().of(configuration.getRoot())) {
-            assertWalFileExist(tableName, walName, "a", 0, path);
-            assertWalFileExist(tableName, walName, "b", 0, path);
+            assertWalFileExist(path, tableName, walName, 0, "a.d");
+            assertWalFileExist(path, tableName, walName, 0, "b.d");
+            assertWalFileExist(path, tableName, walName, 0, "b.i");
         }
     }
 
@@ -112,7 +107,6 @@ public class WalWriterTest extends AbstractGriffinTest {
             } catch(UnsupportedOperationException e) {
                 // ignore, this is expected
             }
-            walWriter.commit();
         }
 
         try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
@@ -141,7 +135,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             assertNull(reader.getSymbolMapReader(3).valueOf(2));
         }
 
-        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, walSymbolCounts, 10L)) {
+        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, walSymbolCounts, 10L, -1)) {
             assertEquals(4, reader.getColumnCount());
             assertEquals(10, reader.size());
             RecordCursor cursor = reader.getCursor();
@@ -185,12 +179,22 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
 
         try (Path path = new Path().of(configuration.getRoot())) {
-            assertWalFileExist(tableName, walName, "a", 0, path);
-            assertWalFileExist(tableName, walName, "b", 0, path);
-            assertWalSymbolFileExist(tableName, walName, "b", ".c", path);
-            assertWalSymbolFileExist(tableName, walName, "b", ".k", path);
-            assertWalSymbolFileExist(tableName, walName, "b", ".o", path);
-            assertWalSymbolFileExist(tableName, walName, "b", ".v", path);
+            assertWalFileExist(path, tableName, walName, 0, "a.d");
+            assertWalFileExist(path, tableName, walName, 0, "b.d");
+            assertWalFileExist(path, tableName, walName, 0, "c.d");
+            assertWalFileExist(path, tableName, walName, 0, "d.d");
+            assertWalFileExist(path, tableName, walName, "b.c");
+            assertWalFileExist(path, tableName, walName, "b.k");
+            assertWalFileExist(path, tableName, walName, "b.o");
+            assertWalFileExist(path, tableName, walName, "b.v");
+            assertWalFileExist(path, tableName, walName, "c.c");
+            assertWalFileExist(path, tableName, walName, "c.k");
+            assertWalFileExist(path, tableName, walName, "c.o");
+            assertWalFileExist(path, tableName, walName, "c.v");
+            assertWalFileExist(path, tableName, walName, "d.c");
+            assertWalFileExist(path, tableName, walName, "d.k");
+            assertWalFileExist(path, tableName, walName, "d.o");
+            assertWalFileExist(path, tableName, walName, "d.v");
         }
     }
 
@@ -245,8 +249,12 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
 
         try (Path path = new Path().of(configuration.getRoot())) {
-            assertWalFileExist(tableName, walName, "a", 0, path);
-            assertWalFileExist(tableName, walName, "a", 1, path);
+            assertWalFileExist(path, tableName, walName, 0, "a.d");
+            assertWalFileExist(path, tableName, walName, 0, "b.d");
+            assertWalFileExist(path, tableName, walName, 0, "b.i");
+            assertWalFileExist(path, tableName, walName, 1, "a.d");
+            assertWalFileExist(path, tableName, walName, 1, "b.d");
+            assertWalFileExist(path, tableName, walName, 1, "b.i");
         }
     }
 
@@ -267,10 +275,13 @@ public class WalWriterTest extends AbstractGriffinTest {
             row.append();
         }
 
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = defaultModel(tableName, false)) {
-            assertValidMetadataFileCreated(model, walName, 0, path);
-            assertValidMetadataFileCreated(model, walName, 1, path);
+        try (TableModel model = defaultModel(tableName)) {
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), 1, -1)) {
+                assertMetaData(model, reader);
+            }
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, new IntList(), 1, -1)) {
+                assertMetaData(model, reader);
+            }
         }
     }
 
@@ -288,7 +299,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
 
         try (Path path = new Path().of(configuration.getRoot())) {
-            assertMetadataFileExist(tableName, walName, 0, path);
+            assertWalFileExist(path, tableName, walName, 0, "_meta");
         }
     }
 
@@ -306,7 +317,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
 
         try (Path path = new Path().of(configuration.getRoot())) {
-            assertMetadataFileExist(tableName, walName, 0, path);
+            assertWalFileExist(path, tableName, walName, 0, "_meta");
         }
     }
 
@@ -328,8 +339,8 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
 
         try (Path path = new Path().of(configuration.getRoot())) {
-            assertMetadataFileExist(tableName, walName, 0, path);
-            assertMetadataFileExist(tableName, walName, 1, path);
+            assertWalFileExist(path, tableName, walName, 0, "_meta");
+            assertWalFileExist(path, tableName, walName, 1, "_meta");
         }
     }
 
@@ -345,13 +356,28 @@ public class WalWriterTest extends AbstractGriffinTest {
             row.putByte(0, (byte) 1);
             row.append();
             walWriter.addColumn("c", ColumnType.INT);
+            row = walWriter.newRow();
+            row.putByte(0, (byte) 10);
+            row.append();
         }
 
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = defaultModel(tableName, false)
-        ) {
-            assertValidMetadataFileCreated(model, walName, 0, path);
-            assertValidMetadataFileCreated(model.col("c", ColumnType.INT), walName, 1, path);
+        try (TableModel model = defaultModel(tableName)) {
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), 1, -1)) {
+                assertMetaData(model, reader);
+            }
+            model.col("c", ColumnType.INT);
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, new IntList(), 1, -1)) {
+                assertMetaData(model, reader);
+            }
+        }
+    }
+
+    private void assertMetaData(TableModel expected, WalReader reader) {
+        final int columnCount = expected.getColumnCount();
+        assertEquals(columnCount, reader.getColumnCount());
+        for (int i = 0; i < columnCount; i++) {
+            assertEquals(expected.getColumnName(i), reader.getColumnName(i));
+            assertEquals(expected.getColumnType(i), reader.getColumnType(i));
         }
     }
 
@@ -367,22 +393,25 @@ public class WalWriterTest extends AbstractGriffinTest {
             row.putByte(0, (byte) 1);
             row.append();
             walWriter.removeColumn("a");
+            row = walWriter.newRow();
+            row.append();
         }
 
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = defaultModel(tableName, false)
-        ) {
-            assertValidMetadataFileCreated(model, walName, 0, path);
+        try (TableModel model = defaultModel(tableName)) {
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), 1, -1)) {
+                assertMetaData(model, reader);
+            }
         }
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel updatedModel = new TableModel(configuration, tableName, PartitionBy.NONE)
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                 .col("b", ColumnType.STRING)) {
-            assertValidMetadataFileCreated(updatedModel, walName, 1, path);
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, new IntList(), 1, -1)) {
+                assertMetaData(model, reader);
+            }
         }
     }
 
     @Test
-    public void testDesignatedTimestampsIncludesSegmentRowNumber() {
+    public void testDesignatedTimestampIncludesSegmentRowNumber() {
         final String tableName = "testTable";
         createTable(tableName, true);
 
@@ -393,17 +422,44 @@ public class WalWriterTest extends AbstractGriffinTest {
             WalWriter.Row row = walWriter.newRow(ts);
             row.putByte(0, (byte) 1);
             row.append();
+            row = walWriter.newRow(ts + 500);
+            row.putByte(0, (byte) 17);
+            row.append();
+            row = walWriter.newRow(ts + 1200);
+            row.append();
         }
 
-        try (Path path = new Path().of(configuration.getRoot());
-             TableModel model = defaultModel(tableName, true)
-        ) {
-            assertValidMetadataFileCreated(model, walName, 0, path);
-        }
-        try (Path path = new Path().of(configuration.getRoot());
-             WalSegmentDataReader segmentReader = new WalSegmentDataReader(configuration.getFilesFacade(), toWalPath(tableName, walName, 0, path))) {
-            int tsIndex = segmentReader.getColumnIndex("ts");
-            assertDesignatedTimestamp(segmentReader, tsIndex, 0, ts);
+        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), 3, 2)) {
+            assertEquals(3, reader.getColumnCount());
+            assertEquals(walName, reader.getWalName());
+            assertEquals(tableName, reader.getTableName());
+            assertEquals(3, reader.size());
+
+            final RecordCursor cursor = reader.getCursor();
+            final Record record = cursor.getRecord();
+            assertTrue(cursor.hasNext());
+            assertEquals(1, record.getByte(0));
+            assertNull(record.getStr(1));
+            assertEquals(ts, record.getTimestamp(2));
+            assertEquals(0, record.getRowId());
+            assertEquals(0, ((WalReaderRecord) record).getDesignatedTimestampRowId(2));
+            assertTrue(cursor.hasNext());
+            assertEquals(17, record.getByte(0));
+            assertNull(record.getStr(1));
+            assertEquals(ts + 500, record.getTimestamp(2));
+            assertEquals(1, record.getRowId());
+            assertEquals(1, ((WalReaderRecord) record).getDesignatedTimestampRowId(2));
+            assertTrue(cursor.hasNext());
+            assertEquals(0, record.getByte(0));
+            assertNull(record.getStr(1));
+            assertEquals(ts + 1200, record.getTimestamp(2));
+            assertEquals(2, record.getRowId());
+            assertEquals(2, ((WalReaderRecord) record).getDesignatedTimestampRowId(2));
+            assertFalse(cursor.hasNext());
+
+            try (TableModel model = defaultModel(tableName, true)) {
+                assertMetaData(model, reader);
+            }
         }
     }
 
@@ -487,16 +543,16 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     row.append();
                 }
-                walWriter.commit();
                 assertEquals(rowsToInsertTotal, walWriter.size());
                 assertEquals("WalWriter{name=" + tableName + "}", walWriter.toString());
             }
 
-            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), rowsToInsertTotal)) {
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), rowsToInsertTotal, 21)) {
                 assertEquals(22, reader.getColumnCount());
                 assertEquals(walName, reader.getWalName());
                 assertEquals(tableName, reader.getTableName());
                 assertEquals(rowsToInsertTotal, reader.size());
+
                 final RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 final StringSink testSink = new StringSink();
@@ -538,6 +594,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     stringSink.clear();
                     record.getLong256(20, stringSink);
                     assertEquals(testSink.toString(), stringSink.toString());
+                    assertEquals(ts, record.getTimestamp(21));
                     assertEquals(i, record.getRowId());
                     testSink.clear();
                     ((Sinkable) record).toSink(testSink);
@@ -584,6 +641,10 @@ public class WalWriterTest extends AbstractGriffinTest {
         );
     }
 
+    private TableModel defaultModel(String tableName) {
+        return defaultModel(tableName, false);
+    }
+
     private TableModel defaultModel(String tableName, boolean withTimestamp) {
         return withTimestamp
                 ? new TableModel(configuration, tableName, PartitionBy.HOUR)
@@ -601,11 +662,6 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private static void assertDesignatedTimestamp(WalSegmentDataReader segmentReader, int tsIndex, int expectedRowNumber, long expectedTimestamp) {
-        assertEquals(expectedTimestamp, segmentReader.nextLong(tsIndex));
-        assertEquals(expectedRowNumber, segmentReader.nextLong(tsIndex));
-    }
-
     private static void assertBinSeqEquals(BinarySequence expected, BinarySequence actual) {
         assertNotNull(expected);
         assertNotNull(actual);
@@ -619,331 +675,25 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private void assertValidMetadataFileCreated(TableModel model, String walName, long segment, Path path) {
+    private void assertWalFileExist(Path path, String tableName, String walName, String fileName) {
+        assertWalFileExist(path, tableName, walName, -1, fileName);
+    }
+
+    private void assertWalFileExist(Path path, String tableName, String walName, int segment, String fileName) {
         final int pathLen = path.length();
         try {
-            toMetadataPath(model.getTableName(), walName, segment, path);
-            WalMetadataReader walMetadataReader = new WalMetadataReader(configuration.getFilesFacade(), path);
-            assertMetadataMatchesModel(model, walMetadataReader);
-        } finally {
-            path.trimTo(pathLen);
-        }
-    }
-
-    private void assertWalFileExist(String tableName, String walName, String columnName, int segment, Path path) {
-        final int pathLen = path.length();
-        try {
-            path.concat(tableName).slash().concat(walName)
-                    .slash().put(segment)
-                    .slash().concat(columnName + TableUtils.FILE_SUFFIX_D).$();
-            assertPathExists(path);
-        } finally {
-            path.trimTo(pathLen);
-        }
-    }
-
-    private void assertWalSymbolFileExist(String tableName, String walName, String columnName, String extension, Path path) {
-        final int pathLen = path.length();
-        try {
-            path.concat(tableName).slash().concat(walName).slash().concat(columnName + extension).$();
-            assertPathExists(path);
-        } finally {
-            path.trimTo(pathLen);
-        }
-    }
-
-    private void assertMetadataFileExist(String tableName, CharSequence walName, int segment, Path path) {
-        final int pathLen = path.length();
-        try {
-            assertPathExists(toMetadataPath(tableName, walName, segment, path));
-        } finally {
-            path.trimTo(pathLen);
-        }
-    }
-
-    private static Path toMetadataPath(CharSequence tableName, CharSequence walName, long segment, Path path) {
-        return toWalPath(tableName, walName, segment, path)
-                .concat("_meta").$();
-    }
-
-    private static Path toWalPath(CharSequence tableName, CharSequence walName, long segment, Path path) {
-        return path.concat(tableName).slash()
-                .concat(walName).slash()
-                .put(segment).slash();
-    }
-
-    private static void assertPathExists(Path path) {
-        if (!Files.exists(path)) {
-            throw new AssertionError("Path " + path + " does not exists!");
-        }
-    }
-
-    private static Long256Acceptor assertingAcceptor(long expectedL0, long expectedL1, long expectedL2, long expectedL3) {
-        return (l0, l1, l2, l3) -> {
-            assertEquals(expectedL0, l0);
-            assertEquals(expectedL1, l1);
-            assertEquals(expectedL2, l2);
-            assertEquals(expectedL3, l3);
-        };
-    }
-
-    private static void assertMetadataMatchesModel(TableModel model, WalMetadataReader metadata) {
-        int columnCount = model.getColumnCount();
-        assertEquals(columnCount, metadata.getColumnCount());
-        for (int i = 0; i < columnCount; i++) {
-            assertEquals(model.getColumnType(i), metadata.getColumnType(i));
-            assertEquals(model.getColumnName(i), metadata.getColumnName(i));
-        }
-    }
-
-    public static class WalSegmentDataReader implements Closeable {
-        private final FilesFacade ff;
-        private final List<MemoryMR> primaryColumns;
-        private final LongList offsets;
-        private final ObjIntHashMap<String> name2columns;
-
-        public WalSegmentDataReader(FilesFacade ff, Path path) {
-            this.ff = ff;
-            this.primaryColumns = new ArrayList<>();
-            this.offsets = new LongList();
-            this.name2columns = new ObjIntHashMap<>();
-            of(path);
-        }
-
-        @Override
-        public void close() {
-            for (MemoryMR mem : primaryColumns) {
-                mem.close();
+            path = constructPath(path, tableName, walName, segment, fileName);
+            if (!Files.exists(path)) {
+                throw new AssertionError("Path " + path + " does not exists!");
             }
-            primaryColumns.clear();
-            offsets.clear();
-            name2columns.clear();
-        }
-
-        public WalSegmentDataReader of(Path path) {
-            close();
-            int plen = path.length();
-            try (WalMetadataReader walMetadataReader = new WalMetadataReader(ff, path.concat("_meta").$())) {
-                int columnCount = walMetadataReader.getColumnCount();
-                for (int i = 0; i < columnCount; i++) {
-                    String name = walMetadataReader.getColumnName(i);
-                    MemoryMR primaryMem = Vm.getMRInstance();
-                    primaryMem.wholeFile(ff, TableUtils.dFile(path.trimTo(plen), name), MemoryTag.MMAP_DEFAULT);
-                    primaryColumns.add(primaryMem);
-                    name2columns.put(name, i);
-                }
-                offsets.setAll(columnCount, 0);
-                return this;
-            } finally {
-                path.trimTo(plen);
-            }
-        }
-
-        public int getColumnCount() {
-            return name2columns.size();
-        }
-
-        public int getColumnIndex(String columnName) {
-            return name2columns.get(columnName);
-        }
-
-        public int nextInt(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            int result = primaryColumns.get(columnIndex).getInt(offset);
-            offset += Integer.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public byte nextByte(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            byte result = primaryColumns.get(columnIndex).getByte(offset);
-            offset += Byte.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public CharSequence nextString(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            CharSequence result = primaryColumns.get(columnIndex).getStr(offset);
-            offset += Vm.getStorageLength(result.length());
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public long nextLong(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            long result = primaryColumns.get(columnIndex).getLong(offset);
-            offset += Long.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public double nextDouble(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            double result = primaryColumns.get(columnIndex).getDouble(offset);
-            offset += Double.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public float nextFloat(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            float result = primaryColumns.get(columnIndex).getFloat(offset);
-            offset += Float.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public short nextShort(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            short result = primaryColumns.get(columnIndex).getShort(offset);
-            offset += Short.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public long nextTimestamp(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            long result = primaryColumns.get(columnIndex).getLong(offset);
-            offset += Long.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public char nextChar(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            char result = primaryColumns.get(columnIndex).getChar(offset);
-            offset += Character.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public byte nextGeoByte(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            byte result = primaryColumns.get(columnIndex).getByte(offset);
-            offset += Byte.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public int nextGeoInt(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            int result = primaryColumns.get(columnIndex).getInt(offset);
-            offset += Integer.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public short nextGeoShort(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            short result = primaryColumns.get(columnIndex).getShort(offset);
-            offset += Short.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public long nextGeoLong(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            long result = primaryColumns.get(columnIndex).getLong(offset);
-            offset += Long.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public BinarySequence nextBin(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            BinarySequence result = primaryColumns.get(columnIndex).getBin(offset);
-            offset += result.length() + Long.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public boolean nextBool(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            boolean result = primaryColumns.get(columnIndex).getBool(offset);
-            offset += 1;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public long nextDate(int columnIndex) {
-            long offset = offsets.get(columnIndex);
-            long result = primaryColumns.get(columnIndex).getLong(offset);
-            offset += Long.BYTES;
-            offsets.set(columnIndex, offset);
-            return result;
-        }
-
-        public void nextLong256(int columnIndex, Long256Acceptor acceptor) {
-            long offset = offsets.get(columnIndex);
-            primaryColumns.get(columnIndex).getLong256(offset, acceptor);
-            offset += Long256.BYTES;
-            offsets.set(columnIndex, offset);
+        } finally {
+            path.trimTo(pathLen);
         }
     }
 
-    public static class WalMetadataReader implements Closeable {
-        private final FilesFacade ff;
-        private final MemoryMR metaMem;
-        private int columnCount;
-        private final IntList columnTypes;
-        private final List<String> columnNames;
-
-        public WalMetadataReader(FilesFacade ff, Path path) {
-            this.ff = ff;
-            this.metaMem = Vm.getMRInstance();
-            this.columnTypes = new IntList();
-            this.columnNames = new ArrayList<>();
-            of(path, WalWriter.WAL_FORMAT_VERSION);
-        }
-
-        @Override
-        public void close() {
-            Misc.free(metaMem);
-        }
-
-        public WalMetadataReader of(Path path, int expectedVersion) {
-            columnNames.clear();
-            columnTypes.clear();
-            try {
-                this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
-                int offset = 0;
-                int version = metaMem.getInt(offset);
-                offset += Integer.BYTES;
-                if (version != expectedVersion) {
-                    throw CairoException.instance(CairoException.METADATA_VALIDATION)
-                            .put("Invalid metadata at fd=")
-                            .put(metaMem.getFd())
-                            .put(". ");
-                }
-                this.columnCount = metaMem.getInt(offset);
-                offset += Integer.BYTES;
-                for (int i = 0; i < columnCount; i++) {
-                    int columnType = metaMem.getInt(offset);
-                    offset += Integer.BYTES;
-                    CharSequence name = metaMem.getStr(offset);
-                    offset += Vm.getStorageLength(name);
-                    columnTypes.add(columnType);
-                    columnNames.add(Chars.toString(name));
-                }
-            } catch (Throwable e) {
-                close();
-                throw e;
-            }
-            return this;
-        }
-
-        public int getColumnCount() {
-            return columnCount;
-        }
-
-        public int getColumnType(int columnIndex) {
-            return columnTypes.get(columnIndex);
-        }
-
-        public String getColumnName(int columnIndex) {
-            return columnNames.get(columnIndex);
-        }
+    private static Path constructPath(Path path, CharSequence tableName, CharSequence walName, long segment, CharSequence fileName) {
+        return segment < 0
+                ? path.concat(tableName).slash().concat(walName).slash().concat(fileName).$()
+                : path.concat(tableName).slash().concat(walName).slash().put(segment).slash().concat(fileName).$();
     }
 }

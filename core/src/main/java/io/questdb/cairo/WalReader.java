@@ -56,7 +56,7 @@ public class WalReader implements Closeable, SymbolTableSource {
     private final ObjList<MemoryMR> columns;
     private final int columnCount;
 
-    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, IntList walSymbolCounts, long walRowCount) {
+    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, IntList walSymbolCounts, long walRowCount, int timestampIndex) {
         this.configuration = configuration;
         this.tableName = Chars.toString(tableName);
         this.walName = Chars.toString(walName);
@@ -68,7 +68,7 @@ public class WalReader implements Closeable, SymbolTableSource {
         path.of(configuration.getRoot()).concat(this.tableName).concat(this.walName);
         rootLen = path.length();
         try {
-            metadata = openMetaFile();
+            metadata = openMetaFile(timestampIndex);
             columnCount = metadata.getColumnCount();
             LOG.debug().$("open [table=").$(this.tableName).I$();
             openSymbolMaps(walSymbolCounts);
@@ -110,6 +110,10 @@ public class WalReader implements Closeable, SymbolTableSource {
         return walName;
     }
 
+    public int getTimestampIndex() {
+        return metadata.getTimestampIndex();
+    }
+
     public WalReaderRecordCursor getCursor() {
         recordCursor.toTop();
         return recordCursor;
@@ -148,17 +152,17 @@ public class WalReader implements Closeable, SymbolTableSource {
 
             final int columnType = metadata.getColumnType(columnIndex);
             if (ColumnType.isVariableLength(columnType)) {
-                long columnSize = walRowCount * 8L + 8L;
+                long columnSize = (walRowCount + 1) << 3;
                 TableUtils.iFile(path.trimTo(pathLen), name);
                 MemoryMR secondaryMem = columns.getQuick(secondaryIndex);
                 secondaryMem = openOrCreateMemory(path, columns, secondaryIndex, secondaryMem, columnSize);
-                columnSize = secondaryMem.getLong(walRowCount * 8L);
+                columnSize = secondaryMem.getLong(walRowCount << 3);
                 TableUtils.dFile(path.trimTo(pathLen), name);
                 openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnSize);
             } else {
                 long columnSize = walRowCount << ColumnType.pow2SizeOf(columnType);
                 TableUtils.dFile(path.trimTo(pathLen), name);
-                openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnSize);
+                openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnIndex == getTimestampIndex() ? columnSize << 1 : columnSize);
                 Misc.free(columns.getAndSetQuick(secondaryIndex, null));
             }
         } finally {
@@ -168,6 +172,14 @@ public class WalReader implements Closeable, SymbolTableSource {
 
     public long size() {
         return walRowCount;
+    }
+
+    public String getColumnName(int columnIndex) {
+        return metadata.getColumnName(columnIndex);
+    }
+
+    public int getColumnType(int columnIndex) {
+        return metadata.getColumnType(columnIndex);
     }
 
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
@@ -199,13 +211,13 @@ public class WalReader implements Closeable, SymbolTableSource {
         return columnCount;
     }
 
-    private WalReaderMetadata openMetaFile() {
+    private WalReaderMetadata openMetaFile(int timestampIndex) {
         final long deadline = this.configuration.getMicrosecondClock().getTicks() + this.configuration.getSpinLockTimeoutUs();
         final WalReaderMetadata metadata = new WalReaderMetadata(ff, segmentId);
         try {
             while (true) {
                 try {
-                    return metadata.of(path, 0);
+                    return metadata.of(path, WalWriter.WAL_FORMAT_VERSION, timestampIndex);
                 } catch (CairoException ex) {
                     TableUtils.handleMetadataLoadException(configuration, tableName, deadline, ex);
                 }

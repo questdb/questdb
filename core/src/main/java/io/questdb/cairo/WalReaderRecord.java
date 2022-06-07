@@ -192,6 +192,24 @@ public class WalReaderRecord implements Record, Sinkable {
     }
 
     @Override
+    public long getTimestamp(int col) {
+        return col == reader.getTimestampIndex() ? getDesignatedTimestamp(col) : getLong(col);
+    }
+
+    private long getDesignatedTimestamp(int col) {
+        final long offset = 2 * recordIndex * Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
+    // only for tests
+    long getDesignatedTimestampRowId(int col) {
+        final long offset = 2 * recordIndex * Long.BYTES + Long.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getLong(offset);
+    }
+
+    @Override
     public long getRowId() {
         return Rows.toRowID(0, recordIndex);
     }

@@ -55,14 +55,14 @@ public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
         Misc.free(path);
     }
 
-    public WalReaderMetadata of(Path p, int expectedVersion) {
+    public WalReaderMetadata of(Path p, int expectedVersion, int timestampIndex) {
         path.of(p).slash().put(segmentId).concat(TableUtils.META_FILE_NAME).$();
         try {
             metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             columnNameIndexMap.clear();
             TableUtils.loadWalMetadata(metaMem, columnMetadata, columnNameIndexMap, symbolMapDiffs, expectedVersion);
             columnCount = metaMem.getInt(TableUtils.WAL_META_OFFSET_COUNT);
-            timestampIndex = -1;
+            this.timestampIndex = timestampIndex;
         } catch (Throwable e) {
             close();
             throw e;
