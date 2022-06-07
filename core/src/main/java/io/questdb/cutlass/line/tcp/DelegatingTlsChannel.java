@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cutlass.line.LineChannel;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.network.NetworkError;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -83,12 +84,12 @@ public final class DelegatingTlsChannel implements LineChannel {
         Field limitField;
         Field capacityField;
         try {
-            // todo: is reflection a good idea?
             addressField = Buffer.class.getDeclaredField("address");
             limitField = Buffer.class.getDeclaredField("limit");
             capacityField = Buffer.class.getDeclaredField("capacity");
         } catch (NoSuchFieldException e) {
-            throw new RuntimeException(e);
+            // todo: consider a fallback strategy - we could keep copying buffers
+            throw new LineSenderException("unexpected buffer");
         }
         ADDRESS_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(addressField);
         LIMIT_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(limitField);
@@ -134,7 +135,7 @@ public final class DelegatingTlsChannel implements LineChannel {
                         String adjustedPath = trustStorePath.substring("classpath:".length());
                         trustStoreStream = DelegatingTlsChannel.class.getResourceAsStream(adjustedPath);
                         if (trustStoreStream == null) {
-                            throw new IllegalStateException("Configured trust at classpath:" + trustStorePath + " is unavailable on a classpath");
+                            throw new LineSenderException("Configured trust at classpath:" + trustStorePath + " is unavailable on a classpath");
                         }
                     } else {
                         trustStoreStream = new BufferedInputStream(new FileInputStream(trustStorePath));
@@ -156,7 +157,7 @@ public final class DelegatingTlsChannel implements LineChannel {
             return sslEngine;
         } catch (NoSuchAlgorithmException | KeyManagementException | CertificateException | KeyStoreException |
                  IOException e) {
-            throw new RuntimeException(e);
+            throw new LineSenderException("error while creating openssl engine", e);
         }
     }
 
@@ -167,9 +168,8 @@ public final class DelegatingTlsChannel implements LineChannel {
             resetBufferToPointer(wrapInputBuffer, ptr, len);
             wrapLoop(wrapInputBuffer);
             assert !wrapInputBuffer.hasRemaining();
-            writeToUpstreamAndClear();
         } catch (SSLException e) {
-            throw new RuntimeException(e);
+            throw new LineSenderException("error while sending data to questdb server", e);
         }
     }
 
@@ -191,17 +191,16 @@ public final class DelegatingTlsChannel implements LineChannel {
                     break;
                 case NEED_WRAP:
                     wrapLoop(dummyBuffer);
-                    writeToUpstreamAndClear();
                     break;
                 case NEED_UNWRAP:
                     unwrapLoop();
                     break;
                 case FINISHED:
-                    throw new IllegalStateException("getHandshakeStatus() returns FINISHED. It should not be possible.");
+                    throw new LineSenderException("getHandshakeStatus() returns FINISHED. It should not be possible.");
                 case NEED_UNWRAP_AGAIN:
                     // fall-through
                 default:
-                    throw new UnsupportedOperationException(status + "not supported");
+                    throw new LineSenderException(status + "not supported");
             }
         }
     }
@@ -211,15 +210,16 @@ public final class DelegatingTlsChannel implements LineChannel {
             SSLEngineResult result = sslEngine.wrap(src, wrapOutputBuffer);
             switch (result.getStatus()) {
                 case BUFFER_UNDERFLOW:
-                    throw new IllegalStateException("should not happen");
+                    throw new LineSenderException("should not happen");
                 case BUFFER_OVERFLOW:
                     growWrapOutputBuffer();
                     break;
                 case OK:
+                    writeToUpstreamAndClear();
                     break;
                 case CLOSED:
                     if (state != CLOSING) {
-                        throw new IllegalStateException("Connection closed");
+                        throw new LineSenderException("connection closed");
                     }
                     return;
             }
@@ -227,13 +227,8 @@ public final class DelegatingTlsChannel implements LineChannel {
     }
 
     private void unwrapLoop() throws SSLException {
-        for (;;) {
-            if (unwrapOutputBuffer.position() != 0) {
-                // we have some decoded data ready to be read
-                // no need to unwrap more
-                return;
-            }
-
+        // we want the loop to return as soon as we have some unwrapped data in the output buffer
+        while (unwrapOutputBuffer.position() == 0) {
             readFromUpstream(false);
             unwrapInputBuffer.flip();
             SSLEngineResult result = sslEngine.unwrap(unwrapInputBuffer, unwrapOutputBuffer);
@@ -257,7 +252,7 @@ public final class DelegatingTlsChannel implements LineChannel {
                 case OK:
                     return;
                 case CLOSED:
-                    throw new IllegalStateException("connection closed");
+                    throw new LineSenderException("connection closed");
             }
         }
     }
@@ -295,7 +290,7 @@ public final class DelegatingTlsChannel implements LineChannel {
 
         int receive = upstream.receive(adjustedPtr, remainingLen);
         if (receive < 0) {
-            throw new IllegalStateException("connection closed");
+            throw new LineSenderException("connection closed");
         }
         unwrapInputBuffer.position(unwrapInputBuffer.position() + receive);
     }
@@ -310,7 +305,7 @@ public final class DelegatingTlsChannel implements LineChannel {
             unwrapOutputBuffer.compact();
             return i;
         } catch (SSLException e) {
-            throw new RuntimeException(e);
+            throw new LineSenderException("error while receiving data from questdb server", e);
         }
     }
 
