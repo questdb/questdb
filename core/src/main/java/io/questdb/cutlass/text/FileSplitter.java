@@ -735,4 +735,12 @@ public class FileSplitter implements Closeable, Mutable {
     public void setBufferLength(int length) {
         this.bufferLength = length;
     }
+
+    public CharSequence getImportRoot() {
+        return this.importRoot;
+    }
+
+    public CharSequence getInputFileName() {
+        return this.inputFileName;
+    }
 }

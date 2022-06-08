@@ -64,6 +64,7 @@ public class TextImportTask {
     private int symbolColumnIndex;
     private CharSequence importRoot;
     private RecordMetadata metadata;
+    private int maxLineLength;
 
     public void of(
             CountDownLatchSPI doneLatch,
@@ -94,7 +95,8 @@ public class TextImportTask {
             int index,
             long lo,
             long hi,
-            ObjList<CharSequence> partitionNames
+            ObjList<CharSequence> partitionNames,
+            int maxLineLength
     ) {
         this.doneLatch = doneLatch;
         this.phase = phase;
@@ -103,6 +105,7 @@ public class TextImportTask {
         this.lo = lo;
         this.hi = hi;
         this.partitionNames = partitionNames;
+        this.maxLineLength = maxLineLength;
     }
 
     public void of(CountDownLatchSPI doneLatch,
@@ -163,7 +166,7 @@ public class TextImportTask {
             } else if (phase == PHASE_INDEXING) {
                 context.buildIndexStage(lo, hi, lineNumber, chunkStats, index, partitionKeys);
             } else if (phase == PHASE_PARTITION_IMPORT) {
-                context.importPartitionStage(index, lo, hi, partitionNames);
+                context.importPartitionStage(index, lo, hi, partitionNames, maxLineLength);
             } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
                 FileIndexer.mergeColumnSymbolTables(cfg, importRoot, writer, tableName, symbolColumnName, columnIndex, symbolColumnIndex, tmpTableCount, partitionBy);
             } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
