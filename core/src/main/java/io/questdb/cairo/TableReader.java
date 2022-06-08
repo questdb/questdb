@@ -89,6 +89,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.path = new Path();
         this.path.of(configuration.getRoot()).concat(this.tableName);
         this.rootLen = path.length();
+        path.trimTo(rootLen);
         try {
             this.metadata = openMetaFile();
             this.columnCount = this.metadata.getColumnCount();
@@ -744,10 +745,19 @@ public class TableReader implements Closeable, SymbolTableSource {
         TableReaderMetadata metadata = new TableReaderMetadata(ff);
         path.concat(TableUtils.META_FILE_NAME).$();
         try {
+            boolean existanceChecked = false;
             while (true) {
                 try {
                     return metadata.of(path, ColumnType.VERSION);
                 } catch (CairoException ex) {
+                    if (!existanceChecked) {
+                        path.trimTo(rootLen).put(Files.SEPARATOR).$();
+                        if (!ff.exists(path)) {
+                            throw CairoException.instance(2).put("table does not exist [table=").put(tableName).put(']');
+                        }
+                        path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
+                    }
+                    existanceChecked = true;
                     TableUtils.handleMetadataLoadException(configuration, tableName, deadline, ex);
                 }
             }
