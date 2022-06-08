@@ -187,10 +187,6 @@ public class WalWriter implements Closeable {
         return walName;
     }
 
-    public long getCurrentWalDSegmentRowCount() {
-        return walDRowCounter;
-    }
-
     public Row newRow() {
         return newRow(0L);
     }
@@ -503,6 +499,7 @@ public class WalWriter implements Closeable {
                         MemoryTag.MMAP_TABLE_WRITER,
                         configuration.getWriterFileOpenOpts()
                 );
+                mem2.putLong(0L);
             }
         } finally {
             path.trimTo(pathTrimToLen);

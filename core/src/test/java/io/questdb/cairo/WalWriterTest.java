@@ -37,29 +37,6 @@ import static org.junit.Assert.*;
 public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
-    public void testBootstrapWal() {
-        final String tableName = "testTable";
-        createTable(tableName);
-
-        final String walName;
-        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-            walName = walWriter.getWalName();
-            for (int i = 0; i < 100; i++) {
-                WalWriter.Row row = walWriter.newRow();
-                row.putByte(0, (byte) i);
-                row.putStr(1, String.valueOf(i));
-                row.append();
-            }
-        }
-
-        try (Path path = new Path().of(configuration.getRoot())) {
-            assertWalFileExist(path, tableName, walName, 0, "a.d");
-            assertWalFileExist(path, tableName, walName, 0, "b.d");
-            assertWalFileExist(path, tableName, walName, 0, "b.i");
-        }
-    }
-
-    @Test
     public void testSymbolWal() {
         final String tableName = "testSymTable";
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
@@ -179,6 +156,7 @@ public class WalWriterTest extends AbstractGriffinTest {
         }
 
         try (Path path = new Path().of(configuration.getRoot())) {
+            assertWalFileExist(path, tableName, walName, 0, "_meta");
             assertWalFileExist(path, tableName, walName, 0, "a.d");
             assertWalFileExist(path, tableName, walName, 0, "b.d");
             assertWalFileExist(path, tableName, walName, 0, "c.d");
@@ -199,148 +177,81 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRowCount_simple() {
-        final String tableName = "testTable";
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
-                     .col("a", ColumnType.BYTE)
-                     .col("b", ColumnType.STRING)
-                     .col("c", ColumnType.INT)
-        ) {
-            createTable(model);
-        }
-
-        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-            for (int i = 0; i < 100; i++) {
-                WalWriter.Row row = walWriter.newRow();
-                row.putByte(0, (byte) i);
-                row.putStr(1, String.valueOf(i));
-                row.putInt(2, 42);
-                row.append();
-            }
-            assertEquals(100, walWriter.getCurrentWalDSegmentRowCount());
-            walWriter.newRow().cancel(); // force a new WAL-D segment
-            assertEquals(0, walWriter.getCurrentWalDSegmentRowCount());
-            for (int i = 0; i < 50; i++) {
-                WalWriter.Row row = walWriter.newRow();
-                row.putByte(0, (byte) i);
-                row.putStr(1, String.valueOf(i));
-                row.putInt(2, 42);
-                row.append();
-            }
-            assertEquals(50, walWriter.getCurrentWalDSegmentRowCount());
-        }
-    }
-
-    @Test
-    public void cancelRowStartsANewSegment_for_now() {
+    public void testCancelRowStartsNewSegment() {
         final String tableName = "testTable";
         createTable(tableName);
 
         final String walName;
         try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
             walName = walWriter.getWalName();
-            WalWriter.Row row = walWriter.newRow();
-            row.putByte(0, (byte) 1);
-            row.cancel();
-
-            row = walWriter.newRow();
-            row.putByte(0, (byte) 1);
-            row.append();
-        }
-
-        try (Path path = new Path().of(configuration.getRoot())) {
-            assertWalFileExist(path, tableName, walName, 0, "a.d");
-            assertWalFileExist(path, tableName, walName, 0, "b.d");
-            assertWalFileExist(path, tableName, walName, 0, "b.i");
-            assertWalFileExist(path, tableName, walName, 1, "a.d");
-            assertWalFileExist(path, tableName, walName, 1, "b.d");
-            assertWalFileExist(path, tableName, walName, 1, "b.i");
-        }
-    }
-
-    @Test
-    public void testDdlMetadataReadable() {
-        final String tableName = "testTable";
-        createTable(tableName);
-
-        final String walName;
-        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-            walName = walWriter.getWalName();
+            assertEquals(0, walWriter.size());
             WalWriter.Row row = walWriter.newRow();
             row.putByte(0, (byte) 1);
             row.append();
-            walWriter.newRow().cancel(); // new segment
+            assertEquals(1, walWriter.size());
             row = walWriter.newRow();
-            row.putByte(0, (byte) 1);
+            row.putByte(0, (byte) 11);
             row.append();
+            assertEquals(2, walWriter.size());
+            row = walWriter.newRow();
+            row.putByte(0, (byte) 111);
+            assertEquals(2, walWriter.size());
+            row.cancel(); // new segment
+            assertEquals(0, walWriter.size());
+            row = walWriter.newRow();
+            row.putByte(0, (byte) 112);
+            row.append();
+            assertEquals(1, walWriter.size());
         }
 
         try (TableModel model = defaultModel(tableName)) {
-            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), 1, -1)) {
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), 2, -1)) {
+                assertEquals(2, reader.getColumnCount());
+                assertEquals(walName, reader.getWalName());
+                assertEquals(tableName, reader.getTableName());
+                assertEquals(2, reader.size());
+
+                final RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
+                assertTrue(cursor.hasNext());
+                assertEquals(1, record.getByte(0));
+                assertNull(record.getStr(1));
+                assertEquals(0, record.getRowId());
+                assertTrue(cursor.hasNext());
+                assertEquals(11, record.getByte(0));
+                assertNull(record.getStr(1));
+                assertEquals(1, record.getRowId());
+                assertFalse(cursor.hasNext());
+
                 assertMetaData(model, reader);
             }
             try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, new IntList(), 1, -1)) {
+                assertEquals(2, reader.getColumnCount());
+                assertEquals(walName, reader.getWalName());
+                assertEquals(tableName, reader.getTableName());
+                assertEquals(1, reader.size());
+
+                final RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
+                assertTrue(cursor.hasNext());
+                assertEquals(112, record.getByte(0));
+                assertNull(record.getStr(1));
+                assertEquals(0, record.getRowId());
+                assertFalse(cursor.hasNext());
+
                 assertMetaData(model, reader);
             }
         }
-    }
-
-    @Test
-    public void testDdlMetadataCreated() {
-        final String tableName = "testTable";
-        createTable(tableName);
-
-        final String walName;
-        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-            walName = walWriter.getWalName();
-            WalWriter.Row row = walWriter.newRow();
-            row.putByte(0, (byte) 1);
-            row.append();
-        }
 
         try (Path path = new Path().of(configuration.getRoot())) {
             assertWalFileExist(path, tableName, walName, 0, "_meta");
-        }
-    }
-
-    @Test
-    public void testDdlMetadataForNewSegmentReadable() {
-        final String tableName = "testTable";
-        createTable(tableName);
-
-        final String walName;
-        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-            walName = walWriter.getWalName();
-            WalWriter.Row row = walWriter.newRow();
-            row.putByte(0, (byte) 1);
-            row.append();
-        }
-
-        try (Path path = new Path().of(configuration.getRoot())) {
-            assertWalFileExist(path, tableName, walName, 0, "_meta");
-        }
-    }
-
-    @Test
-    public void testDdlMetadataCreatedForNewSegment() {
-        final String tableName = "testTable";
-        createTable(tableName);
-
-        final String walName;
-        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-            walName = walWriter.getWalName();
-            WalWriter.Row row = walWriter.newRow();
-            row.putByte(0, (byte) 1);
-            row.append();
-            walWriter.newRow().cancel(); // force new segment
-            row = walWriter.newRow();
-            row.putByte(0, (byte) 1);
-            row.append();
-        }
-
-        try (Path path = new Path().of(configuration.getRoot())) {
-            assertWalFileExist(path, tableName, walName, 0, "_meta");
+            assertWalFileExist(path, tableName, walName, 0, "a.d");
+            assertWalFileExist(path, tableName, walName, 0, "b.d");
+            assertWalFileExist(path, tableName, walName, 0, "b.i");
             assertWalFileExist(path, tableName, walName, 1, "_meta");
+            assertWalFileExist(path, tableName, walName, 1, "a.d");
+            assertWalFileExist(path, tableName, walName, 1, "b.d");
+            assertWalFileExist(path, tableName, walName, 1, "b.i");
         }
     }
 
@@ -359,25 +270,56 @@ public class WalWriterTest extends AbstractGriffinTest {
             row = walWriter.newRow();
             row.putByte(0, (byte) 10);
             row.append();
+            walWriter.addColumn("d", ColumnType.SHORT);
         }
 
         try (TableModel model = defaultModel(tableName)) {
             try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), 1, -1)) {
+                assertEquals(2, reader.getColumnCount());
+                assertEquals(walName, reader.getWalName());
+                assertEquals(tableName, reader.getTableName());
+                assertEquals(1, reader.size());
+
+                final RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
+                assertTrue(cursor.hasNext());
+                assertEquals(1, record.getByte(0));
+                assertNull(record.getStr(1));
+                assertEquals(0, record.getRowId());
+                assertFalse(cursor.hasNext());
+
                 assertMetaData(model, reader);
             }
             model.col("c", ColumnType.INT);
             try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, new IntList(), 1, -1)) {
+                assertEquals(3, reader.getColumnCount());
+                assertEquals(walName, reader.getWalName());
+                assertEquals(tableName, reader.getTableName());
+                assertEquals(1, reader.size());
+
+                final RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
+                assertTrue(cursor.hasNext());
+                assertEquals(10, record.getByte(0));
+                assertNull(record.getStr(1));
+                assertEquals(Integer.MIN_VALUE, record.getInt(2));
+                assertEquals(0, record.getRowId());
+                assertFalse(cursor.hasNext());
+
                 assertMetaData(model, reader);
             }
-        }
-    }
+            model.col("d", ColumnType.SHORT);
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 2, new IntList(), 0, -1)) {
+                assertEquals(4, reader.getColumnCount());
+                assertEquals(walName, reader.getWalName());
+                assertEquals(tableName, reader.getTableName());
+                assertEquals(0, reader.size());
 
-    private void assertMetaData(TableModel expected, WalReader reader) {
-        final int columnCount = expected.getColumnCount();
-        assertEquals(columnCount, reader.getColumnCount());
-        for (int i = 0; i < columnCount; i++) {
-            assertEquals(expected.getColumnName(i), reader.getColumnName(i));
-            assertEquals(expected.getColumnType(i), reader.getColumnType(i));
+                final RecordCursor cursor = reader.getCursor();
+                assertFalse(cursor.hasNext());
+
+                assertMetaData(model, reader);
+            }
         }
     }
 
@@ -393,18 +335,37 @@ public class WalWriterTest extends AbstractGriffinTest {
             row.putByte(0, (byte) 1);
             row.append();
             walWriter.removeColumn("a");
-            row = walWriter.newRow();
-            row.append();
         }
 
         try (TableModel model = defaultModel(tableName)) {
             try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), 1, -1)) {
+                assertEquals(2, reader.getColumnCount());
+                assertEquals(walName, reader.getWalName());
+                assertEquals(tableName, reader.getTableName());
+                assertEquals(1, reader.size());
+
+                final RecordCursor cursor = reader.getCursor();
+                final Record record = cursor.getRecord();
+                assertTrue(cursor.hasNext());
+                assertEquals(1, record.getByte(0));
+                assertNull(record.getStr(1));
+                assertEquals(0, record.getRowId());
+                assertFalse(cursor.hasNext());
+
                 assertMetaData(model, reader);
             }
         }
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)
                 .col("b", ColumnType.STRING)) {
-            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, new IntList(), 1, -1)) {
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, new IntList(), 0, -1)) {
+                assertEquals(1, reader.getColumnCount());
+                assertEquals(walName, reader.getWalName());
+                assertEquals(tableName, reader.getTableName());
+                assertEquals(0, reader.size());
+
+                final RecordCursor cursor = reader.getCursor();
+                assertFalse(cursor.hasNext());
+
                 assertMetaData(model, reader);
             }
         }
@@ -465,7 +426,6 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testReadAndWriteAllTypes() {
-        // todo: geohash
         final String tableName = "testTableAllTypes";
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                      .col("int", ColumnType.INT)
@@ -578,11 +538,13 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(i, record.getGeoInt(13));
                     assertEquals(i, record.getGeoShort(14));
                     assertEquals(i, record.getGeoLong(15));
+
                     prepareBinPayload(pointer, i);
                     assertBinSeqEquals(binSeq.of(pointer, i), record.getBin(16));
                     prepareBinPayload(pointer, i + 1);
                     assertBinSeqEquals(binSeq.of(pointer, i + 1), record.getBin(17));
                     assertEquals(i + 1, record.getBinLen(17));
+
                     testSink.clear();
                     long256.toSink(testSink);
                     stringSink.clear();
@@ -594,6 +556,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     stringSink.clear();
                     record.getLong256(20, stringSink);
                     assertEquals(testSink.toString(), stringSink.toString());
+
                     assertEquals(ts, record.getTimestamp(21));
                     assertEquals(i, record.getRowId());
                     testSink.clear();
@@ -672,6 +635,15 @@ public class WalWriterTest extends AbstractGriffinTest {
             assertEquals("Binary sequences not equals at offset " + i
                     + ". Expected byte: " + expectedByte + ", actual byte: " + actualByte +".",
                     expectedByte, actualByte);
+        }
+    }
+
+    private void assertMetaData(TableModel expected, WalReader reader) {
+        final int columnCount = expected.getColumnCount();
+        assertEquals(columnCount, reader.getColumnCount());
+        for (int i = 0; i < columnCount; i++) {
+            assertEquals(expected.getColumnName(i), reader.getColumnName(i));
+            assertEquals(expected.getColumnType(i), reader.getColumnType(i));
         }
     }
 
