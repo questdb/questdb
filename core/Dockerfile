@@ -1,7 +1,9 @@
 FROM debian:bullseye
 
 RUN apt-get update \
-  && apt-get install git curl wget software-properties-common unzip openjdk-17-jdk -y
+  && apt-get install -y git curl wget software-properties-common unzip \
+  openjdk-17-jdk=17.0.3+7-1~deb11u1 openjdk-17-jre=17.0.3+7-1~deb11u1 \
+  openjdk-17-jdk-headless=17.0.3+7-1~deb11u1 openjdk-17-jre-headless=17.0.3+7-1~deb11u1
 
 
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
