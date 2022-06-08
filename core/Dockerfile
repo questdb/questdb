@@ -1,14 +1,10 @@
-FROM debian:11.3
+FROM debian:bullseye
 
 RUN apt-get update \
-  && apt-get install git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip -y
+  && apt-get install git curl wget software-properties-common unzip openjdk-17-jdk -y
 
-RUN wget -O- https://apt.corretto.aws/corretto.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/winehq.gpg >/dev/null && \
-    add-apt-repository 'deb https://apt.corretto.aws stable main' && \
-    apt-get update && \
-    apt-get install -y java-17-amazon-corretto-jdk=1:17.0.3.6-1
 
-ENV JAVA_HOME=/usr/lib/jvm/java-17-amazon-corretto
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 WORKDIR /build
 
 RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output maven.zip \
