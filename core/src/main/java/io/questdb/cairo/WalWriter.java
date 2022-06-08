@@ -151,21 +151,15 @@ public class WalWriter implements Closeable {
         closeCurrentSegment();
         LOG.info().$("adding column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
 
-        metadataCache.addColumn(name, type, columnCount);
-
-        if (ColumnType.isSymbol(type)) {
-            createSymbolMapWriter(name);
-        } else {
-            // maintain sparse list of symbol writers
-            symbolMapWriters.extendAndSet(columnCount, NullMapWriter.INSTANCE);
-            initSymbolCounts.add(-1);
-        }
+        final int index = columnCount;
+        metadataCache.addColumn(index, name, type);
 
         // add column objects
-        configureColumn(type, columnCount);
+        configureColumn(index, type);
         columnCount++;
 
         openNewSegment(metadataCache);
+        configureSymbolMapWriter(index, name, type, null);
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
     }
 
@@ -211,8 +205,8 @@ public class WalWriter implements Closeable {
         if (ColumnType.isSymbol(type)) {
             removeSymbolMapWriter(index);
         }
+
         metadataCache.removeColumn(index);
-        initSymbolCounts.setQuick(index, -1);
 
         // remove column objects
         removeColumn(index);
@@ -329,7 +323,7 @@ public class WalWriter implements Closeable {
         metrics.tableWriter().addCommittedRows(walDRowCounter);
     }
 
-    private void configureColumn(int type, int index) {
+    private void configureColumn(int index, int type) {
         final MemoryMA primary;
         final MemoryMA secondary;
 
@@ -359,53 +353,45 @@ public class WalWriter implements Closeable {
     private void configureColumnMemory(BaseRecordMetadata metadata) {
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
-            configureColumn(type, i);
+            configureColumn(i, type);
         }
     }
 
     private void configureSymbolTable(TableReader tableReader) {
         final BaseRecordMetadata metadata = tableReader.getMetadata();
         for (int i = 0; i < columnCount; i++) {
-            int type = metadata.getColumnType(i);
-            if (ColumnType.isSymbol(type)) {
-                final SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
-                        configuration,
-                        path.trimTo(rootLen),
-                        metadata.getColumnName(i),
-                        COLUMN_NAME_TXN_NONE,
-                        0,
-                        denseSymbolMapWriters.size(),
-                        SymbolValueCountCollector.NOOP
-                );
-
-                // copy symbols from main table to wal table
-                final SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
-                for (int j = 0; j < symbolMapReader.getSymbolCount(); j++) {
-                    symbolMapWriter.put(symbolMapReader.valueOf(j));
-                }
-
-                symbolMapWriters.extendAndSet(i, symbolMapWriter);
-                denseSymbolMapWriters.add(symbolMapWriter);
-                initSymbolCounts.add(symbolMapWriter.getSymbolCount());
-            } else {
-                initSymbolCounts.add(-1);
-            }
+            configureSymbolMapWriter(i, metadata.getColumnName(i), metadata.getColumnType(i), tableReader.getSymbolMapReader(i));
         }
     }
 
-    private void createSymbolMapWriter(CharSequence name) {
-        final SymbolMapWriter w = new SymbolMapWriter(
+    private void configureSymbolMapWriter(int columnIndex, CharSequence columnName, int columnType, SymbolMapReader symbolMapReader) {
+        if (!ColumnType.isSymbol(columnType)) {
+            // maintain sparse list of symbol writers
+            symbolMapWriters.extendAndSet(columnIndex, NullMapWriter.INSTANCE);
+            initSymbolCounts.add(-1);
+            return;
+        }
+
+        final SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
                 configuration,
-                path,
-                name,
+                path.trimTo(rootLen),
+                columnName,
                 COLUMN_NAME_TXN_NONE,
                 0,
                 denseSymbolMapWriters.size(),
                 SymbolValueCountCollector.NOOP
         );
-        denseSymbolMapWriters.add(w);
-        symbolMapWriters.extendAndSet(columnCount, w);
-        initSymbolCounts.add(w.getSymbolCount());
+
+        if (symbolMapReader != null) {
+            // copy symbols from main table to wal
+            for (int i = 0; i < symbolMapReader.getSymbolCount(); i++) {
+                symbolMapWriter.put(symbolMapReader.valueOf(i));
+            }
+        }
+
+        symbolMapWriters.extendAndSet(columnIndex, symbolMapWriter);
+        denseSymbolMapWriters.add(symbolMapWriter);
+        initSymbolCounts.add(symbolMapWriter.getSymbolCount());
     }
 
     private void doClose(boolean truncate) {
@@ -519,7 +505,7 @@ public class WalWriter implements Closeable {
             path.slash().put(waldSegmentCounter);
             final int pathLen = path.length();
             if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-                throw CairoException.instance(ff.errno()).put("Cannot create WAL-D segment directory: ").put(path);
+                throw CairoException.instance(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
             }
             path.trimTo(pathLen);
             assert columnCount > 0;
@@ -546,7 +532,7 @@ public class WalWriter implements Closeable {
                 }
             }
             writeMetadata(metadata, pathLen, liveColumnCount);
-            LOG.info().$("switched WAL-D segment [path='").$(path).$('\'').I$();
+            LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } catch (Throwable e) {
             distressed = true;
             throw e;
@@ -611,7 +597,7 @@ public class WalWriter implements Closeable {
     }
 
     private void removeSymbolMapWriter(int index) {
-        MapWriter writer = symbolMapWriters.getAndSetQuick(index, NullMapWriter.INSTANCE);
+        final MapWriter writer = symbolMapWriters.getAndSetQuick(index, NullMapWriter.INSTANCE);
         if (writer != null && writer != NullMapWriter.INSTANCE) {
             int symColIndex = denseSymbolMapWriters.remove(writer);
             // Shift all subsequent symbol indexes by 1 back
@@ -622,6 +608,7 @@ public class WalWriter implements Closeable {
             }
             Misc.free(writer);
         }
+        initSymbolCounts.setQuick(index, -1);
     }
 
     private void rowAppend(ObjList<Runnable> activeNullSetters) {

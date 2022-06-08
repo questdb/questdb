@@ -697,7 +697,7 @@ public class TableWriter implements Closeable, WalWriterFactory {
 
         commit();
 
-        MapWriter symbolMapWriter = getSymbolMapWriter(columnIndex);
+        final MapWriter symbolMapWriter = symbolMapWriters.getQuick(columnIndex);
         if (symbolMapWriter.isCached() != cache) {
             symbolMapWriter.updateCacheFlag(cache);
         } else {
@@ -2473,10 +2473,6 @@ public class TableWriter implements Closeable, WalWriterFactory {
     private MemoryMA getSecondaryColumn(int column) {
         assert column < columnCount : "Column index is out of bounds: " + column + " >= " + columnCount;
         return columns.getQuick(getSecondaryColumnIndex(column));
-    }
-
-    private MapWriter getSymbolMapWriter(int columnIndex) {
-        return symbolMapWriters.getQuick(columnIndex);
     }
 
     private boolean hasO3() {

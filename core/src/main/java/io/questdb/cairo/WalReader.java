@@ -183,7 +183,7 @@ public class WalReader implements Closeable, SymbolTableSource {
     }
 
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
-        return symbolMapReaders.getQuick(columnIndex);
+        return symbolMapReaders.getQuiet(columnIndex);
     }
 
     public SymbolMapDiff getSymbolMapDiff(int columnIndex) {

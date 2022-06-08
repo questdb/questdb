@@ -71,6 +71,6 @@ public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
     }
 
     public SymbolMapDiff getSymbolMapDiff(int columnIndex) {
-        return symbolMapDiffs.get(columnIndex);
+        return symbolMapDiffs.getQuiet(columnIndex);
     }
 }

@@ -44,7 +44,7 @@ public class WalWriterMetadataCache extends BaseRecordMetadata {
         for (int i = 0; i < metadata.getColumnCount(); i++) {
             final CharSequence name = metadata.getColumnName(i);
             final int type = metadata.getColumnType(i);
-            addColumn(name, type, i);
+            addColumn(i, name, type);
         }
         return this;
     }
@@ -56,7 +56,7 @@ public class WalWriterMetadataCache extends BaseRecordMetadata {
         timestampIndex = -1;
     }
 
-    void addColumn(CharSequence columnName, int type, int columnIndex) {
+    void addColumn(int columnIndex, CharSequence columnName, int type) {
         final String name = columnName.toString();
         columnNameIndexMap.put(name, columnNameIndexMap.size());
         if (ColumnType.isSymbol(type)) {
