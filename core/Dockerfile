@@ -6,7 +6,7 @@ RUN apt-get update \
   openjdk-17-jdk-headless=17.0.3+7-1~deb11u1 openjdk-17-jre-headless=17.0.3+7-1~deb11u1
 
 
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV JAVA_HOME="/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)"
 WORKDIR /build
 
 RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output maven.zip \
