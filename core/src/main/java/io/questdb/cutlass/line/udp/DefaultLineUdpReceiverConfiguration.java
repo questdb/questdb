@@ -118,6 +118,16 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     }
 
     @Override
+    public boolean getAutoCreateNewColumns() {
+        return true;
+    }
+
+    @Override
+    public boolean getAutoCreateNewTables() {
+        return true;
+    }
+
+    @Override
     public int getCommitMode() {
         return CommitMode.NOSYNC;
     }

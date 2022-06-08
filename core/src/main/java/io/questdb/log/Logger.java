@@ -358,7 +358,7 @@ class Logger implements LogRecord, Log {
             return NullLogRecord.INSTANCE;
         }
 
-        final long cursor = seq.nextBully();
+        final long cursor = seq.next();
         if (cursor < 0) {
             return NullLogRecord.INSTANCE;
         }
