@@ -197,8 +197,6 @@ public final class DelegatingTlsChannel implements LineChannel {
                     break;
                 case FINISHED:
                     throw new LineSenderException("getHandshakeStatus() returns FINISHED. It should not be possible.");
-                case NEED_UNWRAP_AGAIN:
-                    // fall-through
                 default:
                     throw new LineSenderException(status + "not supported");
             }
