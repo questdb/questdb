@@ -27,9 +27,13 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.test.tools.AssumeDockerAvailableTestRule;
 import io.questdb.test.tools.TestUtils;
 import org.junit.ClassRule;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestRule;
+import org.testcontainers.DockerClientFactory;
 import org.testcontainers.Testcontainers;
 import org.testcontainers.containers.BindMode;
 import org.testcontainers.containers.GenericContainer;
@@ -38,6 +42,7 @@ import org.testcontainers.utility.DockerImageName;
 import java.util.UUID;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assume.assumeTrue;
 
 public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
 
@@ -47,9 +52,11 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
     private static final String TRUSTSTORE_PATH = "/keystore/haproxy_ca.jks";
     private static final char[] TRUSTSTORE_PASSWORD = "questdb".toCharArray();
 
-
     @ClassRule
-    public static GenericContainer<?> haProxy = new GenericContainer<>(HA_PROXY_IMAGE)
+    public static TestRule DOCKER_AVAILABLE = AssumeDockerAvailableTestRule.INSTANCE;
+
+    @Rule
+    public GenericContainer<?> haProxy = new GenericContainer<>(HA_PROXY_IMAGE).withReuse(true)
             .withClasspathResourceMapping("/io/questdb/cutlass/line/tcp/haproxy.pem", "/usr/local/etc/haproxy/haproxy.pem", BindMode.READ_ONLY)
             .withClasspathResourceMapping("/io/questdb/cutlass/line/tcp/haproxy.cfg", "/usr/local/etc/haproxy/haproxy.cfg", BindMode.READ_ONLY)
             .withExposedPorts(8443)
@@ -83,7 +90,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         String tableName = UUID.randomUUID().toString();
         int hugeBufferSize = 1024 * 1024;
-        int rows = 1_000_000;
+        int rows = 100_000;
         runInContext(c -> {
             Testcontainers.exposeHostPorts(9002);
 
@@ -177,6 +184,15 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
             } else {
                 System.clearProperty(key);
             }
+        }
+    }
+
+    private static boolean isDockerAvailable() {
+        try {
+            DockerClientFactory.instance().client();
+            return true;
+        } catch (Throwable ex) {
+            return false;
         }
     }
 }
