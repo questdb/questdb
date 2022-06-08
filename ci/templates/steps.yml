@@ -14,7 +14,7 @@ steps:
   - task: DockerInstaller@0
     displayName: Docker Installer
     inputs:
-      dockerVersion: 17.09.0-ce
+      dockerVersion: 20.10.9
       releaseType: stable
   - task: Maven@3
     displayName: "Compile with Maven"
