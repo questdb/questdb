@@ -26,13 +26,18 @@ package org.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.tcp.PlanTcpLineChannel;
 import io.questdb.network.Net;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+
+import java.io.IOException;
 
 public class LineTCPSenderMainVarLenStrings {
     private static final StringSink sink = new StringSink();
@@ -53,7 +58,8 @@ public class LineTCPSenderMainVarLenStrings {
                 path.put(args[0]).$();
                 logFd = ff.openRW(path, CairoConfiguration.O_NONE);
             }
-            try (LineTcpSender sender = new LoggingLineTcpSender(Net.parseIPv4(hostIPv4), port, bufferCapacity, logFd, ff)) {
+            PlanTcpLineChannel tcpLineChannel = new PlanTcpLineChannel(NetworkFacadeImpl.INSTANCE, Net.parseIPv4(hostIPv4), port, bufferCapacity * 2);
+            try (LineTcpSender sender = new LineTcpSender(new LoggingLineChannel(tcpLineChannel, logFd, ff), bufferCapacity)) {
                 for (int i = 0; i < count; i++) {
                     sender.metric("md_msgs");
                     sender
@@ -90,26 +96,42 @@ public class LineTCPSenderMainVarLenStrings {
         return sink;
     }
 
-    private static class LoggingLineTcpSender extends LineTcpSender {
+    private static class LoggingLineChannel implements LineChannel {
+        private final LineChannel delegate;
         private final long outFileFd;
         private final FilesFacade ff;
         private long fileOffset = 0;
 
-        public LoggingLineTcpSender(int sendToIPv4Address, int sendToPort, int bufferCapacity, long outFileFd, FilesFacade ff) {
-            super(sendToIPv4Address, sendToPort, bufferCapacity);
+        private LoggingLineChannel(LineChannel delegate, long outFileFd, FilesFacade ff) {
+            this.delegate = delegate;
             this.outFileFd = outFileFd;
             this.ff = ff;
         }
 
         @Override
-        protected void sendToSocket(long fd, long lo, long sockaddr, int len) {
+        public void close() throws IOException {
+            delegate.close();
+        }
+
+        @Override
+        public void send(long ptr, int len) {
             if (outFileFd > -1) {
-                if (ff.write(outFileFd, lo, len, fileOffset) != len) {
+                if (ff.write(outFileFd, ptr, len, fileOffset) != len) {
                     throw CairoException.instance(ff.errno()).put("Cannot write to file");
                 }
                 fileOffset += len;
             }
-            super.sendToSocket(fd, lo, sockaddr, len);
+            delegate.send(ptr, len);
+        }
+
+        @Override
+        public int receive(long ptr, int len) {
+            return delegate.receive(ptr, len);
+        }
+
+        @Override
+        public int errno() {
+            return delegate.errno();
         }
     }
 }

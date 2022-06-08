@@ -44,7 +44,7 @@ public class LineTcpSender extends AbstractLineSender {
         super(new PlanTcpLineChannel(NetworkFacadeImpl.INSTANCE, sendToIPv4Address, sendToPort, bufferCapacity * 2), bufferCapacity);
     }
 
-    private LineTcpSender(LineChannel channel, int bufferCapacity) {
+    public LineTcpSender(LineChannel channel, int bufferCapacity) {
         super(channel, bufferCapacity);
     }
 
