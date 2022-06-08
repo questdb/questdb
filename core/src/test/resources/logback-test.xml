@@ -32,7 +32,7 @@
         </layout>
     </appender>
 
-    <root level="info">
+    <root level="debug">
         <appender-ref ref="CONSOLE"/>
     </root>
 
