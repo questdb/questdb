@@ -8,7 +8,6 @@ RUN apt-get update \
 
 
 ENV JAVA_HOME="/usr/lib/jvm/java-17-openjdk"
-RUN echo $JAVA_HOME
 WORKDIR /build
 
 RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output maven.zip \
