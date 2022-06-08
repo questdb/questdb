@@ -60,9 +60,9 @@ import java.io.IOException;
  * - scans each chunk and extract timestamps and line offsets to per-partition index files
  * (index files are stored as $inputWorkDir/$inputFileName/$partitionName/$workerId_$chunkNumber)
  * then it sorts each file by timestamp value
- * - merges all partiton index chunks into one index file per partition
+ * - merges all partition index chunks into one index file per partition
  * - loads partitions into separate tables using merged indexes (one table per worker)
- * - deattaches partitions from temp tables and attaches them to final table
+ * - move partitions from temp tables and attaches them to final table
  * - removes temp tables and index files
  * <p>
  */
@@ -113,6 +113,7 @@ public class FileIndexer implements Closeable, Mutable {
     private int partitionBy;
     private byte columnDelimiter;
     private TimestampAdapter timestampAdapter;
+    private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
     private boolean forceHeader;
     //input params end
     //index of timestamp column in input file
@@ -135,6 +136,8 @@ public class FileIndexer implements Closeable, Mutable {
     private final CairoEngine cairoEngine;
     private final CairoConfiguration configuration;
     private int atomicity;
+
+    private final TableStructureAdapter targetTableStructure;
 
     public FileIndexer(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
@@ -163,41 +166,41 @@ public class FileIndexer implements Closeable, Mutable {
         this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
         this.defaultDateLocale = textConfiguration.getDefaultDateLocale();
 
+        this.targetTableStructure = new TableStructureAdapter(configuration);
+
         for (int i = 0; i < workerCount; i++) {
             contextObjList.add(new TaskContext());
             partitionKeys.add(new LongList());
         }
     }
 
-    @Override
-    public void clear() {
-        doneLatch.reset();
-        chunkStats.clear();
-        indexChunkStats.clear();
-        indexStats.clear();
-        partitionNames.clear();
-        partitionNameSink.clear();
-        utf8Sink.clear();
-        typeManager.clear();
-        textMetadataDetector.clear();
-
-        inputFileName = null;
-        tableName = null;
-        timestampColumn = null;
-        timestampIndex = -1;
-        partitionBy = -1;
-        columnDelimiter = -1;
-        timestampAdapter = null;
-        forceHeader = false;
-        maxLineLength = 0;
-        atomicity = Atomicity.SKIP_ALL;
-
-        for (int i = 0; i < contextObjList.size(); i++) {
-            contextObjList.get(i).clear();
-        }
-
-        for (int i = 0; i < partitionKeys.size(); i++) {
-            partitionKeys.get(i).clear();
+    public static void createTable(final FilesFacade ff, int mkDirMode, final CharSequence root, final CharSequence tableName, TableStructure structure, int tableId) {
+        try (Path path = new Path()) {
+            switch (TableUtils.exists(ff, path, root, tableName, 0, tableName.length())) {
+                case TableUtils.TABLE_EXISTS:
+                    int errno;
+                    if ((errno = ff.rmdir(path)) != 0) {
+                        LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
+                        throw CairoException.instance(errno).put("Table remove failed");
+                    }
+                case TableUtils.TABLE_DOES_NOT_EXIST:
+                    try (MemoryMARW memory = Vm.getMARWInstance()) {
+                        TableUtils.createTable(
+                                ff,
+                                root,
+                                mkDirMode,
+                                memory,
+                                path,
+                                tableName,
+                                structure,
+                                ColumnType.VERSION,
+                                tableId
+                        );
+                    }
+                    break;
+                default:
+                    throw CairoException.instance(0).put("name is reserved [tableName=").put(tableName).put(']');
+            }
         }
     }
 
@@ -394,6 +397,64 @@ public class FileIndexer implements Closeable, Mutable {
         }
     }
 
+    @Override
+    public void clear() {
+        doneLatch.reset();
+        chunkStats.clear();
+        indexChunkStats.clear();
+        indexStats.clear();
+        partitionNames.clear();
+        partitionNameSink.clear();
+        utf8Sink.clear();
+        typeManager.clear();
+        textMetadataDetector.clear();
+        otherToTimestampAdapterPool.clear();
+
+        inputFileName = null;
+        tableName = null;
+        timestampColumn = null;
+        timestampIndex = -1;
+        partitionBy = -1;
+        columnDelimiter = -1;
+        timestampAdapter = null;
+        forceHeader = false;
+        maxLineLength = 0;
+        atomicity = Atomicity.SKIP_ALL;
+
+        for (int i = 0; i < contextObjList.size(); i++) {
+            contextObjList.get(i).clear();
+        }
+
+        for (int i = 0; i < partitionKeys.size(); i++) {
+            partitionKeys.get(i).clear();
+        }
+    }
+
+    private void removeWorkDir() {
+        Path workDirPath = tmpPath.of(importRoot).slash$();
+
+        if (ff.exists(workDirPath)) {
+            LOG.info().$("removing import directory path='").$(workDirPath).$("'").$();
+
+            int errno = ff.rmdir(workDirPath);
+            if (errno != 0) {
+                throw CairoException.instance(errno).put("Can't remove import directory path='").put(workDirPath).put("' errno=").put(errno);
+            }
+        }
+    }
+
+    private void createWorkDir() {
+        removeWorkDir();
+
+        Path workDirPath = tmpPath.of(importRoot).slash$();
+        int errno = ff.mkdir(workDirPath, dirMode);
+        if (errno != 0) {
+            throw CairoException.instance(errno).put("Can't create import work dir ").put(workDirPath).put(" errno=").put(errno);
+        }
+
+        LOG.info().$("created import dir ").$(workDirPath).$();
+    }
+
     public void parseStructure() throws TextException {
         final int textAnalysisMaxLines = 10;
         final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
@@ -434,9 +495,7 @@ public class FileIndexer implements Closeable, Mutable {
                 textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
                 forceHeader = textMetadataDetector.isHeader();
 
-                final TaskContext context = contextObjList.get(0);
-                context.setIgnoreColumnIndexedFlad(false);
-                context.prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), tmpPath, typeManager);
+                prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), tmpPath, typeManager);
                 prepareContexts();
             }
         } finally {
@@ -444,53 +503,6 @@ public class FileIndexer implements Closeable, Mutable {
                 ff.close(fd);
             }
             Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    private void removeWorkDir() {
-        Path workDirPath = tmpPath.of(importRoot).slash$();
-
-        if (ff.exists(workDirPath)) {
-            LOG.info().$("removing import directory path='").$(workDirPath).$("'").$();
-
-            int errno = ff.rmdir(workDirPath);
-            if (errno != 0) {
-                throw CairoException.instance(errno).put("Can't remove import directory path='").put(workDirPath).put("' errno=").put(errno);
-            }
-        }
-    }
-
-    private void createWorkDir() {
-        removeWorkDir();
-
-        Path workDirPath = tmpPath.of(importRoot).slash$();
-        int errno = ff.mkdir(workDirPath, dirMode);
-        if (errno != 0) {
-            throw CairoException.instance(errno).put("Can't create import work dir ").put(workDirPath).put(" errno=").put(errno);
-        }
-
-        LOG.info().$("created import dir ").$(workDirPath).$();
-    }
-
-    public void process() throws SqlException, TextException {
-        long fd = ff.openRO(inputFilePath);
-        if (fd < 0) {
-            throw TextException.$("Can't open input file=").put(inputFilePath).put(", errno=").put(ff.errno());
-        }
-
-        try (TableWriter writer = cairoEngine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, LOCK_REASON)) {
-            findChunkBoundaries(fd);
-            indexChunks();
-            IntList taskDistribution = importPartitions();
-            int taskCount = taskDistribution.size() / 3;
-            parallelMergeSymbolTables(taskCount, writer);
-            parallelUpdateSymbolKeys(taskCount, writer);
-            parallelBuildColumnIndexes(taskCount, writer);
-            movePartitionsToDst(taskDistribution, taskCount);
-            attachPartititons(writer);
-        } finally {
-            removeWorkDir();
-            ff.close(fd);
         }
     }
 
@@ -546,19 +558,29 @@ public class FileIndexer implements Closeable, Mutable {
         }
     }
 
-    void prepareContexts() {
-        boolean forceHeader = this.forceHeader;
-        for (int i = 0; i < contextObjList.size(); i++) {
-            TaskContext context = contextObjList.get(i);
-            context.of(i, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), forceHeader);
-            context.setIgnoreColumnIndexedFlad(true);
-            if (forceHeader) {
-                forceHeader = false;//Assumption: only first splitter will process file with header
-            }
+    public void process() throws SqlException, TextException {
+        long fd = ff.openRO(inputFilePath);
+        if (fd < 0) {
+            throw TextException.$("Can't open input file=").put(inputFilePath).put(", errno=").put(ff.errno());
+        }
+
+        try (TableWriter writer = cairoEngine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, LOCK_REASON)) {
+            findChunkBoundaries(fd);
+            indexChunks();
+            IntList taskDistribution = importPartitions();
+            int taskCount = taskDistribution.size() / 3;
+            parallelMergeSymbolTables(taskCount, writer);
+            parallelUpdateSymbolKeys(taskCount, writer);
+            parallelBuildColumnIndexes(taskCount, writer);
+            movePartitionsToDst(taskDistribution, taskCount);
+            attachPartitions(writer);
+        } finally {
+            removeWorkDir();
+            ff.close(fd);
         }
     }
 
-    private void attachPartititons(TableWriter writer) throws TextException {
+    private void attachPartitions(TableWriter writer) throws TextException {
         if (partitionNames.size() == 0) {
             throw TextException.$("No partitions to attach found");
         }
@@ -759,6 +781,334 @@ public class FileIndexer implements Closeable, Mutable {
         return maxLineLength;
     }
 
+    private void logTypeError(int i, int type) {
+        LOG.info()
+                .$("mis-detected [table=").$(tableName)
+                .$(", column=").$(i)
+                .$(", type=").$(ColumnType.nameOf(type))
+                .$(']').$();
+    }
+
+    private TableWriter openWriterAndOverrideImportMetadata(
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            CairoSecurityContext cairoSecurityContext,
+            TypeManager typeManager
+    ) throws TextException {
+        TableWriter writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
+        RecordMetadata metadata = writer.getMetadata();
+
+        if (metadata.getColumnCount() < types.size()) {
+            writer.close();
+            throw TextException.$("column count mismatch [textColumnCount=").put(types.size())
+                    .put(", tableColumnCount=").put(metadata.getColumnCount())
+                    .put(", table=").put(tableName)
+                    .put(']');
+        }
+
+        //remap index is only needed to adjust names and types
+        //workers will import data into temp tables without remapping
+        IntList remapIndex = new IntList();
+        remapIndex.ensureCapacity(types.size());
+        for (int i = 0, n = types.size(); i < n; i++) {
+
+            final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
+            final int idx = (columnIndex > -1 && columnIndex != i) ? columnIndex : i; // check for strict match ?
+            remapIndex.set(i, idx);
+
+            final int columnType = metadata.getColumnType(idx);
+            final TypeAdapter detectedAdapter = types.getQuick(i);
+            final int detectedType = detectedAdapter.getType();
+            if (detectedType != columnType) {
+                // when DATE type is mis-detected as STRING we
+                // would not have either date format nor locale to
+                // use when populating this field
+                switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.DATE:
+                        logTypeError(i, detectedType);
+                        types.setQuick(i, BadDateAdapter.INSTANCE);
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        if (detectedAdapter instanceof TimestampCompatibleAdapter) {
+                            types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter));
+                        } else {
+                            logTypeError(i, detectedType);
+                            types.setQuick(i, BadTimestampAdapter.INSTANCE);
+                        }
+                        break;
+                    case ColumnType.BINARY:
+                        writer.close();
+                        throw CairoException.instance(0).put("cannot import text into BINARY column [index=").put(i).put(']');
+                    default:
+                        types.setQuick(i, typeManager.getTypeAdapter(columnType));
+                        break;
+                }
+            }
+        }
+
+        //at this point we've to use target table columns names otherwise partition attach could fail on metadata differences
+        //(if header names or synthetic names are different from table's)
+        for (int i = 0, n = remapIndex.size(); i < n; i++) {
+            names.set(i, metadata.getColumnName(remapIndex.get(i)));
+        }
+
+        //add table columns missing in input file
+        if (names.size() < metadata.getColumnCount()) {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                boolean unused = true;
+
+                for (int r = 0, rn = remapIndex.size(); r < rn; r++) {
+                    if (remapIndex.get(r) == i) {
+                        unused = false;
+                        break;
+                    }
+                }
+
+                if (unused) {
+                    names.add(metadata.getColumnName(i));
+                    types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
+                }
+            }
+        }
+
+        return writer;
+    }
+
+    void prepareContexts() {
+        targetTableStructure.setIgnoreColumnIndexedFlag(true);
+        boolean forceHeader = this.forceHeader;
+        for (int i = 0; i < contextObjList.size(); i++) {
+            TaskContext context = contextObjList.get(i);
+            context.of(i, textMetadataDetector.getColumnTypes(), forceHeader);
+            if (forceHeader) {
+                forceHeader = false;//Assumption: only first splitter will process file with header
+            }
+        }
+    }
+
+    void prepareTable(
+            CairoSecurityContext cairoSecurityContext,
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            Path path,
+            TypeManager typeManager
+    ) throws TextException {
+
+        if (types.size() == 0) {
+            throw CairoException.instance(0).put("cannot determine text structure");
+        }
+        if (partitionBy == PartitionBy.NONE) {
+            throw CairoException.instance(-1).put("partition by unit can't be NONE for parallel import");
+        }
+        TableWriter writer = null;
+        if (partitionBy < 0) {
+            partitionBy = PartitionBy.NONE;
+        }
+
+        if (timestampIndex == -1 && timestampColumn != null) {
+            for (int i = 0, n = names.size(); i < n; i++) {
+                if (Chars.equalsIgnoreCase(names.get(i), timestampColumn)) {
+                    timestampIndex = i;
+                    break;
+                }
+            }
+        }
+
+        try {
+            switch (cairoEngine.getStatus(cairoSecurityContext, path, tableName)) {
+                case TableUtils.TABLE_DOES_NOT_EXIST:
+                    if (partitionBy == PartitionBy.NONE) {
+                        throw TextException.$("partition by unit must be set when importing to new table");
+                    }
+                    if (timestampColumn == null) {
+                        throw TextException.$("timestamp column must be set when importing to new table");
+                    }
+                    if (timestampIndex == -1) {
+                        throw TextException.$("timestamp column '").put(timestampColumn).put("' not found in file header");
+                    }
+
+                    validate(names, types, null, NO_INDEX);
+                    targetTableStructure.of(tableName, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), timestampIndex, partitionBy);
+                    createTable(ff, dirMode, configuration.getRoot(), tableName, targetTableStructure, (int) cairoEngine.getNextTableId());
+                    writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
+                    partitionBy = writer.getPartitionBy();
+                    break;
+                case TableUtils.TABLE_EXISTS:
+                    writer = openWriterAndOverrideImportMetadata(names, types, cairoSecurityContext, typeManager);
+
+                    if (writer.getRowCount() > 0) {
+                        throw CairoException.instance(0).put("target table must be empty [table=").put(tableName).put(']');
+                    }
+
+                    CharSequence designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
+                    int designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
+                    if (PartitionBy.isPartitioned(partitionBy) && partitionBy != writer.getPartitionBy()) {
+                        throw CairoException.instance(-1).put("declared partition by unit doesn't match table's");
+                    }
+                    partitionBy = writer.getPartitionBy();
+                    if (!PartitionBy.isPartitioned(partitionBy)) {
+                        throw CairoException.instance(-1).put("target table is not partitioned");
+                    }
+                    validate(names, types, designatedTimestampColumnName, designatedTimestampIndex);
+                    targetTableStructure.of(tableName, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), timestampIndex, partitionBy);
+                    break;
+                default:
+                    throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
+            }
+        } finally {
+            if (writer != null) {
+                writer.close();
+            }
+        }
+
+        if (timestampIndex == -1) {
+            throw CairoException.instance(-1).put("timestamp column not found");
+        }
+
+        if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
+            timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
+        }
+    }
+
+    void validate(ObjList<CharSequence> names,
+                  ObjList<TypeAdapter> types,
+                  CharSequence designatedTimestampColumnName, int designatedTimestampIndex) throws TextException {
+        if (timestampColumn == null && designatedTimestampColumnName == null) {
+            timestampIndex = NO_INDEX;
+        } else if (timestampColumn != null) {
+            timestampIndex = names.indexOf(timestampColumn);
+            if (timestampIndex == NO_INDEX) {
+                throw TextException.$("invalid timestamp column '").put(timestampColumn).put('\'');
+            }
+        } else {
+            timestampIndex = names.indexOf(designatedTimestampColumnName);
+            if (timestampIndex == NO_INDEX) {
+                // columns in the imported file may not have headers, then use writer timestamp index
+                timestampIndex = designatedTimestampIndex;
+            }
+        }
+
+        if (timestampIndex != NO_INDEX) {
+            final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
+            final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
+            if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
+                throw TextException.$("column no=").put(timestampIndex).put(", name='").put(timestampColumn).put("' is not a timestamp");
+            }
+        }
+    }
+
+    private static class TableStructureAdapter implements TableStructure {
+        private final CairoConfiguration configuration;
+        private final LongList columnBits = new LongList();
+        private CharSequence tableName;
+        private ObjList<CharSequence> columnNames;
+        private int timestampColumnIndex;
+        private int partitionBy;
+        private boolean ignoreColumnIndexedFlag;
+
+        public TableStructureAdapter(CairoConfiguration configuration) {
+            this.configuration = configuration;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return columnNames.size();
+        }
+
+        @Override
+        public CharSequence getColumnName(int columnIndex) {
+            return columnNames.getQuick(columnIndex);
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            return Numbers.decodeLowInt(columnBits.getQuick(columnIndex));
+        }
+
+        @Override
+        public long getColumnHash(int columnIndex) {
+            return configuration.getRandom().nextLong();
+        }
+
+        @Override
+        public int getIndexBlockCapacity(int columnIndex) {
+            return configuration.getIndexValueBlockSize();
+        }
+
+        @Override
+        public boolean isIndexed(int columnIndex) {
+            return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+            return false;
+        }
+
+        @Override
+        public int getPartitionBy() {
+            return partitionBy;
+        }
+
+        @Override
+        public boolean getSymbolCacheFlag(int columnIndex) {
+            return false;
+        }
+
+        @Override
+        public int getSymbolCapacity(int columnIndex) {
+            return configuration.getDefaultSymbolCapacity();
+        }
+
+        @Override
+        public CharSequence getTableName() {
+            return tableName;
+        }
+
+        public void setTableName(final CharSequence tableName) {
+            this.tableName = tableName;
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return timestampColumnIndex;
+        }
+
+        @Override
+        public int getMaxUncommittedRows() {
+            return configuration.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getCommitLag() {
+            return configuration.getCommitLag();
+        }
+
+        public void of(final CharSequence tableName,
+                       final ObjList<CharSequence> names,
+                       final ObjList<TypeAdapter> types,
+                       final int timestampColumnIndex,
+                       final int partitionBy
+        ) {
+            this.tableName = tableName;
+            this.columnNames = names;
+
+            this.columnBits.clear();
+            for (int i = 0, size = types.size(); i < size; i++) {
+                final TypeAdapter adapter = types.getQuick(i);
+                this.columnBits.add(Numbers.encodeLowHighInts(adapter.getType(), adapter.isIndexed() ? 1 : 0));
+            }
+
+            this.timestampColumnIndex = timestampColumnIndex;
+            this.partitionBy = partitionBy;
+        }
+
+        public void setIgnoreColumnIndexedFlag(boolean flag) {
+            this.ignoreColumnIndexedFlag = flag;
+        }
+
+    }
+
     public class TaskContext implements Closeable, Mutable {
         private final DirectLongList mergeIndexes = new DirectLongList(64, MemoryTag.NATIVE_LONG_LIST);
         private final FileSplitter splitter;
@@ -768,17 +1118,12 @@ public class FileIndexer implements Closeable, Mutable {
         private final DirectCharSink utf8Sink;
 
         private final Path path = new Path();
-        private final MemoryMARW memory = Vm.getMARWInstance();
-        private final TableStructureAdapter structureAdapter = new TableStructureAdapter();
 
-        private CharSequence currentTableName;
-        private ObjList<CharSequence> names;
         private ObjList<TypeAdapter> types;
         private TimestampAdapter timestampAdapter;
         private TableWriter tableWriterRef;
-        private boolean ignoreColumnIndexedFlad = true;
+        private final StringSink tableNameSink = new StringSink();
 
-        private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
 
         public TaskContext() {
             final TextConfiguration textConfiguration = configuration.getTextConfiguration();
@@ -792,20 +1137,24 @@ public class FileIndexer implements Closeable, Mutable {
             splitter.index(lo, hi, lineNumber, indexStats, index, partitionKeys);
         }
 
-        @Override
-        public void clear() {
-            mergeIndexes.clear();
-            splitter.clear();
-            lexer.clear();
-            typeManager.clear();
-            utf8Sink.clear();
-            if (types != null) {
-                types.clear();
+        public void buildColumnIndexesStage(int index, RecordMetadata metadata) {
+            tableNameSink.clear();
+            tableNameSink.put(tableName).put('_').put(index);
+            final int columnCount = metadata.getColumnCount();
+            try (TableWriter w = new TableWriter(configuration,
+                    tableNameSink,
+                    cairoEngine.getMessageBus(),
+                    null,
+                    true,
+                    DefaultLifecycleManager.INSTANCE,
+                    importRoot,
+                    cairoEngine.getMetrics())) {
+                for (int i = 0; i < columnCount; i++) {
+                    if (metadata.isColumnIndexed(i)) {
+                        w.addIndex(metadata.getColumnName(i), metadata.getIndexValueBlockCapacity(i));
+                    }
+                }
             }
-            otherToTimestampAdapterPool.clear();
-            timestampAdapter = null;
-            timestampIndex = -1;
-            timestampColumn = null;
         }
 
         @Override
@@ -816,238 +1165,10 @@ public class FileIndexer implements Closeable, Mutable {
             lexer.close();
             utf8Sink.close();
             path.close();
-            memory.close();
         }
 
         public void countQuotesStage(int index, long lo, long hi, final LongList chunkStats) throws TextException {
             splitter.countQuotes(lo, hi, chunkStats, index);
-        }
-
-        void prepareTable(
-                CairoSecurityContext cairoSecurityContext,
-                ObjList<CharSequence> names,
-                ObjList<TypeAdapter> detectedTypes,
-                Path path,
-                TypeManager typeManager
-        ) throws TextException {
-            this.names = names;
-            this.types = detectedTypes;
-
-            if (detectedTypes.size() == 0) {
-                throw CairoException.instance(0).put("cannot determine text structure");
-            }
-            if (partitionBy == PartitionBy.NONE) {
-                throw CairoException.instance(-1).put("partition by unit can't be NONE for parallel import");
-            }
-            TableWriter writer = null;
-            if (partitionBy < 0) {
-                partitionBy = PartitionBy.NONE;
-            }
-
-            if (timestampIndex == -1 && timestampColumn != null) {
-                for (int i = 0, n = names.size(); i < n; i++) {
-                    if (Chars.equalsIgnoreCase(names.get(i), timestampColumn)) {
-                        timestampIndex = i;
-                        break;
-                    }
-                }
-            }
-
-            try {
-                switch (cairoEngine.getStatus(cairoSecurityContext, path, tableName)) {
-                    case TableUtils.TABLE_DOES_NOT_EXIST:
-                        if (partitionBy == PartitionBy.NONE) {
-                            throw TextException.$("partition by unit must be set when importing to new table");
-                        }
-                        if (timestampColumn == null) {
-                            throw TextException.$("timestamp column must be set when importing to new table");
-                        }
-                        if (timestampIndex == -1) {
-                            throw TextException.$("timestamp column '").put(timestampColumn).put("' not found in file header");
-                        }
-
-                        validate(null, NO_INDEX);
-                        createTable(configuration.getRoot(), tableName);
-                        writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
-                        partitionBy = writer.getPartitionBy();
-                        break;
-                    case TableUtils.TABLE_EXISTS:
-                        writer = openWriterAndOverrideImportMetadata(names, detectedTypes, cairoSecurityContext, typeManager);
-
-                        if (writer.getRowCount() > 0) {
-                            throw CairoException.instance(0).put("target table must be empty [table=").put(tableName).put(']');
-                        }
-
-                        CharSequence designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
-                        int designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
-                        if (PartitionBy.isPartitioned(partitionBy) && partitionBy != writer.getPartitionBy()) {
-                            throw CairoException.instance(-1).put("declared partition by unit doesn't match table's");
-                        }
-                        partitionBy = writer.getPartitionBy();
-                        if (!PartitionBy.isPartitioned(partitionBy)) {
-                            throw CairoException.instance(-1).put("target table is not partitioned");
-                        }
-                        validate(designatedTimestampColumnName, designatedTimestampIndex);
-                        break;
-                    default:
-                        throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
-                }
-            } finally {
-                if (writer != null) {
-                    writer.close();
-                }
-            }
-
-            if (timestampIndex == -1) {
-                throw CairoException.instance(-1).put("timestamp column not found");
-            }
-
-            if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
-                timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
-            }
-        }
-
-        void validate(CharSequence designatedTimestampColumnName, int designatedTimestampIndex) throws TextException {
-            if (timestampColumn == null && designatedTimestampColumnName == null) {
-                timestampIndex = NO_INDEX;
-            } else if (timestampColumn != null) {
-                timestampIndex = names.indexOf(timestampColumn);
-                if (timestampIndex == NO_INDEX) {
-                    throw TextException.$("invalid timestamp column '").put(timestampColumn).put('\'');
-                }
-            } else {
-                timestampIndex = names.indexOf(designatedTimestampColumnName);
-                if (timestampIndex == NO_INDEX) {
-                    // columns in the imported file may not have headers, then use writer timestamp index
-                    timestampIndex = designatedTimestampIndex;
-                }
-            }
-
-            if (timestampIndex != NO_INDEX) {
-                final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
-                final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
-                if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
-                    throw TextException.$("column no=").put(timestampIndex).put(", name='").put(timestampColumn).put("' is not a timestamp");
-                }
-            }
-        }
-
-        private TableWriter openWriterAndOverrideImportMetadata(
-                ObjList<CharSequence> names,
-                ObjList<TypeAdapter> detectedTypes,
-                CairoSecurityContext cairoSecurityContext,
-                TypeManager typeManager
-        ) throws TextException {
-            TableWriter writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
-            RecordMetadata metadata = writer.getMetadata();
-
-            if (metadata.getColumnCount() < detectedTypes.size()) {
-                writer.close();
-                throw TextException.$("column count mismatch [textColumnCount=").put(detectedTypes.size())
-                        .put(", tableColumnCount=").put(metadata.getColumnCount())
-                        .put(", table=").put(tableName)
-                        .put(']');
-            }
-
-            this.types = detectedTypes;
-
-            //remap index is only needed to adjust names and types
-            //workers will import data into temp tables without remapping
-            IntList remapIndex = new IntList();
-            remapIndex.ensureCapacity(this.types.size());
-            for (int i = 0, n = this.types.size(); i < n; i++) {
-
-                final int columnIndex = metadata.getColumnIndexQuiet(names.getQuick(i));
-                final int idx = (columnIndex > -1 && columnIndex != i) ? columnIndex : i; // check for strict match ?
-                remapIndex.set(i, idx);
-
-                final int columnType = metadata.getColumnType(idx);
-                final TypeAdapter detectedAdapter = this.types.getQuick(i);
-                final int detectedType = detectedAdapter.getType();
-                if (detectedType != columnType) {
-                    // when DATE type is mis-detected as STRING we
-                    // would not have either date format nor locale to
-                    // use when populating this field
-                    switch (ColumnType.tagOf(columnType)) {
-                        case ColumnType.DATE:
-                            logTypeError(i);
-                            this.types.setQuick(i, BadDateAdapter.INSTANCE);
-                            break;
-                        case ColumnType.TIMESTAMP:
-                            if (detectedAdapter instanceof TimestampCompatibleAdapter) {
-                                this.types.setQuick(i, otherToTimestampAdapterPool.next().of((TimestampCompatibleAdapter) detectedAdapter));
-                            } else {
-                                logTypeError(i);
-                                this.types.setQuick(i, BadTimestampAdapter.INSTANCE);
-                            }
-                            break;
-                        case ColumnType.BINARY:
-                            writer.close();
-                            throw CairoException.instance(0).put("cannot import text into BINARY column [index=").put(i).put(']');
-                        default:
-                            this.types.setQuick(i, typeManager.getTypeAdapter(columnType));
-                            break;
-                    }
-                }
-            }
-
-            //at this point we've to use target table columns names otherwise partition attach could fail on metadata differences 
-            //(if header names or synthetic names are different from table's)
-            for (int i = 0, n = remapIndex.size(); i < n; i++) {
-                names.set(i, metadata.getColumnName(remapIndex.get(i)));
-            }
-
-            //add table columns missing in input file 
-            if (names.size() < metadata.getColumnCount()) {
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    boolean unused = true;
-
-                    for (int r = 0, rn = remapIndex.size(); r < rn; r++) {
-                        if (remapIndex.get(r) == i) {
-                            unused = false;
-                            break;
-                        }
-                    }
-
-                    if (unused) {
-                        names.add(metadata.getColumnName(i));
-                        types.add(typeManager.getTypeAdapter(metadata.getColumnType(i)));
-                    }
-                }
-            }
-
-            return writer;
-        }
-
-        private void logTypeError(int i) {
-            LOG.info()
-                    .$("mis-detected [table=").$(tableName)
-                    .$(", column=").$(i)
-                    .$(", type=").$(ColumnType.nameOf(this.types.getQuick(i).getType()))
-                    .$(']').$();
-        }
-
-        public void createTable(final CharSequence root, final CharSequence tableName) {
-            setCurrentTableName(tableName);
-            securityContext.checkWritePermission(); //todo: do this once
-            switch (cairoEngine.getStatus(securityContext, path, currentTableName)) {
-                case TableUtils.TABLE_EXISTS:
-                    cairoEngine.remove(securityContext, path, currentTableName);
-                case TableUtils.TABLE_DOES_NOT_EXIST:
-                    TableUtils.createTable(
-                            configuration.getFilesFacade(),
-                            root,
-                            configuration.getMkDirMode(),
-                            memory,
-                            path,
-                            structureAdapter,
-                            ColumnType.VERSION,
-                            (int) cairoEngine.getNextTableId()
-                    );
-                    break;
-                default:
-                    throw CairoException.instance(0).put("name is reserved [table=").put(currentTableName).put(']');
-            }
         }
 
         public void importPartitionData(long address, long size) {
@@ -1073,10 +1194,29 @@ public class FileIndexer implements Closeable, Mutable {
             }
         }
 
+        @Override
+        public void clear() {
+            mergeIndexes.clear();
+            splitter.clear();
+            lexer.clear();
+            typeManager.clear();
+            utf8Sink.clear();
+            tableNameSink.clear();
+            if (types != null) {
+                types.clear();
+            }
+            timestampAdapter = null;
+            timestampIndex = -1;
+            timestampColumn = null;
+        }
+
         public void importPartitionStage(int index, long lo, long hi, final ObjList<CharSequence> partitionNames) {
-            createTable(importRoot, tableName + "_" + index);
+            tableNameSink.clear();
+            tableNameSink.put(tableName).put('_').put(index);
+            createTable(ff, dirMode, importRoot, tableNameSink, targetTableStructure, 0);
+            setCurrentTableName(tableNameSink);
             try (TableWriter writer = new TableWriter(configuration,
-                    currentTableName,
+                    tableNameSink,
                     cairoEngine.getMessageBus(),
                     null,
                     true,
@@ -1097,25 +1237,6 @@ public class FileIndexer implements Closeable, Mutable {
                 } finally {
                     lexer.parseLast();
                     writer.commit(CommitMode.SYNC);
-                }
-            }
-        }
-
-        public void buildColumnIndexesStage(int index, RecordMetadata metadata) {
-            setCurrentTableName(tableName + "_" + index);
-            final int columnCount = metadata.getColumnCount();
-            try (TableWriter w = new TableWriter(configuration,
-                    currentTableName,
-                    cairoEngine.getMessageBus(),
-                    null,
-                    true,
-                    DefaultLifecycleManager.INSTANCE,
-                    importRoot,
-                    cairoEngine.getMetrics())) {
-                for (int i = 0; i < columnCount; i++) {
-                    if (metadata.isColumnIndexed(i)) {
-                        w.addIndex(metadata.getColumnName(i), metadata.getIndexValueBlockCapacity(i));
-                    }
                 }
             }
         }
@@ -1165,8 +1286,7 @@ public class FileIndexer implements Closeable, Mutable {
             }
         }
 
-        public void of(int index, ObjList<CharSequence> names, ObjList<TypeAdapter> types, boolean forceHeader) {
-            this.names = names;
+        public void of(int index, ObjList<TypeAdapter> types, boolean forceHeader) {
             this.types = typeManager.adjust(types);
             this.timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
             this.lexer.of(columnDelimiter);
@@ -1175,7 +1295,6 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         public void setCurrentTableName(final CharSequence tableName) {
-            this.currentTableName = tableName;
             this.lexer.setTableName(tableName);
         }
 
@@ -1284,88 +1403,6 @@ public class FileIndexer implements Closeable, Mutable {
                 }
             }
             return mergedIndexSize;
-        }
-
-        public void setIgnoreColumnIndexedFlad(boolean flag) {
-            this.ignoreColumnIndexedFlad = flag;
-        }
-
-        private class TableStructureAdapter implements TableStructure {
-
-            @Override
-            public int getColumnCount() {
-                return types.size();
-            }
-
-            @Override
-            public CharSequence getColumnName(int columnIndex) {
-                return names.getQuick(columnIndex);
-            }
-
-            @Override
-            public int getColumnType(int columnIndex) {
-                return types.getQuick(columnIndex).getType();
-            }
-
-            @Override
-            public long getColumnHash(int columnIndex) {
-                return configuration.getRandom().nextLong();
-            }
-
-            @Override
-            public int getIndexBlockCapacity(int columnIndex) {
-                return configuration.getIndexValueBlockSize();
-            }
-
-            @Override
-            public boolean isIndexed(int columnIndex) {
-                if (ignoreColumnIndexedFlad) {
-                    return false;
-                } else {
-                    return types.getQuick(columnIndex).isIndexed();
-                }
-            }
-
-            @Override
-            public boolean isSequential(int columnIndex) {
-                return false;
-            }
-
-            @Override
-            public int getPartitionBy() {
-                return partitionBy;
-            }
-
-            @Override
-            public boolean getSymbolCacheFlag(int columnIndex) {
-                return configuration.getDefaultSymbolCacheFlag();
-            }
-
-            @Override
-            public int getSymbolCapacity(int columnIndex) {
-                return configuration.getDefaultSymbolCapacity();
-            }
-
-            @Override
-            public CharSequence getTableName() {
-                return currentTableName;
-            }
-
-            @Override
-            public int getTimestampIndex() {
-                return timestampIndex;
-            }
-
-            @Override
-            public int getMaxUncommittedRows() {
-                return configuration.getMaxUncommittedRows();
-            }
-
-            @Override
-            public long getCommitLag() {
-                return configuration.getCommitLag();
-            }
-
         }
     }
 }

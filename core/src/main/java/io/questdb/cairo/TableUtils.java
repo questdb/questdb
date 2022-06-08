@@ -196,8 +196,22 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        LOG.debug().$("create table [name=").$(structure.getTableName()).$(']').$();
-        path.of(root).concat(structure.getTableName());
+        createTable(ff, root, mkDirMode, memory, path, structure.getTableName(), structure, tableVersion, tableId);
+    }
+
+    public static void createTable(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            Path path,
+            CharSequence tableName,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        LOG.debug().$("create table [name=").$(tableName).$(']').$();
+        path.of(root).concat(tableName);
 
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create [dir=").put(path).put(']');
