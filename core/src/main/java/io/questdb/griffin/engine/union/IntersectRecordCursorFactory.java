@@ -30,75 +30,37 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public class IntersectRecordCursorFactory implements RecordCursorFactory {
-    private final RecordMetadata metadata;
-    private final RecordCursorFactory factoryA;
-    private final RecordCursorFactory factoryB;
-    private final IntersectRecordCursor cursor;
+public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory {
     private final Map map;
-    private final ObjList<Function> castFunctionsB;
 
     public IntersectRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory factoryA,
             RecordCursorFactory factoryB,
-            ObjList<Function> castFunctionsA,   // unused, we keep it here to comply with an interface
+            ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB,
             RecordSink recordSink,
             ColumnTypes valueTypes
     ) {
-        this.metadata = metadata;
-        this.factoryA = factoryA;
-        this.factoryB = factoryB;
+        super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
         this.map = MapFactory.createMap(configuration, metadata, valueTypes);
-        this.cursor = new IntersectRecordCursor(map, recordSink, castFunctionsB);
-        this.castFunctionsB = castFunctionsB;
+        if (castFunctionsA == null && castFunctionsB == null) {
+            this.cursor = new IntersectRecordCursor(map, recordSink);
+        } else {
+            assert castFunctionsA != null && castFunctionsB != null;
+            this.cursor = new IntersectCastRecordCursor(map, recordSink, castFunctionsA, castFunctionsB);
+        }
     }
 
     @Override
     public void close() {
-        Misc.free(factoryA);
-        Misc.free(factoryB);
+        super.close();
         Misc.free(map);
-        Misc.freeObjList(castFunctionsB);
-        if (castFunctionsB != null) {
-            castFunctionsB.clear();
-        }
-    }
-
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor cursorA = null;
-        RecordCursor cursorB = null;
-        try {
-            cursorA = factoryA.getCursor(executionContext);
-            cursorB = factoryB.getCursor(executionContext);
-            Function.initNc(castFunctionsB, cursorB, executionContext);
-            cursor.of(cursorA, cursorB, executionContext.getCircuitBreaker());
-            return cursor;
-        } catch (Throwable ex) {
-            Misc.free(cursorA);
-            Misc.free(cursorB);
-            throw ex;
-        }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return factoryA.recordCursorSupportsRandomAccess();
     }
 }

@@ -24,16 +24,13 @@
 
 package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
+class UnionAllRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
     private final AbstractUnionRecord record;
-    private RecordCursor cursorA;
-    private RecordCursor cursorB;
     private final NextMethod nextB = this::nextB;
     private NextMethod nextMethod;
     private final NextMethod nextA = this::nextA;
@@ -43,14 +40,8 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
             this.record = new UnionCastRecord(castFunctionsA, castFunctionsB);
         } else {
             assert castFunctionsA == null && castFunctionsB == null;
-            this.record = new UnionDirectRecord();
+            this.record = new UnionRecord();
         }
-    }
-
-    @Override
-    public void close() {
-        Misc.free(this.cursorA);
-        Misc.free(this.cursorB);
     }
 
     @Override
@@ -89,9 +80,8 @@ class UnionAllRecordCursor implements NoRandomAccessRecordCursor {
         return cursorB.hasNext();
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB) throws SqlException {
-        this.cursorA = cursorA;
-        this.cursorB = cursorB;
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker ) throws SqlException {
+        super.of(cursorA, cursorB, circuitBreaker);
         record.of(cursorA.getRecord(), cursorB.getRecord());
         toTop();
     }

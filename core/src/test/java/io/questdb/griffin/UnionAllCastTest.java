@@ -585,6 +585,115 @@ public class UnionAllCastTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testExceptDoubleFloatSort() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table events1 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
+            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
+            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
+            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+
+            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
+            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+
+            assertQuery(
+                    // Empty table expected
+                    "contact\tgroupid\teventid\n" +
+                            "2\t1.600000023841858\tstand\n" +
+                            "1\t1.600000023841858\tstand\n",
+                    "(events1\n" +
+                            "except\n" +
+                            "events2) order by 1 desc",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testExceptSort() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table events1 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
+            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
+            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
+            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+
+            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
+            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+
+            assertQuery(
+                    // Empty table expected
+                    "contact\tgroupid\teventid\n" +
+                            "2\t1.6\tstand\n" +
+                            "1\t1.6\tstand\n",
+                    "(events1\n" +
+                            "except\n" +
+                            "events2) order by 1 desc",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testIntersectDoubleFloatSort() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table events1 (contact symbol, groupid float, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
+            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
+            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
+            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+
+            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
+            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+
+            assertQuery(
+                    // Empty table expected
+                    "contact\tgroupid\teventid\n" +
+                            "2\t1.5\tstand\n" +
+                            "1\t1.5\tflash\n",
+                    "(events1\n" +
+                            "intersect\n" +
+                            "events2) order by 1 desc",
+                    null,
+                    true
+            );
+        });
+    }
+
+
+    @Test
+    public void testIntersectSort() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table events1 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events1 values ('1', 1.5, 'flash')");
+            executeInsert("insert into events1 values ('2', 1.5, 'stand')");
+            executeInsert("insert into events1 values ('1', 1.6, 'stand')");
+            executeInsert("insert into events1 values ('2', 1.6, 'stand')");
+
+            compiler.compile("create table events2 (contact symbol, groupid double, eventid string)", sqlExecutionContext);
+            executeInsert("insert into events2 values ('1', 1.5, 'flash')");
+            executeInsert("insert into events2 values ('2', 1.5, 'stand')");
+
+            assertQuery(
+                    // Empty table expected
+                    "contact\tgroupid\teventid\n" +
+                            "2\t1.5\tstand\n" +
+                            "1\t1.5\tflash\n",
+                    "(events1\n" +
+                            "intersect\n" +
+                            "events2) order by 1 desc",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testFloatBool() throws Exception {
         // this is cast to STRING, both columns
         testUnionAll(
@@ -1653,6 +1762,69 @@ public class UnionAllCastTest extends AbstractGriffinTest {
                 "select a, c, typeOf(c) from (x union all y)",
                 "create table x as (select rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))",
                 "create table y as (select rnd_byte() a, rnd_symbol('x','y') c from long_sequence(5))"
+        );
+    }
+
+    @Test
+    public void testAllNoCast() throws Exception {
+        // we include byte <-> bool cast to make sure
+        // sym <-> sym cast it not thrown away as redundant
+        testUnionAll(
+                "a\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl\tm\tn\to\tp\tr\n" +
+                        "true\t51\tI\t-24455\t-230430837\t-8323443786521150653\t0.0212\t0.33747075654972813\t1970-01-01T00:00:55.172Z\t1970-01-01T00:00:00.000001Z\t0x994c39efcb88eb88810d53a53367e79138e4be9e19321b57832dd27952d949d8\t00000000 a5 18 93 bd 0b 61 f5 5d d0 eb\t010100\t01001111011100\tzyjh\tjzgum6yb\tPGLUO\n" +
+                        "true\t42\tZ\t-23702\t-210935524\t4502522085684189707\t0.7668\t0.4416432347777828\t1970-01-01T00:32:23.671Z\t1970-01-01T00:00:00.000001Z\t0x30f5a8b9a8a2672d1fae11870231bf0c54f33e997d4c2e14540bc0127276f42c\t00000000 84 52 d9 6f 04 ab 27 47 8f 23\t010001\t01100011100011\t46ng\tkwezzxdv\tNWIFF\n" +
+                        "true\t102\tB\t25721\t-1309308188\t8490886945852172597\t0.0930\t0.706473302224657\t1970-01-01T01:11:40.508Z\t1970-01-01T00:00:00.000001Z\t0x4a27205d291d7f124c83d07de0778e771bd70aaefd486767588c16c272288827\t00000000 52 d0 29 26 c5 aa da 18 ce 5f\t000001\t11011011111101\te7d9\t22y0ef3h\t\n" +
+                        "false\t36\tC\t2578\t-799774729\t812677186520066053\t0.0891\t0.7873229912811514\t1970-01-01T00:50:51.249Z\t1970-01-01T00:00:00.000000Z\t0x7cb055c54725b9527a19164d807cee6134570a2bee44673552c395ffb8982d58\t\t111100\t11010010000101\tsgzj\txp0bvd4d\tDTNPH\n" +
+                        "false\t33\tP\t-21417\t992057087\t-6482694999745905510\t0.9130\t0.8813290192134411\t1970-01-01T01:55:59.541Z\t1970-01-01T00:00:00.000001Z\t0x7d4dc4398a4592a6561fb054b568947d3e2ed2ca0fea47416fff79101ec5c1cf\t\t110100\t00100001101110\trr8p\tf6fdj7pr\t\n" +
+                        "false\t102\tJ\t-13027\t73575701\t8920866532787660373\t0.2992\t0.0843832076262595\t1970-01-01T00:10:02.536Z\t1970-01-01T00:00:00.000000Z\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\t00000000 91 3b 72 db f3 04 1b c7 88 de\t110110\t11001100100010\txn8n\t0n2gm6r7\tHFOWL\n" +
+                        "false\t40\tX\t4635\t-342047842\t6854658259142399220\t0.1911\t0.4022810626779558\t1970-01-01T01:24:18.302Z\t1970-01-01T00:00:00.000001Z\t0x3239ad1b0411a66a10bb226eb4243e3683b91ec970b04e788a50f7ff7f6ed330\t00000000 de e4 7c d2 35 07 42 fc 31 79\t110000\t11110001011010\tp1d7\tp2n3hk69\t\n" +
+                        "true\t88\tZ\t-13523\t-360860352\t-7266580375914176030\t0.7998\t0.16381374773748514\t1970-01-01T00:22:51.747Z\t1970-01-01T00:00:00.000001Z\t0x30d46a3a4749c41d7a902c77fa1a889c51686790e59377ca68653a6cd896f81e\t00000000 ac 37 c8 cd 82 89 2b 4d 5f f6\t010101\t11100011000001\tu7g3\tqjuztt7j\tCKYLS\n" +
+                        "true\t42\tD\t27519\t1235206821\t-4116381468144676168\t0.4856\t0.5065228336156442\t1970-01-01T02:04:31.430Z\t1970-01-01T00:00:00.000001Z\t0xacb025f759cffbd0de9be4e331fe36e67dc859770af204938151081b8acafadd\t\t101100\t10011001010000\tsfw9\tvbw85v0q\t\n" +
+                        "false\t64\tV\t-31322\t-283321892\t3446015290144635451\t0.1064\t0.49765193229684157\t1970-01-01T02:44:02.834Z\t1970-01-01T00:00:00.000001Z\t0xb20e1900caff819aaec65e34419d1077db217d41156b2ee1a90c04663c808638\t\t000000\t11010111011010\tpp3d\tur9ps7wg\tYPHRI\n",
+                // column "u" is not ultimately selected from neither X nor Y
+                // we expect this column to be ignored by optimiser, and also
+                // we expect optimiser to correctly select column "b" from Y as
+                // a match against column "a" in the union
+                "create table x as (" +
+                        "select" +
+                        " rnd_boolean() a," +
+                        " rnd_byte() b," +
+                        " rnd_char() c," +
+                        " rnd_short() d," +
+                        " rnd_int() e," +
+                        " rnd_long() f," +
+                        " rnd_float() g," +
+                        " rnd_double() h," +
+                        " rnd_date() i," +
+                        " rnd_timestamp(0, 1, 2) j," +
+                        " rnd_long256() k," +
+                        " rnd_bin(10, 10, 1) l," +
+                        " rnd_geohash(6) m," +
+                        " rnd_geohash(14) n," +
+                        " rnd_geohash(20) o," +
+                        " rnd_geohash(40) p," +
+                        " rnd_str(5,5,1) r " +
+                        "from long_sequence(5))",
+                "create table y as (" +
+                        "select" +
+                        " rnd_boolean() a," +
+                        " rnd_byte() b," +
+                        " rnd_char() c," +
+                        " rnd_short() d," +
+                        " rnd_int() e," +
+                        " rnd_long() f," +
+                        " rnd_float() g," +
+                        " rnd_double() h," +
+                        " rnd_date() i," +
+                        " rnd_timestamp(0, 1, 2) j," +
+                        " rnd_long256() k," +
+                        " rnd_bin(10, 10, 1) l," +
+                        " rnd_geohash(6) m," +
+                        " rnd_geohash(14) n," +
+                        " rnd_geohash(20) o," +
+                        " rnd_geohash(40) p," +
+                        " rnd_str(5,5,1) r " +
+                        "from long_sequence(5))"
         );
     }
 

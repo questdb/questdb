@@ -28,39 +28,36 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 
-class ExceptRecordCursor implements RecordCursor {
+class ExceptRecordCursor extends AbstractSetRecordCursor {
     private final Map map;
     private final RecordSink recordSink;
-    private final VirtualRecord virtualRecord;
-    private Record activeBRecord;
-    private RecordCursor cursorA;
-    private RecordCursor cursorB;
     private Record recordA;
-    private SqlExecutionCircuitBreaker circuitBreaker;
+    private Record recordB;
 
-    public ExceptRecordCursor(Map map, RecordSink recordSink, ObjList<Function> castFunctionsB) {
+    public ExceptRecordCursor(Map map, RecordSink recordSink) {
         this.map = map;
         this.recordSink = recordSink;
-        // cursor B has to be cast to the types of cursor A unless types are identical
-        // in which case this is virtual record is going to be null
-        if (castFunctionsB != null) {
-            this.virtualRecord = new VirtualRecord(castFunctionsB);
-        } else {
-            this.virtualRecord = null;
-        }
     }
 
     @Override
     public void close() {
-        this.cursorA = Misc.free(this.cursorA);
-        this.cursorB = Misc.free(this.cursorB);
+        super.close();
         this.map.clear();
-        circuitBreaker = null;
+    }
+
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        super.of(cursorA, cursorB, circuitBreaker);
+        this.recordB = cursorB.getRecord();
+        map.clear();
+        hashCursorB();
+        recordA = cursorA.getRecord();
+        toTop();
     }
 
     @Override
@@ -104,7 +101,6 @@ class ExceptRecordCursor implements RecordCursor {
     @Override
     public void toTop() {
         cursorA.toTop();
-        this.recordA = cursorA.getRecord();
     }
 
     @Override
@@ -115,7 +111,7 @@ class ExceptRecordCursor implements RecordCursor {
     private void hashCursorB() {
         while (cursorB.hasNext()) {
             MapKey key = map.withKey();
-            key.put(activeBRecord, recordSink);
+            key.put(recordB, recordSink);
             key.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
         }
@@ -123,20 +119,5 @@ class ExceptRecordCursor implements RecordCursor {
         // cursor lingers around. If there is exception or circuit breaker fault
         // we will rely on close() method to release reader.
         this.cursorB = Misc.free(this.cursorB);
-    }
-
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        this.cursorA = cursorA;
-        this.cursorB = cursorB;
-        this.circuitBreaker = circuitBreaker;
-        if (virtualRecord != null) {
-            this.virtualRecord.of(cursorB.getRecord());
-            this.activeBRecord = this.virtualRecord;
-        } else {
-            this.activeBRecord = cursorB.getRecord();
-        }
-        map.clear();
-        hashCursorB();
-        toTop();
     }
 }

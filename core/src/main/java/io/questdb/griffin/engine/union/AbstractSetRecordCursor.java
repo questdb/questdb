@@ -24,23 +24,26 @@
 
 package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.Misc;
 
-public class AbstractUnionRecord implements Record {
-    protected boolean useA = true;
-    protected Record recordA;
-    protected Record recordB;
+public abstract class AbstractSetRecordCursor implements RecordCursor {
+    protected RecordCursor cursorA;
+    protected RecordCursor cursorB;
+    protected SqlExecutionCircuitBreaker circuitBreaker;
 
-    public Record getRecordA() {
-        return recordA;
+    @Override
+    public void close() {
+        this.cursorA = Misc.free(this.cursorA);
+        this.cursorB = Misc.free(this.cursorB);
+        this.circuitBreaker = null;
     }
 
-    public void of(Record recordA, Record recordB) {
-        this.recordA = recordA;
-        this.recordB = recordB;
-    }
-
-    public void setAb(boolean useA) {
-        this.useA = useA;
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        this.cursorA = cursorA;
+        this.cursorB = cursorB;
+        this.circuitBreaker = circuitBreaker;
     }
 }

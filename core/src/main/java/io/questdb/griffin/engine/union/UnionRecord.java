@@ -28,7 +28,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-public class UnionDirectRecord extends AbstractUnionRecord {
+public class UnionRecord extends AbstractUnionRecord {
 
     @Override
     public BinarySequence getBin(int col) {

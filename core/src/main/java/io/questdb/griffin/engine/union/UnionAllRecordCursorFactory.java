@@ -25,21 +25,11 @@
 package io.questdb.griffin.engine.union;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public class UnionAllRecordCursorFactory implements RecordCursorFactory {
-    private final RecordMetadata metadata;
-    private final RecordCursorFactory factoryA;
-    private final RecordCursorFactory factoryB;
-    private final UnionAllRecordCursor cursor;
-    private final ObjList<Function> castFunctionsA;
-    private final ObjList<Function> castFunctionsB;
+public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory {
 
     public UnionAllRecordCursorFactory(
             RecordMetadata metadata,
@@ -48,57 +38,17 @@ public class UnionAllRecordCursorFactory implements RecordCursorFactory {
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB
     ) {
-        this.metadata = metadata;
-        this.factoryA = factoryA;
-        this.factoryB = factoryB;
+        super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
         this.cursor = new UnionAllRecordCursor(castFunctionsA, castFunctionsB);
-        this.castFunctionsA = castFunctionsA;
-        this.castFunctionsB = castFunctionsB;
-    }
-
-    @Override
-    public void close() {
-        Misc.free(factoryA);
-        Misc.free(factoryB);
-        Misc.freeObjList(castFunctionsA);
-        if (castFunctionsA != null) {
-            castFunctionsA.clear();
-        }
-        Misc.freeObjList(castFunctionsB);
-        if (castFunctionsB != null) {
-            castFunctionsB.clear();
-        }
-    }
-
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor cursorA = factoryA.getCursor(executionContext);
-        RecordCursor cursorB = null;
-        try {
-            cursorB = factoryB.getCursor(executionContext);
-            Function.initNc(castFunctionsA, cursorA, executionContext);
-            Function.initNc(castFunctionsB, cursorB, executionContext);
-            cursor.of(cursorA, cursorB);
-            return cursor;
-        } catch (Throwable e) {
-            Misc.free(cursorB);
-            Misc.free(cursorA);
-            throw e;
-        }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
     }
 
     @Override
     public boolean fragmentedSymbolTables() {
         return true;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
     }
 }

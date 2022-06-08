@@ -27,8 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -90,16 +90,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, columnIndex, workerCount) -> new CountVectorAggregateFunction(keyKind);
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
-    private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = (
-            configuration1,
-            metadata,
-            factoryA,
-            factoryB,
-            castFunctionsA,
-            castFunctionsB,
-            recordSink,
-            valueTypes
-    ) -> new ExceptRecordCursorFactory(configuration1, metadata, factoryA, factoryB, castFunctionsB, recordSink, valueTypes);
+    private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final MemoryCARW jitIRMem;
@@ -346,14 +337,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
-    private boolean checkIfSetCastIsRequired(RecordMetadata metadataA, RecordMetadata metadataB) {
+    private boolean checkIfSetCastIsRequired(RecordMetadata metadataA, RecordMetadata metadataB, boolean symbolDisallowed) {
         int columnCount = metadataA.getColumnCount();
         assert columnCount == metadataB.getColumnCount();
 
         for (int i = 0; i < columnCount; i++) {
             int typeA = metadataA.getColumnType(i);
             int typeB = metadataB.getColumnType(i);
-            if (typeA != typeB || typeA == ColumnType.SYMBOL) {
+            if (typeA != typeB || (typeA == ColumnType.SYMBOL && symbolDisallowed)) {
                 return true;
             }
         }
@@ -858,10 +849,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         fromType,
                                         toType
                                 );
-                            // wider types are not possible here
-                            // LONG will be cast to wider types, not other way around
-                            // Wider types tested are: FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
-                            // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
+                                // wider types are not possible here
+                                // LONG will be cast to wider types, not other way around
+                                // Wider types tested are: FLOAT, DOUBLE, DATE, TIMESTAMP, SYMBOL, STRING, LONG256
+                                // GEOBYTE, GEOSHORT, GEOINT, GEOLONG
                         }
                         break;
                     case ColumnType.DATE:
@@ -3031,58 +3022,66 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             final RecordMetadata metadataA = factoryA.getMetadata();
             final RecordMetadata metadataB = factoryB.getMetadata();
-            RecordMetadata setMetadata;
-            final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB);
+            final int positionA = model.getModelPosition();
+            final int positionB = model.getUnionModel().getModelPosition();
 
             switch (model.getSetOperationType()) {
-                case SET_OPERATION_UNION:
-                    setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                case SET_OPERATION_UNION: {
+                    final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
+                    final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
 
                     return generateUnionFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, model.getModelPosition()) : null,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()) : null,
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, positionA) : null,
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, positionB) : null,
                             setMetadata,
                             SET_UNION_CONSTRUCTOR
                     );
-                case SET_OPERATION_UNION_ALL:
-                    setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
+                }
+                case SET_OPERATION_UNION_ALL: {
+                    final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, true);
+                    final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : GenericRecordMetadata.removeTimestamp(metadataA);
                     return generateUnionAllFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, model.getModelPosition()) : null,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()) : null,
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, positionA) : null,
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, positionB) : null,
                             setMetadata
                     );
-                case SET_OPERATION_EXCEPT:
-                    setMetadata = metadataA;
+                }
+                case SET_OPERATION_EXCEPT: {
+                    final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
+                    final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     return generateUnionFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            null,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()) : null,
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, positionA) : null,
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, positionB) : null,
                             setMetadata,
                             SET_EXCEPT_CONSTRUCTOR
                     );
-                case SET_OPERATION_INTERSECT:
-                    setMetadata = metadataA;
+                }
+                case SET_OPERATION_INTERSECT: {
+                    final boolean castIsRequired = checkIfSetCastIsRequired(metadataA, metadataB, false);
+                    final RecordMetadata setMetadata = castIsRequired ? widenSetMetadata(metadataA, metadataB) : metadataA;
                     return generateUnionFactory(
                             model,
                             executionContext,
                             factoryA,
                             factoryB,
-                            null,
-                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, model.getUnionModel().getModelPosition()) : null,
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataA, positionA) : null,
+                            castIsRequired ? generateCastFunctions(setMetadata, metadataB, positionB) : null,
                             setMetadata,
                             SET_INTERSECT_CONSTRUCTOR
                     );
+                }
                 default:
                     assert false;
                     return null;

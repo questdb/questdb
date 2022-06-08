@@ -137,8 +137,6 @@ public class UnionCastRecord extends AbstractUnionRecord {
         return castFunctionsB.getQuick(col).getLong256A(recordB);
     }
 
-    // symbol is not supported by set functions
-
     @Override
     public Long256 getLong256B(int col) {
         if (useA) {
@@ -146,6 +144,14 @@ public class UnionCastRecord extends AbstractUnionRecord {
         }
         return castFunctionsB.getQuick(col).getLong256B(recordB);
     }
+
+    @Override
+    public long getRowId() {
+        assert useA;
+        return recordA.getRowId();
+    }
+
+    // symbol is not supported by set functions
 
     @Override
     public short getShort(int col) {
@@ -226,5 +232,13 @@ public class UnionCastRecord extends AbstractUnionRecord {
             return castFunctionsA.getQuick(col).getGeoLong(recordA);
         }
         return castFunctionsB.getQuick(col).getGeoLong(recordB);
+    }
+
+    public ObjList<Function> getCastFunctionsA() {
+        return castFunctionsA;
+    }
+
+    public ObjList<Function> getCastFunctionsB() {
+        return castFunctionsB;
     }
 }
