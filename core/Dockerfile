@@ -3,10 +3,12 @@ FROM debian:bullseye
 RUN apt-get update \
   && apt-get install -y git curl wget software-properties-common unzip \
   openjdk-17-jdk=17.0.3+7-1~deb11u1 openjdk-17-jre=17.0.3+7-1~deb11u1 \
-  openjdk-17-jdk-headless=17.0.3+7-1~deb11u1 openjdk-17-jre-headless=17.0.3+7-1~deb11u1
+  openjdk-17-jdk-headless=17.0.3+7-1~deb11u1 openjdk-17-jre-headless=17.0.3+7-1~deb11u1 && \
+  ln -sf "/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)" /usr/lib/jvm/java-17-openjdk
 
 
-ENV JAVA_HOME="/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)"
+ENV JAVA_HOME="/usr/lib/jvm/java-17-openjdk"
+RUN echo $JAVA_HOME
 WORKDIR /build
 
 RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output maven.zip \
