@@ -47,6 +47,7 @@ class LineTcpMeasurementEvent implements Closeable {
     private final boolean stringToCharCastAllowed;
     private final boolean symbolAsFieldSupported;
     private final int maxColumnNameLength;
+    private final boolean autoCreateNewColumns;
     private int writerWorkerId;
     private TableUpdateDetails tableUpdateDetails;
     private boolean commitOnWriterClose;
@@ -59,9 +60,11 @@ class LineTcpMeasurementEvent implements Closeable {
             DefaultColumnTypes defaultColumnTypes,
             boolean stringToCharCastAllowed,
             boolean symbolAsFieldSupported,
-            int maxColumnNameLength
+            int maxColumnNameLength,
+            boolean autoCreateNewColumns
     ) {
         this.maxColumnNameLength = maxColumnNameLength;
+        this.autoCreateNewColumns = autoCreateNewColumns;
         this.buffer = new LineTcpEventBuffer(bufLo, bufSize);
         this.clock = clock;
         this.timestampAdapter = timestampAdapter;
@@ -275,9 +278,11 @@ class LineTcpMeasurementEvent implements Closeable {
             } else if (columnWriterIndex == COLUMN_NOT_FOUND) {
                 // send column by name
                 final String columnName = localDetails.getColName();
-                if (TableUtils.isValidColumnName(columnName, maxColumnNameLength)) {
+                if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxColumnNameLength)) {
                     offset = buffer.addColumnName(offset, columnName);
                     colType = localDetails.getColumnType(columnName, entityType);
+                } else if (!autoCreateNewColumns) {
+                    throw newColumnsNotAllowed(columnName);
                 } else {
                     throw invalidColNameError(columnName);
                 }
@@ -497,6 +502,13 @@ class LineTcpMeasurementEvent implements Closeable {
         buffer.addDesignatedTimestamp(buffer.getAddress(), timestamp);
         buffer.addNumOfColumns(buffer.getAddress() + Long.BYTES, entitiesWritten);
         writerWorkerId = tableUpdateDetails.getWriterThreadId();
+    }
+
+    private CairoException newColumnsNotAllowed(String colName) {
+        return CairoException.instance(0)
+                .put("column does not exist, creating new columns is disabled [table=").put(tableUpdateDetails.getTableNameUtf16())
+                .put(", columnName=").put(colName)
+                .put(']');
     }
 
     void createWriterReleaseEvent(TableUpdateDetails tableUpdateDetails, boolean commitOnWriterClose) {

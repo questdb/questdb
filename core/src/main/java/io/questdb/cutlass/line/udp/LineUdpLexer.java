@@ -60,6 +60,7 @@ public class LineUdpLexer implements Mutable, Closeable {
             floatingCharSequence.hi = buffer + Numbers.decodeLowInt(address) - 2;
             assert floatingCharSequence.hi < bufferHi;
             assert floatingCharSequence.lo >= buffer;
+            assert floatingCharSequence.lo <= floatingCharSequence.hi;
             return floatingCharSequence;
         };
         clear();
