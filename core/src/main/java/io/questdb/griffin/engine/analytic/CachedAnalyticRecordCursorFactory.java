@@ -29,7 +29,6 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
@@ -39,7 +38,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
-public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
+public class CachedAnalyticRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordChain recordChain;
     private final RecordCursorFactory base;
     private final ObjList<LongTreeChain> orderedSources;
@@ -48,7 +47,6 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
     @Nullable private final ObjList<AnalyticFunction> unorderedFunctions;
     private final ObjList<AnalyticFunction> allFunctions;
     private final ObjList<RecordComparator> comparators;
-    private final GenericRecordMetadata metadata;
     private final Record recordChainRecord;
     private boolean closed = false;
 
@@ -62,6 +60,7 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
             ObjList<ObjList<AnalyticFunction>> orderedFunctions,
             @Nullable ObjList<AnalyticFunction> unorderedFunctions
     ) {
+        super(metadata);
         this.base = base;
         this.orderedGroupCount = comparators.size();
         assert orderedGroupCount == orderedFunctions.size();
@@ -95,14 +94,12 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
             allFunctions.addAll(unorderedFunctions);
         }
 
-        // create our metadata and also flatten functions for our record representation
-        this.metadata = metadata;
         this.recordChainRecord = recordChain.getRecord();
         this.unorderedFunctions = unorderedFunctions;
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         if (closed) {
             return;
         }
@@ -184,11 +181,6 @@ public class CachedAnalyticRecordCursorFactory implements RecordCursorFactory {
         for (int i = 0; i < orderedGroupCount; i++) {
             orderedSources.getQuick(i).clear();
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

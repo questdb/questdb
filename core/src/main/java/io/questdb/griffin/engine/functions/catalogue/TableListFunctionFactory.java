@@ -26,8 +26,10 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.TelemetryJob;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -39,7 +41,7 @@ import io.questdb.std.str.StringSink;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
-public class TableMetadataCursorFactory implements FunctionFactory {
+public class TableListFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final int idColumn;
     private static final int nameColumn;
@@ -47,7 +49,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
     private static final int maxUncommittedRowsColumn;
     private static final int commitLagColumn;
     private static final int designatedTimestampColumn;
-    private static final Log LOG = LogFactory.getLog(TableMetadataCursorFactory.class);
+    private static final Log LOG = LogFactory.getLog(TableListFunctionFactory.class);
 
     @Override
     public String getSignature() {
@@ -68,7 +70,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         return new CursorFunction(
-                new TableMetadataCursor(
+                new TableListCursorFactory(
                         configuration.getFilesFacade(),
                         configuration.getRoot(),
                         configuration.getTelemetryConfiguration().hideTables(),
@@ -81,34 +83,34 @@ public class TableMetadataCursorFactory implements FunctionFactory {
         };
     }
 
-    private static class TableMetadataCursor implements RecordCursorFactory {
+    private static class TableListCursorFactory extends AbstractRecordCursorFactory {
         private final FilesFacade ff;
         private final TableListRecordCursor cursor;
         private final boolean hideTelemetryTables;
-        private final CharSequence systablePefix;
+        private final CharSequence sysTablePrefix;
         private Path path;
+        private TableReaderMetadata metaReader;
 
-        public TableMetadataCursor(FilesFacade ff, CharSequence dbRoot, boolean hideTelemetryTables, CharSequence systablePefix) {
+        public TableListCursorFactory(FilesFacade ff, CharSequence dbRoot, boolean hideTelemetryTables, CharSequence sysTablePrefix) {
+            super(METADATA);
             this.ff = ff;
             path = new Path().of(dbRoot).$();
-            this.systablePefix = systablePefix;
+            this.sysTablePrefix = sysTablePrefix;
             cursor = new TableListRecordCursor();
             this.hideTelemetryTables = hideTelemetryTables;
+            this.metaReader = new TableReaderMetadata(ff);
         }
 
         @Override
-        public void close() {
+        protected void _close() {
             path = Misc.free(path);
+            metaReader = Misc.free(metaReader);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            return cursor.of(executionContext);
-        }
-
-        @Override
-        public RecordMetadata getMetadata() {
-            return METADATA;
+            cursor.toTop();
+            return cursor;
         }
 
         @Override
@@ -120,17 +122,10 @@ public class TableMetadataCursorFactory implements FunctionFactory {
             private final StringSink sink = new StringSink();
             private final TableListRecord record = new TableListRecord();
             private long findPtr = 0;
-            private TableReaderMetadata metaReader;
 
             @Override
             public void close() {
-                if (findPtr > 0) {
-                    ff.findClose(findPtr);
-                    findPtr = 0;
-                }
-                if (metaReader != null) {
-                    metaReader.close();
-                }
+                findPtr = ff.findClose(findPtr);
             }
 
             @Override
@@ -177,15 +172,6 @@ public class TableMetadataCursorFactory implements FunctionFactory {
             @Override
             public long size() {
                 return -1;
-            }
-
-            public TableListRecordCursor of(SqlExecutionContext executionContext) {
-                toTop();
-                if (metaReader == null) {
-                    // Assuming FilesFacade does not chang in real execution
-                    metaReader = new TableReaderMetadata(executionContext.getCairoEngine().getConfiguration().getFilesFacade());
-                }
-                return this;
             }
 
             public class TableListRecord implements Record {
@@ -241,7 +227,7 @@ public class TableMetadataCursorFactory implements FunctionFactory {
 
                 public boolean open(CharSequence tableName) {
 
-                    if (hideTelemetryTables && (Chars.equals(tableName, TelemetryJob.tableName) || Chars.equals(tableName, TelemetryJob.configTableName) || Chars.startsWith(tableName, systablePefix))) {
+                    if (hideTelemetryTables && (Chars.equals(tableName, TelemetryJob.tableName) || Chars.equals(tableName, TelemetryJob.configTableName) || Chars.startsWith(tableName, sysTablePrefix))) {
                         return false;
                     }
 

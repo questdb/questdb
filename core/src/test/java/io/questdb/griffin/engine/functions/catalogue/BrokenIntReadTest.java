@@ -208,9 +208,9 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
         }
 
         @Override
-        public void findClose(long findPtr) {
+        public long findClose(long findPtr) {
             callCount = 0;
-            super.findClose(findPtr);
+            return super.findClose(findPtr);
         }
 
         @Override

@@ -29,9 +29,8 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionParser;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
@@ -41,7 +40,7 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-public class SampleByInterpolateRecordCursorFactory implements RecordCursorFactory {
+public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final RecordCursorFactory base;
     protected final Map recordKeyMap;
@@ -57,7 +56,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     private final RecordSink mapSink;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink2;
-    private final RecordMetadata metadata;
     private final int timestampIndex;
     private final TimestampSampler sampler;
     private final int yDataSize;
@@ -69,55 +67,25 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     public SampleByInterpolateRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
+            RecordMetadata metadata,
+            ObjList<GroupByFunction> groupByFunctions,
+            ObjList<Function> recordFunctions,
             @NotNull TimestampSampler timestampSampler,
             @Transient @NotNull QueryModel model,
             @Transient @NotNull ListColumnFilter listColumnFilter,
-            @Transient @NotNull FunctionParser functionParser,
-            @Transient @NotNull SqlExecutionContext executionContext,
             @Transient @NotNull BytecodeAssembler asm,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Transient @NotNull EntityColumnFilter entityColumnFilter,
-            @Transient @NotNull IntList recordFunctionPositions,
             @Transient @NotNull IntList groupByFunctionPositions,
             int timestampIndex
     ) throws SqlException {
+        super(metadata);
         final int columnCount = model.getBottomUpColumns().size();
-        final RecordMetadata metadata = base.getMetadata();
-        this.groupByFunctions = new ObjList<>(columnCount);
-        this.groupByScalarFunctions = new ObjList<>(columnCount);
-        this.groupByTwoPointFunctions = new ObjList<>(columnCount);
-        valueTypes.add(ColumnType.BYTE); // gap flag
-
-        GroupByUtils.prepareGroupByFunctions(
-                model,
-                metadata,
-                functionParser,
-                executionContext,
-                groupByFunctions,
-                groupByFunctionPositions,
-                valueTypes
-        );
-
-        this.recordFunctions = new ObjList<>(columnCount);
-        final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-        GroupByUtils.prepareGroupByRecordFunctions(
-                model,
-                metadata,
-                listColumnFilter,
-                groupByFunctions,
-                groupByFunctionPositions,
-                recordFunctions,
-                recordFunctionPositions,
-                groupByMetadata,
-                keyTypes,
-                valueTypes.getColumnCount(),
-                false,
-                timestampIndex
-        );
-
-        this.storeYFunctions = new ObjList<>(columnCount);
-        this.interpolatorFunctions = new ObjList<>(columnCount);
+        this.groupByFunctions = groupByFunctions;
+        this.recordFunctions = recordFunctions;
+        this.base = base;
+        this.sampler = timestampSampler;
 
         // create timestamp column
         TimestampColumn timestampColumn = TimestampColumn.newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount());
@@ -127,6 +95,10 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             }
         }
 
+        this.groupByScalarFunctions = new ObjList<>(columnCount);
+        this.groupByTwoPointFunctions = new ObjList<>(columnCount);
+        this.storeYFunctions = new ObjList<>(columnCount);
+        this.interpolatorFunctions = new ObjList<>(columnCount);
         this.groupByFunctionCount = groupByFunctions.size();
         for (int i = 0; i < groupByFunctionCount; i++) {
             GroupByFunction function = groupByFunctions.getQuick(i);
@@ -173,7 +145,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_DEFAULT);
 
         // sink will be storing record columns to map key
-        this.mapSink = RecordSinkFactory.getInstance(asm, metadata, listColumnFilter, false);
+        this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         entityColumnFilter.of(keyTypes.getColumnCount());
         this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, false);
 
@@ -184,14 +156,11 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
         keyTypes.add(ColumnType.TIMESTAMP);
 
         this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
-        this.base = base;
-        this.metadata = groupByMetadata;
-        this.sampler = timestampSampler;
         this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(recordFunctions);
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         Misc.freeObjList(recordFunctions);
         Misc.free(recordKeyMap);
         Misc.free(dataMap);
@@ -416,11 +385,6 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
             baseCursor.close();
             throw e;
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override
