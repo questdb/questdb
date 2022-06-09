@@ -139,7 +139,7 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         private void touchTable() {
             clearCounters();
             final long pageSize = Files.PAGE_SIZE;
-            // factory belong to the function, do not close
+            // factory belongs to the function, do not close
             final RecordCursorFactory recordCursorFactory = arg.getRecordCursorFactory();
             try (PageFrameCursor pageFrameCursor = recordCursorFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
                 PageFrame frame;
