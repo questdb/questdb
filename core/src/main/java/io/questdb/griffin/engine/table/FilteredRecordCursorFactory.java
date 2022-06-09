@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -32,12 +33,13 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
-public class FilteredRecordCursorFactory implements RecordCursorFactory {
+public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final FilteredRecordCursor cursor;
     private final Function filter;
 
     public FilteredRecordCursorFactory(RecordCursorFactory base, Function filter) {
+        super(base.getMetadata());
         assert !(base instanceof FilteredRecordCursorFactory);
         this.base = base;
         this.cursor = new FilteredRecordCursor(filter);
@@ -45,7 +47,7 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         base.close();
         filter.close();
     }
@@ -60,11 +62,6 @@ public class FilteredRecordCursorFactory implements RecordCursorFactory {
             Misc.free(cursor);
             throw e;
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return base.getMetadata();
     }
 
     @Override

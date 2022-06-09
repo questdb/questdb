@@ -93,7 +93,7 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
         }
 
         @Override
-        public void close() {
+        protected void _close() {
             Misc.free(path);
             Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
@@ -137,10 +137,7 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
 
         @Override
         public void close() {
-            if (findFileStruct != 0) {
-                ff.findClose(findFileStruct);
-                findFileStruct = 0;
-            }
+            findFileStruct = ff.findClose(findFileStruct);
         }
 
         @Override
@@ -173,10 +170,7 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
 
         @Override
         public void toTop() {
-            if (findFileStruct != 0) {
-                ff.findClose(findFileStruct);
-                findFileStruct = 0;
-            }
+            findFileStruct = ff.findClose(findFileStruct);
             fixedRelPos = -1;
             record.of(staticReadingRecord);
         }
@@ -212,8 +206,7 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
                 }
             } while (ff.findNext(findFileStruct) > 0);
 
-            ff.findClose(findFileStruct);
-            findFileStruct = 0;
+            findFileStruct = ff.findClose(findFileStruct);
             return false;
         }
 

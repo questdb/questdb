@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -33,10 +34,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public abstract class AbstractSampleByRecordCursorFactory implements RecordCursorFactory {
+public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final RecordCursorFactory base;
-    protected final RecordMetadata metadata;
     protected final ObjList<Function> recordFunctions;
 
     public AbstractSampleByRecordCursorFactory(
@@ -44,20 +44,15 @@ public abstract class AbstractSampleByRecordCursorFactory implements RecordCurso
             RecordMetadata metadata,
             ObjList<Function> recordFunctions
     ) {
+        super(metadata);
         this.base = base;
-        this.metadata = metadata;
         this.recordFunctions = recordFunctions;
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         Misc.freeObjList(recordFunctions);
         Misc.free(base);
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

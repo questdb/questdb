@@ -76,7 +76,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractRecordCursorF
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         joinKeyMap.close();
         slaveChain.close();
         ((JoinRecordMetadata) getMetadata()).close();
