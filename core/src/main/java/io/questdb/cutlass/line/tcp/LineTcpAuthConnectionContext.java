@@ -86,7 +86,14 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
         if (authenticated) {
             return super.handleIO(netIoJob);
         }
-        return handleAuth();
+        IOContextResult result = handleAuth();
+        if (authenticated && recvBufPos > recvBufStart) {
+            // authentication is completed and there are still bytes remaining in the buffer
+            // we have to consume them. otherwise they might be stuck there until there is
+            // a new READ EVENT
+            return super.handleIO(netIoJob);
+        }
+        return result;
     }
 
     private IOContextResult handleAuth() {
