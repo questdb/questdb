@@ -24,7 +24,7 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.cutlass.line.tcp.LineTlsTcpSenderTest;
+import io.questdb.std.Os;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
@@ -32,14 +32,29 @@ import org.testcontainers.DockerClientFactory;
 
 import static org.junit.Assume.assumeTrue;
 
-public final class AssumeDockerAvailableTestRule implements TestRule {
-    public static final TestRule INSTANCE = new AssumeDockerAvailableTestRule();
+/**
+ * This is useful for tests which uses Docker: We want them to always run on Linux.
+ * Docker on Linux is easy and it should always be available. If Docker is unavailable
+ * then we want a test to fail.
+ *
+ * Other platforms - such as MacOs or Windows - have more complicated relationship with Docker
+ * and we cannot assume Docker to always available. This is even more complicated on build server.
+ * Hence, we check Docker availability and when it's not there then the rule will skip a test.
+ *
+ */
+public final class AssumeLinuxOrDockerIsAvailableRule implements TestRule {
+    public static final TestRule INSTANCE = new AssumeLinuxOrDockerIsAvailableRule();
+
+    private AssumeLinuxOrDockerIsAvailableRule() {
+
+    }
     @Override
     public Statement apply(Statement base, Description description) {
         return new Statement() {
             @Override
             public void evaluate() throws Throwable {
-                assumeTrue(isDockerAvailable());
+                boolean isLinux = (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64);
+                assumeTrue(isLinux || isDockerAvailable());
                 base.evaluate();
             }
         };
