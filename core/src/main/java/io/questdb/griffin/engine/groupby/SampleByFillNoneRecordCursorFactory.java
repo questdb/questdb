@@ -82,14 +82,9 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
     }
 
     @Override
-    public void close() {
-        super.close();
+    public void _close() {
+        super._close();
         Misc.free(map);
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

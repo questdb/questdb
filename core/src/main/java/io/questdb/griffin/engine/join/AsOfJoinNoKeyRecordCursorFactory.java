@@ -57,7 +57,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public void close() {
+    public void _close() {
         ((JoinRecordMetadata) getMetadata()).close();
         masterFactory.close();
         slaveFactory.close();

@@ -1812,7 +1812,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 }
             }
         } catch (SqlException e) {
-            typesAndSelect = Misc.free(typesAndSelect);
+            freeFactory();
             typesAndUpdate = Misc.free(typesAndUpdate);
             throw e;
         }
@@ -1878,6 +1878,11 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         }
 
         syncActions.add(SYNC_BIND);
+    }
+
+    private void freeFactory() {
+        currentFactory = null;
+        typesAndSelect = Misc.free(typesAndSelect);
     }
 
     private void processClose(long lo, long msgLimit) throws BadProtocolException {
@@ -2457,12 +2462,12 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                     this.rnd = sqlExecutionContext.getRandom();
                 } catch (ReaderOutOfDateException e) {
                     LOG.info().$(e.getFlyweightMessage()).$();
-                    currentFactory = Misc.free(currentFactory);
+                    freeFactory();
                     compileQuery(compiler);
                     buildSelectColumnTypes();
                     applyLatestBindColumnFormats();
                 } catch (Throwable e) {
-                    currentFactory = Misc.free(currentFactory);
+                    freeFactory();
                     throw e;
                 }
             } while (recompileStale);

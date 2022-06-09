@@ -36,13 +36,12 @@ import org.jetbrains.annotations.NotNull;
 /**
  * Used only in the latest by over sub-query case. Assumes that the base factory supports random access.
  */
-public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
+public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static final int ROW_ID_VALUE_IDX = 0;
     private static final int TIMESTAMP_VALUE_IDX = 1;
 
     private final RecordCursorFactory base;
-    private final RecordMetadata metadata;
     private final int timestampIndex;
     private final boolean orderedByTimestampAsc;
     private final LatestByLightRecordCursor cursor;
@@ -58,9 +57,9 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
             int timestampIndex,
             boolean orderedByTimestampAsc
     ) {
+        super(base.getMetadata());
         assert base.recordCursorSupportsRandomAccess();
         this.base = base;
-        this.metadata = base.getMetadata();
         this.recordSink = recordSink;
         ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
         mapValueTypes.add(ROW_ID_VALUE_IDX, ColumnType.LONG);
@@ -74,7 +73,7 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    public void _close() {
         base.close();
         latestByMap.close();
     }
@@ -134,11 +133,6 @@ public class LatestByLightRecordCursorFactory implements RecordCursorFactory {
                 }
             }
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

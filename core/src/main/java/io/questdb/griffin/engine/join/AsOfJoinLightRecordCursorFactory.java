@@ -78,7 +78,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public void close() {
+    public void _close() {
         joinKeyMap.close();
         ((JoinRecordMetadata) getMetadata()).close();
         masterFactory.close();

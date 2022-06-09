@@ -66,7 +66,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     }
 
     @Override
-    public void close() {
+    public void _close() {
         base.close();
         if (chain != null) {
             chain.close();
@@ -134,27 +134,22 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         long lo = loFunction.getLong(null);
         if (lo < 0 && hiFunction == null) {
             // last N rows
-            isFirstN = false;
             // lo is negative, -5 for example
             // if we have 12 records we need to skip 12-5 = 7
             // if we have 4 records = return all of them
             // set limit to return remaining rows
             limit = -lo;
-            skipFirst = skipLast = 0;
         } else if (lo > -1 && hiFunction == null) {
             // first N rows
             isFirstN = true;
             limit = lo;
-            skipFirst = skipLast = 0;
         } else {
             // at this stage we also have 'hi'
             long hi = hiFunction.getLong(null);
             if (lo < 0) {
                 // right, here we are looking for something like -10,-5 five rows away from tail
                 if (lo < hi) {
-                    isFirstN = false;
                     limit = -lo;
-                    skipFirst = 0;
                     skipLast = Math.max(-hi, 0);
                     //}
                 } else {

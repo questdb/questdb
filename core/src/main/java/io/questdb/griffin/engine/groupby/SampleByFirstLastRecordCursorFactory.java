@@ -37,14 +37,13 @@ import io.questdb.std.*;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
-public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory {
+public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final int FILTER_KEY_IS_NULL = 0;
     private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
     private static final int FIRST_OUT_INDEX = 0;
     private static final int LAST_OUT_INDEX = 1;
     private static final int TIMESTAMP_OUT_INDEX = 2;
     private final RecordCursorFactory base;
-    private final GenericRecordMetadata groupByMetadata;
     private final int[] firstLastIndexByCol;
     private final int[] queryToFrameColumnMapping;
     private final int pageSize;
@@ -72,13 +71,13 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
             SingleSymbolFilter symbolFilter,
             int configPageSize
     ) throws SqlException {
+        super(groupByMetadata);
         this.base = base;
         this.groupBySymbolColIndex = symbolFilter.getColumnIndex();
         this.queryToFrameColumnMapping = new int[columns.size()];
         this.firstLastIndexByCol = new int[columns.size()];
         this.crossFrameRow = new LongList(columns.size());
         this.crossFrameRow.setPos(columns.size());
-        this.groupByMetadata = groupByMetadata;
         this.timestampIndex = timestampIndex;
         buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex);
         int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
@@ -99,7 +98,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     }
 
     @Override
-    public void close() {
+    public void _close() {
         base.close();
         rowIdOutAddress = Misc.free(rowIdOutAddress);
         samplePeriodAddress = Misc.free(samplePeriodAddress);
@@ -127,11 +126,6 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return groupByMetadata;
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
@@ -151,7 +145,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         for (int i = 0, n = firstLastIndex.length; i < n; i++) {
             QueryColumn column = columns.getQuick(i);
             ExpressionNode ast = column.getAst();
-            int resultSetColumnType = groupByMetadata.getColumnType(i);
+            int resultSetColumnType = getMetadata().getColumnType(i);
             if (ast.rhs != null) {
                 if (SqlKeywords.isLastFunction(ast.token)) {
                     firstLastIndex[i] = LAST_OUT_INDEX;
@@ -571,7 +565,7 @@ public class SampleByFirstLastRecordCursorFactory implements RecordCursorFactory
         }
 
         private void saveRowIdValueToCrossRow(long rowId, int columnIndex) {
-            int columnType = groupByMetadata.getColumnType(columnIndex);
+            int columnType = getMetadata().getColumnType(columnIndex);
             int frameColIndex = queryToFrameColumnMapping[columnIndex];
             long pageAddress = currentFrame.getPageAddress(frameColIndex);
             if (pageAddress > 0) {

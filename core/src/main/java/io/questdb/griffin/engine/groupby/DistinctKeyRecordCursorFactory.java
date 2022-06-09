@@ -36,11 +36,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
-public class DistinctKeyRecordCursorFactory implements RecordCursorFactory {
+public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final TableColumnMetadata COUNT_COLUMN_META = new TableColumnMetadata("count", 1, ColumnType.LONG);
 
     private final GroupByRecordCursorFactory baseAggregatorFactory;
-    private final RecordMetadata metadata;
 
     public DistinctKeyRecordCursorFactory(
             CairoConfiguration configuration,
@@ -51,7 +50,7 @@ public class DistinctKeyRecordCursorFactory implements RecordCursorFactory {
             int workerCount,
             @Transient IntList symbolTableSkewIndex) {
 
-        this.metadata = metadata;
+        super(metadata);
 
         GenericRecordMetadata internalMeta = new GenericRecordMetadata();
         GenericRecordMetadata.copyColumns(metadata, internalMeta);
@@ -82,18 +81,13 @@ public class DistinctKeyRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    public void _close() {
         this.baseAggregatorFactory.close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         return this.baseAggregatorFactory.getCursor(executionContext);
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

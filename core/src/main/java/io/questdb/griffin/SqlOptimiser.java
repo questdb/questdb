@@ -2253,10 +2253,7 @@ class SqlOptimiser {
 
     private void parseFunctionAndEnumerateColumns(@NotNull QueryModel model, @NotNull SqlExecutionContext executionContext) throws SqlException {
         assert model.getTableNameFunction() == null;
-        final Function function = functionParser.parseFunction(model.getTableName(), AnyRecordMetadata.INSTANCE, executionContext);
-        if (!ColumnType.isCursor(function.getType())) {
-            throw SqlException.$(model.getTableName().position, "function must return CURSOR");
-        }
+        final Function function = TableUtils.createCursorFunction(functionParser, model, executionContext);
         model.setTableNameFunction(function);
         functionsInFlight.add(function);
         copyColumnsFromMetadata(model, function.getRecordCursorFactory().getMetadata(), true);

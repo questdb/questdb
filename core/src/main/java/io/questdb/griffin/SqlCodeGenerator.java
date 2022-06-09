@@ -27,8 +27,8 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -166,6 +166,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         Misc.free(filter);
         throw SqlException.$(expr.position, "boolean expression expected");
+    }
+
+    public RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        return generateQuery(model, executionContext, true);
     }
 
     private static RecordCursorFactory createFullFatAsOfJoin(CairoConfiguration configuration,
@@ -726,10 +730,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    public RecordCursorFactory generate(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        return generateQuery(model, executionContext, true);
-    }
-
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ExpressionNode filter = model.getWhereClause();
         return filter == null ? factory : generateFilter0(factory, model, executionContext, filter);
@@ -819,30 +819,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new FilteredRecordCursorFactory(factory, f);
     }
 
-    private ObjList<Function> preparePerWorkerFilters(
-            RecordMetadata metadata,
-            SqlExecutionContext executionContext,
-            ExpressionNode filter,
-            Function filterFunction
-    ) throws SqlException {
-        if (!filterFunction.isReadThreadSafe()) {
-            ObjList<Function> perWorkerFilters = new ObjList<>();
-            for (int i = 0, c = executionContext.getWorkerCount(); i < c; i++) {
-                final Function perWorkerFilter = compileFilter(filter, metadata, executionContext);
-                perWorkerFilters.extendAndSet(i, perWorkerFilter);
-            }
-            return perWorkerFilters;
-        }
-        return null;
-    }
-
-    private RecordCursorFactory generateFunctionQuery(QueryModel model) throws SqlException {
+    private RecordCursorFactory generateFunctionQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final Function function = model.getTableNameFunction();
-        assert function != null;
-        if (!ColumnType.isCursor(function.getType())) {
-            throw SqlException.position(model.getTableName().position).put("function must return CURSOR [actual=").put(ColumnType.nameOf(function.getType())).put(']');
+        if (function != null) {
+            // We're transferring ownership of the function's factory to another factory
+            // setting function to NULL will prevent double-ownership.
+            // We should not release function itself, they typically just a lightweight factory wrapper.
+            // Releasing function will also release the factory, which we don't want to happen.
+            model.setTableNameFunction(null);
+            return function.getRecordCursorFactory();
+        } else {
+            // when function is null we have to recompile it from scratch, including creating new factory
+            return TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
         }
-        return function.getRecordCursorFactory();
     }
 
     private RecordCursorFactory generateJoins(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -869,6 +858,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 RecordCursorFactory slave = null;
+                boolean releaseSlave = true;
                 try {
                     // compile
                     slave = generateQuery(slaveModel, executionContext, index > 0);
@@ -881,6 +871,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // making it faster compared to ordering of join record source that
                         // doesn't allow rowid access.
                         master = slave;
+                        releaseSlave = false;
                         masterAlias = slaveModel.getName();
                     } else {
                         // not the root, join to "master"
@@ -942,6 +933,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     );
                                 }
                                 masterAlias = null;
+                                // if we fail after this step, master will release slave
+                                releaseSlave = false;
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 break;
                             case JOIN_LT:
@@ -988,6 +981,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     );
                                 }
                                 masterAlias = null;
+                                // if we fail after this step, master will release slave
+                                releaseSlave = false;
                                 validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 break;
                             case JOIN_SPLICE:
@@ -1013,6 +1008,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             ),
                                             masterMetadata.getColumnCount()
                                     );
+                                    // if we fail after this step, master will release slave
+                                    releaseSlave = false;
                                     validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 } else {
                                     assert false;
@@ -1032,7 +1029,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 } catch (Throwable th) {
                     master = Misc.free(master);
-                    Misc.free(slave);
+                    if (releaseSlave) {
+                        Misc.free(slave);
+                    }
                     throw th;
                 } finally {
                     executionContext.popTimestampRequiredFlag();
@@ -1377,7 +1376,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ExpressionNode tableName = model.getTableName();
         if (tableName != null) {
             if (tableName.type == FUNCTION) {
-                return generateFunctionQuery(model);
+                return generateFunctionQuery(model, executionContext);
             } else {
                 return generateTableQuery(model, executionContext);
             }
@@ -1584,10 +1583,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordCursorFactory factory = generateSubQuery(model, executionContext);
 
             // We require timestamp with asc order.
-            final int timestampIndex = getTimestampIndex(model, factory);
-            if (timestampIndex == -1 || factory.hasDescendingOrder()) {
+            final int timestampIndex;
+            try {
+                timestampIndex = getTimestampIndex(model, factory);
+                if (timestampIndex == -1 || factory.hasDescendingOrder()) {
+                    throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over dedicated TIMESTAMP column");
+                }
+            } catch (Throwable e) {
                 Misc.free(factory);
-                throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over dedicated TIMESTAMP column");
+                throw e;
             }
 
             final RecordMetadata metadata = factory.getMetadata();
@@ -3286,13 +3290,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private int getTimestampIndex(QueryModel model, RecordCursorFactory factory) throws SqlException {
-        final RecordMetadata metadata = factory.getMetadata();
-        try {
-            return getTimestampIndex(model, metadata);
-        } catch (SqlException e) {
-            Misc.free(factory);
-            throw e;
-        }
+        return getTimestampIndex(model, factory.getMetadata());
     }
 
     private int getTimestampIndex(QueryModel model, RecordMetadata metadata) throws SqlException {
@@ -3402,6 +3400,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return latestByColumnCount;
     }
 
+    private ObjList<Function> preparePerWorkerFilters(
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext,
+            ExpressionNode filter,
+            Function filterFunction
+    ) throws SqlException {
+        if (!filterFunction.isReadThreadSafe()) {
+            ObjList<Function> perWorkerFilters = new ObjList<>();
+            for (int i = 0, c = executionContext.getWorkerCount(); i < c; i++) {
+                final Function perWorkerFilter = compileFilter(filter, metadata, executionContext);
+                perWorkerFilters.extendAndSet(i, perWorkerFilter);
+            }
+            return perWorkerFilters;
+        }
+        return null;
+    }
+
     private void processJoinContext(
             boolean vanillaMaster,
             JoinContext jc,
@@ -3490,16 +3505,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return indices;
     }
 
-    private void validateBothTimestamps(QueryModel slaveModel, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) throws SqlException {
-        if (masterMetadata.getTimestampIndex() == -1) {
-            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "left side of time series join has no timestamp");
-        }
-
-        if (slaveMetadata.getTimestampIndex() == -1) {
-            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
-        }
-    }
-
     private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {
         if (masterFactory.hasDescendingOrder()) {
             throw SqlException.$(position, "left side of time series join has DESC timestamp order");
@@ -3507,6 +3512,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (slaveFactory.hasDescendingOrder()) {
             throw SqlException.$(position, "right side of time series join has DESC timestamp order");
+        }
+    }
+
+    private void validateBothTimestamps(QueryModel slaveModel, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) throws SqlException {
+        if (masterMetadata.getTimestampIndex() == -1) {
+            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "left side of time series join has no timestamp");
+        }
+
+        if (slaveMetadata.getTimestampIndex() == -1) {
+            throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
         }
     }
 

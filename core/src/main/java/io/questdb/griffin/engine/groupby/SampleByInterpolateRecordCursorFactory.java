@@ -66,6 +66,7 @@ public class SampleByInterpolateRecordCursorFactory implements RecordCursorFacto
     private final int groupByTwoPointFunctionCount;
     private long yData;
 
+    // todo: this class creates its own metadata and cannot have base class we need
     public SampleByInterpolateRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,

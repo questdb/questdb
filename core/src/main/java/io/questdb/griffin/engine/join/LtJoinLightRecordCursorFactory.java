@@ -76,7 +76,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public void close() {
+    public void _close() {
         joinKeyMap.close();
         ((JoinRecordMetadata) getMetadata()).close();
         masterFactory.close();

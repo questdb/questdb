@@ -85,7 +85,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void close() {
+        public void _close() {
             Misc.free(path);
             Misc.free(metaMem);
         }
@@ -126,10 +126,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            if (findFileStruct != 0) {
-                ff.findClose(findFileStruct);
-                findFileStruct = 0;
-            }
+            findFileStruct = ff.findClose(findFileStruct);
             metaMem.close();
         }
 
@@ -155,10 +152,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-            if (findFileStruct != 0) {
-                ff.findClose(findFileStruct);
-                findFileStruct = 0;
-            }
+            findFileStruct = ff.findClose(findFileStruct);
         }
 
         @Override
@@ -212,8 +206,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                 }
             } while (hasNextFile);
 
-            ff.findClose(findFileStruct);
-            findFileStruct = 0;
+            findFileStruct = ff.findClose(findFileStruct);
             hasNextFile = true;
             foundMetadataFile = false;
             return false;

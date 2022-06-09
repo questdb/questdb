@@ -75,7 +75,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void close() {
+        public void _close() {
             Misc.free(path);
             Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
@@ -116,10 +116,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            if (findFileStruct != 0) {
-                ff.findClose(findFileStruct);
-                findFileStruct = 0;
-            }
+            findFileStruct = ff.findClose(findFileStruct);
         }
 
         @Override
@@ -144,10 +141,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-            if (findFileStruct != 0) {
-                ff.findClose(findFileStruct);
-                findFileStruct = 0;
-            }
+            findFileStruct = ff.findClose(findFileStruct);
         }
 
         @Override
@@ -205,8 +199,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
                 }
             } while (hasNextFile);
 
-            ff.findClose(findFileStruct);
-            findFileStruct = 0;
+            findFileStruct = ff.findClose(findFileStruct);
             hasNextFile = true;
             foundMetadataFile = false;
             tableId = -1;

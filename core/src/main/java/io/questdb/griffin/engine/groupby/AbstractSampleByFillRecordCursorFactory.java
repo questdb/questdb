@@ -64,8 +64,8 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
     }
 
     @Override
-    public void close() {
-        super.close();
+    public void _close() {
+        super._close();
         Misc.free(map);
     }
 

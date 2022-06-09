@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.*;
 import io.questdb.cairo.map.FastMap;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
@@ -40,13 +37,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactory {
-
+public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorFactory {
     protected final RecordCursorFactory base;
     private final Map dataMap;
     private final DistinctTimeSeriesRecordCursor cursor;
     // this sink is used to copy recordKeyMap keys to dataMap
-    private final RecordMetadata metadata;
     public static final byte COMPUTE_NEXT = 0;
     public static final byte REUSE_CURRENT = 1;
     public static final byte NO_ROWS = 2;
@@ -57,6 +52,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
             @Transient @NotNull EntityColumnFilter columnFilter,
             @Transient @NotNull BytecodeAssembler asm
     ) {
+        super(base.getMetadata());
         assert base.recordCursorSupportsRandomAccess();
         final RecordMetadata metadata = base.getMetadata();
         // sink will be storing record columns to map key
@@ -71,7 +67,6 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
         ) ;
 
         this.base = base;
-        this.metadata = metadata;
         this.cursor = new DistinctTimeSeriesRecordCursor(
                 getMetadata().getTimestampIndex(),
                 dataMap,
@@ -80,7 +75,7 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
     }
 
     @Override
-    public void close() {
+    public void _close() {
         dataMap.close();
         base.close();
     }
@@ -88,11 +83,6 @@ public class DistinctTimeSeriesRecordCursorFactory implements RecordCursorFactor
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         return cursor.of(base.getCursor(executionContext), executionContext);
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

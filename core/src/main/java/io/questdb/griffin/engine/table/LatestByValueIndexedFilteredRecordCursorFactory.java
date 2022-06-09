@@ -49,8 +49,8 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDat
     }
 
     @Override
-    public void close() {
-        super.close();
+    public void _close() {
+        super._close();
         filter.close();
     }
 

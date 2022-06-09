@@ -56,8 +56,8 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
     }
 
     @Override
-    public void close() {
-        super.close();
+    public void _close() {
+        super._close();
         prefixes.close();
     }
 

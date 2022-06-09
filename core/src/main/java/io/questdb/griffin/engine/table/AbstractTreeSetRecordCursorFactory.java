@@ -47,7 +47,7 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecor
     }
 
     @Override
-    public void close() {
+    public void _close() {
         rows.close();
     }
 

@@ -49,7 +49,7 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    public void _close() {
         base.close();
     }
 
