@@ -27,22 +27,30 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
-class IntersectRecordCursor extends AbstractSetRecordCursor {
+class IntersectCastRecordCursor extends AbstractSetRecordCursor {
     private final Map map;
     private final RecordSink recordSink;
-    private Record recordA;
-    private Record recordB;
+    private final UnionCastRecord castRecord;
+    // this is the B record of except cursor, required by sort algo
+    private UnionCastRecord recordB;
 
-    public IntersectRecordCursor(Map map, RecordSink recordSink) {
+    public IntersectCastRecordCursor(
+            Map map,
+            RecordSink recordSink,
+            @NotNull ObjList<Function> castFunctionA,
+            @NotNull ObjList<Function> castFunctionB
+    ) {
         this.map = map;
         this.recordSink = recordSink;
+        this.castRecord = new UnionCastRecord(castFunctionA, castFunctionB);
     }
 
     @Override
@@ -51,35 +59,29 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
         this.map.clear();
     }
 
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        super.of(cursorA, cursorB, circuitBreaker);
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
+        this.cursorA = cursorA;
+        this.cursorB = cursorB;
+        this.circuitBreaker = circuitBreaker;
+
         map.clear();
-        this.recordB = cursorB.getRecord();
+        castRecord.of(cursorA.getRecord(), cursorB.getRecord());
+        castRecord.setAb(false);
         hashCursorB();
-        recordA = cursorA.getRecord();
+        castRecord.setAb(true);
         toTop();
     }
 
     @Override
     public Record getRecord() {
-        return recordA;
-    }
-
-    @Override
-    public SymbolTable getSymbolTable(int columnIndex) {
-        return cursorA.getSymbolTable(columnIndex);
-    }
-
-    @Override
-    public SymbolTable newSymbolTable(int columnIndex) {
-        return cursorA.newSymbolTable(columnIndex);
+        return castRecord;
     }
 
     @Override
     public boolean hasNext() {
         while (cursorA.hasNext()) {
             MapKey key = map.withKey();
-            key.put(recordA, recordSink);
+            key.put(castRecord, recordSink);
             if (key.findValue() != null) {
                 return true;
             }
@@ -90,12 +92,18 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
 
     @Override
     public Record getRecordB() {
-        return cursorA.getRecordB();
+        if (recordB == null) {
+            recordB = new UnionCastRecord(castRecord.getCastFunctionsA(), castRecord.getCastFunctionsB());
+            recordB.setAb(true);
+            // we do not need cursorB here, it is likely to be closed anyway
+            recordB.of(cursorA.getRecordB(), null);
+        }
+        return recordB;
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        cursorA.recordAt(record, atRowId);
+        cursorA.recordAt(((UnionCastRecord)record).getRecordA(), atRowId);
     }
 
     @Override
@@ -111,7 +119,7 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
     private void hashCursorB() {
         while (cursorB.hasNext()) {
             MapKey key = map.withKey();
-            key.put(recordB, recordSink);
+            key.put(castRecord, recordSink);
             key.createValue();
             circuitBreaker.statefulThrowExceptionIfTripped();
         }

@@ -50,15 +50,15 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
             sink.put(func.getLong(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        return new CastLongToStrFunction(args.getQuick(0));
     }
 
-    private static class Func extends StrFunction implements UnaryFunction {
+    public static class CastLongToStrFunction extends StrFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public Func(Function arg) {
+        public CastLongToStrFunction(Function arg) {
             this.arg = arg;
         }
 

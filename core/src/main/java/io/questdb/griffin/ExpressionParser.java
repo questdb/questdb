@@ -493,7 +493,7 @@ class ExpressionParser {
                                         final short columnTypeTag = ColumnType.tagOf(node.token);
                                         if (((columnTypeTag < ColumnType.BOOLEAN || columnTypeTag > ColumnType.LONG256) && !asPoppedNull) ||
                                                 (columnTypeTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)) {
-                                            throw SqlException.$(node.position, "invalid type");
+                                            throw SqlException.$(node.position, "unsupported cast");
                                         }
                                         node.type = ExpressionNode.CONSTANT;
                                     }

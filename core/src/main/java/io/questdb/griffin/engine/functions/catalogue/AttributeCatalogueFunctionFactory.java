@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 
@@ -223,6 +224,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
             public final short[] shortValues = new short[9];
             public final int[] intValues = new int[9];
             public CharSequence name = null;
+            private final StringSink strBSink = new StringSink();
 
             @Override
             public boolean getBool(int col) {
@@ -253,7 +255,12 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                return name;
+                if (name != null) {
+                    strBSink.clear();
+                    strBSink.put(name);
+                    return strBSink;
+                }
+                return null;
             }
 
             @Override

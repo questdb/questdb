@@ -547,7 +547,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastGeoHashCastMissingSize2() {
         assertFail("cast('sp052w92' as geohash)",
                 19,
-                "invalid type");
+                "unsupported cast");
     }
 
     @Test
@@ -666,7 +666,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastMissingType2() {
         assertFail("cast(1 as 1)",
                 10,
-                "invalid type"
+                "unsupported cast"
         );
     }
 
@@ -674,7 +674,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCastMissingType3() {
         assertFail("cast(1 as binary)",
                 10,
-                "invalid type"
+                "unsupported cast"
         );
     }
 

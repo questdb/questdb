@@ -113,7 +113,7 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
     private static class ClassCatalogueCursor implements NoRandomAccessRecordCursor {
         private final Path path;
         private final FilesFacade ff;
-        private final DelegatingRecordImpl record = new DelegatingRecordImpl();
+        private final DelegatingRecord record = new DelegatingRecord();
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
         private final StaticReadingRecord staticReadingRecord = new StaticReadingRecord();
         private final StringSink sink = new StringSink();
