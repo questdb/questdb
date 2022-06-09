@@ -27,16 +27,10 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.test.tools.AssumeLinuxOrDockerIsAvailableRule;
 import io.questdb.test.tools.TestUtils;
-import org.junit.ClassRule;
+import io.questdb.test.tools.TlsProxyRule;
 import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.TestRule;
-import org.testcontainers.Testcontainers;
-import org.testcontainers.containers.BindMode;
-import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.utility.DockerImageName;
 
 import java.util.UUID;
 
@@ -46,38 +40,28 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     private static final String AUTH_KEY_ID1 = "testUser1";
     private static final String TOKEN = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
-    private static final DockerImageName HA_PROXY_IMAGE = DockerImageName.parse("haproxy:2.6.0");
-    private static final String TRUSTSTORE_PATH = "/keystore/haproxy_ca.jks";
+    private static final String TRUSTSTORE_PATH = "/keystore/server.keystore";
     private static final char[] TRUSTSTORE_PASSWORD = "questdb".toCharArray();
 
-    @ClassRule
-    public static TestRule ASSUME_LINUX_OR_DOCKER_RULE = AssumeLinuxOrDockerIsAvailableRule.INSTANCE;
-
     @Rule
-    public GenericContainer<?> haProxy = new GenericContainer<>(HA_PROXY_IMAGE).withReuse(true)
-            .withClasspathResourceMapping("/io/questdb/cutlass/line/tcp/haproxy.pem", "/usr/local/etc/haproxy/haproxy.pem", BindMode.READ_ONLY)
-            .withClasspathResourceMapping("/io/questdb/cutlass/line/tcp/haproxy.cfg", "/usr/local/etc/haproxy/haproxy.cfg", BindMode.READ_ONLY)
-            .withExposedPorts(8443)
-            .withAccessToHost(true);
+    public TlsProxyRule tlsProxy = TlsProxyRule.toHostAndPort("localhost", 9002);
 
     @Test
     public void simpleTest() throws Exception {
         authKeyId = AUTH_KEY_ID1;
         String tableName = UUID.randomUUID().toString();
         runInContext(c -> {
-            Testcontainers.exposeHostPorts(9002);
-
             try (LineTcpSender sender = LineTcpSender.builder()
                     .enableTls()
-                    .address(haProxy.getHost())
-                    .port(haProxy.getMappedPort(8443))
+                    .address("localhost")
+                    .port(tlsProxy.getListeningPort())
                     .token(TOKEN)
                     .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.metric(tableName).field("value", 42).$();
                 sender.flush();
+                assertTableExistsEventually(engine, tableName);
             }
-            assertTableExistsEventually(engine, tableName);
         });
     }
 
@@ -90,13 +74,11 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         int hugeBufferSize = 1024 * 1024;
         int rows = 100_000;
         runInContext(c -> {
-            Testcontainers.exposeHostPorts(9002);
-
             try (LineTcpSender sender = LineTcpSender.builder()
                     .enableTls()
                     .bufferCapacity(hugeBufferSize)
-                    .address(haProxy.getHost())
-                    .port(haProxy.getMappedPort(8443))
+                    .address("localhost")
+                    .port(tlsProxy.getListeningPort())
                     .token(TOKEN)
                     .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
@@ -104,8 +86,8 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     sender.metric(tableName).field("value", 42).$();
                 }
                 sender.flush();
+                assertTableSizeEventually(tableName, rows);
             }
-            assertTableSizeEventually(tableName, rows);
         });
     }
 
@@ -115,19 +97,17 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         String tableName = UUID.randomUUID().toString();
         String truststore = LineTlsTcpSenderTest.class.getResource(TRUSTSTORE_PATH).getFile();
         runInContext(c -> {
-            Testcontainers.exposeHostPorts(9002);
-
             try (LineTcpSender sender = LineTcpSender.builder()
                     .enableTls()
-                    .address(haProxy.getHost())
-                    .port(haProxy.getMappedPort(8443))
+                    .address("localhost")
+                    .port(tlsProxy.getListeningPort())
                     .token(TOKEN)
                     .customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.metric(tableName).field("value", 42).$();
                 sender.flush();
+                assertTableExistsEventually(engine, tableName);
             }
-            assertTableExistsEventually(engine, tableName);
         });
     }
 
@@ -138,12 +118,10 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         withCustomProperty(() -> {
             authKeyId = AUTH_KEY_ID1;
             runInContext(c -> {
-                Testcontainers.exposeHostPorts(9002);
-
                 try (LineTcpSender sender = LineTcpSender.builder()
                         .enableTls()
-                        .address(haProxy.getHost())
-                        .port(haProxy.getMappedPort(8443))
+                        .address("localhost")
+                        .port(tlsProxy.getListeningPort())
                         .token(TOKEN)
                         .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                         .build()) {
@@ -152,13 +130,14 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                         sender.metric(tableName).field("value", 42).$();
                         sender.flush();
                     }
+                    assertTableSizeEventually(tableName, rows);
                 }
-                assertTableSizeEventually(tableName, rows);
             });
         }, "questdb.experimental.tls.buffersize", "1");
     }
 
     private static void assertTableSizeEventually(String tableName, long expectedSize) {
+        assertTableExistsEventually(engine, tableName);
         TestUtils.assertEventually(() -> {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 long size = reader.getCursor().size();
