@@ -22,29 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.UntypedFunction;
+import io.questdb.std.Numbers;
 
-public class CastNullFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "cast(oV)";
-    }
+public class RegclassTypeConstant extends UntypedFunction implements TypeConstant {
+    public static final RegclassTypeConstant INSTANCE = new RegclassTypeConstant();
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (args.size() == 2) {
-            int castTo = args.getQuick(1).getType();
-            return Constants.getNullConstant(castTo);
-        }
-        throw SqlException.$(position, "cast accepts 2 arguments");
+    public int getType() {
+        return ColumnType.REGCLASS;
     }
 }

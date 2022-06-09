@@ -83,8 +83,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     public static ScalarFunction createColumn(
             int position,
             CharSequence name,
-            RecordMetadata metadata,
-            SqlExecutionContext sqlExecutionContext
+            RecordMetadata metadata
     ) throws SqlException {
         final int index = metadata.getColumnIndexQuiet(name);
 
@@ -173,32 +172,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // Do not close incoming function if cast is not a constant
         // it will be used inside the cast as an argument
         return cast;
-    }
-
-    @Nullable
-    private Function createImplicitCastOrNull(int position, Function function, int toType) throws SqlException {
-        int fromType = function.getType();
-        switch (fromType) {
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-                if (toType == ColumnType.TIMESTAMP) {
-                    return new CastStrToTimestampFunctionFactory.Func(position, function);
-                }
-                if (ColumnType.isGeoHash(toType)) {
-                    return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
-                }
-                break;
-            default:
-                if (ColumnType.isGeoHash(fromType)) {
-                    int fromGeoBits = ColumnType.getGeoHashBits(fromType);
-                    int toGeoBits = ColumnType.getGeoHashBits(toType);
-                    if (ColumnType.isGeoHash(toType) && toGeoBits < fromGeoBits) {
-                        return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, toType, fromType);
-                    }
-                }
-                break;
-        }
-        return null;
     }
 
     public FunctionFactoryCache getFunctionFactoryCache() {
@@ -425,7 +398,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     private Function createColumn(int position, CharSequence columnName) throws SqlException {
-        return createColumn(position, columnName, metadata, sqlExecutionContext);
+        return createColumn(position, columnName, metadata);
     }
 
     private Function createConstant(int position, final CharSequence tok) throws SqlException {
@@ -487,7 +460,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         final short columnType = ColumnType.tagOf(tok);
 
-        if (columnType >= ColumnType.BOOLEAN && columnType <= ColumnType.BINARY) {
+        if (
+                (columnType >= ColumnType.BOOLEAN && columnType <= ColumnType.BINARY)
+                        || columnType == ColumnType.REGCLASS
+                        || columnType == ColumnType.PGDATE
+        ) {
             return Constants.getTypeConstant(columnType);
         }
 
@@ -635,7 +612,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     overloadPossible |= argTypeTag == ColumnType.CHAR &&
                             sigArgTypeTag == ColumnType.STRING;
 
-                    // Implicit cast from STRING to TIMESTAMP 
+                    // Implicit cast from STRING to TIMESTAMP
                     overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
                             sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
@@ -643,7 +620,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     overloadPossible |= argTypeTag == ColumnType.STRING &&
                             sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
 
-                    // Implicit cast from SYMBOL to TIMESTAMP 
+                    // Implicit cast from SYMBOL to TIMESTAMP
                     overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
                             sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
 
@@ -761,6 +738,32 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         LOG.debug().$("call ").$(node).$(" -> ").$(candidate.getSignature()).$();
         return checkAndCreateFunction(candidate, args, argPositions, node.position, configuration);
+    }
+
+    @Nullable
+    private Function createImplicitCastOrNull(int position, Function function, int toType) throws SqlException {
+        int fromType = function.getType();
+        switch (fromType) {
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+                if (toType == ColumnType.TIMESTAMP) {
+                    return new CastStrToTimestampFunctionFactory.Func(position, function);
+                }
+                if (ColumnType.isGeoHash(toType)) {
+                    return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
+                }
+                break;
+            default:
+                if (ColumnType.isGeoHash(fromType)) {
+                    int fromGeoBits = ColumnType.getGeoHashBits(fromType);
+                    int toGeoBits = ColumnType.getGeoHashBits(toType);
+                    if (ColumnType.isGeoHash(toType) && toGeoBits < fromGeoBits) {
+                        return CastGeoHashToGeoHashFunctionFactory.newInstance(position, function, toType, fromType);
+                    }
+                }
+                break;
+        }
+        return null;
     }
 
     private Function createIndexParameter(int variableIndex, int position) throws SqlException {

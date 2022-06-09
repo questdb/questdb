@@ -244,6 +244,15 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 't';
     }
 
+    public static boolean isPgCastKeyword(CharSequence tok) {
+        if (tok.length() != 2) {
+            return false;
+        }
+
+        int i = 0;
+        return tok.charAt(i++) == ':' && tok.charAt(i) == ':';
+    }
+
     public static boolean isCenturyKeyword(CharSequence tok) {
         if (tok.length() != 7) {
             return false;

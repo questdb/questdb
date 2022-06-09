@@ -3024,8 +3024,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final Function timestampFunction = FunctionParser.createColumn(
                         0,
                         timestampColumn,
-                        metadata,
-                        executionContext
+                        metadata
                 );
                 functions.add(timestampFunction);
 

@@ -23,7 +23,7 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarTypeFunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 
 open module io.questdb {
@@ -327,7 +327,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory,
-            io.questdb.griffin.engine.functions.cast.CastNullFunctionFactory,
+            CastVarTypeFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToBooleanFunctionFactory,
@@ -546,6 +546,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedDescriptionCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedNamespaceCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.LocksCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TypeCatalogueFunctionFactory,
@@ -553,6 +554,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.CurrentDatabaseFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CurrentSchemaBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.CurrentUserFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DescriptionCatalogueFunctionFactory,

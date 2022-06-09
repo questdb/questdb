@@ -71,7 +71,9 @@ public final class ColumnType {
     // We also build overload matrix, which logic relies on the fact GEOHASH value has to be
     // inside the MAX type value.
     public static final short GEOHASH = 23;
-    public static final short NULL = 24;
+    public static final short REGCLASS = 24;
+    public static final short PGDATE = 25;
+    public static final short NULL = 26;
 
     // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
@@ -375,6 +377,8 @@ public final class ColumnType {
         typeNameMap.put(RECORD, "RECORD");
         typeNameMap.put(VAR_ARG, "VARARG");
         typeNameMap.put(GEOHASH, "GEOHASH");
+        typeNameMap.put(REGCLASS, "regclass");
+        typeNameMap.put(PGDATE, "pgdate");
 
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
@@ -398,6 +402,9 @@ public final class ColumnType {
         nameTypeMap.put("bigint", LONG);
         nameTypeMap.put("real", FLOAT);
         nameTypeMap.put("bytea", STRING);
+        nameTypeMap.put("varchar", STRING);
+        nameTypeMap.put("regclass", REGCLASS);
+        nameTypeMap.put("pgdate", PGDATE);
 
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEO_HASH_MAX_BITS_LENGTH; b++) {

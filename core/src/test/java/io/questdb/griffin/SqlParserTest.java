@@ -515,6 +515,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPgCastRewrite() throws Exception {
+        assertQuery("select-virtual cast(t,varchar) cast from (select [t] from x)",
+                "select t::varchar from x",
+                modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP));
+    }
+
+    @Test
     public void testBracedArithmeticsInsideCast() throws SqlException {
         assertQuery(
                 "select-virtual cast(500000000000L + case(x > 400,x - 1,x),timestamp) ts from (select [x] from long_sequence(1000))",

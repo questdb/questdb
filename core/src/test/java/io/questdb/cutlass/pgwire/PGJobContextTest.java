@@ -4527,6 +4527,10 @@ nodejs code:
         });
     }
 
+    static {
+        LogFactory.configureSync();
+    }
+
     @Test
     public void testRegProcedure() throws Exception {
         assertMemoryLeak(() -> {

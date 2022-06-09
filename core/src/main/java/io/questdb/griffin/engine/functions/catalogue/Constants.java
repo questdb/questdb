@@ -32,6 +32,7 @@ public class Constants {
     public static final String PUBLIC = "public";
     static final String[] NAMESPACES = {"pg_catalog", PUBLIC};
     static final StrFunction PUBLIC_CONSTANT = new StrConstant(PUBLIC);
+    static final StrFunction USER_CONSTANT = new StrConstant("admin");
     static final int[] NAMESPACE_OIDS = {PGOids.PG_CATALOG_OID, PGOids.PG_PUBLIC_OID};
     static final CharSequence[] KEYWORDS = {
             "add",

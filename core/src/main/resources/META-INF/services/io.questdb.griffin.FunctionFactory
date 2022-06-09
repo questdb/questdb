@@ -282,7 +282,7 @@ io.questdb.griffin.engine.functions.cast.CastLongToDoubleFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory
-io.questdb.griffin.engine.functions.cast.CastNullFunctionFactory
+io.questdb.griffin.engine.functions.cast.CastVarTypeFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToSymbolFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory
 io.questdb.griffin.engine.functions.cast.CastLongToBooleanFunctionFactory
@@ -526,12 +526,14 @@ io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.TypeCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.VersionFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.LocksCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DescriptionCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.ClassResolveFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.CurrentUserFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSIExprFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgGetSIExprFunctionFactory
