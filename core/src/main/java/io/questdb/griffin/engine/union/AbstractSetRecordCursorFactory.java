@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -33,8 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-abstract class AbstractSetRecordCursorFactory implements RecordCursorFactory {
-    private final RecordMetadata metadata;
+abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory factoryA;
     private final RecordCursorFactory factoryB;
     private final ObjList<Function> castFunctionsA;
@@ -48,7 +48,7 @@ abstract class AbstractSetRecordCursorFactory implements RecordCursorFactory {
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB
     ) {
-        this.metadata = metadata;
+        super(metadata);
         this.factoryA = factoryA;
         this.factoryB = factoryB;
         this.castFunctionsB = castFunctionsB;
@@ -56,7 +56,7 @@ abstract class AbstractSetRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         Misc.free(factoryA);
         Misc.free(factoryB);
         Misc.freeObjListAndClear(castFunctionsA);
@@ -79,11 +79,6 @@ abstract class AbstractSetRecordCursorFactory implements RecordCursorFactory {
             Misc.free(cursorB);
             throw ex;
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

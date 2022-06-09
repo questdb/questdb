@@ -1923,7 +1923,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int timestampIndex;
             try {
                 timestampIndex = getTimestampIndex(model, factory);
-                if (timestampIndex == -1 || factory.hasDescendingOrder()) {
+            if (timestampIndex == -1 || factory.hasDescendingOrder()) {
                     throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over dedicated TIMESTAMP column");
                 }
             } catch (Throwable e) {
