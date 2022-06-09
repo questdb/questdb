@@ -50,7 +50,7 @@ public class AuthDb {
         byte[] dBytes = Base64.getUrlDecoder().decode(encodedPrivateKey);
 
         try {
-            BigInteger privateKeyInt = new BigInteger(dBytes);
+            BigInteger privateKeyInt = new BigInteger(1, dBytes);
             KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(EC_ALGORITHM);
             AlgorithmParameterSpec prime256v1ParamSpec = new ECGenParameterSpec(EC_CURVE);
             keyPairGenerator.initialize(prime256v1ParamSpec);
@@ -66,8 +66,8 @@ public class AuthDb {
         byte[] xBytes = Base64.getUrlDecoder().decode(encodedX);
         byte[] yBytes = Base64.getUrlDecoder().decode(encodedY);
         try {
-            BigInteger x = new BigInteger(xBytes);
-            BigInteger y = new BigInteger(yBytes);
+            BigInteger x = new BigInteger(1, xBytes);
+            BigInteger y = new BigInteger(1, yBytes);
             ECPoint point = new ECPoint(x, y);
 
             AlgorithmParameters parameters = AlgorithmParameters.getInstance(EC_ALGORITHM);
