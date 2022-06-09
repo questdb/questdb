@@ -76,7 +76,6 @@ public class TableWriter implements Closeable, WalWriterFactory {
     private static final int ROW_ACTION_O3 = 3;
     private static final int ROW_ACTION_SWITCH_PARTITION = 4;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
-    private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
     private static final Runnable NOOP = () -> {
     };
     final ObjList<MemoryMA> columns;
@@ -360,7 +359,7 @@ public class TableWriter implements Closeable, WalWriterFactory {
     public WalWriter createWal(TableReader reader) {
         // always create a new wal with an increasing id
         // remove string concat garbage below, we do not know how many wal writers will be created
-        return new WalWriter(configuration, tableName, WalWriter.WAL_NAME_BASE + walIdGenerator.getNextId(), reader, metrics);
+        return new WalWriter(configuration, tableName, WalWriter.WAL_NAME_BASE + walIdGenerator.getNextId(), reader);
     }
 
     public void addColumn(CharSequence name, int type) {
@@ -1564,12 +1563,6 @@ public class TableWriter implements Closeable, WalWriterFactory {
             LOG.critical().$("index error [fd=").$(indexer.getFd()).$(']').$('{').$((Sinkable) e).$('}').$();
         } finally {
             latch.countDown();
-        }
-    }
-
-    private static void removeOrException(FilesFacade ff, LPSZ path) {
-        if (ff.exists(path) && !ff.remove(path)) {
-            throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
         }
     }
 
@@ -5539,13 +5532,5 @@ public class TableWriter implements Closeable, WalWriterFactory {
             }
             setRowValueNotNull(index);
         }
-    }
-
-    static {
-        IGNORED_FILES.add("..");
-        IGNORED_FILES.add(".");
-        IGNORED_FILES.add(META_FILE_NAME);
-        IGNORED_FILES.add(TXN_FILE_NAME);
-        IGNORED_FILES.add(TODO_FILE_NAME);
     }
 }

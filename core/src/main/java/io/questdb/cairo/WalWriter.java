@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.Metrics;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
@@ -33,7 +32,6 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
@@ -43,10 +41,9 @@ import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 import static io.questdb.cairo.TableUtils.*;
 
 public class WalWriter implements Closeable {
-    public static final String WAL_NAME_BASE = "wal";
-    public static final int WAL_FORMAT_VERSION = 0;
+    static final String WAL_NAME_BASE = "wal";
+    static final int WAL_FORMAT_VERSION = 0;
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
-    private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
     private static final Runnable NOOP = () -> {
     };
     private final ObjList<MemoryMA> columns;
@@ -54,7 +51,6 @@ public class WalWriter implements Closeable {
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final IntList initSymbolCounts = new IntList();
     private final Path path;
-    private final Path other;
     private final LongList rowValueIsNotNull = new LongList();
     private final int rootLen;
     private final FilesFacade ff;
@@ -65,18 +61,15 @@ public class WalWriter implements Closeable {
     private final String walName;
     private final WalWriterMetadataCache metadataCache;
     private final CairoConfiguration configuration;
-    private final int defaultCommitMode;
     private final ObjList<Runnable> nullSetters;
-    private final Metrics metrics;
     private final Row row = new RowImpl();
     private long lockFd = -1;
     private int columnCount;
-    private boolean distressed = false;
-    private long walDRowCounter;
-    private long waldSegmentCounter = -1;
+    private long rowCount = -1;
+    private long segmentCount = -1;
 
-    public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, TableReader reader, Metrics metrics) {
-        this(configuration, tableName, walName, reader, true, configuration.getRoot(), metrics);
+    public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, TableReader reader) {
+        this(configuration, tableName, walName, reader, configuration.getRoot());
     }
 
     public WalWriter(
@@ -84,28 +77,19 @@ public class WalWriter implements Closeable {
             CharSequence tableName,
             CharSequence walName,
             TableReader tableReader,
-            boolean lock,
-            CharSequence root,
-            Metrics metrics
+            CharSequence root
     ) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
-        this.metrics = metrics;
-        this.defaultCommitMode = configuration.getCommitMode();
-        this.ff = configuration.getFilesFacade();
         this.mkDirMode = configuration.getMkDirMode();
+        this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
         this.walName = Chars.toString(walName);
         this.path = new Path().of(root).concat(tableName).concat(walName);
-        this.other = new Path().of(root).concat(tableName).concat(walName);
         this.rootLen = path.length();
+
         try {
-            if (lock) {
-                lock();
-            } else {
-                this.lockFd = -1L;
-            }
-            path.trimTo(rootLen);
+            lock();
 
             this.columnCount = tableReader.getColumnCount();
             this.columns = new ObjList<>(columnCount * 2);
@@ -114,21 +98,20 @@ public class WalWriter implements Closeable {
             this.nullSetters = new ObjList<>(columnCount);
             this.metadataCache = new WalWriterMetadataCache(configuration).of(tableReader);
 
-            configureColumnMemory(metadataCache);
+            configureColumns(metadataCache);
             openNewSegment(metadataCache);
             configureSymbolTable(tableReader);
-            setAppendPosition(walDRowCounter, false);
         } catch (Throwable e) {
             doClose(false);
             throw e;
         }
     }
 
-    public static int getPrimaryColumnIndex(int index) {
+    private static int getPrimaryColumnIndex(int index) {
         return index * 2;
     }
 
-    public static int getSecondaryColumnIndex(int index) {
+    private static int getSecondaryColumnIndex(int index) {
         return getPrimaryColumnIndex(index) + 1;
     }
 
@@ -136,41 +119,39 @@ public class WalWriter implements Closeable {
         addColumn(name, type, configuration.getDefaultSymbolCapacity());
     }
 
-    public void addColumn(
-            CharSequence name,
-            int type,
-            int symbolCapacity
-    ) {
+    public void addColumn(CharSequence name, int type, int symbolCapacity) {
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
-        assert TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength()) : "invalid column name";
+        assert isValidColumnName(name, configuration.getMaxFileNameLength()) : "invalid column name";
 
         if (metadataCache.getColumnIndexQuiet(name) != -1) {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
         }
 
-        closeCurrentSegment();
-        LOG.info().$("adding column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
+        try {
+            closeCurrentSegment();
+            LOG.info().$("adding column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
 
-        final int index = columnCount;
-        metadataCache.addColumn(index, name, type);
+            final int index = columnCount;
+            metadataCache.addColumn(index, name, type);
+            configureColumn(index, type);
+            columnCount++;
 
-        // add column objects
-        configureColumn(index, type);
-        columnCount++;
-
-        openNewSegment(metadataCache);
-        configureSymbolMapWriter(index, name, type, null);
-        LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
+            openNewSegment(metadataCache);
+            configureSymbolMapWriter(index, name, type, null);
+            LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
+        } catch (Throwable e) {
+            throw new CairoError(e);
+        }
     }
 
     @Override
     public void close() {
-        closeCurrentSegment();
-        doClose(true);
-    }
-
-    public void commit() {
-        commit(defaultCommitMode);
+        try {
+            closeCurrentSegment();
+            doClose(true);
+        } catch (Throwable e) {
+            throw new CairoError(e);
+        }
     }
 
     public String getTableName() {
@@ -186,37 +167,43 @@ public class WalWriter implements Closeable {
     }
 
     public Row newRow(long timestamp) {
-        int timestampIndex = metadataCache.getTimestampIndex();
-        if (timestampIndex != -1) {
-            // todo: avoid lookups by having a designated field with primaryColumn
-            MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
-            primaryColumn.putLong128(timestamp, walDRowCounter);
-            setRowValueNotNull(timestampIndex);
+        try {
+            final int timestampIndex = metadataCache.getTimestampIndex();
+            if (timestampIndex != -1) {
+                //avoid lookups by having a designated field with primaryColumn
+                final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
+                primaryColumn.putLong128(timestamp, rowCount);
+                setRowValueNotNull(timestampIndex);
+            }
+            return row;
+        } catch (Throwable e) {
+            throw new CairoError(e);
         }
-        return row;
     }
 
     public void removeColumn(CharSequence name) {
-        closeCurrentSegment();
-        LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
+        try {
+            closeCurrentSegment();
+            LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
 
-        final int index = metadataCache.getColumnIndex(name);
-        final int type = metadataCache.getColumnType(index);
-        if (ColumnType.isSymbol(type)) {
-            removeSymbolMapWriter(index);
+            final int index = metadataCache.getColumnIndex(name);
+            final int type = metadataCache.getColumnType(index);
+            if (ColumnType.isSymbol(type)) {
+                removeSymbolMapWriter(index);
+            }
+
+            metadataCache.removeColumn(index);
+            removeColumn(index);
+
+            openNewSegment(metadataCache);
+            LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
+        } catch (Throwable e) {
+            throw new CairoError(e);
         }
-
-        metadataCache.removeColumn(index);
-
-        // remove column objects
-        removeColumn(index);
-
-        openNewSegment(metadataCache);
-        LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
     }
 
     public long size() {
-        return walDRowCounter;
+        return rowCount;
     }
 
     @Override
@@ -224,12 +211,6 @@ public class WalWriter implements Closeable {
         return "WalWriter{" +
                 "name=" + tableName +
                 '}';
-    }
-
-    private static void removeOrException(FilesFacade ff, LPSZ path) {
-        if (ff.exists(path) && !ff.remove(path)) {
-            throw CairoException.instance(ff.errno()).put("Cannot remove ").put(path);
-        }
     }
 
     private static void configureNullSetters(ObjList<Runnable> nullers, int type, MemoryA mem1, MemoryA mem2) {
@@ -296,13 +277,6 @@ public class WalWriter implements Closeable {
         }
     }
 
-    private void checkDistressed() {
-        if (!distressed) {
-            return;
-        }
-        throw new CairoError("Table '" + tableName + "' is distressed");
-    }
-
     private void closeAppendMemoryTruncate(boolean truncate) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             MemoryMA m = columns.getQuick(i);
@@ -310,17 +284,6 @@ public class WalWriter implements Closeable {
                 m.close(truncate);
             }
         }
-    }
-
-    private void commit(int commitMode) {
-        checkDistressed();
-
-        if (commitMode != CommitMode.NOSYNC) {
-            syncColumns(commitMode);
-        }
-
-        metrics.tableWriter().incrementCommits();
-        metrics.tableWriter().addCommittedRows(walDRowCounter);
     }
 
     private void configureColumn(int index, int type) {
@@ -350,10 +313,9 @@ public class WalWriter implements Closeable {
         rowValueIsNotNull.extendAndSet(index, -1);
     }
 
-    private void configureColumnMemory(BaseRecordMetadata metadata) {
+    private void configureColumns(BaseRecordMetadata metadata) {
         for (int i = 0; i < columnCount; i++) {
-            int type = metadata.getColumnType(i);
-            configureColumn(i, type);
+            configureColumn(i, metadata.getColumnType(i));
         }
     }
 
@@ -398,10 +360,10 @@ public class WalWriter implements Closeable {
         Misc.free(metaMem);
         freeSymbolMapWriters();
         Misc.free(symbolMapMem);
-        Misc.free(other);
-        freeColumns(truncate & !distressed);
+        freeColumns(truncate);
+
         try {
-            releaseLock(!truncate | distressed);
+            releaseLock(!truncate);
         } finally {
             Misc.free(path);
             LOG.info().$("closed '").utf8(tableName).$('\'').$();
@@ -453,23 +415,20 @@ public class WalWriter implements Closeable {
 
     private void lock() {
         try {
-            path.trimTo(rootLen);
             lockName(path);
-            this.lockFd = TableUtils.lock(ff, path);
+            lockFd = TableUtils.lock(ff, path);
         } finally {
             path.trimTo(rootLen);
         }
 
-        if (this.lockFd == -1L) {
+        if (lockFd == -1L) {
             throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
         }
     }
 
     private void openColumnFiles(CharSequence name, int columnIndex, int pathTrimToLen) {
-        MemoryMA mem1 = getPrimaryColumn(columnIndex);
-        MemoryMA mem2 = getSecondaryColumn(columnIndex);
-
         try {
+            final MemoryMA mem1 = getPrimaryColumn(columnIndex);
             mem1.of(ff,
                     dFile(path.trimTo(pathTrimToLen), name),
                     configuration.getDataAppendPageSize(),
@@ -477,6 +436,8 @@ public class WalWriter implements Closeable {
                     MemoryTag.MMAP_TABLE_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
+
+            final MemoryMA mem2 = getSecondaryColumn(columnIndex);
             if (mem2 != null) {
                 mem2.of(ff,
                         iFile(path.trimTo(pathTrimToLen), name),
@@ -493,22 +454,15 @@ public class WalWriter implements Closeable {
     }
 
     private void closeCurrentSegment() {
-        commit();
         writeSymbolMapDiffs();
     }
 
     private void openNewSegment(BaseRecordMetadata metadata) {
-        waldSegmentCounter++;
-        walDRowCounter = 0;
-        rowValueIsNotNull.fill(0, columnCount, -1);
         try {
-            path.slash().put(waldSegmentCounter);
-            final int pathLen = path.length();
-            if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-                throw CairoException.instance(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
-            }
-            path.trimTo(pathLen);
-            assert columnCount > 0;
+            segmentCount++;
+            rowCount = 0;
+            rowValueIsNotNull.fill(0, columnCount, -1);
+            final int segmentPathLen = createSegmentDir();
 
             int liveColumnCount = 0;
             for (int i = 0; i < columnCount; i++) {
@@ -516,7 +470,7 @@ public class WalWriter implements Closeable {
                 if (type > 0) {
                     liveColumnCount++;
                     final CharSequence name = metadata.getColumnName(i);
-                    openColumnFiles(name, i, pathLen);
+                    openColumnFiles(name, i, segmentPathLen);
                     if (ColumnType.isSymbol(type)) {
                         createSymbolMapFiles(
                                 ff,
@@ -527,18 +481,26 @@ public class WalWriter implements Closeable {
                                 configuration.getDefaultSymbolCapacity(), // take this from TableStructure/TableWriter !!!
                                 configuration.getDefaultSymbolCacheFlag() // take this from TableStructure/TableWriter !!!
                         );
-                        path.slash().put(waldSegmentCounter);
+                        path.slash().put(segmentCount);
                     }
                 }
             }
-            writeMetadata(metadata, pathLen, liveColumnCount);
+
+            writeMetadata(metadata, segmentPathLen, liveColumnCount);
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
-        } catch (Throwable e) {
-            distressed = true;
-            throw e;
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    private int createSegmentDir() {
+        path.slash().put(segmentCount);
+        final int segmentPathLen = path.length();
+        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            throw CairoException.instance(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
+        }
+        path.trimTo(segmentPathLen);
+        return segmentPathLen;
     }
 
     private void writeMetadata(BaseRecordMetadata metadata, int pathLen, int liveColumnCount) {
@@ -573,10 +535,10 @@ public class WalWriter implements Closeable {
         metaMem.putInt(SymbolMapDiff.END_OF_SYMBOL_DIFFS);
     }
 
-    private void releaseLock(boolean distressed) {
+    private void releaseLock(boolean keepLockFile) {
         if (lockFd != -1L) {
             ff.close(lockFd);
-            if (distressed) {
+            if (keepLockFile) {
                 return;
             }
 
@@ -613,78 +575,25 @@ public class WalWriter implements Closeable {
 
     private void rowAppend(ObjList<Runnable> activeNullSetters) {
         for (int i = 0; i < columnCount; i++) {
-            if (rowValueIsNotNull.getQuick(i) < walDRowCounter) {
+            if (rowValueIsNotNull.getQuick(i) < rowCount) {
                 activeNullSetters.getQuick(i).run();
             }
         }
-        walDRowCounter++;
+        rowCount++;
     }
 
-    void rowCancel() {
-        closeCurrentSegment();
-        openNewSegment(metadataCache);
-    }
-
-    void setAppendPosition(final long position, boolean doubleAllocate) {
-        for (int i = 0; i < columnCount; i++) {
-            // stop calculating oversize as soon as we find first over-sized column
-            setColumnSize(i, position, doubleAllocate);
-        }
-    }
-
-    private void setColumnSize(int columnIndex, long pos, boolean doubleAllocate) {
-        MemoryMA mem1 = getPrimaryColumn(columnIndex);
-        MemoryMA mem2 = getSecondaryColumn(columnIndex);
-        int type = metadataCache.getColumnType(columnIndex);
-        if (type > 0) { // Not deleted
-            if (pos > 0) {
-                // subtract column top
-                final long m1pos;
-                switch (ColumnType.tagOf(type)) {
-                    case ColumnType.BINARY:
-                    case ColumnType.STRING:
-                        assert mem2 != null;
-                        if (doubleAllocate) {
-                            mem2.allocate(pos * Long.BYTES + Long.BYTES);
-                        }
-                        // Jump to the number of records written to read length of var column correctly
-                        mem2.jumpTo(pos * Long.BYTES);
-                        m1pos = Unsafe.getUnsafe().getLong(mem2.getAppendAddress());
-                        // Jump to the end of file to correctly trim the file
-                        mem2.jumpTo((pos + 1) * Long.BYTES);
-                        break;
-                    default:
-                        m1pos = pos << ColumnType.pow2SizeOf(type);
-                        break;
-                }
-                if (doubleAllocate) {
-                    mem1.allocate(m1pos);
-                }
-                mem1.jumpTo(m1pos);
-            } else {
-                mem1.jumpTo(0);
-                if (mem2 != null) {
-                    mem2.jumpTo(0);
-                    mem2.putLong(0);
-                }
-            }
+    public void rollToNextSegment() {
+        try {
+            closeCurrentSegment();
+            openNewSegment(metadataCache);
+        } catch (Throwable e) {
+            throw new CairoError(e);
         }
     }
 
     private void setRowValueNotNull(int columnIndex) {
-        assert rowValueIsNotNull.getQuick(columnIndex) != walDRowCounter;
-        rowValueIsNotNull.setQuick(columnIndex, walDRowCounter);
-    }
-
-    private void syncColumns(int commitMode) {
-        final boolean async = commitMode == CommitMode.ASYNC;
-        for (int i = 0; i < columnCount; i++) {
-            columns.getQuick(i * 2).sync(async);
-            final MemoryMA m2 = columns.getQuick(i * 2 + 1);
-            if (m2 != null) {
-                m2.sync(false);
-            }
-        }
+        assert rowValueIsNotNull.getQuick(columnIndex) != rowCount;
+        rowValueIsNotNull.setQuick(columnIndex, rowCount);
     }
 
     public interface Row {
@@ -754,7 +663,7 @@ public class WalWriter implements Closeable {
 
         @Override
         public void cancel() {
-            rowCancel();
+            rollToNextSegment();
         }
 
         @Override
@@ -965,13 +874,5 @@ public class WalWriter implements Closeable {
             }
             setRowValueNotNull(index);
         }
-    }
-
-    static {
-        IGNORED_FILES.add("..");
-        IGNORED_FILES.add(".");
-        IGNORED_FILES.add(META_FILE_NAME);
-        IGNORED_FILES.add(TXN_FILE_NAME);
-        IGNORED_FILES.add(TODO_FILE_NAME);
     }
 }

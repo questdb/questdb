@@ -52,16 +52,16 @@ public class WalReader implements Closeable, SymbolTableSource {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final long segmentId;
-    private final long walRowCount;
+    private final long rowCount;
     private final ObjList<MemoryMR> columns;
     private final int columnCount;
 
-    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, IntList walSymbolCounts, long walRowCount, int timestampIndex) {
+    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, IntList walSymbolCounts, long rowCount, int timestampIndex) {
         this.configuration = configuration;
         this.tableName = Chars.toString(tableName);
         this.walName = Chars.toString(walName);
         this.segmentId = segmentId;
-        this.walRowCount = walRowCount;
+        this.rowCount = rowCount;
 
         ff = configuration.getFilesFacade();
         path = new Path();
@@ -85,7 +85,7 @@ public class WalReader implements Closeable, SymbolTableSource {
         }
     }
 
-    public static int getPrimaryColumnIndex(int index) {
+    static int getPrimaryColumnIndex(int index) {
         return index * 2 + 2;
     }
 
@@ -125,7 +125,7 @@ public class WalReader implements Closeable, SymbolTableSource {
             if (ff.exists(path.$())) {
                 path.chop$();
                 openSegmentColumns();
-                return walRowCount;
+                return rowCount;
             }
             LOG.error().$("open segment failed, segment does not exist on the disk. [path=").utf8(path.$()).I$();
             throw CairoException.instance(0)
@@ -152,15 +152,15 @@ public class WalReader implements Closeable, SymbolTableSource {
 
             final int columnType = metadata.getColumnType(columnIndex);
             if (ColumnType.isVariableLength(columnType)) {
-                long columnSize = (walRowCount + 1) << 3;
+                long columnSize = (rowCount + 1) << 3;
                 TableUtils.iFile(path.trimTo(pathLen), name);
                 MemoryMR secondaryMem = columns.getQuick(secondaryIndex);
                 secondaryMem = openOrCreateMemory(path, columns, secondaryIndex, secondaryMem, columnSize);
-                columnSize = secondaryMem.getLong(walRowCount << 3);
+                columnSize = secondaryMem.getLong(rowCount << 3);
                 TableUtils.dFile(path.trimTo(pathLen), name);
                 openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnSize);
             } else {
-                long columnSize = walRowCount << ColumnType.pow2SizeOf(columnType);
+                long columnSize = rowCount << ColumnType.pow2SizeOf(columnType);
                 TableUtils.dFile(path.trimTo(pathLen), name);
                 openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnIndex == getTimestampIndex() ? columnSize << 1 : columnSize);
                 Misc.free(columns.getAndSetQuick(secondaryIndex, null));
@@ -171,7 +171,7 @@ public class WalReader implements Closeable, SymbolTableSource {
     }
 
     public long size() {
-        return walRowCount;
+        return rowCount;
     }
 
     public String getColumnName(int columnIndex) {
