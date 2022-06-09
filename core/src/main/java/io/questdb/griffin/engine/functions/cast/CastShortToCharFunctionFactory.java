@@ -42,13 +42,13 @@ public class CastShortToCharFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastShortToCharFunction(args.getQuick(0));
     }
 
-    private static class Func extends CharFunction implements UnaryFunction {
+    public static class CastShortToCharFunction extends CharFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
+        public CastShortToCharFunction(Function arg) {
             this.arg = arg;
         }
 

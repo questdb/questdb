@@ -22,30 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.eq;
+package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.std.Misc;
 
+public abstract class AbstractSetRecordCursor implements RecordCursor {
+    protected RecordCursor cursorA;
+    protected RecordCursor cursorB;
+    protected SqlExecutionCircuitBreaker circuitBreaker;
 
-public class EqGeoHashStrFunctionFactory extends EqGeoHashGeoHashFunctionFactory {
     @Override
-    public String getSignature() {
-        return "=(GS)";
+    public void close() {
+        this.cursorA = Misc.free(this.cursorA);
+        this.cursorB = Misc.free(this.cursorB);
+        this.circuitBreaker = null;
     }
 
-    @Override
-    public Function newInstance(int position,
-                                ObjList<Function> args,
-                                IntList argPositions,
-                                CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext) throws SqlException {
-        args.set(1, CastStrToGeoHashFunctionFactory.newInstance(position, args.getQuick(0).getType(), args.getQuick(1)));
-        return super.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
+    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
+        this.cursorA = cursorA;
+        this.cursorB = cursorB;
+        this.circuitBreaker = circuitBreaker;
     }
 }

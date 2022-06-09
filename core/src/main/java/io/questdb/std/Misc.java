@@ -58,9 +58,22 @@ public final class Misc {
 
     public static <T> void freeObjList(ObjList<T> list) {
         if (list != null) {
+            freeObjList0(list);
+        }
+    }
+
+    private static <T> void freeObjList0(ObjList<T> list) {
+        for (int i = 0, n = list.size(); i < n; i++) {
+            list.setQuick(i, free(list.getQuick(i)));
+        }
+    }
+
+    public static <T> void freeObjListAndClear(ObjList<T> list) {
+        if (list != null) {
             for (int i = 0, n = list.size(); i < n; i++) {
-                list.setQuick(i, free(list.getQuick(i)));
+                free(list.getQuick(i));
             }
+            list.clear();
         }
     }
 
