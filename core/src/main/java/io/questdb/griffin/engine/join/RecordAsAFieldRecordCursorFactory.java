@@ -54,7 +54,7 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         Misc.free(base);
     }
 

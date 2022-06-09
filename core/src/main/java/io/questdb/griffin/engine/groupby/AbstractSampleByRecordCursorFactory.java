@@ -50,7 +50,7 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         Misc.freeObjList(recordFunctions);
         Misc.free(base);
     }

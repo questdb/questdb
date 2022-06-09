@@ -98,7 +98,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         base.close();
         rowIdOutAddress = Misc.free(rowIdOutAddress);
         samplePeriodAddress = Misc.free(samplePeriodAddress);

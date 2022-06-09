@@ -59,7 +59,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         super._close();
         map.close();
     }

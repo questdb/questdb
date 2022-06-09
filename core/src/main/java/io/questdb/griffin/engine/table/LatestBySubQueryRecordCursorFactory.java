@@ -78,7 +78,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         super._close();
         recordCursorFactory.close();
         Misc.free(filter);

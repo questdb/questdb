@@ -82,7 +82,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         super._close();
         Misc.free(map);
     }

@@ -93,7 +93,7 @@ public abstract class AbstractClassCatalogueFunctionFactory implements FunctionF
         }
 
         @Override
-        public void _close() {
+        protected void _close() {
             Misc.free(path);
             Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         }

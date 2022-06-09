@@ -73,7 +73,7 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         base.close();
         latestByMap.close();
     }

@@ -152,7 +152,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         Misc.freeObjList(vafList);
         for (int i = 0, n = pRosti.length; i < n; i++) {
             Rosti.free(pRosti[i]);

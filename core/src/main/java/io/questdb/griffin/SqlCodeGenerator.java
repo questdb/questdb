@@ -1621,19 +1621,52 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 listColumnFilterA.clear();
 
                 if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "linear")) {
+
+                    final int columnCount = metadata.getColumnCount();
+                    final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
+                    final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
+
+                    valueTypes.add(ColumnType.BYTE); // gap flag
+
+                    GroupByUtils.prepareGroupByFunctions(
+                            model,
+                            metadata,
+                            functionParser,
+                            executionContext,
+                            groupByFunctions,
+                            groupByFunctionPositions,
+                            valueTypes
+                    );
+
+                    final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
+                    GroupByUtils.prepareGroupByRecordFunctions(
+                            model,
+                            metadata,
+                            listColumnFilterA,
+                            groupByFunctions,
+                            groupByFunctionPositions,
+                            recordFunctions,
+                            recordFunctionPositions,
+                            groupByMetadata,
+                            keyTypes,
+                            valueTypes.getColumnCount(),
+                            false,
+                            timestampIndex
+                    );
+
                     return new SampleByInterpolateRecordCursorFactory(
                             configuration,
                             factory,
+                            groupByMetadata,
+                            groupByFunctions,
+                            recordFunctions,
                             timestampSampler,
                             model,
                             listColumnFilterA,
-                            functionParser,
-                            executionContext,
                             asm,
                             keyTypes,
                             valueTypes,
                             entityColumnFilter,
-                            recordFunctionPositions,
                             groupByFunctionPositions,
                             timestampIndex
                     );

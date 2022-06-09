@@ -81,7 +81,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         Misc.free(base);
         Misc.free(filterAtom);
         Misc.free(frameSequence);

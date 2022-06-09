@@ -61,7 +61,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         base.close();
         chain.close();
     }

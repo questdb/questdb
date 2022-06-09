@@ -75,7 +75,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void _close() {
+        protected void _close() {
             Misc.free(path);
             Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
         }

@@ -91,7 +91,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         Misc.free(base);
         Misc.free(filterAtom);
         Misc.free(frameSequence);

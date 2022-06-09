@@ -62,7 +62,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         dataMap.close();
         base.close();
     }

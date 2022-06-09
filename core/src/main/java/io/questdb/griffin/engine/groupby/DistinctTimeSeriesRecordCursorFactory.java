@@ -75,7 +75,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         dataMap.close();
         base.close();
     }

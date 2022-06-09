@@ -47,7 +47,7 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         base.close();
         filter.close();
     }

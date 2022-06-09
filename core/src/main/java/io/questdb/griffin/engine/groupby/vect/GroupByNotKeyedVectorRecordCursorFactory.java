@@ -71,7 +71,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         Misc.freeObjList(vafList);
         Misc.free(base);
     }

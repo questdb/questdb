@@ -54,7 +54,7 @@ public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         cursor.close();
     }
 

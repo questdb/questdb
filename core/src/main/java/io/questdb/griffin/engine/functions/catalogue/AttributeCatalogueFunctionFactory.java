@@ -85,7 +85,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void _close() {
+        protected void _close() {
             Misc.free(path);
             Misc.free(metaMem);
         }

@@ -81,7 +81,7 @@ public class DistinctKeyRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         this.baseAggregatorFactory.close();
     }
 

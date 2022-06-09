@@ -102,7 +102,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void _close() {
+        protected void _close() {
             path = Misc.free(path);
             metaReader = Misc.free(metaReader);
         }

@@ -60,7 +60,7 @@ public class LatestByValuesFilteredRecordCursorFactory extends AbstractDeferredT
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         super._close();
         Misc.free(filter);
     }

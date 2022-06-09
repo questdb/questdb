@@ -70,7 +70,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         Misc.free(filter);
         recordCursorFactory.close();
         factoriesA.clear();

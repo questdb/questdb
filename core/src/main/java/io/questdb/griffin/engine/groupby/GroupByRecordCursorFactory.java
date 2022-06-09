@@ -77,7 +77,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         Misc.freeObjList(recordFunctions);
         Misc.free(dataMap);
         Misc.free(base);

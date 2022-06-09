@@ -74,7 +74,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         base.close();
         latestByMap.close();
         rowIndexes.close();

@@ -53,7 +53,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         super._close();
         if (filter != null) {
             filter.close();

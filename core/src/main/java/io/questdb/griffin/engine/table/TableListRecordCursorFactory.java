@@ -54,7 +54,7 @@ public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void _close() {
+    protected void _close() {
         path = Misc.free(path);
     }
 
