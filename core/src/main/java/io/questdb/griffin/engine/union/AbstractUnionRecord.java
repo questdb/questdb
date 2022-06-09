@@ -22,53 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.udp;
+package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
-import io.questdb.network.NetworkFacade;
+import io.questdb.cairo.sql.Record;
 
-public interface LineUdpReceiverConfiguration {
+public class AbstractUnionRecord implements Record {
+    protected boolean useA = true;
+    protected Record recordA;
+    protected Record recordB;
 
-    boolean getAutoCreateNewColumns();
+    public Record getRecordA() {
+        return recordA;
+    }
 
-    boolean getAutoCreateNewTables();
+    public void of(Record recordA, Record recordB) {
+        this.recordA = recordA;
+        this.recordB = recordB;
+    }
 
-    int getCommitMode();
-
-    int getBindIPv4Address();
-
-    int getCommitRate();
-
-    int getGroupIPv4Address();
-
-    int getMaxFileNameLength();
-
-    int getMsgBufferSize();
-
-    int getMsgCount();
-
-    NetworkFacade getNetworkFacade();
-
-    int getPort();
-
-    int getReceiveBufferSize();
-
-    CairoSecurityContext getCairoSecurityContext();
-
-    boolean isEnabled();
-
-    boolean isUnicast();
-
-    boolean ownThread();
-
-    int ownThreadAffinity();
-
-    LineProtoTimestampAdapter getTimestampAdapter();
-
-    int getDefaultPartitionBy();
-
-    short getDefaultColumnTypeForFloat();
-
-    short getDefaultColumnTypeForInteger();
+    public void setAb(boolean useA) {
+        this.useA = useA;
+    }
 }

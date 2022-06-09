@@ -82,7 +82,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final IntHashSet dependencies = new IntHashSet();
     private final IntList orderedJoinModels1 = new IntList();
     private final IntList orderedJoinModels2 = new IntList();
-    private final LowerCaseCharSequenceIntHashMap aliasIndexes = new LowerCaseCharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
 
     // collect frequency of column names from each join model
@@ -91,7 +92,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // column name frequency of 0 corresponds to map value -1
     // list of "and" concatenated expressions
     private final ObjList<ExpressionNode> parsedWhere = new ObjList<>();
-    private final IntHashSet parsedWhereConsts = new IntHashSet();
+    private final IntHashSet parsedWhereConstants = new IntHashSet();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
@@ -153,8 +154,46 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.add(this);
     }
 
-    public boolean addAliasIndex(ExpressionNode node, int index) {
-        return aliasIndexes.put(node.token, index);
+    // Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
+    public static void backupWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
+        QueryModel current = model;
+        while (current != null) {
+            if (current.unionModel != null) {
+                backupWhereClause(pool, current.unionModel);
+            }
+            if (current.updateTableModel != null) {
+                backupWhereClause(pool, current.updateTableModel);
+            }
+            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
+                final QueryModel m = current.joinModels.get(i);
+                if (m != null && current != m) {
+                    backupWhereClause(pool, m);
+                }
+            }
+            current.backupWhereClause = ExpressionNode.deepClone(pool, current.whereClause);
+            current = current.nestedModel;
+        }
+    }
+
+    // Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
+    public static void restoreWhereClause(final QueryModel model) {
+        QueryModel current = model;
+        while (current != null) {
+            if (current.unionModel != null) {
+                restoreWhereClause(current.unionModel);
+            }
+            if (current.updateTableModel != null) {
+                restoreWhereClause(current.updateTableModel);
+            }
+            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
+                final QueryModel m = current.joinModels.get(i);
+                if (m != null && current != m) {
+                    restoreWhereClause(m);
+                }
+            }
+            current.whereClause = current.backupWhereClause;
+            current = current.nestedModel;
+        }
     }
 
     public void addBottomUpColumn(QueryColumn column) throws SqlException {
@@ -190,6 +229,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         columnNameToAliasMap.put(ast.token, alias);
         bottomUpColumnNames.add(alias);
         aliasToColumnMap.put(alias, column);
+        columnAliasIndexes.put(alias, bottomUpColumnNames.size() - 1);
     }
 
     public void addGroupBy(ExpressionNode node) {
@@ -206,6 +246,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void addLatestBy(ExpressionNode latestBy) {
         this.latestBy.add(latestBy);
+    }
+
+    public boolean addModelAliasIndex(ExpressionNode node, int index) {
+        return modelAliasIndexes.put(node.token, index);
     }
 
     public void addOrderBy(ExpressionNode node, int direction) {
@@ -273,8 +317,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinKeywordPosition = 0;
         orderedJoinModels1.clear();
         orderedJoinModels2.clear();
-        parsedWhereConsts.clear();
-        aliasIndexes.clear();
+        parsedWhereConstants.clear();
+        columnAliasIndexes.clear();
+        modelAliasIndexes.clear();
         postJoinWhereClause = null;
         context = null;
         orderedJoinModels = orderedJoinModels2;
@@ -401,18 +446,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.alias = alias;
     }
 
-    public int getAliasIndex(CharSequence column, int start, int end) {
-        int index = aliasIndexes.keyIndex(column, start, end);
-        if (index < 0) {
-            return aliasIndexes.valueAt(index);
-        }
-        return -1;
-    }
-
-    public LowerCaseCharSequenceIntHashMap getAliasIndexes() {
-        return aliasIndexes;
-    }
-
     public LowerCaseCharSequenceObjHashMap<QueryColumn> getAliasToColumnMap() {
         return aliasToColumnMap;
     }
@@ -427,6 +460,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<QueryColumn> getBottomUpColumns() {
         return bottomUpColumns;
+    }
+
+    public int getColumnAliasIndex(CharSequence alias) {
+        return columnAliasIndexes.get(alias);
     }
 
     public LowerCaseCharSequenceObjHashMap<CharSequence> getColumnNameToAliasMap() {
@@ -523,6 +560,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getLimitLo() {
         return limitLo;
+    }
+
+    public int getModelAliasIndex(CharSequence column, int start, int end) {
+        int index = modelAliasIndexes.keyIndex(column, start, end);
+        if (index < 0) {
+            return modelAliasIndexes.valueAt(index);
+        }
+        return -1;
+    }
+
+    public LowerCaseCharSequenceIntHashMap getModelAliasIndexes() {
+        return modelAliasIndexes;
     }
 
     public int getModelPosition() {
@@ -711,52 +760,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.unionModel = unionModel;
     }
 
-    public void setUpdateTableName(String tableName) {
-        this.updateTableName = tableName;
-    }
-
-    // Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
-    public static void backupWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
-        QueryModel current = model;
-        while (current != null) {
-            if (current.unionModel != null) {
-                backupWhereClause(pool, current.unionModel);
-            }
-            if (current.updateTableModel != null) {
-                backupWhereClause(pool, current.updateTableModel);
-            }
-            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
-                final QueryModel m = current.joinModels.get(i);
-                if (m != null && current != m) {
-                    backupWhereClause(pool, m);
-                }
-            }
-            current.backupWhereClause = ExpressionNode.deepClone(pool, current.whereClause);
-            current = current.nestedModel;
-        }
-    }
-
-    // Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
-    public static void restoreWhereClause(final QueryModel model) {
-        QueryModel current = model;
-        while (current != null) {
-            if (current.unionModel != null) {
-                restoreWhereClause(current.unionModel);
-            }
-            if (current.updateTableModel != null) {
-                restoreWhereClause(current.updateTableModel);
-            }
-            for (int i = 0, n = current.joinModels.size(); i < n; i++) {
-                final QueryModel m = current.joinModels.get(i);
-                if (m != null && current != m) {
-                    restoreWhereClause(m);
-                }
-            }
-            current.whereClause = current.backupWhereClause;
-            current = current.nestedModel;
-        }
-    }
-
     public ObjList<ExpressionNode> getUpdateExpressions() {
         return updateSetColumns;
     }
@@ -771,6 +774,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public String getUpdateTableName() {
         return updateTableName;
+    }
+
+    public void setUpdateTableName(String tableName) {
+        this.updateTableName = tableName;
     }
 
     public ExpressionNode getWhereClause() {
@@ -833,18 +840,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return isUpdateModel;
     }
 
-    public void moveAliasFrom(QueryModel that) {
-        final ExpressionNode alias = that.alias;
-        if (alias != null && !Chars.startsWith(alias.token, SUB_QUERY_ALIAS_PREFIX)) {
-            setAlias(alias);
-            addAliasIndex(alias, 0);
-        }
-    }
-
     public void moveGroupByFrom(QueryModel model) {
         this.groupBy.addAll(model.groupBy);
         // clear the source
         model.groupBy.clear();
+    }
+
+    public void moveJoinAliasFrom(QueryModel that) {
+        final ExpressionNode alias = that.alias;
+        if (alias != null && !Chars.startsWith(alias.token, SUB_QUERY_ALIAS_PREFIX)) {
+            setAlias(alias);
+            addModelAliasIndex(alias, 0);
+        }
     }
 
     public void moveLimitFrom(QueryModel baseModel) {

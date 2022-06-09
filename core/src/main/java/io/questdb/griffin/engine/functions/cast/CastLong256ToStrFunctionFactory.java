@@ -24,9 +24,51 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-public class CastLong256ToStrFunctionFactory extends CastLongToStrFunctionFactory {
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
+
+public class CastLong256ToStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "cast(Hs)";
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return null;
+    }
+
+    public static class CastLong256ToStrFunction extends StrFunction {
+        private final Function arg;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public CastLong256ToStrFunction(Function arg) {
+            this.arg = arg;
+        }
+
+        @Override
+        public CharSequence getStr(Record rec) {
+            return toSink(rec, sinkA);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return toSink(rec, sinkB);
+        }
+
+        private StringSink toSink(Record rec, StringSink sinkA) {
+            sinkA.clear();
+            arg.getLong256(rec, sinkA);
+            return sinkA;
+        }
     }
 }

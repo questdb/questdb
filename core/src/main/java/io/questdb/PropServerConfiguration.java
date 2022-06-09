@@ -395,6 +395,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private short integerDefaultColumnType;
     private final int columnPurgeTaskPoolCapacity;
     private final int maxFileNameLength;
+    private final boolean ilpAutoCreateNewColumns;
+    private final boolean ilpAutoCreateNewTables;
 
     public PropServerConfiguration(
             String root,
@@ -924,6 +926,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
             }
+            this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
+            this.ilpAutoCreateNewTables = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_TABLES, true);
 
             this.sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(1, cpuAvailable / 2 - 1 - cpuUsed));
             this.sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.SHARED_WORKER_AFFINITY, sharedWorkerCount);
@@ -2492,6 +2496,16 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
         @Override
+        public boolean getAutoCreateNewColumns() {
+            return ilpAutoCreateNewColumns;
+        }
+
+        @Override
+        public boolean getAutoCreateNewTables() {
+            return ilpAutoCreateNewTables;
+        }
+
+        @Override
         public int getCommitMode() {
             return lineUdpCommitMode;
         }
@@ -2738,6 +2752,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public String getAuthDbPath() {
             return lineTcpAuthDbPath;
+        }
+
+        @Override
+        public boolean getAutoCreateNewColumns() {
+            return ilpAutoCreateNewColumns;
+        }
+
+        @Override
+        public boolean getAutoCreateNewTables() {
+            return ilpAutoCreateNewTables;
         }
 
         @Override

@@ -411,7 +411,7 @@ public final class SqlParser {
         QueryModel model;
         this.subQueryMode = true;
         try {
-            model = parseDml(lexer, withClauses);
+            model = parseDml(lexer, withClauses, lexer.getPosition());
         } finally {
             this.subQueryMode = false;
         }
@@ -563,7 +563,7 @@ public final class SqlParser {
 
     private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
         expectTok(lexer, '(');
-        QueryModel queryModel = optimiser.optimise(parseDml(lexer, null), executionContext);
+        QueryModel queryModel = optimiser.optimise(parseDml(lexer, null, lexer.getPosition()), executionContext);
         ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         assert columns.size() > 0;
 
@@ -755,7 +755,11 @@ public final class SqlParser {
         return null;
     }
 
-    private QueryModel parseDml(GenericLexer lexer, @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses) throws SqlException {
+    private QueryModel parseDml(
+            GenericLexer lexer,
+            @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
+            int modelPosition
+    ) throws SqlException {
         QueryModel model = null;
         QueryModel prevModel = null;
         while (true) {
@@ -763,7 +767,7 @@ public final class SqlParser {
             LowerCaseCharSequenceObjHashMap<WithClauseModel> parentWithClauses = prevModel != null ? prevModel.getWithClauses() : withClauses;
             LowerCaseCharSequenceObjHashMap<WithClauseModel> topWithClauses = model == null ? topLevelWithModel : null;
 
-            QueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses);
+            QueryModel unionModel = parseDml0(lexer, parentWithClauses, topWithClauses, modelPosition);
             if (prevModel == null) {
                 model = unionModel;
                 prevModel = model;
@@ -782,14 +786,18 @@ public final class SqlParser {
                 tok = tok(lexer, "all or select");
                 if (isAllKeyword(tok)) {
                     prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION_ALL);
+                    modelPosition = lexer.getPosition();
                 } else {
                     prevModel.setSetOperationType(QueryModel.SET_OPERATION_UNION);
                     lexer.unparseLast();
+                    modelPosition = lexer.lastTokenPosition();
                 }
+                continue;
             }
 
             if (isExceptKeyword(tok)) {
                 prevModel.setSetOperationType(QueryModel.SET_OPERATION_EXCEPT);
+                continue;
             }
 
             if (isIntersectKeyword(tok)) {
@@ -802,11 +810,10 @@ public final class SqlParser {
     private QueryModel parseDml0(
             GenericLexer lexer,
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> parentWithClauses,
-            @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> topWithClauses
+            @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> topWithClauses,
+            int modelPosition
     ) throws SqlException {
         CharSequence tok;
-        final int modelPosition = lexer.getPosition();
-
         QueryModel model = queryModelPool.next();
         model.setModelPosition(modelPosition);
         if (parentWithClauses != null) {
@@ -1281,7 +1288,7 @@ public final class SqlParser {
         if (isSelectKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparseLast();
-            final QueryModel queryModel = parseDml(lexer, null);
+            final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition());
             model.setQueryModel(queryModel);
             return model;
         }
@@ -1474,7 +1481,7 @@ public final class SqlParser {
 
     private ExecutionModel parseSelect(GenericLexer lexer) throws SqlException {
         lexer.unparseLast();
-        final QueryModel model = parseDml(lexer, null);
+        final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition());
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
@@ -1672,7 +1679,7 @@ public final class SqlParser {
         if (!isUpdateKeyword(tok)) {
             // SELECT
             lexer.unparseLast();
-            return parseDml(lexer, null);
+            return parseDml(lexer, null, lexer.lastTokenPosition());
         } else {
             // UPDATE
             return parseUpdate(lexer);

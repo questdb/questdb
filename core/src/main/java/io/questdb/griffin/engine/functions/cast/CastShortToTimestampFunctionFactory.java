@@ -41,11 +41,11 @@ public class CastShortToTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastShortToTimestampFunction(args.getQuick(0));
     }
 
-    private static class Func extends AbstractUnaryTimestampFunction {
-        public Func(Function arg) {
+    public static class CastShortToTimestampFunction extends AbstractUnaryTimestampFunction {
+        public CastShortToTimestampFunction(Function arg) {
             super(arg);
         }
 

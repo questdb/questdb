@@ -116,16 +116,16 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return ex;
     }
 
-    @Override
-    public StackTraceElement[] getStackTrace() {
-        StackTraceElement[] result = EMPTY_STACK_TRACE;
-        // This is to have correct stack trace reported in CI 
-        assert (result = super.getStackTrace()) != null;
-        return result;
-    }
-
     public static SqlException unexpectedToken(int position, CharSequence token) {
         return position(position).put("unexpected token: ").put(token);
+    }
+
+    public static SqlException unsupportedCast(int position, CharSequence columnName, int fromType, int toType) {
+        return SqlException.$(position, "unsupported cast [column=").put(columnName)
+                .put(", from=").put(ColumnType.nameOf(fromType))
+                .put(", to=").put(ColumnType.nameOf(toType))
+                .put(']');
+
     }
 
     @Override
@@ -136,6 +136,14 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     @Override
     public String getMessage() {
         return "[" + position + "] " + message;
+    }
+
+    @Override
+    public StackTraceElement[] getStackTrace() {
+        StackTraceElement[] result = EMPTY_STACK_TRACE;
+        // This is to have correct stack trace reported in CI
+        assert (result = super.getStackTrace()) != null;
+        return result;
     }
 
     public int getPosition() {

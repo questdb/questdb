@@ -843,22 +843,6 @@ public class SqlCompiler implements Closeable {
         return asm.newInstance();
     }
 
-    public static boolean builtInFunctionCast(int toType, int fromType) {
-        // This method returns true when a cast is not needed from type to type
-        // because of the way typed functions are implemented.
-        // For example IntFunction has getDouble() method implemented and does not need
-        // additional wrap function to CAST to double.
-        // This is usually case for widening conversions.
-        return (fromType >= ColumnType.BYTE
-                && toType >= ColumnType.BYTE
-                && toType <= ColumnType.DOUBLE
-                && fromType < toType)
-                || fromType == ColumnType.NULL
-                // char can be short and short can be char for symmetry
-                || (fromType == ColumnType.CHAR && toType == ColumnType.SHORT)
-                || (fromType == ColumnType.TIMESTAMP && toType == ColumnType.LONG);
-    }
-
     public static void configureLexer(GenericLexer lexer) {
         for (int i = 0, k = sqlControlSymbols.size(); i < k; i++) {
             lexer.defineSymbol(sqlControlSymbols.getQuick(i));
@@ -869,39 +853,6 @@ public class SqlCompiler implements Closeable {
                 lexer.defineSymbol(op.token);
             }
         }
-    }
-
-    public static boolean isAssignableFrom(int to, int from) {
-        final int toTag = ColumnType.tagOf(to);
-        final int fromTag = ColumnType.tagOf(from);
-        return (toTag == fromTag && (ColumnType.getGeoHashBits(to) <= ColumnType.getGeoHashBits(from)
-                || ColumnType.getGeoHashBits(from) == 0) /* to account for typed NULL assignment */)
-                // widening conversions,
-                || builtInFunctionCast(to, from)
-                //narrowing conversions
-                || (fromTag == ColumnType.DOUBLE && (toTag == ColumnType.FLOAT || (toTag >= ColumnType.BYTE && toTag <= ColumnType.LONG)))
-                || (fromTag == ColumnType.FLOAT && toTag >= ColumnType.BYTE && toTag <= ColumnType.LONG)
-                || (fromTag == ColumnType.LONG && toTag >= ColumnType.BYTE && toTag <= ColumnType.INT)
-                || (fromTag == ColumnType.INT && toTag >= ColumnType.BYTE && toTag <= ColumnType.SHORT)
-                || (fromTag == ColumnType.SHORT && toTag == ColumnType.BYTE)
-                //end of narrowing conversions
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOBYTE)
-                || (fromTag == ColumnType.CHAR && toTag == ColumnType.GEOBYTE && ColumnType.getGeoHashBits(to) < 6)
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOSHORT)
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOINT)
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.GEOLONG)
-                || (fromTag == ColumnType.GEOLONG && toTag == ColumnType.GEOINT)
-                || (fromTag == ColumnType.GEOLONG && toTag == ColumnType.GEOSHORT)
-                || (fromTag == ColumnType.GEOLONG && toTag == ColumnType.GEOBYTE)
-                || (fromTag == ColumnType.GEOINT && toTag == ColumnType.GEOSHORT)
-                || (fromTag == ColumnType.GEOINT && toTag == ColumnType.GEOBYTE)
-                || (fromTag == ColumnType.GEOSHORT && toTag == ColumnType.GEOBYTE)
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.SYMBOL)
-                || (fromTag == ColumnType.SYMBOL && toTag == ColumnType.STRING)
-                || (fromTag == ColumnType.CHAR && toTag == ColumnType.SYMBOL)
-                || (fromTag == ColumnType.CHAR && toTag == ColumnType.STRING)
-                || (fromTag == ColumnType.STRING && toTag == ColumnType.TIMESTAMP)
-                || (fromTag == ColumnType.SYMBOL && toTag == ColumnType.TIMESTAMP);
     }
 
     @Override
@@ -2356,7 +2307,7 @@ public class SqlCompiler implements Closeable {
 
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(index);
-                    if (isAssignableFrom(toType, fromType)) {
+                    if (ColumnType.isAssignableFrom(fromType, toType)) {
                         listColumnFilter.add(index + 1);
                     } else {
                         throw SqlException.inconvertibleTypes(
@@ -2408,7 +2359,7 @@ public class SqlCompiler implements Closeable {
                 for (int i = 0; i < n; i++) {
                     int fromType = cursorMetadata.getColumnType(i);
                     int toType = writerMetadata.getColumnType(i);
-                    if (isAssignableFrom(toType, fromType)) {
+                    if (ColumnType.isAssignableFrom(fromType, toType)) {
                         continue;
                     }
 
@@ -2885,7 +2836,7 @@ public class SqlCompiler implements Closeable {
             function.assignType(columnType, bindVariableService);
         }
 
-        if (isAssignableFrom(columnType, function.getType())) {
+        if (ColumnType.isAssignableFrom(function.getType(), columnType)) {
             if (metadataColumnIndex == writerTimestampIndex) {
                 return function;
             }
@@ -2954,8 +2905,7 @@ public class SqlCompiler implements Closeable {
             if (isCompatibleCase(from, to)) {
                 typeCast.put(index, to);
             } else {
-                throw SqlException.$(ccm.getColumnTypePos(),
-                        "unsupported cast [from=").put(ColumnType.nameOf(from)).put(",to=").put(ColumnType.nameOf(to)).put(']');
+                throw SqlException.unsupportedCast(ccm.getColumnTypePos(), columnName, from, to);
             }
         }
 

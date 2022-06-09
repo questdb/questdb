@@ -36,6 +36,10 @@ public interface LineTcpReceiverConfiguration {
 
     String getAuthDbPath();
 
+    boolean getAutoCreateNewColumns();
+
+    boolean getAutoCreateNewTables();
+
     CairoSecurityContext getCairoSecurityContext();
 
     int getConnectionPoolInitialCapacity();

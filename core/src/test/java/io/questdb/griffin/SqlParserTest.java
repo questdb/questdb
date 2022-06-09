@@ -5625,7 +5625,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByTimestampDescOrder() throws Exception {
         assertSyntaxError("select x,sum(y) from (tab order by ts desc) sample by 2m",
-                7,
+                0,
                 "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -5637,7 +5637,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByTimestampDescOrderVirtualColumn() throws Exception {
         assertSyntaxError("select sum(x) from (select x+1 as x, ts from (tab order by ts desc)) sample by 2m",
-                7,
+                0,
                 "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -5649,7 +5649,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByUndefinedTimestamp() throws Exception {
         assertSyntaxError("select x,sum(y) from tab sample by 2m",
-                7,
+                0,
                 "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -5660,7 +5660,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByUndefinedTimestampWithDistinct() throws Exception {
         assertSyntaxError("select x,sum(y) from (select distinct x, y from tab) sample by 2m",
-                7,
+                0,
                 "base query does not provide ASC order over dedicated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
@@ -6064,7 +6064,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectNoFromUnion() throws SqlException {
         assertQuery(
-                "select-group-by a, sum(b) sum from (select-virtual [1 a, 1 b] 1 a, 1 b from (long_sequence(1)) union all select-virtual 333 333, 1 1 from (long_sequence(1))) x",
+                "select-group-by a, sum(b) sum from (select-virtual [1 a, 1 b] 1 a, 1 b from (long_sequence(1)) union all select-virtual [333 333, 1 1] 333 333, 1 1 from (long_sequence(1))) x",
                 "select a, sum(b) from (select 1 a, 1 b union all select 333, 1) x"
         );
     }
