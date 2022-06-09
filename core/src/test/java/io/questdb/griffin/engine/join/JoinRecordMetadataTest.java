@@ -45,6 +45,7 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
             metadata.add("b", "y", 7,ColumnType.FLOAT, false, 0, false, null);
             Assert.fail();
         } catch (Exception ignored) {
+            TestUtils.assertContains(ignored.getMessage(), "Duplicate column [name=y, alias=b]");
         }
 
         metadata.add(null, "c.x", 8, ColumnType.STRING, false, 0, false, null);
@@ -94,8 +95,6 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
     public void testDuplicateColumnAlias() {
         JoinRecordMetadata metadata = new JoinRecordMetadata(configuration, 3);
         metadata.add("A", "x", 1, ColumnType.INT, false, 0, false, null);
-        metadata.add("a", "y", 2, ColumnType.DOUBLE, false, 0, false, null);
-        metadata.add("a", "z", 3, ColumnType.STRING, false, 0, false, null);
         try {
             metadata.add("a", "X", 1, ColumnType.FLOAT, false, 0, false, null);
             Assert.fail();
@@ -112,9 +111,8 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
 
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("x"));
         Assert.assertEquals(0, metadata.getColumnIndexQuiet("a.x"));
-        Assert.assertEquals(1, metadata.getColumnIndexQuiet("a.y"));
-        Assert.assertEquals(1, metadata.getColumnIndexQuiet("A.y"));
-        Assert.assertEquals(-1, metadata.getColumnIndexQuiet("m"));
-        Assert.assertEquals(2, metadata.getColumnIndexQuiet("Z"));
+        Assert.assertEquals(0, metadata.getColumnIndexQuiet("a.X"));
+        Assert.assertEquals(0, metadata.getColumnIndexQuiet("A.x"));
+        Assert.assertEquals(0, metadata.getColumnIndexQuiet("A.X"));
     }
 }

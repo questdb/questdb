@@ -24,6 +24,8 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class AsOfJoinTest extends AbstractGriffinTest {
@@ -576,6 +578,54 @@ public class AsOfJoinTest extends AbstractGriffinTest {
                     "lt join tab b " +
                     "where a.x > b.x + 1";
             printSqlResult(ex, query, null, false, false);
+        });
+    }
+
+    @Test
+    public void testLtJoinAttemptToBlowUpJoinRecordMetadata() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table DB (a symbol, b timestamp) timestamp(b) partition by NONE",
+                    sqlExecutionContext
+            );
+
+            String query = "SELECT " +
+                    "   a.a aa, " +
+                    "   a.b ab, " +
+                    "   b.a ba, " +
+                    "   b.b bb " +
+                    "FROM DB a lt join DB b";
+            printSqlResult("aa\tab\tba\tbb\n", query, "ab", false, false);
+
+            try {
+                compiler.compile(
+                        "SELECT " +
+                                "   a.a aa, " +
+                                "   a.b ab, " +
+                                "   b.a ba, " +
+                                "   b.b bb " +
+                                "FROM DB a lt join DB a",
+                        sqlExecutionContext
+                );
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "duplicate table or alias: a");
+            }
+
+            try {
+                compiler.compile(
+                        "SELECT " +
+                                "   a.a aa, " +
+                                "   a.b ab, " +
+                                "   b.a ab, " +
+                                "   b.b bb " +
+                                "FROM DB a lt join DB b",
+                        sqlExecutionContext
+                );
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Duplicate column [name=ab]");
+            }
         });
     }
 
