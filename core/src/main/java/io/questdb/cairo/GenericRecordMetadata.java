@@ -30,7 +30,6 @@ import io.questdb.std.ObjList;
 
 public class GenericRecordMetadata extends BaseRecordMetadata {
     public static final GenericRecordMetadata EMPTY = new GenericRecordMetadata();
-    private final LowerCaseCharSequenceIntHashMap columnNameIndexMap;
 
     public GenericRecordMetadata() {
         this.columnMetadata = new ObjList<>();

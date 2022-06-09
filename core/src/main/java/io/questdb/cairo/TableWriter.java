@@ -76,7 +76,6 @@ public class TableWriter implements Closeable {
     private static final int ROW_ACTION_O3 = 3;
     private static final int ROW_ACTION_SWITCH_PARTITION = 4;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
-    private static final CharSequenceHashSet IGNORED_FILES = new CharSequenceHashSet();
     private static final Runnable NOOP = () -> {
     };
     final ObjList<MemoryMA> columns;
@@ -2099,7 +2098,7 @@ public class TableWriter implements Closeable {
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
 
         if (indexFlag) {
-            indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
+            indexers.extendAndSet(index, new SymbolColumnIndexer());
         }
         rowValueIsNotNull.add(0);
     }
@@ -2125,10 +2124,6 @@ public class TableWriter implements Closeable {
 
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
                 denseSymbolMapWriters.add(symbolMapWriter);
-            }
-
-            if (metadata.isColumnIndexed(i)) {
-                indexers.extendAndSet(i, new SymbolColumnIndexer());
             }
         }
         final int timestampIndex = metadata.getTimestampIndex();
@@ -5527,13 +5522,5 @@ public class TableWriter implements Closeable {
             }
             setRowValueNotNull(index);
         }
-    }
-
-    static {
-        IGNORED_FILES.add("..");
-        IGNORED_FILES.add(".");
-        IGNORED_FILES.add(META_FILE_NAME);
-        IGNORED_FILES.add(TXN_FILE_NAME);
-        IGNORED_FILES.add(TODO_FILE_NAME);
     }
 }
