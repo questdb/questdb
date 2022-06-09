@@ -54,8 +54,8 @@ public class UnionRecordCursorFactory extends AbstractSetRecordCursorFactory {
     }
 
     @Override
-    public void close() {
-        super.close();
+    public void _close() {
+        super._close();
         Misc.free(map);
     }
 

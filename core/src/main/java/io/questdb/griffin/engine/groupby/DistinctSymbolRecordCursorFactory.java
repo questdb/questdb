@@ -24,19 +24,15 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.SymbolMapReader;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
-public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
+public class DistinctSymbolRecordCursorFactory extends AbstractRecordCursorFactory {
     private final DistinctSymbolRecordCursor cursor;
     private final CairoEngine engine;
-    private final GenericRecordMetadata metadata;
     private final String tableName;
     private final long tableVersion;
     private final int tableId;
@@ -47,9 +43,10 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
             final String tableName,
             final int columnIndex,
             final int tableId,
-            final long tableVersion) {
+            final long tableVersion
+    ) {
+        super(metadata);
         this.engine = engine;
-        this.metadata = metadata;
         this.tableName = tableName;
         this.tableVersion = tableVersion;
         this.tableId = tableId;
@@ -57,7 +54,7 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         cursor.close();
     }
 
@@ -66,11 +63,6 @@ public class DistinctSymbolRecordCursorFactory implements RecordCursorFactory {
         TableReader reader = engine.getReader(executionContext.getCairoSecurityContext(), tableName, tableId, tableVersion);
         cursor.of(reader);
         return cursor;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

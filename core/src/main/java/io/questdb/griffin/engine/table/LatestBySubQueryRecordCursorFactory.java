@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -77,12 +78,10 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     }
 
     @Override
-    public void close() {
-        super.close();
+    protected void _close() {
+        super._close();
         recordCursorFactory.close();
-        if (filter != null) {
-            filter.close();
-        }
+        Misc.free(filter);
     }
 
     @Override
