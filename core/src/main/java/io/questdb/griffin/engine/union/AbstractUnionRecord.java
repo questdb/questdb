@@ -22,36 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.AbstractUnaryTimestampFunction;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
 
-public class CastShortToTimestampFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "cast(En)";
+public class AbstractUnionRecord implements Record {
+    protected boolean useA = true;
+    protected Record recordA;
+    protected Record recordB;
+
+    public Record getRecordA() {
+        return recordA;
     }
 
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CastShortToTimestampFunction(args.getQuick(0));
+    public void of(Record recordA, Record recordB) {
+        this.recordA = recordA;
+        this.recordB = recordB;
     }
 
-    public static class CastShortToTimestampFunction extends AbstractUnaryTimestampFunction {
-        public CastShortToTimestampFunction(Function arg) {
-            super(arg);
-        }
-
-        @Override
-        public long getTimestamp(Record rec) {
-            return arg.getShort(rec);
-        }
+    public void setAb(boolean useA) {
+        this.useA = useA;
     }
 }
