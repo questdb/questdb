@@ -43,13 +43,13 @@ public class CastLongToTimestampFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function var = args.getQuick(0);
-        return new Func(var);
+        return new CastLongToTimestampFunction(var);
     }
 
-    private static class Func extends TimestampFunction implements UnaryFunction {
+    public static class CastLongToTimestampFunction extends TimestampFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
+        public CastLongToTimestampFunction(Function arg) {
             this.arg = arg;
         }
 

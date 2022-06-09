@@ -170,7 +170,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
         assertFailure("cast(null as GEOHASH)",
                 null,
                 13,
-                "invalid type");
+                "unsupported cast");
     }
 
     @Test

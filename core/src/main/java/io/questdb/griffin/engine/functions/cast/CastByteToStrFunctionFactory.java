@@ -53,15 +53,15 @@ public class CastByteToStrFunctionFactory implements FunctionFactory {
             sink.put(intFunc.getByte(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        return new CastByteToStrFunction(args.getQuick(0));
     }
 
-    private static class Func extends StrFunction implements UnaryFunction {
+    public static class CastByteToStrFunction extends StrFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public Func(Function arg) {
+        public CastByteToStrFunction(Function arg) {
             this.arg = arg;
         }
 

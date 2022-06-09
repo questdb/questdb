@@ -44,13 +44,13 @@ public class CastSymbolToShortFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastSymbolToShortFunction(args.getQuick(0));
     }
 
-    private static class Func extends ShortFunction implements UnaryFunction {
+    public static class CastSymbolToShortFunction extends ShortFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
+        public CastSymbolToShortFunction(Function arg) {
             this.arg = arg;
         }
 
