@@ -26,7 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.Sender;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
 import org.junit.Rule;
@@ -51,14 +51,14 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         String tableName = UUID.randomUUID().toString();
         runInContext(c -> {
-            try (LineTcpSender sender = LineTcpSender.builder()
+            try (Sender sender = Sender.builder()
                     .enableTls()
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
                     .enableAuth(AUTH_KEY_ID1).token(TOKEN)
                     .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
-                sender.metric(tableName).field("value", 42).$();
+                sender.table(tableName).column("value", 42).atNow();
                 sender.flush();
                 assertTableExistsEventually(engine, tableName);
             }
@@ -74,7 +74,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         int hugeBufferSize = 1024 * 1024;
         int rows = 100_000;
         runInContext(c -> {
-            try (LineTcpSender sender = LineTcpSender.builder()
+            try (Sender sender = Sender.builder()
                     .enableTls()
                     .bufferCapacity(hugeBufferSize)
                     .address("localhost")
@@ -83,7 +83,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
                 for (long l = 0; l < rows; l++) {
-                    sender.metric(tableName).field("value", 42).$();
+                    sender.table(tableName).column("value", 42).atNow();
                 }
                 sender.flush();
                 assertTableSizeEventually(tableName, rows);
@@ -97,14 +97,14 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         String tableName = UUID.randomUUID().toString();
         String truststore = LineTlsTcpSenderTest.class.getResource(TRUSTSTORE_PATH).getFile();
         runInContext(c -> {
-            try (LineTcpSender sender = LineTcpSender.builder()
+            try (Sender sender = Sender.builder()
                     .enableTls()
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
                     .enableAuth(AUTH_KEY_ID1).token(TOKEN)
                     .customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                     .build()) {
-                sender.metric(tableName).field("value", 42).$();
+                sender.table(tableName).column("value", 42).atNow();
                 sender.flush();
                 assertTableExistsEventually(engine, tableName);
             }
@@ -118,7 +118,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
         withCustomProperty(() -> {
             authKeyId = AUTH_KEY_ID1;
             runInContext(c -> {
-                try (LineTcpSender sender = LineTcpSender.builder()
+                try (Sender sender = Sender.builder()
                         .enableTls()
                         .address("localhost")
                         .port(tlsProxy.getListeningPort())
@@ -127,7 +127,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .build()) {
 
                     for (int i = 0; i < rows; i++) {
-                        sender.metric(tableName).field("value", 42).$();
+                        sender.table(tableName).column("value", 42).atNow();
                         sender.flush();
                     }
                     assertTableSizeEventually(tableName, rows);

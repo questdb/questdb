@@ -44,7 +44,7 @@ import java.security.Signature;
 import java.security.SignatureException;
 import java.util.Base64;
 
-public abstract class AbstractLineSender extends AbstractCharSink implements Closeable {
+public abstract class AbstractLineSender extends AbstractCharSink implements Closeable, Sender {
     protected final int capacity;
     private final long bufA;
     private final long bufB;
@@ -72,15 +72,25 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public void $(long timestamp) {
-        put(' ').put(timestamp);
-        $();
+        at(timestamp);
     }
 
     public void $() {
+        atNow();
+    }
+
+    @Override
+    public final void atNow() {
         put('\n');
         lineStart = ptr;
         hasMetric = false;
         noFields = true;
+    }
+
+    @Override
+    public final void at(long timestamp) {
+        put(' ').put(timestamp);
+        $();
     }
 
     @Override
@@ -95,6 +105,10 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return this;
     }
 
+    public final AbstractLineSender column(String name, long value) {
+        return field(name, value);
+    }
+
     public AbstractLineSender field(CharSequence name, CharSequence value) {
         field(name).put('"');
         quoted = true;
@@ -104,14 +118,29 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return this;
     }
 
+    @Override
+    public final AbstractLineSender column(String name, String value) {
+        return field(name, value);
+    }
+
     public AbstractLineSender field(CharSequence name, double value) {
         field(name).put(value);
         return this;
     }
 
+    @Override
+    public final AbstractLineSender column(String name, double value) {
+        return field(name, value);
+    }
+
     public AbstractLineSender field(CharSequence name, boolean value) {
         field(name).put(value ? 't' : 'f');
         return this;
+    }
+
+    @Override
+    public final AbstractLineSender column(String name, boolean value) {
+        return field(name, value);
     }
 
     @Override
@@ -172,12 +201,22 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return this;
     }
 
+    @Override
+    public final AbstractLineSender table(String metric) {
+        return metric(metric);
+    }
+
     public AbstractLineSender tag(CharSequence tag, CharSequence value) {
         if (hasMetric) {
             put(',').encodeUtf8(tag).put('=').encodeUtf8(value);
             return this;
         }
         throw CairoException.instance(0).put("metric expected");
+    }
+
+    @Override
+    public final AbstractLineSender symbol(String symbol, String value) {
+        return tag(symbol, value);
     }
 
     private CharSink field(CharSequence name) {

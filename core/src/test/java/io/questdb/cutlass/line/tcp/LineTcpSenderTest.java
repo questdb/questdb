@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.Sender;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
 import io.questdb.std.Os;
@@ -100,11 +101,11 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         String address = "127.0.0.1:" + bindPort;
         runInContext(r -> {
-            try (LineTcpSender sender = LineTcpSender.builder()
+            try (Sender sender = Sender.builder()
                     .address(address)
                     .enableAuth(AUTH_KEY_ID1).token(TOKEN)
                     .build()) {
-                sender.metric("mytable").field("my int field", 42).$();
+                sender.table("mytable").column("my int field", 42).atNow();
                 sender.flush();
             }
             assertTableExistsEventually(engine, "mytable");
@@ -115,10 +116,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testBuilderPlainText_addressWithIpAndPort() throws Exception {
         String address = "127.0.0.1:" + bindPort;
         runInContext(r -> {
-            try (LineTcpSender sender = LineTcpSender.builder()
+            try (Sender sender = Sender.builder()
                     .address(address)
                     .build()) {
-                sender.metric("mytable").field("my int field", 42).$();
+                sender.table("mytable").column("my int field", 42).atNow();
                 sender.flush();
             }
             assertTableExistsEventually(engine, "mytable");
@@ -129,10 +130,10 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testBuilderPlainText_addressWithHostnameAndPort() throws Exception {
         String address = "localhost:" + bindPort;
         runInContext(r -> {
-            try (LineTcpSender sender = LineTcpSender.builder()
+            try (Sender sender = Sender.builder()
                     .address(address)
                     .build()) {
-                sender.metric("mytable").field("my int field", 42).$();
+                sender.table("mytable").column("my int field", 42).atNow();
                 sender.flush();
             }
             assertTableExistsEventually(engine, "mytable");
@@ -142,11 +143,11 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testBuilderPlainText_addressWithExplicitIpAndPort() throws Exception {
         runInContext(r -> {
-            try (LineTcpSender sender = LineTcpSender.builder()
+            try (Sender sender = Sender.builder()
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
-                sender.metric("mytable").field("my int field", 42).$();
+                sender.table("mytable").column("my int field", 42).atNow();
                 sender.flush();
             }
             assertTableExistsEventually(engine, "mytable");
@@ -156,11 +157,11 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testBuilderPlainText_withExplicitHostnameAndPort() throws Exception {
         runInContext(r -> {
-            try (LineTcpSender sender = LineTcpSender.builder()
+            try (Sender sender = Sender.builder()
                     .host(Inet4Address.getByName("localhost"))
                     .port(bindPort)
                     .build()) {
-                sender.metric("mytable").field("my int field", 42).$();
+                sender.table("mytable").column("my int field", 42).atNow();
                 sender.flush();
             }
             assertTableExistsEventually(engine, "mytable");
