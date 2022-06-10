@@ -906,11 +906,11 @@ public final class TableUtils {
                 throw validationException(metaMem).put("File is too small, column types are missing ").put(memSize);
             }
 
+            // validate designated timestamp column
             final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
             if (timestampIndex < -1 || timestampIndex >= columnCount) {
                 throw validationException(metaMem).put("Timestamp index is outside of columnCount");
             }
-
             if (timestampIndex != -1) {
                 int timestampType = getColumnType(metaMem, timestampIndex);
                 if (!ColumnType.isTimestamp(timestampType)) {
