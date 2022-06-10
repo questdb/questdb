@@ -1138,10 +1138,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         }
     }
 
-    private static void updateIndex(long dstFixAddr, long dstFixSize, BitmapIndexWriter w, long row, long rowAdjust, long columnTopSize) {
+    private static void updateIndex(long dstFixAddr, long dstFixSize, BitmapIndexWriter w, long row, long rowAdjust, long srcDataTop) {
         w.rollbackConditionally(row + rowAdjust);
         final long count = dstFixSize / Integer.BYTES - rowAdjust;
-        rowAdjust += columnTopSize / Integer.BYTES; // shift rowid by column top row count.
+        rowAdjust += srcDataTop / Integer.BYTES; // shift rowid by column top row count.
         for (; row < count; row++) {
             w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
         }
