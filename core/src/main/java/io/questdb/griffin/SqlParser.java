@@ -1140,8 +1140,8 @@ public final class SqlParser {
                 lexer.unparseLast();
 
                 ExpressionNode n = expr(lexer, model);
-                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT)) {
-                    throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
+                if (n == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "literal expected");
                 }
 
                 tok = optTok(lexer);

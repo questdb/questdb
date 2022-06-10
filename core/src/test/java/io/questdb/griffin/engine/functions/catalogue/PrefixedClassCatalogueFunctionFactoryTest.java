@@ -41,11 +41,11 @@ public class PrefixedClassCatalogueFunctionFactoryTest extends AbstractGriffinTe
         // LEFT JOIN is outer, therefore it does not reduce one of other tables to 0 rows, hence we
         // expect row duplication
         assertQuery(
-                "nspname\toid\trelname\trelnamespace\trelkind\trelowner\toid1\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\tobjoid\tclassoid\tobjsubid\tdescription\n" +
-                        "pg_catalog\t11\tpg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\tNaN\tNaN\t0\t\n" +
-                        "public\t2200\tpg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\tNaN\tNaN\t0\t\n" +
-                        "pg_catalog\t11\tbeta\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\tNaN\tNaN\t0\t\n" +
-                        "public\t2200\tbeta\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\tNaN\tNaN\t0\t\n",
+                "nspname\toid\txmin\tnspowner\trelname\trelnamespace\trelkind\trelowner\toid1\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\tobjoid\tclassoid\tobjsubid\tdescription\n" +
+                        "pg_catalog\t11\t0\t1\tpg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\tNaN\tNaN\t0\t\n" +
+                        "public\t2200\t0\t1\tpg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\tNaN\tNaN\t0\t\n" +
+                        "pg_catalog\t11\t0\t1\tbeta\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\tNaN\tNaN\t0\t\n" +
+                        "public\t2200\t0\t1\tbeta\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\tNaN\tNaN\t0\t\n",
                 "    pg_catalog.pg_namespace n, \n" +
                         "    pg_catalog.pg_class c  \n" +
                         "    LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n",

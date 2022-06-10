@@ -24,39 +24,9 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-
-public class NamespaceCatalogueFunctionFactory implements FunctionFactory {
+public class PrefixedCurrentDatabaseFunctionFactory extends CurrentDatabaseFunctionFactory {
     @Override
     public String getSignature() {
-        return "pg_namespace()";
-    }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(
-                new GenericRecordCursorFactory(
-                        NamespaceCatalogueCursor.METADATA,
-                        new NamespaceCatalogueCursor(),
-                        false
-                )
-        ) {
-            @Override
-            public boolean isRuntimeConstant() {
-                return true;
-            }
-        };
+        return "pg_catalog.current_database()";
     }
 }

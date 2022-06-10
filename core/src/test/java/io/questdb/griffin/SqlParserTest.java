@@ -74,13 +74,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testMoveOrderByFlat() throws Exception {
+        assertQuery(
+                "select-virtual" +
+                        " cast(cast(transactionid,varchar),bigint) transaction_id," +
+                        " pg_catalog.age(transactionid1) age " +
+                        "from (" +
+                        "select-choose [transactionid, transactionid transactionid1]" +
+                        " transactionid," +
+                        " transactionid transactionid1 " +
+                        "from (" +
+                        "select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L" +
+                        ") L order by age desc limit 1",
+                "select L.transactionid::varchar::bigint as transaction_id\n" +
+                        "from pg_catalog.pg_locks L\n" +
+                        "where L.transactionid is not null\n" +
+                        "order by pg_catalog.age(L.transactionid) desc\n" +
+                        "limit 1"
+        );
+    }
+
+    @Test
     public void testLatestBySansSelect() throws Exception {
         assertQuery(
                 "select-choose ts, x from (select-choose [ts, x] ts, x from (select [ts, x] from t1 latest by x))",
                 "(t1 latest by x)",
                 modelOf("t1").col("ts", ColumnType.TIMESTAMP).col("x", ColumnType.INT));
     }
-
 
     @Test
     @Ignore
@@ -4660,11 +4680,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("tab1").col("x", ColumnType.INT).col("y", ColumnType.INT),
                 modelOf("tab2").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
-    }
-
-    @Test
-    public void testOrderByExpression() throws Exception {
-        assertSyntaxError("select x, y from tab order by x+y", 31, "literal expected");
     }
 
     @Test

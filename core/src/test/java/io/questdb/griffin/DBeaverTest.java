@@ -193,9 +193,9 @@ public class DBeaverTest extends AbstractGriffinTest {
     @Test
     public void testNamespaceListSql() throws SqlException {
         assertQuery(
-                "oid\tnspname\toid1\tdescription\n" +
-                        "11\tpg_catalog\t11\t\n" +
-                        "2200\tpublic\t2200\t\n",
+                "oid\tnspname\toid1\txmin\tnspowner\tdescription\n" +
+                        "11\tpg_catalog\t11\t0\t1\t\n" +
+                        "2200\tpublic\t2200\t0\t1\t\n",
                 "SELECT n.oid,n.*,d.description FROM pg_catalog.pg_namespace n\n" +
                         "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=n.oid AND d.objsubid=0 AND d.classoid='pg_namespace'::regclass\n" +
                         " ORDER BY nspname",

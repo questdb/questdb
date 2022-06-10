@@ -27,67 +27,25 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 
-class NamespaceCatalogueCursor implements NoRandomAccessRecordCursor {
-    static final RecordMetadata METADATA;
-    private static final int rowCount = Constants.NAMESPACES.length;
-    private final NamespaceCatalogueRecord record = new NamespaceCatalogueRecord();
-    private int row = -1;
+public class PgShDescriptionFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private final static RecordMetadata METADATA;
 
-    @Override
-    public void close() {
-        row = -1;
+    public PgShDescriptionFunctionFactory() {
+        super("pg_catalog.pg_shdescription()", METADATA);
     }
 
     @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return ++row < rowCount;
-    }
-
-    @Override
-    public void toTop() {
-        row = -1;
-    }
-
-    @Override
-    public long size() {
-        return rowCount;
-    }
-
-    private class NamespaceCatalogueRecord implements Record {
-        @Override
-        public int getInt(int col) {
-            return Constants.NAMESPACE_OIDS[row];
-        }
-
-        @Override
-        public CharSequence getStr(int col) {
-            return Constants.NAMESPACES[row];
-        }
-
-        @Override
-        public CharSequence getStrB(int col) {
-            return getStr(col);
-        }
-
-        @Override
-        public int getStrLen(int col) {
-            return getStr(col).length();
-        }
+    public boolean isRuntimeConstant() {
+        return true;
     }
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("nspname", 1, ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("oid", 2, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("objoid", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("classoid", 2, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("description", 3, ColumnType.STRING));
         METADATA = metadata;
     }
 }

@@ -33,10 +33,10 @@ import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class PrefixedNamespaceCatalogueFunctionFactory implements FunctionFactory {
+public class PgNamespaceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_namespace()";
+        return "pg_namespace()";
     }
 
     @Override

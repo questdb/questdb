@@ -27,36 +27,22 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class PrefixedNamespaceCatalogueFunctionFactory implements FunctionFactory {
+public class PrefixedAgeFunctionFactory implements FunctionFactory {
+    private static final Function ZERO_CONST = new LongConstant(0);
+
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_namespace()";
+        return "pg_catalog.age(L)";
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(
-                new GenericRecordCursorFactory(
-                        PgNamespaceRecordCursor.METADATA,
-                        new PgNamespaceRecordCursor(),
-                        false
-                )
-        ) {
-            @Override
-            public boolean isRuntimeConstant() {
-                return true;
-            }
-        };
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return ZERO_CONST;
     }
 }

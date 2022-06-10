@@ -38,8 +38,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
-import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
-import static io.questdb.griffin.model.ExpressionNode.LITERAL;
+import static io.questdb.griffin.model.ExpressionNode.*;
 
 class SqlOptimiser {
 
@@ -1672,6 +1671,29 @@ class SqlOptimiser {
         return result;
     }
 
+    private void moveOrderByFunctionIntoSelect(QueryModel model) {
+        // at this point order by should be on the nested model of this model :)
+        //todo: make recursive and test thoroughly
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
+            final int n = orderBy.size();
+            int columnCount = model.getBottomUpColumns().size();
+            for (int i = 0; i < n; i++) {
+                ExpressionNode node = orderBy.getQuick(i);
+                if (node.type == FUNCTION || node.type == OPERATION) {
+                    // add this function to bottom-up columns and replace this expression with index
+                    model.getBottomUpColumns().add(queryColumnPool.next().of(
+                                    createColumnAlias(node, model),
+                                    node
+                            )
+                    );
+                    orderBy.setQuick(i, nextLiteral(""+(++columnCount)));
+                }
+            }
+        }
+    }
+
     private void moveTimestampToChooseModel(QueryModel model) {
         QueryModel nested = model.getNestedModel();
         if (nested != null) {
@@ -1904,6 +1926,7 @@ class SqlOptimiser {
             optimiseExpressionModels(model, sqlExecutionContext);
             enumerateTableColumns(model, sqlExecutionContext);
             rewriteColumnsToFunctions(model);
+            moveOrderByFunctionIntoSelect(model);
             resolveJoinColumns(model);
             optimiseBooleanNot(model);
             rewrittenModel = rewriteOrderBy(

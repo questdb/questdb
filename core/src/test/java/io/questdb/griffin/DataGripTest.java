@@ -24,10 +24,112 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.tools.TestUtils;
 import org.junit.Ignore;
 import org.junit.Test;
 
 public class DataGripTest extends AbstractGriffinTest {
+
+    @Test
+    public void testGetDatabases() throws SqlException {
+        assertQuery(
+                "id\tname\tdescription\tis_template\tallow_connections\towner\n" +
+                        "1\tquestdb\t\tfalse\ttrue\tpublic\n",
+                "select N.oid::bigint as id,\n" +
+                        "       datname as name,\n" +
+                        "       D.description,\n" +
+                        "       datistemplate as is_template,\n" +
+                        "       datallowconn as allow_connections,\n" +
+                        "       pg_catalog.pg_get_userbyid(N.datdba) as \"owner\"\n" +
+                        "from pg_catalog.pg_database N\n" +
+                        "  left join pg_catalog.pg_shdescription D on N.oid = D.objoid",
+                null,
+                false,
+                sqlExecutionContext,
+                false,
+                false
+        );
+    }
+
+    @Test
+    @Ignore
+    public void testGetDatabaseOwner() throws SqlException {
+        // todo: current_schema is function used without parentheses, we need to support this
+        //     if column exists, it is column, otherwise we convert this to function
+        //     except when function doesn't exist either, we leave error message as invalid columns
+        assertQuery(
+                "id\tstate_number\tname\tdescription\towner\tcase\n" +
+                        "2200\t0\tpublic\t\tpublic\t-1\n" +
+                        "11\t0\tpg_catalog\t\tpublic\t11\n",
+                "select N.oid::bigint as id,\n" +
+                        "       N.xmin as state_number,\n" +
+                        "       nspname as name,\n" +
+                        "       D.description,\n" +
+                        "       pg_catalog.pg_get_userbyid(N.nspowner) as \"owner\"\n" +
+                        "from pg_catalog.pg_namespace N\n" +
+                        "  left join pg_catalog.pg_description D on N.oid = D.objoid\n" +
+                        "/* */where N.nspname not like 'pg_toast%' and N.nspname not like 'pg_temp%' \n" +
+                        "order by case when nspname = current_schema then -1::bigint else N.oid::bigint end",
+                null,
+                true,
+                sqlExecutionContext,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testGetCurrentDatabase() throws SqlException {
+        assertQuery(
+                "id\tname\tdescription\tis_template\tallow_connections\towner\tcase\n" +
+                        "1\tquestdb\t\tfalse\ttrue\tpublic\t-1\n",
+                "select N.oid::bigint as id,\n" +
+                        "       datname as name,\n" +
+                        "       D.description,\n" +
+                        "       datistemplate as is_template,\n" +
+                        "       datallowconn as allow_connections,\n" +
+                        "       pg_catalog.pg_get_userbyid(N.datdba) as \"owner\"\n" +
+                        "from pg_catalog.pg_database N\n" +
+                        "  left join pg_catalog.pg_shdescription D on N.oid = D.objoid\n" +
+                        "order by case when datname = pg_catalog.current_database() then -1::bigint else N.oid::bigint end;\n",
+                null,
+                true,
+                sqlExecutionContext,
+                false,
+                false
+        );
+    }
+
+    @Test
+    public void testGetTxn() throws Exception {
+        assertMemoryLeak(
+                () -> TestUtils.assertSql(
+                        compiler,
+                        sqlExecutionContext,
+                        "select case\n" +
+                                "  when pg_catalog.pg_is_in_recovery()\n" +
+                                "    then null\n" +
+                                "  else\n" +
+                                "    pg_catalog.txid_current()::varchar::bigint\n" +
+                                "  end as current_txid",
+                        sink,
+                        "current_txid\n" +
+                                "1\n"
+                )
+        );
+    }
+
+    @Test
+    public void testLowerCaseCount() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table y as (select x from long_sequence(10))", sqlExecutionContext);
+            assertSql(
+                    "select COUNT(*) from y",
+                    "count\n" +
+                            "10\n"
+            );
+        });
+    }
 
     @Test
     @Ignore
@@ -80,18 +182,6 @@ public class DataGripTest extends AbstractGriffinTest {
 
     @Test
     public void testUpperCaseCount() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table y as (select x from long_sequence(10))", sqlExecutionContext);
-            assertSql(
-                    "select COUNT(*) from y",
-                    "count\n" +
-                            "10\n"
-            );
-        });
-    }
-
-    @Test
-    public void testLowerCaseCount() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table y as (select x from long_sequence(10))", sqlExecutionContext);
             assertSql(

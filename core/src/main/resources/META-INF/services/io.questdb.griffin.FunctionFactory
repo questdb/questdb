@@ -528,13 +528,14 @@ io.questdb.griffin.engine.functions.catalogue.IsTableVisibleCatalogueFunctionFac
 io.questdb.griffin.engine.functions.catalogue.UserByIdCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.TypeCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.VersionFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.NamespaceCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PgNamespaceFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.LocksCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DescriptionCatalogueFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemaFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CurrentUserFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSIExprFunctionFactory
@@ -548,6 +549,14 @@ io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedAgeFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedInRecoveryFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedTxIDCurrentFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PgDatabaseFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PgShDescriptionFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.CurrentDatabaseFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentDatabaseFunctionFactory
+
 
 # PostgreSQL advisory locks functions
 io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll
