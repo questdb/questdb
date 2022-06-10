@@ -531,6 +531,12 @@ public class NumbersTest {
         String s8 = "-Infinity";
         Assert.assertEquals(Double.parseDouble(s8), Numbers.parseDouble(s8), 0.000000001);
 
+        String s10 = "2E+2";
+        Assert.assertEquals(Double.parseDouble(s10), Numbers.parseDouble(s10), 0.000000001);
+
+        String s11 = "2E+02";
+        Assert.assertEquals(Double.parseDouble(s11), Numbers.parseDouble(s11), 0.000000001);
+
     }
 
     @Test
