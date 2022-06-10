@@ -31,10 +31,10 @@ import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
 import org.junit.Rule;
 import org.junit.Test;
-
 import java.util.UUID;
 
 import static org.junit.Assert.assertEquals;
+
 
 public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
 
@@ -55,7 +55,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .enableTls()
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
-                    .token(TOKEN)
+                    .enableAuth(AUTH_KEY_ID1).token(TOKEN)
                     .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.metric(tableName).field("value", 42).$();
@@ -79,7 +79,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .bufferCapacity(hugeBufferSize)
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
-                    .token(TOKEN)
+                    .enableAuth(AUTH_KEY_ID1).token(TOKEN)
                     .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
                 for (long l = 0; l < rows; l++) {
@@ -101,7 +101,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .enableTls()
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
-                    .token(TOKEN)
+                    .enableAuth(AUTH_KEY_ID1).token(TOKEN)
                     .customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.metric(tableName).field("value", 42).$();
@@ -122,7 +122,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .enableTls()
                         .address("localhost")
                         .port(tlsProxy.getListeningPort())
-                        .token(TOKEN)
+                        .enableAuth(AUTH_KEY_ID1).token(TOKEN)
                         .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                         .build()) {
 

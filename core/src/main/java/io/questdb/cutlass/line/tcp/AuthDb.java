@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.std.CharSequenceObjHashMap;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
@@ -133,10 +132,7 @@ public class AuthDb {
         }
     }
 
-    public PublicKey getPublicKey(@NotNull CharSequence keyId) {
-        if (keyId.length() == 0 && publicKeyByKeyId.size() == 1) {
-            return publicKeyByKeyId.valueQuick(0);
-        }
+    public PublicKey getPublicKey(CharSequence keyId) {
         return publicKeyByKeyId.get(keyId);
     }
 }

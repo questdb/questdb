@@ -97,12 +97,13 @@ public class LineTcpSender extends AbstractLineSender {
 
         private int port;
         private int host;
+        private PrivateKey privateKey;
+        private boolean shouldDestroyPrivKey;
         private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
         private boolean tlsEnabled;
         private String trustStorePath;
+        private String user;
         private char[] trustStorePassword;
-        private String token;
-        private String user = DEFAULT_USER;
 
         private LineSenderBuilder() {
 
@@ -165,20 +166,12 @@ public class LineTcpSender extends AbstractLineSender {
             return this;
         }
 
-        public LineSenderBuilder token(String token) {
-            if (this.token != null) {
-                throw new LineSenderException("authentication token was already set");
-            }
-            this.token = token;
-            return this;
-        }
-
-        public LineSenderBuilder user(String user) {
-            if (!DEFAULT_USER.equals(this.user)) {
-                throw new LineSenderException("user was already set");
+        public AuthBuilder enableAuth(String user) {
+            if (this.user != null) {
+                throw new LineSenderException("authentication keyId was already set");
             }
             this.user = user;
-            return this;
+            return new AuthBuilder();
         }
 
         public LineSenderBuilder enableTls() {
@@ -214,7 +207,7 @@ public class LineTcpSender extends AbstractLineSender {
                 bufferCapacity = DEFAULT_BUFFER_CAPACITY;
             }
 
-            if (token == null) {
+            if (privateKey == null) {
                 // unauthenticated path
                 if (tlsEnabled) {
                     return LineTcpSender.tlsSender(host, port, bufferCapacity * 2, trustStorePath, trustStorePassword);
@@ -222,12 +215,6 @@ public class LineTcpSender extends AbstractLineSender {
                 return new LineTcpSender(host, port, bufferCapacity);
             } else {
                 // authenticated path
-                PrivateKey privateKey;
-                try {
-                    privateKey = AuthDb.importPrivateKey(token);
-                } catch (IllegalArgumentException e) {
-                    throw new LineSenderException("cannot import token", e);
-                }
                 LineTcpSender sender;
                 if (tlsEnabled) {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
@@ -235,12 +222,37 @@ public class LineTcpSender extends AbstractLineSender {
                 } else {
                     sender = LineTcpSender.authenticatedPlainTextSender(host, port, bufferCapacity, user, privateKey);
                 }
-                try {
-                    privateKey.destroy();
-                } catch (DestroyFailedException e) {
-                    // not much we can do
+                if (shouldDestroyPrivKey) {
+                    try {
+                        privateKey.destroy();
+                    } catch (DestroyFailedException e) {
+                        // not much we can do
+                    }
                 }
                 return sender;
+            }
+        }
+
+        public class AuthBuilder {
+            public LineSenderBuilder privateKey(PrivateKey privateKey) {
+                if (LineSenderBuilder.this.privateKey != null) {
+                    throw new LineSenderException("private key was already set");
+                }
+                LineSenderBuilder.this.privateKey = privateKey;
+                return LineSenderBuilder.this;
+            }
+
+            public LineSenderBuilder token(String token) {
+                if (LineSenderBuilder.this.privateKey != null) {
+                    throw new LineSenderException("token was already set");
+                }
+                try {
+                    LineSenderBuilder.this.privateKey = AuthDb.importPrivateKey(token);
+                } catch (IllegalArgumentException e) {
+                    throw new LineSenderException("cannot import token", e);
+                }
+                LineSenderBuilder.this.shouldDestroyPrivKey = true;
+                return LineSenderBuilder.this;
             }
         }
     }
