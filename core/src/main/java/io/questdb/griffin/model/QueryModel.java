@@ -955,9 +955,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return aliasToColumnNameMap.get(column);
     }
 
-    private static final boolean containsColumnByName(ObjList<QueryColumn> columns, QueryColumn col) {
+    private static boolean containsColumnByName(ObjList<QueryColumn> columns, QueryColumn col) {
         CharSequence colName = col.getName();
-        for (int i=0, limit=columns.size(); i < limit; i++) {
+        for (int i = 0, limit = columns.size(); i < limit; i++) {
             if (Chars.equalsIgnoreCase(columns.getQuick(i).getName(), colName)) {
                 return true;
             }
