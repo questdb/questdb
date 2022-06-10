@@ -49,4 +49,17 @@ public class SqlExceptionTest extends AbstractCairoTest {
                 SqlException.duplicateColumn(2022, "我们是最棒的").getMessage()
         );
     }
+
+    @Test
+    public void testParserErr() {
+        TestUtils.assertEquals(
+                "[17] found [tok=')', len=1] expected ',', or 'colName'",
+                SqlException.parserErr(17, ")", "expected ',', or 'colName'").getMessage()
+        );
+
+        TestUtils.assertEquals(
+                "[17] expected ',', or 'colName'",
+                SqlException.parserErr(17, null, "expected ',', or 'colName'").getMessage()
+        );
+    }
 }

@@ -672,7 +672,7 @@ class SqlOptimiser {
         if (parent.addModelAliasIndex(alias, modelIndex)) {
             return;
         }
-        throw SqlException.position(alias.position).put("duplicate table or alias: ").put(alias.token);
+        throw SqlException.position(alias.position).put("Duplicate table or alias: ").put(alias.token);
     }
 
     private ExpressionNode concatFilters(ExpressionNode old, ExpressionNode filter) {

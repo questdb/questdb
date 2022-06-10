@@ -814,6 +814,31 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("t1").col("x", ColumnType.INT).timestamp("ts"),
                 modelOf("t2").col("x", ColumnType.INT).timestamp("ts")
         );
+
+        assertSyntaxError(
+                "SELECT " +
+                        "   a.a aa, " +
+                        "   a.b ab, " +
+                        "   b.a ba, " +
+                        "   b.b bb " +
+                        "FROM DB a lt join DB a",
+                71,
+                "Duplicate table or alias: a",
+                modelOf("DB").col("a", ColumnType.SYMBOL).timestamp("b")
+        );
+
+
+        assertSyntaxError(
+                "SELECT " +
+                        "   a.a aa, " +
+                        "   a.b ab, " +
+                        "   b.a ab, " +
+                        "   b.b bb " +
+                        "FROM DB a lt join DB b",
+                36,
+                "Duplicate column [name=ab]",
+                modelOf("DB").col("a", ColumnType.SYMBOL).timestamp("b")
+        );
     }
 
     @Test
@@ -2427,7 +2452,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testDuplicateAlias() throws Exception {
         assertSyntaxError("customers a" +
-                        " cross join orders a", 30, "duplicate",
+                        " cross join orders a", 30, "Duplicate table or alias: a",
                 modelOf("customers").col("customerId", ColumnType.INT).col("customerName", ColumnType.STRING),
                 modelOf("orders").col("customerId", ColumnType.INT).col("product", ColumnType.STRING)
         );
@@ -3575,7 +3600,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select * from tab cross join tab",
                 29,
-                "duplicate",
+                "Duplicate table or alias: tab",
                 modelOf("tab").col("y", ColumnType.INT)
         );
     }

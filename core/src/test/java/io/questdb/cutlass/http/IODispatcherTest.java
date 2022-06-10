@@ -6283,8 +6283,8 @@ public class IODispatcherTest {
                                             "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
                                             "Keep-Alive: timeout=5, max=10000\r\n" +
                                             "\r\n" +
-                                            "5b\r\n" +
-                                            "{\"query\":\"insert into tab value (1)\",\"error\":\"'select' or 'values' expected\",\"position\":16}\r\n" +
+                                            "76\r\n" +
+                                            "{\"query\":\"insert into tab value (1)\",\"error\":\"found [tok='value', len=5] 'select' or 'values' expected\",\"position\":16}\r\n" +
                                             "00\r\n" +
                                             "\r\n",
                                     1,

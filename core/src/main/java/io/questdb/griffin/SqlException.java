@@ -30,6 +30,8 @@ import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
 
@@ -56,6 +58,18 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException duplicateColumn(int position, CharSequence colName) {
         return duplicateColumn(position, colName, null);
+    }
+
+    public static SqlException parserErr(int position, @Nullable CharSequence tok, @NotNull CharSequence msg) {
+        return tok == null ?
+                SqlException.$(position, msg)
+                :
+                SqlException.$(position, "found [tok='")
+                        .put(tok)
+                        .put("', len=")
+                        .put(tok.length())
+                        .put("] ")
+                        .put(msg);
     }
 
     public static SqlException duplicateColumn(int position, CharSequence colName, CharSequence additionalMessage) {
