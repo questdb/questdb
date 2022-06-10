@@ -60,18 +60,6 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return duplicateColumn(position, colName, null);
     }
 
-    public static SqlException parserErr(int position, @Nullable CharSequence tok, @NotNull CharSequence msg) {
-        return tok == null ?
-                SqlException.$(position, msg)
-                :
-                SqlException.$(position, "found [tok='")
-                        .put(tok)
-                        .put("', len=")
-                        .put(tok.length())
-                        .put("] ")
-                        .put(msg);
-    }
-
     public static SqlException duplicateColumn(int position, CharSequence colName, CharSequence additionalMessage) {
         SqlException exception = SqlException.$(position, "Duplicate column [name=").put(colName).put(']');
         if (additionalMessage != null) {
@@ -119,6 +107,18 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException invalidDate(int position) {
         return position(position).put("Invalid date");
+    }
+
+    public static SqlException parserErr(int position, @Nullable CharSequence tok, @NotNull CharSequence msg) {
+        return tok == null ?
+                SqlException.$(position, msg)
+                :
+                SqlException.$(position, "found [tok='")
+                        .put(tok)
+                        .put("', len=")
+                        .put(tok.length())
+                        .put("] ")
+                        .put(msg);
     }
 
     public static SqlException position(int position) {
