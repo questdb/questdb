@@ -124,7 +124,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    bid int,\n" +
                         "    ask int\n" +
                         ")",
-                7,
+                0,
                 "not enough columns in group by"
         );
     }
@@ -139,7 +139,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    bid int,\n" +
                         "    ask int\n" +
                         ")",
-                7,
+                0,
                 "not enough columns in group by"
         );
     }
@@ -424,7 +424,7 @@ public class NoopGroupByTest extends AbstractGriffinTest {
                         "    ask double,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                7,
+                0,
                 "not enough columns in group by"
         );
     }

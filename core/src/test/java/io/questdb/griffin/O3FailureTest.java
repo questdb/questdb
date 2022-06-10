@@ -1685,7 +1685,8 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext,
                 "x",
                 "(y union all z) order by ts",
-                LOG
+                LOG,
+                true
         );
 
         TestUtils.printSql(

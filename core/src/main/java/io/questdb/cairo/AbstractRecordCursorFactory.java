@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 
 public abstract class AbstractRecordCursorFactory implements RecordCursorFactory {
     private final RecordMetadata metadata;
+    private boolean closed = false;
 
     public AbstractRecordCursorFactory(RecordMetadata metadata) {
         this.metadata = metadata;
@@ -37,5 +38,16 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
     @Override
     public RecordMetadata getMetadata() {
         return metadata;
+    }
+
+    protected void _close() {
+        // nothing to do
+    }
+
+    @Override
+    final public void close() {
+        assert !closed;
+        _close();
+        closed = true;
     }
 }

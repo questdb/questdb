@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -73,11 +74,9 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     }
 
     @Override
-    public void close() {
-        super.close();
-        if (filter != null) {
-            filter.close();
-        }
+    protected void _close() {
+        super._close();
+        Misc.free(filter);
         this.cursor.destroy();
     }
 

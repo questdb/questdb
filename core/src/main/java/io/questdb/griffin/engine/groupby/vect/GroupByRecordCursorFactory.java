@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -44,7 +45,7 @@ import io.questdb.tasks.VectorAggregateTask;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
-public class GroupByRecordCursorFactory implements RecordCursorFactory {
+public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
 
@@ -53,7 +54,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     private final ObjectPool<VectorAggregateEntry> entryPool;
     private final ObjList<VectorAggregateEntry> activeEntries;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
-    private final RecordMetadata metadata;
 
     private final long[] pRosti;
     private final int keyColumnIndex;
@@ -70,7 +70,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             int keyColumnIndexInThisCursor,
             @Transient IntList symbolTableSkewIndex
     ) {
-
+        super(metadata);
         this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
         this.activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
@@ -81,7 +81,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         // functions[n].type == columnTypes[n+1]
 
         this.base = base;
-        this.metadata = metadata;
         // first column is INT or SYMBOL
         this.pRosti = new long[workerCount];
         final int vafCount = vafList.size();
@@ -153,7 +152,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         Misc.freeObjList(vafList);
         for (int i = 0, n = pRosti.length; i < n; i++) {
             Rosti.free(pRosti[i]);
@@ -274,11 +273,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
         LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
 
         return this.cursor.of(cursor);
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

@@ -65,8 +65,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public void findClose(long findPtr) {
-        Files.findClose(findPtr);
+    public long findClose(long findPtr) {
+        if (findPtr != 0) {
+            Files.findClose(findPtr);
+        }
+        return 0;
     }
 
     @Override

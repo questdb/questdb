@@ -25,10 +25,15 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
+import io.questdb.griffin.AnyRecordMetadata;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
@@ -38,6 +43,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3PartitionPurgeTask;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
@@ -72,25 +78,16 @@ public final class TableUtils {
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_COLUMN_DATA_SIZE = 32;
-    static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
-    static final byte TODO_RESTORE_META = 2;
-    static final byte TODO_TRUNCATE = 1;
-    static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
-
     // transaction file structure
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
     public static final long TX_BASE_OFFSET_VERSION_64 = 0;
-
     public static final long TX_BASE_OFFSET_A_32 = TX_BASE_OFFSET_VERSION_64 + 8;
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 = TX_BASE_OFFSET_A_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 + 4;
-
     public static final long TX_BASE_OFFSET_B_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 + 4 + TX_BASE_HEADER_SECTION_PADDING;
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
-
     public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
-
     public static final long TX_OFFSET_TXN_64 = 0;
     public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_TXN_64 + 8;
     public static final long TX_OFFSET_FIXED_ROW_COUNT_64 = TX_OFFSET_TRANSIENT_ROW_COUNT_64 + 8;
@@ -103,9 +100,11 @@ public final class TableUtils {
     public static final long TX_OFFSET_TRUNCATE_VERSION_64 = TX_OFFSET_COLUMN_VERSION_64 + 8;
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
-
     public static final long COLUMN_NAME_TXN_NONE = -1L;
-
+    static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
+    static final byte TODO_RESTORE_META = 2;
+    static final byte TODO_TRUNCATE = 1;
+    static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
     /**
      * TXN file structure
      * struct {
@@ -146,14 +145,12 @@ public final class TableUtils {
         }
     }
 
-    public static void createTable(
-            CairoConfiguration configuration,
-            MemoryMARW memory,
-            Path path,
-            TableStructure structure,
-            int tableId
-    ) {
-        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId);
+    public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {
+        path.concat(columnName).put(".c");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
     }
 
     public static void createColumnVersionFile(MemoryMARW mem) {
@@ -163,12 +160,27 @@ public final class TableUtils {
         mem.zero();
     }
 
-    public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {
-        path.concat(columnName).put(".c");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
+    @NotNull
+    public static Function createCursorFunction(
+            FunctionParser functionParser,
+            @NotNull QueryModel model,
+            @NotNull SqlExecutionContext executionContext
+    ) throws SqlException {
+        final Function function = functionParser.parseFunction(model.getTableName(), AnyRecordMetadata.INSTANCE, executionContext);
+        if (!ColumnType.isCursor(function.getType())) {
+            throw SqlException.$(model.getTableName().position, "function must return CURSOR");
         }
-        return path.$();
+        return function;
+    }
+
+    public static void createTable(
+            CairoConfiguration configuration,
+            MemoryMARW memory,
+            Path path,
+            TableStructure structure,
+            int tableId
+    ) {
+        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId);
     }
 
     public static void createTable(
@@ -359,64 +371,6 @@ public final class TableUtils {
         return path.$();
     }
 
-    public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
-        int l = seq.length();
-        if (l > fsFileNameLimit) {
-            // Most file systems don't support files name longer than 255 bytes
-            return false;
-        }
-
-        for (int i = 0; i < l; i++) {
-            char c = seq.charAt(i);
-            switch (c) {
-                case '?':
-                case '.':
-                case ',':
-                case '\'':
-                case '\"':
-                case '\\':
-                case '/':
-                case ':':
-                case ')':
-                case '(':
-                case '+':
-                case '-':
-                case '*':
-                case '%':
-                case '~':
-                case '\u0000':
-                case '\u0001':
-                case '\u0002':
-                case '\u0003':
-                case '\u0004':
-                case '\u0005':
-                case '\u0006':
-                case '\u0007':
-                case '\u0008':
-                case '\u0009': // Control characters, except \n
-                case '\u000B':
-                case '\u000c':
-                case '\r':
-                case '\u000e':
-                case '\u000f':
-                case '\u007f':
-                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
-                    return false;
-                default:
-                    break;
-            }
-        }
-        return l > 0;
-    }
-
-    public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
-        path.concat(columnName).put(".o");
-        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
-            path.put('.').put(columnNameTxn);
-        }
-        return path.$();
-    }
-
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
         return exists(ff, path, root, name, 0, name.length());
     }
@@ -480,6 +434,56 @@ public final class TableUtils {
             path.put('.').put(columnTxn);
         }
         return path.$();
+    }
+
+    public static boolean isValidColumnName(CharSequence seq, int fsFileNameLimit) {
+        int l = seq.length();
+        if (l > fsFileNameLimit) {
+            // Most file systems don't support files name longer than 255 bytes
+            return false;
+        }
+
+        for (int i = 0; i < l; i++) {
+            char c = seq.charAt(i);
+            switch (c) {
+                case '?':
+                case '.':
+                case ',':
+                case '\'':
+                case '\"':
+                case '\\':
+                case '/':
+                case ':':
+                case ')':
+                case '(':
+                case '+':
+                case '-':
+                case '*':
+                case '%':
+                case '~':
+                case '\u0000':
+                case '\u0001':
+                case '\u0002':
+                case '\u0003':
+                case '\u0004':
+                case '\u0005':
+                case '\u0006':
+                case '\u0007':
+                case '\u0008':
+                case '\u0009': // Control characters, except \n
+                case '\u000B':
+                case '\u000c':
+                case '\r':
+                case '\u000e':
+                case '\u000f':
+                case '\u007f':
+                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+                    return false;
+                default:
+                    break;
+            }
+        }
+        return l > 0;
     }
 
     public static boolean isValidTableName(CharSequence tableName, int fsFileNameLimit) {
@@ -566,10 +570,11 @@ public final class TableUtils {
      * Maps a file in read-only mode.
      * <p>
      * Important note. Linux requires the offset to be page aligned.
-     * @param ff files facade, - intermediary to allow intercepting calls to the OS.
-     * @param fd file descriptor, previously provided by one of openFile() functions
-     * @param size size of the mapped file region
-     * @param offset offset in file to begin mapping
+     *
+     * @param ff        files facade, - intermediary to allow intercepting calls to the OS.
+     * @param fd        file descriptor, previously provided by one of openFile() functions
+     * @param size      size of the mapped file region
+     * @param offset    offset in file to begin mapping
      * @param memoryTag bucket to trace memory allocation calls
      * @return read-only memory address
      */
@@ -598,10 +603,10 @@ public final class TableUtils {
      * <p>
      * Important note. Linux requires the offset to be page aligned.
      *
-     * @param ff files facade, - intermediary to allow intercepting calls to the OS.
-     * @param fd file descriptor, previously provided by one of openFile() functions. File has to be opened read-write
-     * @param size size of the mapped file region
-     * @param offset offset in file to begin mapping
+     * @param ff        files facade, - intermediary to allow intercepting calls to the OS.
+     * @param fd        file descriptor, previously provided by one of openFile() functions. File has to be opened read-write
+     * @param size      size of the mapped file region
+     * @param offset    offset in file to begin mapping
      * @param memoryTag bucket to trace memory allocation calls
      * @return read-write memory address
      */
@@ -642,6 +647,14 @@ public final class TableUtils {
             throw CairoException.instance(errno).put("could not remap file [previousSize=").put(prevSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
         }
         return page;
+    }
+
+    public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
+        path.concat(columnName).put(".o");
+        if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
+            path.put('.').put(columnNameTxn);
+        }
+        return path.$();
     }
 
     public static void oldPartitionName(Path path, long txn) {
@@ -750,6 +763,34 @@ public final class TableUtils {
         txMem.putInt(baseOffset + getPartitionTableSizeOffset(symbolMapCount), 0);
     }
 
+    public static void safeReadTxn(TxReader txReader, MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
+        long deadline = microsecondClock.getTicks() + spinLockTimeoutUs;
+        if (txReader.unsafeReadVersion() == txReader.getVersion()) {
+            LOG.debug().$("checked clean txn, version ").$(txReader.getVersion()).$(", txn=").$(txReader.getTxn()).$();
+            return;
+        }
+
+        while (true) {
+            if (txReader.unsafeLoadAll()) {
+                LOG.debug().$("loaded clean txn, version ").$(txReader.getVersion())
+                        .$(", offset=").$(txReader.getBaseOffset())
+                        .$(", size=").$(txReader.getRecordSize())
+                        .$(", txn=").$(txReader.getTxn()).$();
+                // All good, snapshot read
+                return;
+            }
+            // This is unlucky, sequences have changed while we were reading transaction data
+            // We must discard and try again
+            if (microsecondClock.getTicks() > deadline) {
+                LOG.error().$("tx read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+                throw CairoException.instance(0).put("Transaction read timeout");
+            }
+
+            LOG.debug().$("loaded __dirty__ txn, version ").$(txReader.getVersion()).$();
+            Os.pause();
+        }
+    }
+
     public static boolean schedulePurgeO3Partitions(MessageBus messageBus, String tableName, int partitionBy) {
         final MPSequence seq = messageBus.getO3PurgeDiscoveryPubSeq();
         while (true) {
@@ -762,6 +803,46 @@ public final class TableUtils {
             } else if (cursor == -1) {
                 return false;
             }
+        }
+    }
+
+    public static void setNull(int columnType, long addr, long count) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.GEOBYTE:
+                Vect.memset(addr, count, 0);
+                break;
+            case ColumnType.CHAR:
+            case ColumnType.SHORT:
+            case ColumnType.GEOSHORT:
+                Vect.setMemoryShort(addr, (short) 0, count);
+                break;
+            case ColumnType.INT:
+            case ColumnType.GEOINT:
+                Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
+                break;
+            case ColumnType.FLOAT:
+                Vect.setMemoryFloat(addr, Float.NaN, count);
+                break;
+            case ColumnType.SYMBOL:
+                Vect.setMemoryInt(addr, -1, count);
+                break;
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.GEOLONG:
+                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);
+                break;
+            case ColumnType.DOUBLE:
+                Vect.setMemoryDouble(addr, Double.NaN, count);
+                break;
+            case ColumnType.LONG256:
+                // Long256 is null when all 4 longs are NaNs
+                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
+                break;
+            default:
+                break;
         }
     }
 
@@ -789,34 +870,6 @@ public final class TableUtils {
     public static void txnPartitionConditionally(CharSink path, long txn) {
         if (txn > -1) {
             txnPartition(path, txn);
-        }
-    }
-
-    public static void safeReadTxn(TxReader txReader, MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
-        long deadline = microsecondClock.getTicks() + spinLockTimeoutUs;
-        if (txReader.unsafeReadVersion() == txReader.getVersion()) {
-            LOG.debug().$("checked clean txn, version ").$(txReader.getVersion()).$(", txn=").$(txReader.getTxn()).$();
-            return;
-        }
-
-        while (true) {
-            if (txReader.unsafeLoadAll()) {
-                LOG.debug().$("loaded clean txn, version ").$(txReader.getVersion())
-                        .$(", offset=").$(txReader.getBaseOffset())
-                        .$(", size=").$(txReader.getRecordSize())
-                        .$(", txn=").$(txReader.getTxn()).$();
-                // All good, snapshot read
-                return;
-            }
-            // This is unlucky, sequences have changed while we were reading transaction data
-            // We must discard and try again
-            if (microsecondClock.getTicks() > deadline) {
-                LOG.error().$("tx read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
-                throw CairoException.instance(0).put("Transaction read timeout");
-            }
-
-            LOG.debug().$("loaded __dirty__ txn, version ").$(txReader.getVersion()).$();
-            Os.pause();
         }
     }
 
@@ -1081,45 +1134,5 @@ public final class TableUtils {
 
     public interface FailureCloseable {
         void close(long prevSize);
-    }
-
-    public static void setNull(int columnType, long addr, long count) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.GEOBYTE:
-                Vect.memset(addr, count, 0);
-                break;
-            case ColumnType.CHAR:
-            case ColumnType.SHORT:
-            case ColumnType.GEOSHORT:
-                Vect.setMemoryShort(addr, (short) 0, count);
-                break;
-            case ColumnType.INT:
-            case ColumnType.GEOINT:
-                Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
-                break;
-            case ColumnType.FLOAT:
-                Vect.setMemoryFloat(addr, Float.NaN, count);
-                break;
-            case ColumnType.SYMBOL:
-                Vect.setMemoryInt(addr, -1, count);
-                break;
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.GEOLONG:
-                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);
-                break;
-            case ColumnType.DOUBLE:
-                Vect.setMemoryDouble(addr, Double.NaN, count);
-                break;
-            case ColumnType.LONG256:
-                // Long256 is null when all 4 longs are NaNs
-                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
-                break;
-            default:
-                break;
-        }
     }
 }
