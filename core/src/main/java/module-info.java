@@ -23,7 +23,7 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastVarTypeFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastNullTypeFunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 
 open module io.questdb {
@@ -327,7 +327,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory,
-            CastVarTypeFunctionFactory,
+            CastNullTypeFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToBooleanFunctionFactory,
@@ -423,6 +423,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastStrToFloatFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToLongFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastStrToRegProcedureFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToByteFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToStrFunctionFactory,
@@ -559,7 +562,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DescriptionCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.ClassResolveFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSITExprFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSIExprFunctionFactory,

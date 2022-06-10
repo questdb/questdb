@@ -5862,26 +5862,11 @@ public class CastTest extends AbstractGriffinTest {
     public void testStringRegClass() throws Exception {
         assertQuery(
                 "b\ta\n" +
-                        "20\t1970-01-01T00:00:00.000020Z\n" +
-                        "\t\n" +
-                        "11\t1970-01-01T00:00:00.000011Z\n" +
-                        "13\t1970-01-01T00:00:00.000013Z\n" +
-                        "\t\n" +
-                        "15\t1970-01-01T00:00:00.000015Z\n" +
-                        "19\t1970-01-01T00:00:00.000019Z\n" +
-                        "17\t1970-01-01T00:00:00.000017Z\n" +
-                        "\t\n" +
-                        "10\t1970-01-01T00:00:00.000010Z\n" +
-                        "\t\n" +
-                        "17\t1970-01-01T00:00:00.000017Z\n" +
-                        "\t\n" +
-                        "17\t1970-01-01T00:00:00.000017Z\n" +
-                        "18\t1970-01-01T00:00:00.000018Z\n" +
-                        "18\t1970-01-01T00:00:00.000018Z\n" +
-                        "\t\n" +
-                        "12\t1970-01-01T00:00:00.000012Z\n" +
-                        "11\t1970-01-01T00:00:00.000011Z\n" +
-                        "15\t1970-01-01T00:00:00.000015Z\n",
+                        "2615\tpg_namespace\n" +
+                        "2615\tpg_namespace\n" +
+                        "1259\tpg_class\n" +
+                        "1259\tpg_class\n" +
+                        "1259\tpg_class\n",
                 "select cast(a as string)::regclass b, a from tab",
                 "create table tab as (select rnd_symbol('pg_namespace', 'pg_class') a from long_sequence(5))",
                 null,

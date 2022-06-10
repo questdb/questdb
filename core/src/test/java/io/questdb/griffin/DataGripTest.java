@@ -28,9 +28,10 @@ import org.junit.Ignore;
 import org.junit.Test;
 
 public class DataGripTest extends AbstractGriffinTest {
+
     @Test
     @Ignore
-    public void testStartUpUnknowDBMS() throws SqlException {
+    public void testStartUpUnknownDBMS() throws SqlException {
         assertQuery(
                 "",
                 "SELECT NULL AS TABLE_CAT, n.nspname AS TABLE_SCHEM," +

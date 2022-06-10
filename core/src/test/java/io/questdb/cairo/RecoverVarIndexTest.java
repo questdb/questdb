@@ -63,7 +63,6 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                         -1,
                         null);
         bindVariableService.clear();
-        LogFactory.configureSync();
     }
 
     @AfterClass

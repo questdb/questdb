@@ -156,6 +156,12 @@ public class FunctionFactoryDescriptor {
             case 'p':
                 sigArgType = ColumnType.REGCLASS;
                 break;
+            case 'q':
+                sigArgType = ColumnType.REGPROCEDURE;
+                break;
+            case 'w':
+                sigArgType = ColumnType.ARRAY_STRING;
+                break;
             default:
                 sigArgType = -1;
                 break;

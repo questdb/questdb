@@ -28,11 +28,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.UntypedFunction;
 
-public class PgDateTypeConstant extends UntypedFunction implements TypeConstant {
-    public static final PgDateTypeConstant INSTANCE = new PgDateTypeConstant();
+public class RegClassTypeConstant extends UntypedFunction implements TypeConstant {
+    public static final RegClassTypeConstant INSTANCE = new RegClassTypeConstant();
 
     @Override
     public int getType() {
-        return ColumnType.PGDATE;
+        return ColumnType.REGCLASS;
     }
 }

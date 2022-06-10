@@ -1913,7 +1913,9 @@ public final class SqlParser {
             if (SqlKeywords.isFloatKeyword(node.rhs.token)) {
                 node.rhs.token = "double";
             } else if (SqlKeywords.isDateKeyword(node.rhs.token)) {
-                node.rhs.token = "pgdate";
+                node.token = "to_pg_date";
+                node.rhs = null;
+                node.paramCount = 1;
             }
         }
     }

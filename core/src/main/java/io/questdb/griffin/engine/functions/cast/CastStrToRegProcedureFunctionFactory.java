@@ -24,35 +24,31 @@
 
 package io.questdb.griffin.engine.functions.cast;
 
-import io.questdb.griffin.AbstractGriffinTest;
-import org.junit.Assert;
-import org.junit.Test;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
+public class CastStrToRegProcedureFunctionFactory implements FunctionFactory {
+    private final Function REG_PROC_CONST = new IntConstant(289208840);
 
-public class CastVarTypeFunctionFactoryTest extends AbstractGriffinTest {
-
-    @Test
-    public void testSignature() throws Exception {
-        Assert.assertEquals("cast(oV)", new CastVarTypeFunctionFactory().getSignature());
+    @Override
+    public String getSignature() {
+        return "cast(Sq)";
     }
 
-    @Test
-    public void testCastNullToNonExisingTypeShouldFail() {
-        try {
-            assertQuery(null, "cast(null as NON_EXISTING_TYPE)", null, null);
-            Assert.fail();
-        } catch (Exception expected) {
-            Assert.assertEquals("[13] invalid constant: NON_EXISTING_TYPE", expected.getMessage());
-        }
-    }
-
-    @Test
-    public void testCastNullToNonCastFriendlyTypeShouldFail() {
-        try {
-            assertQuery(null, "cast(null as CURSOR)", null, null);
-            Assert.fail();
-        } catch (Exception expected) {
-            Assert.assertEquals("[13] invalid constant: CURSOR", expected.getMessage());
-        }
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return REG_PROC_CONST;
     }
 }

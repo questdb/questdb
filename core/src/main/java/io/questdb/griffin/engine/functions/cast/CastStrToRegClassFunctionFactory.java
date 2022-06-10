@@ -28,29 +28,48 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.std.*;
+
+import static io.questdb.cutlass.pgwire.PGOids.PG_CLASS_OID;
+import static io.questdb.cutlass.pgwire.PGOids.PG_NAMESPACE_OID;
 
 public class CastStrToRegClassFunctionFactory implements FunctionFactory {
+    private static final CharSequenceObjHashMap<Function> funcMap = new CharSequenceObjHashMap<>();
+    private static final CharSequenceIntHashMap valueMap = new CharSequenceIntHashMap(4, 0.6, Numbers.INT_NaN);
+
     @Override
     public String getSignature() {
         return "cast(Sp)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            Function result = funcMap.get(arg.getStr(null));
+            if (result != null) {
+                return result;
+            }
+            throw SqlException.$(argPositions.getQuick(0), "unsupported class [name=").put(arg.getStr(null)).put(']');
+        }
+            return new CastStrToRegClassFunction(arg);
     }
 
-    private static class Func extends FloatFunction implements UnaryFunction {
+    private static class CastStrToRegClassFunction extends IntFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
+        public CastStrToRegClassFunction(Function arg) {
             this.arg = arg;
         }
 
@@ -60,13 +79,20 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public float getFloat(Record rec) {
-            final CharSequence value = arg.getStr(rec);
-            try {
-                return value == null ? Float.NaN : Numbers.parseFloat(value);
-            } catch (NumericException e) {
-                return Float.NaN;
+        public int getInt(Record rec) {
+            CharSequence val = arg.getStr(rec);
+            if (val != null) {
+                return valueMap.get(val);
             }
+            return Numbers.INT_NaN;
         }
+    }
+
+    static {
+        funcMap.put("pg_namespace", new IntConstant(PG_NAMESPACE_OID));
+        funcMap.put("pg_class", new IntConstant(PG_CLASS_OID));
+
+        valueMap.put("pg_namespace", PG_NAMESPACE_OID);
+        valueMap.put("pg_class", PG_CLASS_OID);
     }
 }

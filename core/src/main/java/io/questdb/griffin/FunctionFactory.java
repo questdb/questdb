@@ -59,6 +59,7 @@ public interface FunctionFactory {
      * <li>G = GeoHash</li>
      * <li>o = NULL - this type is used in cast()</li>
      * <li>p = REGCLASS - this type is used in cast()</li>
+     * <li>q = REGPROCEDURE - this type is used in cast()</li>
      * </ul>
      *
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and

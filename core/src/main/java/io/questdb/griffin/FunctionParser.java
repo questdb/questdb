@@ -463,7 +463,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (
                 (columnType >= ColumnType.BOOLEAN && columnType <= ColumnType.BINARY)
                         || columnType == ColumnType.REGCLASS
-                        || columnType == ColumnType.PGDATE
+                        || columnType == ColumnType.REGPROCEDURE
+                        || columnType == ColumnType.ARRAY_STRING
         ) {
             return Constants.getTypeConstant(columnType);
         }
@@ -597,9 +598,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         continue;
                     }
 
-                    if (i == 60) {
-                        System.out.println("stop");
-                    }
                     int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
                     sigArgTypeSum += overloadDistance;
                     // Overload with cast to higher precision

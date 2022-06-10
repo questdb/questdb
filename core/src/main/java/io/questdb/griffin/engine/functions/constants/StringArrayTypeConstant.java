@@ -25,17 +25,14 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
-import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.UntypedFunction;
-import io.questdb.std.Numbers;
 
-public class RegclassTypeConstant extends UntypedFunction implements TypeConstant {
-    public static final RegclassTypeConstant INSTANCE = new RegclassTypeConstant();
+public class StringArrayTypeConstant extends UntypedFunction implements TypeConstant {
+    public static final StringArrayTypeConstant INSTANCE = new StringArrayTypeConstant();
 
     @Override
     public int getType() {
-        return ColumnType.REGCLASS;
+        return ColumnType.ARRAY_STRING;
     }
 }

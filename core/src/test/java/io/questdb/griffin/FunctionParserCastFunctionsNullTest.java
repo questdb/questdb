@@ -213,7 +213,7 @@ public class FunctionParserCastFunctionsNullTest extends BaseFunctionFactoryTest
             new CastLong256ToLong256FunctionFactory(),
             new CastStrToGeoHashFunctionFactory(),
             new CastGeoHashToGeoHashFunctionFactory(),
-            new CastVarTypeFunctionFactory(),
+            new CastNullTypeFunctionFactory(),
     };
 
     private static final CharSequenceIntHashMap typeNameToId = new CharSequenceIntHashMap();
