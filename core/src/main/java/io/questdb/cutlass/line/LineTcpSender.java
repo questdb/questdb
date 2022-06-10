@@ -70,7 +70,7 @@ public class LineTcpSender extends AbstractLineSender {
 
     private static void checkBufferCapacity(int capacity) {
         if (capacity < MIN_BUFFER_SIZE_FOR_AUTH) {
-            throw new IllegalArgumentException("Minimal buffer capacity is " + capacity + ". Requested buffer capacity: " + capacity);
+            throw new LineSenderException("Minimal buffer capacity is " + capacity + ". Requested buffer capacity: " + capacity);
         }
     }
 
@@ -110,10 +110,10 @@ public class LineTcpSender extends AbstractLineSender {
 
         public LineSenderBuilder host(InetAddress host) {
             if (!(host instanceof Inet4Address)) {
-                throw new IllegalArgumentException("only IPv4 addresses are supported");
+                throw new LineSenderException("only IPv4 addresses are supported");
             }
             if (this.host != 0) {
-                throw new IllegalStateException("host address is already configured");
+                throw new LineSenderException("host address is already configured");
             }
 
             byte[] addrBytes = host.getAddress();
@@ -127,7 +127,7 @@ public class LineTcpSender extends AbstractLineSender {
 
         public LineSenderBuilder address(String address) {
             if (host != 0) {
-                throw new IllegalStateException("host address is already configured");
+                throw new LineSenderException("host address is already configured");
             }
             try {
                 // optimistically assume it's just IP address
@@ -135,12 +135,12 @@ public class LineTcpSender extends AbstractLineSender {
             } catch (NetworkError e) {
                 int portIndex = address.indexOf(':');
                 if (portIndex + 1 == address.length()) {
-                    throw new IllegalArgumentException("cannot parse address " + address + ". address cannot ends with :");
+                    throw new LineSenderException("cannot parse address " + address + ". address cannot ends with :");
                 }
                 String hostname;
                 if (portIndex != -1) {
                     if (port != 0) {
-                        throw new IllegalStateException("address " + address + " contains a port, but a port was already set to " + port);
+                        throw new LineSenderException("address " + address + " contains a port, but a port was already set to " + port);
                     }
                     hostname = address.substring(0, portIndex);
                     port = Integer.parseInt(address.substring(portIndex + 1));
@@ -151,7 +151,7 @@ public class LineTcpSender extends AbstractLineSender {
                     InetAddress inet4Address = Inet4Address.getByName(hostname);
                     return host(inet4Address);
                 } catch (UnknownHostException ex) {
-                    throw new IllegalArgumentException("bad address " + address, ex);
+                    throw new LineSenderException("bad address " + address, ex);
                 }
             }
             return this;
@@ -159,7 +159,7 @@ public class LineTcpSender extends AbstractLineSender {
 
         public LineSenderBuilder port(int port) {
             if (this.port != 0) {
-                throw new IllegalStateException("post is already configured to " + this.port);
+                throw new LineSenderException("post is already configured to " + this.port);
             }
             this.port = port;
             return this;
@@ -167,7 +167,7 @@ public class LineTcpSender extends AbstractLineSender {
 
         public LineSenderBuilder token(String token) {
             if (this.token != null) {
-                throw new IllegalStateException("authentication token was already set");
+                throw new LineSenderException("authentication token was already set");
             }
             this.token = token;
             return this;
@@ -175,7 +175,7 @@ public class LineTcpSender extends AbstractLineSender {
 
         public LineSenderBuilder user(String user) {
             if (!DEFAULT_USER.equals(this.user)) {
-                throw new IllegalStateException("user was already set");
+                throw new LineSenderException("user was already set");
             }
             this.user = user;
             return this;
@@ -188,7 +188,7 @@ public class LineTcpSender extends AbstractLineSender {
 
         public LineSenderBuilder bufferCapacity(int bufferCapacity) {
             if (this.bufferCapacity != BUFFER_CAPACITY_DEFAULT) {
-                throw new IllegalStateException("buffer capacity was already set to " + this.bufferCapacity);
+                throw new LineSenderException("buffer capacity was already set to " + this.bufferCapacity);
             }
             this.bufferCapacity = bufferCapacity;
             return this;
@@ -196,7 +196,7 @@ public class LineTcpSender extends AbstractLineSender {
 
         public LineSenderBuilder customTrustStore(String trustStorePath, char[] trustStorePassword) {
             if (this.trustStorePath != null) {
-                throw new IllegalStateException("custom trust store was already set to " + this.trustStorePath);
+                throw new LineSenderException("custom trust store was already set to " + this.trustStorePath);
             }
             this.trustStorePath = trustStorePath;
             this.trustStorePassword = trustStorePassword;
@@ -205,10 +205,10 @@ public class LineTcpSender extends AbstractLineSender {
 
         public LineTcpSender build() {
             if (host == 0) {
-                throw new IllegalStateException("questdb server host not set");
+                throw new LineSenderException("questdb server host not set");
             }
             if (port == 0) {
-                throw new IllegalStateException("questdb server port not set");
+                throw new LineSenderException("questdb server port not set");
             }
             if (bufferCapacity == BUFFER_CAPACITY_DEFAULT) {
                 bufferCapacity = DEFAULT_BUFFER_CAPACITY;
@@ -222,7 +222,12 @@ public class LineTcpSender extends AbstractLineSender {
                 return new LineTcpSender(host, port, bufferCapacity);
             } else {
                 // authenticated path
-                PrivateKey privateKey = AuthDb.importPrivateKey(token);
+                PrivateKey privateKey;
+                try {
+                    privateKey = AuthDb.importPrivateKey(token);
+                } catch (IllegalArgumentException e) {
+                    throw new LineSenderException("cannot import token", e);
+                }
                 LineTcpSender sender;
                 if (tlsEnabled) {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null

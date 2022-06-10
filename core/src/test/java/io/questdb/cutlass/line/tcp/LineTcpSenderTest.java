@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
@@ -52,7 +53,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         try {
             LineTcpSender.authenticatedPlainTextSender(HOST, bindPort, tinyCapacity, AUTH_KEY_ID1, AUTH_PRIVATE_KEY1);
             fail();
-        } catch (IllegalArgumentException e) {
+        } catch (LineSenderException e) {
             assertContains(e.getMessage(), "buffer capacity");
         }
     }

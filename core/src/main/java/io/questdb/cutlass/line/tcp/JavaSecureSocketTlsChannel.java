@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cutlass.line.LineChannel;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Unsafe;
@@ -89,7 +90,7 @@ public final class JavaSecureSocketTlsChannel implements LineChannel {
             this.outputStream = socket.getOutputStream();
             this.arr = new byte[64 * 1024];
         } catch (NoSuchAlgorithmException | IOException | KeyManagementException e) {
-            throw new RuntimeException(e);
+            throw new LineSenderException("cannot create a new TLS channel", e);
         }
     }
 
@@ -107,7 +108,7 @@ public final class JavaSecureSocketTlsChannel implements LineChannel {
             try {
                 outputStream.write(arr, 0, i);
             } catch (IOException e) {
-                throw new RuntimeException(e);
+                throw new LineSenderException("cannot send data", e);
             }
         } while (len > 0);
     }
