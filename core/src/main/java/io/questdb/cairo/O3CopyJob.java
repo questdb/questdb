@@ -192,6 +192,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 srcDataFixFd,
                 srcDataFixAddr,
                 srcDataFixSize,
+                srcDataTop,
                 srcDataVarFd,
                 srcDataVarAddr,
                 srcDataVarSize,
@@ -338,6 +339,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
+            long srcDataTop,
             long srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarSize,
@@ -376,6 +378,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         srcDataFixFd,
                         srcDataFixAddr,
                         srcDataFixSize,
+                        srcDataTop,
                         srcDataVarFd,
                         srcDataVarAddr,
                         srcDataVarSize,
@@ -479,6 +482,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             long srcDataFixFd,
             long srcDataFixAddr,
             long srcDataFixSize,
+            long srcDataTop,
             long srcDataVarFd,
             long srcDataVarAddr,
             long srcDataVarSize,
@@ -507,7 +511,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 indexWriter.of(tableWriter.getConfiguration(), dstKFd, dstVFd, row == 0, indexBlockCapacity);
             }
             try {
-                updateIndex(dstFixAddr, dstFixSize, indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
+                updateIndex(dstFixAddr, dstFixSize, indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust, srcDataTop);
             } finally {
                 if (closed) {
                     Misc.free(indexWriter);
@@ -1134,9 +1138,10 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         }
     }
 
-    private static void updateIndex(long dstFixAddr, long dstFixSize, BitmapIndexWriter w, long row, long rowAdjust) {
+    private static void updateIndex(long dstFixAddr, long dstFixSize, BitmapIndexWriter w, long row, long rowAdjust, long srcDataTop) {
         w.rollbackConditionally(row + rowAdjust);
         final long count = dstFixSize / Integer.BYTES - rowAdjust;
+        rowAdjust += srcDataTop / Integer.BYTES; // shift rowid by column top row count.
         for (; row < count; row++) {
             w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
         }
