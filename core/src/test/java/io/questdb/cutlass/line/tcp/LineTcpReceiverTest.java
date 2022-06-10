@@ -1107,11 +1107,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testWriterScientificDoubleNotation() throws Exception {
         runInContext((receiver) -> {
-            String lineData = "doubles d0=0,dm0=-0,d1=1,dE100=1E+100,dED100=0.18923E100,d0000001=1E-06,dm0001=-0.000001,dl=1234.5678,dml=-1234.5678,dvl=1.2345678901234567E+0 0\n";
+            String lineData = "doubles d0=0,d1=1.23E-10,d2=1.23E-03,d3=1.23E10,d4=1.23E01,d5=1.23E+10,d6=1.23E+01 0\n";
             send(receiver, lineData, "doubles");
 
-            String expected = "d0\tdm0\td1\tdE100\tdED100\td0000001\tdm0001\tdl\tdml\tdvl\ttimestamp\n" +
-                    "0.0\t0.0\t1.0\t1.0E100\t1.8923E99\t1.0E-6\t-1.0E-6\t1234.5678\t-1234.5678\t1.2345678901234567\t1970-01-01T00:00:00.000000Z\n";
+            String expected = "d0\td1\td2\td3\td4\td5\td6\ttimestamp\n" +
+                    "0.0\t1.23E-10\t0.00123\t1.23E10\t12.3\t1.23E10\t12.3\t1970-01-01T00:00:00.000000Z\n";
             assertTable(expected, "doubles");
         });
     }
