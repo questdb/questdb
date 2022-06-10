@@ -897,22 +897,9 @@ public final class TableUtils {
             int expectedVersion
     ) {
         try {
-            long memSize = metaMem.size();
-            if (memSize < META_OFFSET_COLUMN_TYPES) {
-                throw CairoException.instance(0).put(". File is too small ").put(memSize);
-            }
-            final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
-            if (expectedVersion != metaVersion) {
-                throw validationException(metaMem)
-                        .put("Metadata version does not match runtime version [expected=").put(expectedVersion)
-                        .put(", actual=").put(metaVersion)
-                        .put(']');
-            }
-
-            final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
-            if (columnCount < 0) {
-                throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
-            }
+            final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
+            validateMetaVersion(metaMem, META_OFFSET_VERSION, expectedVersion);
+            final int columnCount = getColumnCount(metaMem, META_OFFSET_COUNT);
 
             long offset = getColumnNameOffset(columnCount);
             if (memSize < offset) {
@@ -933,7 +920,7 @@ public final class TableUtils {
 
             // validate column types and index attributes
             for (int i = 0; i < columnCount; i++) {
-                int type = Math.abs(getColumnType(metaMem, i));
+                final int type = Math.abs(getColumnType(metaMem, i));
                 if (ColumnType.sizeOf(type) == -1) {
                     throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
                 }
@@ -952,23 +939,7 @@ public final class TableUtils {
             // validate column names
             int denseCount = 0;
             for (int i = 0; i < columnCount; i++) {
-                if (offset + 4 > memSize) {
-                    throw validationException(metaMem).put("File is too small, column length for column ").put(i).put(" is missing");
-                }
-
-                int strLength = metaMem.getInt(offset);
-                if (strLength == TableUtils.NULL_LEN) {
-                    throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
-                }
-                if (strLength < 1 || strLength > 255 || offset + Vm.getStorageLength(strLength) > memSize) {
-                    // EXT4 and many others do not allow file name length > 255 bytes
-                    throw validationException(metaMem)
-                            .put("Column name length of ")
-                            .put(strLength).put(" is invalid at offset ")
-                            .put(offset);
-                }
-
-                CharSequence name = metaMem.getStr(offset);
+                final CharSequence name = getColumnName(metaMem, memSize, offset, i);
                 if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
                     offset += Vm.getStorageLength(name);
                 } else {
@@ -989,107 +960,122 @@ public final class TableUtils {
             int expectedVersion
     ) {
         try {
-            long memSize = metaMem.size();
-            if (memSize < WAL_META_OFFSET_COLUMNS) {
-                throw CairoException.instance(0).put(". File is too small ").put(memSize);
-            }
-
-            final int metaVersion = metaMem.getInt(WAL_META_OFFSET_VERSION);
-            if (expectedVersion != metaVersion) {
-                throw validationException(metaMem)
-                        .put("Metadata version does not match runtime version [expected=").put(expectedVersion)
-                        .put(", actual=").put(metaVersion)
-                        .put(']');
-            }
-
-            final int columnCount = metaMem.getInt(WAL_META_OFFSET_COUNT);
-            if (columnCount < 0) {
-                throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
-            }
+            final long memSize = checkMemSize(metaMem, WAL_META_OFFSET_COLUMNS);
+            validateMetaVersion(metaMem, WAL_META_OFFSET_VERSION, expectedVersion);
+            final int columnCount = getColumnCount(metaMem, WAL_META_OFFSET_COUNT);
 
             // load column types and names
             long offset = WAL_META_OFFSET_COLUMNS;
             for (int i = 0; i < columnCount; i++) {
-                if (memSize < offset + 2 * Integer.BYTES) {
-                    throw CairoException.instance(0).put(". File is too small ").put(memSize);
-                }
-                final int type = metaMem.getInt(offset);
-                if (ColumnType.sizeOf(type) == -1) {
-                    throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
-                }
+                final int type = getColumnType(metaMem, memSize, offset, i);
                 offset += Integer.BYTES;
 
-                final int strLength = metaMem.getInt(offset);
-                if (strLength == TableUtils.NULL_LEN) {
-                    throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
-                }
-                if (strLength < 1 || strLength > 255 || offset + Vm.getStorageLength(strLength) > memSize) {
-                    // EXT4 and many others do not allow file name length > 255 bytes
-                    throw validationException(metaMem)
-                            .put("Column name length of ")
-                            .put(strLength).put(" is invalid at offset ")
-                            .put(offset);
-                }
-
-                final CharSequence name = metaMem.getStr(offset);
-                nameIndex.put(name, i);
-                if (ColumnType.isSymbol(type)) {
-                    columnMetadata.add(new TableColumnMetadata(name.toString(), -1L, type, true, 1024, true, null));
-                } else {
-                    columnMetadata.add(new TableColumnMetadata(name.toString(), -1L, type));
-                }
+                final String name = getColumnName(metaMem, memSize, offset, i).toString();
                 offset += Vm.getStorageLength(name);
+
+                nameIndex.put(name, i);
+
+                if (ColumnType.isSymbol(type)) {
+                    columnMetadata.add(new TableColumnMetadata(name, -1L, type, true, 1024, true, null));
+                } else {
+                    columnMetadata.add(new TableColumnMetadata(name, -1L, type));
+                }
             }
 
             // load symbol diffs
             while (true) {
-                if (memSize < offset + Integer.BYTES) {
-                    throw CairoException.instance(0).put(". File is too small ").put(memSize);
-                }
-                final int columnIndex = metaMem.getInt(offset);
+                final int columnIndex = getInt(metaMem, memSize, offset);
+                offset += Integer.BYTES;
+
                 if (columnIndex == SymbolMapDiff.END_OF_SYMBOL_DIFFS) {
                     break;
                 }
-                offset += Integer.BYTES;
 
                 final SymbolMapDiff symbolMapDiff = new SymbolMapDiff();
                 symbolMapDiffs.extendAndSet(columnIndex, symbolMapDiff);
 
-                if (memSize < offset + Integer.BYTES) {
-                    throw CairoException.instance(0).put(". File is too small ").put(memSize);
-                }
-                final int numOfNewSymbols = metaMem.getInt(offset);
+                final int numOfNewSymbols = getInt(metaMem, memSize, offset);
                 offset += Integer.BYTES;
 
                 for (int i = 0; i < numOfNewSymbols; i++) {
-                    if (memSize < offset + Integer.BYTES) {
-                        throw CairoException.instance(0).put(". File is too small ").put(memSize);
-                    }
-                    final int key = metaMem.getInt(offset);
+                    final int key = getInt(metaMem, memSize, offset);
                     offset += Integer.BYTES;
 
-                    if (memSize < offset + Integer.BYTES) {
-                        throw CairoException.instance(0).put(". File is too small ").put(memSize);
-                    }
-                    final int strLength = metaMem.getInt(offset);
-                    if (strLength < 1 || strLength > 255 || offset + Vm.getStorageLength(strLength) > memSize) {
-                        // EXT4 and many others do not allow file name length > 255 bytes
-                        throw validationException(metaMem)
-                                .put("Symbol value length of ")
-                                .put(strLength).put(" is invalid at offset ")
-                                .put(offset);
-                    }
-
-                    final CharSequence symbol = metaMem.getStr(offset);
+                    final String symbol = getSymbol(metaMem, memSize, offset).toString();
                     offset += Vm.getStorageLength(symbol);
 
-                    symbolMapDiff.add(symbol.toString(), key);
+                    symbolMapDiff.add(symbol, key);
                 }
             }
         } catch (Throwable e) {
             nameIndex.clear();
             throw e;
         }
+    }
+
+    private static long checkMemSize(MemoryMR metaMem, long minSize) {
+        final long memSize = metaMem.size();
+        if (memSize < minSize) {
+            throw CairoException.instance(0).put(". File is too small ").put(memSize);
+        }
+        return memSize;
+    }
+
+    private static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
+        final int metaVersion = metaMem.getInt(metaVersionOffset);
+        if (expectedVersion != metaVersion) {
+            throw validationException(metaMem)
+                    .put("Metadata version does not match runtime version [expected=").put(expectedVersion)
+                    .put(", actual=").put(metaVersion)
+                    .put(']');
+        }
+    }
+
+    private static int getColumnCount(MemoryMR metaMem, long columnCountOffset) {
+        final int columnCount = metaMem.getInt(columnCountOffset);
+        if (columnCount < 0) {
+            throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
+        }
+        return columnCount;
+    }
+
+    private static int getColumnType(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+        final int type = getInt(metaMem, memSize, offset);
+        if (ColumnType.sizeOf(type) == -1) {
+            throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(columnIndex).put(']');
+        }
+        return type;
+    }
+
+    private static CharSequence getColumnName(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
+        final int strLength = getInt(metaMem, memSize, offset);
+        if (strLength == TableUtils.NULL_LEN) {
+            throw validationException(metaMem).put("NULL column name at [").put(columnIndex).put(']');
+        }
+        return getCharSequence(metaMem, memSize, offset, strLength);
+    }
+
+    private static CharSequence getSymbol(MemoryMR metaMem, long memSize, long offset) {
+        final int strLength = getInt(metaMem, memSize, offset);
+        return getCharSequence(metaMem, memSize, offset, strLength);
+    }
+
+    private static int getInt(MemoryMR metaMem, long memSize, long offset) {
+        if (memSize < offset + Integer.BYTES) {
+            throw CairoException.instance(0).put(". File is too small ").put(memSize);
+        }
+        return metaMem.getInt(offset);
+    }
+
+    private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {
+        if (strLength < 1 || strLength > 255 || offset + Vm.getStorageLength(strLength) > memSize) {
+            // EXT4 and many others do not allow file name length > 255 bytes
+            throw validationException(metaMem)
+                    .put("Symbol value length of ")
+                    .put(strLength).put(" is invalid at offset ")
+                    .put(offset);
+        }
+        return metaMem.getStr(offset);
     }
 
     public static void validateIndexValueBlockSize(int position, int indexValueBlockSize) throws SqlException {
