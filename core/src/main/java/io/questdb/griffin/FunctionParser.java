@@ -597,6 +597,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         continue;
                     }
 
+                    if (i == 60) {
+                        System.out.println("stop");
+                    }
                     int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
                     sigArgTypeSum += overloadDistance;
                     // Overload with cast to higher precision

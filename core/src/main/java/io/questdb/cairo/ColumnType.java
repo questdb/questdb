@@ -106,6 +106,13 @@ public final class ColumnType {
             /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
             /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
             /* 18 BINARY    */, {BINARY}
+//            /* 19 PARAMETER */, {}
+//            /* 20 CURSOR    */, {}
+//            /* 21 VARARG    */, {}
+//            /* 22 RECORD    */, {}
+//            /* 23 GEOHASH   */, {}
+//            /* 24 REGCLASS  */, {REGCLASS}
+//            /* 25 PGDATE    */, {PGDATE}
     };
 
     // this value has to be larger than MAX type and be power of 2

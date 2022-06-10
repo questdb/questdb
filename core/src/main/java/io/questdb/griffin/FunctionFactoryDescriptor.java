@@ -153,6 +153,9 @@ public class FunctionFactoryDescriptor {
             case 'o':
                 sigArgType = ColumnType.NULL;
                 break;
+            case 'p':
+                sigArgType = ColumnType.REGCLASS;
+                break;
             default:
                 sigArgType = -1;
                 break;
