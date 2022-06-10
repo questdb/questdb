@@ -32,13 +32,15 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.FloatingDirectCharSink;
+import io.questdb.std.str.StringSink;
 
 class LineTcpConnectionContext implements IOContext, Mutable {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -49,7 +51,8 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final MillisecondClock milliClock;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final LineTcpParser parser;
-    private final FloatingDirectCharSink floatingDirectCharSink = new FloatingDirectCharSink();
+    private final DirectBinarySequence binarySequence = new DirectBinarySequence();
+    private final StringSink stringSink = new StringSink();
     private final boolean disconnectOnError;
     protected long fd;
     protected IODispatcher<LineTcpConnectionContext> dispatcher;
@@ -85,7 +88,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         this.fd = -1;
         Unsafe.free(recvBufStart, recvBufEnd - recvBufStart, MemoryTag.NATIVE_DEFAULT);
         recvBufStart = recvBufEnd = recvBufPos = 0;
-        floatingDirectCharSink.close();
     }
 
     @Override
@@ -101,7 +103,9 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     @Override
     public void dumpBuffer() {
         if (recvBufPos > recvBufStart) {
-            LOG.error().$('[').$(fd).$("] data remained in buffer: [").utf8(byteCharSequence.of(recvBufStart, recvBufPos)).$(']').$();
+            stringSink.clear();
+            Chars.toSink(binarySequence.of(recvBufStart, recvBufPos - recvBufStart), stringSink);
+            LOG.error().$('[').$(fd).$("] data remained in buffer: [").$(stringSink).$(']').$();
         }
     }
 
@@ -183,7 +187,7 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
-                            if (scheduler.scheduleEvent(netIoJob, parser, floatingDirectCharSink)) {
+                            if (scheduler.scheduleEvent(netIoJob, parser)) {
                                 // Waiting for writer threads to drain queue, request callback as soon as possible
                                 if (checkQueueFullLogHysteresis()) {
                                     LOG.debug().$('[').$(fd).$("] queue full").$();
