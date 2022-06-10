@@ -99,6 +99,13 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     }
 
     @Override
+    public void dumpBuffer() {
+        if (recvBufPos > recvBufStart) {
+            LOG.error().$('[').$(fd).$("] data remained in buffer: [").utf8(byteCharSequence.of(recvBufStart, recvBufPos)).$(']').$();
+        }
+    }
+
+    @Override
     public IODispatcher<LineTcpConnectionContext> getDispatcher() {
         return dispatcher;
     }
