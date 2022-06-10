@@ -86,10 +86,10 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
         if (authenticated) {
             return super.handleIO(netIoJob);
         }
-        return handleAuth();
+        return handleAuth(netIoJob);
     }
 
-    private IOContextResult handleAuth() {
+    private IOContextResult handleAuth(NetworkIOJob netIoJob) {
         switch (authState) {
             case WAITING_FOR_KEY_ID:
                 readKeyId();
@@ -99,6 +99,11 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
                 break;
             case WAITING_FOR_RESPONSE:
                 waitForResponse();
+                if (authenticated && recvBufPos > recvBufStart) {
+                    // if authentication is completed and there are still bytes remaining in the buffer
+                    // we have to parse them
+                    return parseMeasurements(netIoJob);
+                }
                 break;
             default:
                 break;
