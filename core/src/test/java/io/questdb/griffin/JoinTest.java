@@ -4025,8 +4025,6 @@ public class JoinTest extends AbstractGriffinTest {
                     sink
             );
 
-            System.out.println(sink);
-
             compiler.setFullFatJoins(true);
             assertSql(query, expected);
             compiler.setFullFatJoins(false);

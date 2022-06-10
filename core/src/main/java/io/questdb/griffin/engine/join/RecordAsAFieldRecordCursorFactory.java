@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
@@ -34,16 +35,16 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 
-public class RecordAsAFieldRecordCursorFactory implements RecordCursorFactory {
+public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
-    private final GenericRecordMetadata metadata;
     private final RecordAsAFieldRecordCursor cursor;
 
     public RecordAsAFieldRecordCursorFactory(RecordCursorFactory base, CharSequence columnAlias) {
+        super(new GenericRecordMetadata());
         this.base = base;
         this.cursor = new RecordAsAFieldRecordCursor();
-        this.metadata = new GenericRecordMetadata();
-        this.metadata.add(new TableColumnMetadata(Chars.toString(columnAlias), 1, ColumnType.RECORD, base.getMetadata()));
+        GenericRecordMetadata metadata = (GenericRecordMetadata) getMetadata();
+        metadata.add(new TableColumnMetadata(Chars.toString(columnAlias), 1, ColumnType.RECORD, base.getMetadata()));
     }
 
     @Override
@@ -53,13 +54,8 @@ public class RecordAsAFieldRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         Misc.free(base);
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

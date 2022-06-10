@@ -44,7 +44,7 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         base.close();
     }
 

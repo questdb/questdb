@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.EntityColumnFilter;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.*;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -40,14 +37,13 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class DistinctRecordCursorFactory implements RecordCursorFactory {
+public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final RecordCursorFactory base;
     private final Map dataMap;
     private final DistinctRecordCursor cursor;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
-    private final RecordMetadata metadata;
 
     public DistinctRecordCursorFactory(
             CairoConfiguration configuration,
@@ -55,18 +51,18 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
             @Transient @NotNull EntityColumnFilter columnFilter,
             @Transient @NotNull BytecodeAssembler asm
     ) {
+        super(base.getMetadata());
         final RecordMetadata metadata = base.getMetadata();
         // sink will be storing record columns to map key
         columnFilter.of(metadata.getColumnCount());
         this.mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
         this.dataMap = MapFactory.createMap(configuration, metadata);
         this.base = base;
-        this.metadata = metadata;
         this.cursor = new DistinctRecordCursor();
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         dataMap.close();
         base.close();
     }
@@ -82,11 +78,6 @@ public class DistinctRecordCursorFactory implements RecordCursorFactory {
             baseCursor.close();
             throw e;
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override
