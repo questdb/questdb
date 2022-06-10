@@ -32,7 +32,6 @@ import io.questdb.cairo.vm.MemoryPMARImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
-import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -142,6 +141,7 @@ public class FileSplitter implements Closeable, Mutable {
     private long fieldLo;
     private long fieldHi;
     private int index;
+    private int errno = -1;
 
     public FileSplitter(CairoConfiguration configuration) {
         final TextConfiguration textConfiguration = configuration.getTextConfiguration();
@@ -161,6 +161,14 @@ public class FileSplitter implements Closeable, Mutable {
         this.fieldRollBufCur = fieldRollBufPtr;
 
         this.timestampField = new DirectByteCharSequence();
+    }
+
+    public int getErrno() {
+        return errno;
+    }
+
+    public int getMaxLineLength() {
+        return maxLineLength;
     }
 
     public void of(CharSequence inputFileName, CharSequence importRoot, int index, int partitionBy, byte columnDelimiter, int timestampIndex, TimestampAdapter adapter, boolean ignoreHeader) {
@@ -555,7 +563,7 @@ public class FileSplitter implements Closeable, Mutable {
         this.lastLineStart = this.offset + (this.fieldLo - lo);
     }
 
-    public void index(long chunkLo, long chunkHi, long lineNumber, LongList output, int outputIndex, LongList partitionKeys) throws SqlException {
+    public void index(long chunkLo, long chunkHi, long lineNumber, LongList output, int outputIndex, LongList partitionKeys) {
         assert chunkHi > 0;
         assert chunkLo >= 0 && chunkLo < chunkHi;
 
@@ -581,12 +589,16 @@ public class FileSplitter implements Closeable, Mutable {
             } while (offset < chunkHi);
 
             if (read < 0 || offset < chunkHi) {
-                throw SqlException.$(0, "could not read file [errno=").put(ff.errno()).put(']');
+                this.errno = ff.errno();
+//                throw SqlException.$(0, "could not read file [errno=").put(ff.errno()).put(']');
             } else {
                 parseLast();
             }
 
-            output.set(outputIndex, maxLineLength);
+            System.err.println("max " + maxLineLength);
+            if (output != null) {
+//                output.set(outputIndex, maxLineLength);
+            }
             collectPartitionKeys(partitionKeys);
         } finally {
             closeOutputFiles();
@@ -598,7 +610,6 @@ public class FileSplitter implements Closeable, Mutable {
 
     private void collectPartitionKeys(LongList partitionKeys) {
         partitionKeys.setPos(0);
-
         outputFiles.forEach((key, value) -> partitionKeys.add(value.partitionKey));
     }
 

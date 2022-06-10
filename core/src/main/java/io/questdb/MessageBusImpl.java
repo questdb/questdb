@@ -87,6 +87,7 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<TextImportTask> textImportQueue;
     private final MPSequence textImportPubSeq;
     private final MCSequence textImportSubSeq;
+    private final FanOut textImportFanOut;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -178,7 +179,8 @@ public class MessageBusImpl implements MessageBus {
         this.textImportQueue = new RingQueue<>(TextImportTask::new, configuration.getLatestByQueueCapacity()); //todo: add dedicated cfg option
         this.textImportPubSeq = new MPSequence(textImportQueue.getCycle());
         this.textImportSubSeq = new MCSequence(textImportQueue.getCycle());
-        textImportPubSeq.then(textImportSubSeq).then(textImportPubSeq);
+        this.textImportFanOut = new FanOut();
+        textImportPubSeq.then(textImportSubSeq).then(textImportFanOut).then(textImportPubSeq);
     }
 
     @Override
@@ -391,6 +393,11 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getTextImportSubSeq() {
         return textImportSubSeq;
+    }
+
+    @Override
+    public FanOut getTextImportFanOut() {
+        return textImportFanOut;
     }
 
 }

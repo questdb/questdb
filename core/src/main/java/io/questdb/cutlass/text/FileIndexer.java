@@ -38,6 +38,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
@@ -51,6 +52,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.function.Consumer;
 
 
 /**
@@ -137,6 +139,8 @@ public class FileIndexer implements Closeable, Mutable {
     private final CairoConfiguration configuration;
 
     private final TableStructureAdapter targetTableStructure;
+    private final SCSequence collectSeq = new SCSequence();
+    private int bufferLength;
 
     public FileIndexer(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
@@ -148,6 +152,7 @@ public class FileIndexer implements Closeable, Mutable {
         this.queue = bus.getTextImportQueue();
         this.pubSeq = bus.getTextImportPubSeq();
         this.subSeq = bus.getTextImportSubSeq();
+        bus.getTextImportFanOut().and(collectSeq);
 
         CairoConfiguration cfg = sqlExecutionContext.getCairoEngine().getConfiguration();
         this.workerCount = sqlExecutionContext.getWorkerCount();
@@ -166,6 +171,7 @@ public class FileIndexer implements Closeable, Mutable {
         this.defaultDateLocale = textConfiguration.getDefaultDateLocale();
 
         this.targetTableStructure = new TableStructureAdapter(configuration);
+        this.bufferLength = configuration.getSqlCopyBufferSize();
 
         for (int i = 0; i < workerCount; i++) {
             contextObjList.add(new TaskContext(cairoEngine));
@@ -387,11 +393,25 @@ public class FileIndexer implements Closeable, Mutable {
         inputFilePath.of(inputRoot).slash().concat(inputFileName).$();
     }
 
-    @TestOnly
-    void setBufferLength(int bufferSize) {
-        for (int i = 0; i < contextObjList.size(); i++) {
-            TaskContext context = contextObjList.get(i);
-            context.splitter.setBufferLength(bufferSize);
+    public void process2() throws SqlException, TextException {
+        long fd = ff.openRO(inputFilePath);
+        if (fd < 0) {
+            throw TextException.$("Can't open input file=").put(inputFilePath).put(", errno=").put(ff.errno());
+        }
+
+        try (TableWriter writer = cairoEngine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, LOCK_REASON)) {
+            findChunkBoundaries(fd);
+            indexChunks();
+            IntList taskDistribution = importPartitions();
+            int taskCount = taskDistribution.size() / 3;
+            parallelMergeSymbolTables(taskCount, writer);
+            parallelUpdateSymbolKeys(taskCount, writer);
+            parallelBuildColumnIndexes(taskCount, writer);
+            movePartitionsToDst(taskDistribution, taskCount);
+            attachPartitions(writer);
+        } finally {
+            removeWorkDir();
+            ff.close(fd);
         }
     }
 
@@ -577,6 +597,19 @@ public class FileIndexer implements Closeable, Mutable {
         }
     }
 
+    private void collect(int queuedCount, Consumer<TextImportTask> consumer) {
+        while (queuedCount > 0) {
+            final long seq = collectSeq.next();
+            if (seq > -1) {
+                consumer.accept(queue.get(seq));
+                collectSeq.done(seq);
+                --queuedCount;
+            } else {
+                stealWork(queue, subSeq);
+            }
+        }
+    }
+
     private void attachPartitions(TableWriter writer) throws TextException {
         if (partitionNames.size() == 0) {
             throw TextException.$("No partitions to attach found");
@@ -601,8 +634,82 @@ public class FileIndexer implements Closeable, Mutable {
         this.minChunkSize = minChunkSize;
     }
 
+    private void collectChunkStats(final TextImportTask task) {
+        final TextImportTask.CountQuotesStage countQuotesStage = task.getCountQuotesStage();
+        final int chunkIndex = task.getIndex();
+        chunkStats.set(chunkIndex, countQuotesStage.getQuoteCount());
+        chunkStats.set(chunkIndex + 1, countQuotesStage.getNewLineCountEven());
+        chunkStats.set(chunkIndex + 2, countQuotesStage.getNewLineCountOdd());
+        chunkStats.set(chunkIndex + 3, countQuotesStage.getNewLineOffsetEven());
+        chunkStats.set(chunkIndex + 4, countQuotesStage.getNewLineOffsetOdd());
+    }
+
+    private void collectIndexStats(final TextImportTask task) {
+        final TextImportTask.BuildPartitionIndexStage buildPartitionIndexStage = task.getBuildPartitionIndexStage();
+        final int chunkIndex = task.getIndex();
+        final long lineLength = buildPartitionIndexStage.getMaxLineLength();
+        System.err.println("len: " + lineLength);
+        this.maxLineLength = (int) Math.max(maxLineLength, lineLength);
+        final LongList keys = buildPartitionIndexStage.getPartitionKeys();
+        this.partitionKeys.add(keys);
+    }
+
     //returns list with N chunk boundaries
-    LongList findChunkBoundaries(long fd) throws TextException {
+    LongList findChunkBoundaries(long fd) {
+        LOG.info().$("Started checking boundaries in file=").$(inputFilePath).$();
+
+        final long fileLength = ff.length(fd);
+
+        assert (workerCount > 0 && minChunkSize > 0);
+
+        if (workerCount == 1) {
+            indexChunkStats.setPos(0);
+            indexChunkStats.add(0);
+            indexChunkStats.add(0);
+            indexChunkStats.add(fileLength);
+            indexChunkStats.add(0);
+            return indexChunkStats;
+        }
+
+        long chunkSize = fileLength / workerCount;
+        chunkSize = Math.max(minChunkSize, chunkSize);
+        final int chunks = (int) Math.max(fileLength / chunkSize, 1);
+
+        int queuedCount = 0;
+        doneLatch.reset();
+
+        chunkStats.setPos(chunks * 5);
+        chunkStats.zero(0);
+
+        for (int i = 0; i < chunks; i++) {
+            final long chunkLo = i * chunkSize;
+            final long chunkHi = Long.min(chunkLo + chunkSize, fileLength);
+            while (true) {
+                final long seq = pubSeq.next();
+                if (seq > -1) {
+                    final TextImportTask task = queue.get(seq);
+                    task.setIndex(5 * i);
+                    task.ofCountQuotesStage(ff, fd, chunkLo, chunkHi, bufferLength);
+                    pubSeq.done(seq);
+                    queuedCount++;
+                    break;
+                } else {
+                    stealWork(queue, subSeq);
+                }
+            }
+        }
+
+        collect(queuedCount, this::collectChunkStats);
+
+        processChunkStats(fileLength, chunks);
+
+        LOG.info().$("Finished checking boundaries in file=").$(inputFilePath).$();
+
+        return indexChunkStats;
+    }
+
+    //returns list with N chunk boundaries
+    LongList findChunkBoundariesOld(long fd) throws TextException {
         LOG.info().$("Started checking boundaries in file=").$(inputFilePath).$();
 
         final long fileLength = ff.length(fd);
@@ -637,9 +744,25 @@ public class FileIndexer implements Closeable, Mutable {
             if (seq < 0) {
                 context.countQuotesStage(5 * i, chunkLo, chunkHi, chunkStats);
             } else {
+                System.err.println("seq pub: " + seq);
                 queue.get(seq).of(doneLatch, TextImportTask.PHASE_BOUNDARY_CHECK, context, 5 * i, chunkLo, chunkHi, -1, chunkStats, null);
                 pubSeq.done(seq);
                 queuedCount++;
+            }
+        }
+
+        int qc = queuedCount;
+        while (true) {
+            long seq = collectSeq.next();
+            if (seq > -1) {
+                System.err.println("seq sub: " + seq);
+                final TextImportTask task = queue.get(seq);
+                System.err.println("idx: " + task.getIndex());
+                collectSeq.done(seq);
+                qc -= 1;
+                if (qc == 0) {
+                    break;
+                }
             }
         }
 
@@ -651,7 +774,54 @@ public class FileIndexer implements Closeable, Mutable {
         return indexChunkStats;
     }
 
-    void indexChunks() throws SqlException, TextException {
+    void indexChunks() throws TextException {
+        int queuedCount = 0;
+        doneLatch.reset();
+
+        if (indexChunkStats.size() < 2) {
+            throw TextException.$("No chunks found for indexing in file=").put(inputFilePath);
+        }
+
+        LOG.info().$("Started indexing file=").$(inputFilePath).$();
+        createWorkDir();
+        indexStats.setPos((indexChunkStats.size() - 2) / 2);
+        indexStats.zero(0);
+
+        boolean forceHeader = this.forceHeader;
+        for (int i = 0, n = indexChunkStats.size() - 2; i < n; i += 2) {
+            int colIdx = i / 2;
+
+            final long chunkLo = indexChunkStats.get(i);
+            final long lineNumber = indexChunkStats.get(i + 1);
+            final long chunkHi = indexChunkStats.get(i + 2);
+
+            while (true) {
+                final long seq = pubSeq.next();
+                if (seq > -1) {
+                    final TextImportTask task = queue.get(seq);
+                    task.setIndex(colIdx);
+                    task.ofBuildPartitionIndexStage(chunkLo, chunkHi, lineNumber, colIdx, configuration, inputFileName, importRoot, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader, bufferLength);
+                    if (forceHeader) {
+                        forceHeader = false;
+                    }
+                    pubSeq.done(seq);
+                    queuedCount++;
+                    break;
+                } else {
+                    stealWork(queue, subSeq);
+                }
+            }
+        }
+
+        this.maxLineLength = 0;
+        collect(queuedCount, this::collectIndexStats);
+
+        processIndexStats(partitionKeys);
+
+        LOG.info().$("Finished indexing file=").$(inputFilePath).$();
+    }
+
+    void indexChunksOld() throws SqlException, TextException {
         int queuedCount = 0;
         doneLatch.reset();
 
@@ -690,10 +860,10 @@ public class FileIndexer implements Closeable, Mutable {
     }
 
     private void processIndexStats(ObjList<LongList> partitionKeys) {
-        maxLineLength = 0;
-        for (int i = 0, n = indexStats.size(); i < n; i++) {
-            maxLineLength = (int) Math.max(maxLineLength, indexStats.get(i));
-        }
+//        maxLineLength = 0;
+//        for (int i = 0, n = indexStats.size(); i < n; i++) {
+//            maxLineLength = (int) Math.max(maxLineLength, indexStats.get(i));
+//        }
 
         LongHashSet set = new LongHashSet();
         for (int i = 0, n = partitionKeys.size(); i < n; i++) {
@@ -718,6 +888,26 @@ public class FileIndexer implements Closeable, Mutable {
             dirFormat.format(uniquePartitionKeys.get(i), null, null, partitionNameSink);
             partitionNames.add(partitionNameSink.toString());
         }
+    }
+
+    @TestOnly
+    void setBufferLength(int bufferSize) {
+        this.bufferLength = bufferSize;
+        for (int i = 0; i < contextObjList.size(); i++) {
+            TaskContext context = contextObjList.get(i);
+            context.splitter.setBufferLength(bufferSize);
+        }
+    }
+
+    private boolean stealWork(RingQueue<TextImportTask> queue, Sequence subSeq) {
+        long seq = subSeq.next();
+        if (seq > -1) {
+            queue.get(seq).run();
+            subSeq.done(seq);
+            return true;
+        }
+        Os.pause();
+        return false;
     }
 
     private void processChunkStats(long fileLength, int chunks) {
