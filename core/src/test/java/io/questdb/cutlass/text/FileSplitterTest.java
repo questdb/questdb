@@ -1999,7 +1999,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
              FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
             indexer.setMinChunkSize(1);
             indexer.of("table", fileName, PartitionBy.DAY, (byte) ',', "unknown", null, false);
-            indexer.prepareContexts();
 
             long fd = ff.openRO(path);
             Assert.assertTrue(fd > -1);

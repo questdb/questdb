@@ -30,14 +30,14 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeAdapter;
+import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.engine.functions.columns.ColumnUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.CountDownLatchSPI;
-import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
@@ -52,127 +52,11 @@ public class TextImportTask {
     public static final byte PHASE_UPDATE_SYMBOL_KEYS = 5;
     public static final byte PHASE_BUILD_INDEX = 6;
 
-    private CountDownLatchSPI doneLatch;
     private byte phase;
-    private FileIndexer.TaskContext context;
     private int index;
-    private long lo;
-    private long hi;
-    private long lineNumber;
-    private LongList chunkStats;
-    private LongList partitionKeys;
-    private ObjList<CharSequence> partitionNames;
-    private long partitionSize;
-    private long partitionTimestamp;
-    private CharSequence symbolColumnName;
-    private int symbolCount;
-    private CairoConfiguration cfg;
-    private CharSequence tableName;
-    private int columnIndex;
-    private int tmpTableCount;
-    private int partitionBy;
-    private TableWriter writer;
-    private int symbolColumnIndex;
-    private CharSequence importRoot;
-    private RecordMetadata metadata;
-    private int maxLineLength;
 
     private final CountQuotesStage countQuotesStage = new CountQuotesStage();
     private final BuildPartitionIndexStage buildPartitionIndexStage = new BuildPartitionIndexStage();
-
-    public void of(
-            CountDownLatchSPI doneLatch,
-            byte phase,
-            FileIndexer.TaskContext context,
-            int index,
-            long lo,
-            long hi,
-            long lineNumber,
-            LongList chunkStats,
-            LongList partitionKeys
-    ) {
-        this.doneLatch = doneLatch;
-        this.phase = phase;
-        this.context = context;
-        this.index = index;
-        this.lo = lo;
-        this.hi = hi;
-        this.lineNumber = lineNumber;
-        this.chunkStats = chunkStats;
-        this.partitionKeys = partitionKeys;
-    }
-
-    public void of(
-            CountDownLatchSPI doneLatch,
-            byte phase,
-            FileIndexer.TaskContext context,
-            int index,
-            long lo,
-            long hi,
-            ObjList<CharSequence> partitionNames,
-            int maxLineLength
-    ) {
-        this.doneLatch = doneLatch;
-        this.phase = phase;
-        this.context = context;
-        this.index = index;
-        this.lo = lo;
-        this.hi = hi;
-        this.partitionNames = partitionNames;
-        this.maxLineLength = maxLineLength;
-    }
-
-    public void of(CountDownLatchSPI doneLatch,
-                   byte phase,
-                   FileIndexer.TaskContext context,
-                   int index,
-                   long partitionSize,
-                   long partitionTimestamp,
-                   CharSequence symbolColumnName,
-                   int symbolCount) {
-        this.doneLatch = doneLatch;
-        this.phase = phase;
-        this.context = context;
-        this.index = index;
-        this.partitionSize = partitionSize;
-        this.partitionTimestamp = partitionTimestamp;
-        this.symbolColumnName = symbolColumnName;
-        this.symbolCount = symbolCount;
-    }
-
-    public void of(CountDownLatchSPI doneLatch,
-                   byte phase,
-                   final CharSequence importRoot,
-                   final CairoConfiguration cfg,
-                   final TableWriter writer,
-                   final CharSequence tableName,
-                   final CharSequence symbolColumnName,
-                   int columnIndex,
-                   int symbolColumnIndex,
-                   int tmpTableCount,
-                   int partitionBy
-    ) {
-        this.doneLatch = doneLatch;
-        this.phase = phase;
-        this.cfg = cfg;
-        this.writer = writer;
-        this.tableName = tableName;
-        this.symbolColumnName = symbolColumnName;
-        this.columnIndex = columnIndex;
-        this.symbolColumnIndex = symbolColumnIndex;
-        this.tmpTableCount = tmpTableCount;
-        this.partitionBy = partitionBy;
-        this.importRoot = importRoot;
-    }
-
-    public void of(SOUnboundedCountDownLatch doneLatch, byte phase, FileIndexer.TaskContext context, int index, RecordMetadata metadata) {
-        this.doneLatch = doneLatch;
-        this.phase = phase;
-        this.context = context;
-        this.index = index;
-        this.metadata = metadata;
-    }
-
     private final ImportPartitionDataStage importPartitionDataStage = new ImportPartitionDataStage();
     private final MergeSymbolTablesStage mergeSymbolTablesStage = new MergeSymbolTablesStage();
     private final UpdateSymbolColumnKeysStage updateSymbolColumnKeysStage = new UpdateSymbolColumnKeysStage();
@@ -233,14 +117,11 @@ public class TextImportTask {
         this.countQuotesStage.of(ff, fd, chunkStart, chunkEnd, bufferLength);
     }
 
-    public void ofImportPartitionDataStage(StringSink tableNameSink,
+    public void ofImportPartitionDataStage(CairoEngine cairoEngine,
                                            TableStructure targetTableStructure,
-                                           TextLexer lexer,
-                                           Path path,
-                                           CairoEngine cairoEngine,
-                                           DirectLongList mergeIndexes,
-                                           int timestampIndex,
+                                           ObjList<TypeAdapter> types,
                                            int atomicity,
+                                           byte columnDelimiter,
                                            CharSequence importRoot,
                                            CharSequence inputFileName,
                                            int index,
@@ -250,7 +131,7 @@ public class TextImportTask {
                                            int maxLineLength
     ) {
         this.phase = PHASE_PARTITION_IMPORT;
-        this.importPartitionDataStage.of(tableNameSink, targetTableStructure, lexer, path, cairoEngine, mergeIndexes, timestampIndex, atomicity, importRoot, inputFileName, index, lo, hi, partitionNames, maxLineLength);
+        this.importPartitionDataStage.of(cairoEngine, targetTableStructure, types, atomicity, columnDelimiter, importRoot, inputFileName, index, lo, hi, partitionNames, maxLineLength);
     }
 
     public void ofMergeSymbolTablesStage(CairoConfiguration cfg,
@@ -302,35 +183,6 @@ public class TextImportTask {
             t.printStackTrace();//TODO: how can we react to job failing
             return false;
         } finally {
-            if (doneLatch != null) {
-                doneLatch.countDown();
-            }
-        }
-        return true;
-    }
-
-    public boolean runOld() {
-        try {
-            if (phase == PHASE_BOUNDARY_CHECK) {
-                context.countQuotesStage(index, lo, hi, chunkStats);
-            } else if (phase == PHASE_INDEXING) {
-                context.buildIndexStage(lo, hi, lineNumber, chunkStats, index, partitionKeys);
-            } else if (phase == PHASE_PARTITION_IMPORT) {
-                context.importPartitionStage(index, lo, hi, partitionNames, maxLineLength);
-            } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
-                FileIndexer.mergeColumnSymbolTables(cfg, importRoot, writer, tableName, symbolColumnName, columnIndex, symbolColumnIndex, tmpTableCount, partitionBy);
-            } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
-                context.updateSymbolKeys(index, partitionSize, partitionTimestamp, symbolColumnName, symbolCount);
-            } else if (phase == PHASE_BUILD_INDEX) {
-                context.buildColumnIndexesStage(index, metadata);
-            } else {
-                throw TextException.$("Unexpected phase ").put(phase);
-            }
-        } catch (Throwable t) {
-            t.printStackTrace();//TODO: how can we react to job failing
-            return false;
-        } finally {
-            doneLatch.countDown();
         }
         return true;
     }
@@ -504,15 +356,12 @@ public class TextImportTask {
 
     public static class ImportPartitionDataStage {
         private static final Log LOG = LogFactory.getLog(ImportPartitionDataStage.class);//todo: use shared instance
-        private StringSink tableNameSink;
-        private TableStructure targetTableStructure;
-        private TextLexer lexer;
-        private Path path;
+        private final StringSink tableNameSink = new StringSink();
         private CairoEngine cairoEngine;
-        private DirectLongList mergeIndexes;
-        private TableWriter tableWriterRef;
-        private int timestampIndex;
+        private TableStructure targetTableStructure;
+        private ObjList<TypeAdapter> types;
         private int atomicity;
+        private byte columnDelimiter;
         private CharSequence importRoot;
         private CharSequence inputFileName;
         private int index;
@@ -521,41 +370,13 @@ public class TextImportTask {
         private ObjList<CharSequence> partitionNames;
         private int maxLineLength;
 
-        private ObjList<TypeAdapter> types;
-        private TimestampAdapter timestampAdapter;
+        private TableWriter tableWriterRef;
 
-        public void importPartitionData(long address, long size, int len) {
-            final CairoConfiguration configuration = cairoEngine.getConfiguration();
-            final FilesFacade ff = configuration.getFilesFacade();
-            long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-            try {
-                path.of(configuration.getInputRoot()).concat(inputFileName).$();
-                long fd = ff.openRO(path);
-                try {
-                    final long count = size / (2 * Long.BYTES);
-                    for (long i = 0; i < count; i++) {
-                        final long offset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
-                        long n = ff.read(fd, buf, len, offset);
-                        if (n > 0) {
-                            lexer.parse(buf, buf + n, 0, this::onFieldsPartitioned);
-                        }
-                    }
-                } finally {
-                    ff.close(fd);
-                }
-            } finally {
-                Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
-            }
-        }
-
-        public void of(StringSink tableNameSink,
+        public void of(CairoEngine cairoEngine,
                        TableStructure targetTableStructure,
-                       TextLexer lexer,
-                       Path path,
-                       CairoEngine cairoEngine,
-                       DirectLongList mergeIndexes,
-                       int timestampIndex,
+                       ObjList<TypeAdapter> types,
                        int atomicity,
+                       byte columnDelimiter,
                        CharSequence importRoot,
                        CharSequence inputFileName,
                        int index,
@@ -564,14 +385,11 @@ public class TextImportTask {
                        final ObjList<CharSequence> partitionNames,
                        int maxLineLength
         ) {
-            this.tableNameSink = tableNameSink;
-            this.targetTableStructure = targetTableStructure;
-            this.lexer = lexer;
-            this.path = path;
             this.cairoEngine = cairoEngine;
-            this.mergeIndexes = mergeIndexes;
-            this.timestampIndex = timestampIndex;
+            this.targetTableStructure = targetTableStructure;
+            this.types = types;
             this.atomicity = atomicity;
+            this.columnDelimiter = columnDelimiter;
             this.importRoot = importRoot;
             this.inputFileName = inputFileName;
             this.index = index;
@@ -587,7 +405,6 @@ public class TextImportTask {
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
             createTable(ff, configuration.getMkDirMode(), importRoot, tableNameSink, targetTableStructure, 0);
-            this.lexer.setTableName(tableNameSink);
 
             try (TableWriter writer = new TableWriter(configuration,
                     tableNameSink,
@@ -599,18 +416,28 @@ public class TextImportTask {
                     cairoEngine.getMetrics())) {
 
                 tableWriterRef = writer;
-                try {
-                    lexer.restart(false);
-                    for (int i = (int) lo; i < hi; i++) {
 
-                        final CharSequence name = partitionNames.get(i);
-                        path.of(importRoot).concat(name);
-
-                        mergePartitionIndexAndImportData(ff, path, mergeIndexes, maxLineLength);
+                final TextConfiguration textConfiguration = configuration.getTextConfiguration();
+                try (DirectCharSink utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize())) {
+                    TypeManager typeManager = new TypeManager(textConfiguration, utf8Sink);
+                    final ObjList<TypeAdapter> types = typeManager.adjust(this.types);
+                    try (TextLexer lexer = new TextLexer(textConfiguration, typeManager)) {
+                        lexer.setTableName(tableNameSink);
+                        lexer.of(columnDelimiter);
+                        lexer.setSkipLinesWithExtraValues(false);
+                        try {
+                            lexer.restart(false);
+                            for (int i = (int) lo; i < hi; i++) {
+                                final CharSequence name = partitionNames.get(i);
+                                try (Path path = new Path().of(importRoot).concat(name)) {
+                                    mergePartitionIndexAndImportData(ff, path, lexer, types, maxLineLength);
+                                }
+                            }
+                        } finally {
+                            lexer.parseLast();
+                            writer.commit(CommitMode.SYNC);
+                        }
                     }
-                } finally {
-                    lexer.parseLast();
-                    writer.commit(CommitMode.SYNC);
                 }
             }
         }
@@ -620,43 +447,74 @@ public class TextImportTask {
             logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
         }
 
+        private void importPartitionData(final TextLexer lexer, final ObjList<TypeAdapter> types, long address, long size, int len) {
+            final CairoConfiguration configuration = cairoEngine.getConfiguration();
+            final FilesFacade ff = configuration.getFilesFacade();
+
+            int timestampIndex = targetTableStructure.getTimestampIndex();
+            TimestampAdapter timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
+
+            long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long fd;
+                try (Path path = new Path().of(configuration.getInputRoot()).concat(inputFileName)) {
+                    fd = ff.openRO(path.$());
+                }
+                try {
+                    final long count = size / (2 * Long.BYTES);
+                    for (long i = 0; i < count; i++) {
+                        final long offset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
+                        long n = ff.read(fd, buf, len, offset);
+                        if (n > 0) {
+                            lexer.parse(buf, buf + n, 0,
+                                    (long line, final ObjList<DirectByteCharSequence> values, int valuesLength) -> this.onFieldsPartitioned(types, timestampIndex, timestampAdapter, line, values, valuesLength));
+                        }
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            } finally {
+                Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+
         private void mergePartitionIndexAndImportData(final FilesFacade ff,
                                                       final Path partitionPath,
-                                                      final DirectLongList mergeIndexes,
+                                                      final TextLexer lexer,
+                                                      final ObjList<TypeAdapter> types,
                                                       int maxLineLength) {
-            mergeIndexes.resetCapacity();
-            mergeIndexes.clear();
+            try (DirectLongList mergeIndexes = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT)) {
+                partitionPath.slash$();
+                int partitionLen = partitionPath.length();
 
-            partitionPath.slash$();
-            int partitionLen = partitionPath.length();
+                long mergedIndexSize = openIndexChunks(ff, partitionPath, mergeIndexes, partitionLen);
 
-            long mergedIndexSize = openIndexChunks(ff, partitionPath, mergeIndexes, partitionLen);
+                long address = -1;
+                try {
+                    final int indexesCount = (int) mergeIndexes.size() / 2;
+                    partitionPath.trimTo(partitionLen);
+                    partitionPath.concat(FileSplitter.INDEX_FILE_NAME).$();
 
-            long address = -1;
-            try {
-                final int indexesCount = (int) mergeIndexes.size() / 2;
-                partitionPath.trimTo(partitionLen);
-                partitionPath.concat(FileSplitter.INDEX_FILE_NAME).$();
+                    final long fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
+                    address = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
+                    ff.close(fd);
 
-                final long fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
-                address = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
-                ff.close(fd);
-
-                final long merged = Vect.mergeLongIndexesAscExt(mergeIndexes.getAddress(), indexesCount, address);
-                importPartitionData(merged, mergedIndexSize, maxLineLength);
-            } finally {
-                if (address != -1) {
-                    ff.munmap(address, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
-                }
-                for (long i = 0, sz = mergeIndexes.size() / 2; i < sz; i++) {
-                    final long addr = mergeIndexes.get(2 * i);
-                    final long size = mergeIndexes.get(2 * i + 1) * FileSplitter.INDEX_ENTRY_SIZE;
-                    ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
+                    final long merged = Vect.mergeLongIndexesAscExt(mergeIndexes.getAddress(), indexesCount, address);
+                    importPartitionData(lexer, types, merged, mergedIndexSize, maxLineLength);
+                } finally {
+                    if (address != -1) {
+                        ff.munmap(address, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
+                    }
+                    for (long i = 0, sz = mergeIndexes.size() / 2; i < sz; i++) {
+                        final long addr = mergeIndexes.get(2 * i);
+                        final long size = mergeIndexes.get(2 * i + 1) * FileSplitter.INDEX_ENTRY_SIZE;
+                        ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
+                    }
                 }
             }
         }
 
-        private boolean onField(long line, final DirectByteCharSequence dbcs, TableWriter.Row w, int i) {
+        private boolean onField(final ObjList<TypeAdapter> types, long line, final DirectByteCharSequence dbcs, TableWriter.Row w, int i) {
             try {
                 types.getQuick(i).write(w, i, dbcs);
             } catch (Exception ignore) {
@@ -676,7 +534,7 @@ public class TextImportTask {
             return false;
         }
 
-        private void onFieldsPartitioned(long line, final ObjList<DirectByteCharSequence> values, int valuesLength) {
+        private void onFieldsPartitioned(final ObjList<TypeAdapter> types, int timestampIndex, TimestampAdapter timestampAdapter, long line, final ObjList<DirectByteCharSequence> values, int valuesLength) {
             assert tableWriterRef != null;
             DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
             try {
@@ -686,7 +544,7 @@ public class TextImportTask {
                     if (i == timestampIndex || dbcs.length() == 0) {
                         continue;
                     }
-                    if (onField(line, dbcs, w, i)) return;
+                    if (onField(types, line, dbcs, w, i)) return;
                 }
                 w.append();
             } catch (Exception e) {
