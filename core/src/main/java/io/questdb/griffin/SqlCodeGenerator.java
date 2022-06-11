@@ -425,128 +425,138 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 true
         );
 
+        // This metadata allocates native memory, it has to be closed in case join
+        // generation is unsuccessful. The exception can be thrown anywhere between
+        // try...catch
         JoinRecordMetadata metadata = new JoinRecordMetadata(
                 configuration,
                 masterMetadata.getColumnCount() + slaveMetadata.getColumnCount()
         );
 
-        // metadata will have master record verbatim
-        metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
+        try {
 
-        // slave record is split across key and value of map
-        // the rationale is not to store columns twice
-        // especially when map value does not support variable
-        // length types
+            // metadata will have master record verbatim
+            metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
+
+            // slave record is split across key and value of map
+            // the rationale is not to store columns twice
+            // especially when map value does not support variable
+            // length types
 
 
-        final IntList columnIndex = new IntList(slaveMetadata.getColumnCount());
-        // In map record value columns go first, so at this stage
-        // we add to metadata all slave columns that are not keys.
-        // Add same columns to filter while we are in this loop.
-        listColumnFilterB.clear();
-        valueTypes.clear();
-        ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
-        if (slaveMetadata instanceof BaseRecordMetadata) {
-            for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-                if (intHashSet.excludes(i)) {
-                    final TableColumnMetadata m = ((BaseRecordMetadata) slaveMetadata).getColumnQuick(i);
-                    metadata.add(slaveAlias, m);
-                    listColumnFilterB.add(i + 1);
-                    columnIndex.add(i);
-                    valueTypes.add(m.getType());
-                    slaveTypes.add(m.getType());
+            final IntList columnIndex = new IntList(slaveMetadata.getColumnCount());
+            // In map record value columns go first, so at this stage
+            // we add to metadata all slave columns that are not keys.
+            // Add same columns to filter while we are in this loop.
+            listColumnFilterB.clear();
+            valueTypes.clear();
+            ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
+            if (slaveMetadata instanceof BaseRecordMetadata) {
+                for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+                    if (intHashSet.excludes(i)) {
+                        final TableColumnMetadata m = ((BaseRecordMetadata) slaveMetadata).getColumnQuick(i);
+                        metadata.add(slaveAlias, m);
+                        listColumnFilterB.add(i + 1);
+                        columnIndex.add(i);
+                        valueTypes.add(m.getType());
+                        slaveTypes.add(m.getType());
+                    }
                 }
-            }
 
-            // now add key columns to metadata
-            for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-                int index = listColumnFilterA.getColumnIndexFactored(i);
-                final TableColumnMetadata m = ((BaseRecordMetadata) slaveMetadata).getColumnQuick(index);
-                if (ColumnType.isSymbol(m.getType())) {
+                // now add key columns to metadata
+                for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+                    int index = listColumnFilterA.getColumnIndexFactored(i);
+                    final TableColumnMetadata m = ((BaseRecordMetadata) slaveMetadata).getColumnQuick(index);
+                    if (ColumnType.isSymbol(m.getType())) {
+                        metadata.add(
+                                slaveAlias,
+                                m.getName(),
+                                m.getHash(),
+                                ColumnType.STRING,
+                                false,
+                                0,
+                                false,
+                                null
+                        );
+                        slaveTypes.add(ColumnType.STRING);
+                    } else {
+                        metadata.add(slaveAlias, m);
+                        slaveTypes.add(m.getType());
+                    }
+                    columnIndex.add(index);
+                }
+            } else {
+                for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+                    if (intHashSet.excludes(i)) {
+                        int type = slaveMetadata.getColumnType(i);
+                        metadata.add(
+                                slaveAlias,
+                                slaveMetadata.getColumnName(i),
+                                slaveMetadata.getColumnHash(i),
+                                type,
+                                slaveMetadata.isColumnIndexed(i),
+                                slaveMetadata.getIndexValueBlockCapacity(i),
+                                slaveMetadata.isSymbolTableStatic(i),
+                                slaveMetadata.getMetadata(i)
+                        );
+                        listColumnFilterB.add(i + 1);
+                        columnIndex.add(i);
+                        valueTypes.add(type);
+                        slaveTypes.add(type);
+                    }
+                }
+
+                // now add key columns to metadata
+                for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
+                    int index = listColumnFilterA.getColumnIndexFactored(i);
+                    int type = slaveMetadata.getColumnType(index);
+                    if (ColumnType.isSymbol(type)) {
+                        type = ColumnType.STRING;
+                    }
                     metadata.add(
                             slaveAlias,
-                            m.getName(),
-                            m.getHash(),
-                            ColumnType.STRING,
-                            false,
-                            0,
-                            false,
-                            null
-                    );
-                    slaveTypes.add(ColumnType.STRING);
-                } else {
-                    metadata.add(slaveAlias, m);
-                    slaveTypes.add(m.getType());
-                }
-                columnIndex.add(index);
-            }
-        } else {
-            for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
-                if (intHashSet.excludes(i)) {
-                    int type = slaveMetadata.getColumnType(i);
-                    metadata.add(
-                            slaveAlias,
-                            slaveMetadata.getColumnName(i),
-                            slaveMetadata.getColumnHash(i),
+                            slaveMetadata.getColumnName(index),
+                            slaveMetadata.getColumnHash(index),
                             type,
                             slaveMetadata.isColumnIndexed(i),
                             slaveMetadata.getIndexValueBlockCapacity(i),
                             slaveMetadata.isSymbolTableStatic(i),
                             slaveMetadata.getMetadata(i)
                     );
-                    listColumnFilterB.add(i + 1);
-                    columnIndex.add(i);
-                    valueTypes.add(type);
+                    columnIndex.add(index);
                     slaveTypes.add(type);
                 }
             }
 
-            // now add key columns to metadata
-            for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
-                int index = listColumnFilterA.getColumnIndexFactored(i);
-                int type = slaveMetadata.getColumnType(index);
-                if (ColumnType.isSymbol(type)) {
-                    type = ColumnType.STRING;
-                }
-                metadata.add(
-                        slaveAlias,
-                        slaveMetadata.getColumnName(index),
-                        slaveMetadata.getColumnHash(index),
-                        type,
-                        slaveMetadata.isColumnIndexed(i),
-                        slaveMetadata.getIndexValueBlockCapacity(i),
-                        slaveMetadata.isSymbolTableStatic(i),
-                        slaveMetadata.getMetadata(i)
-                );
-                columnIndex.add(index);
-                slaveTypes.add(type);
+
+            if (masterMetadata.getTimestampIndex() != -1) {
+                metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
             }
+
+            return generator.create(
+                    configuration,
+                    metadata,
+                    master,
+                    slave,
+                    keyTypes,
+                    valueTypes,
+                    slaveTypes,
+                    masterSink,
+                    RecordSinkFactory.getInstance(
+                            asm,
+                            slaveMetadata,
+                            listColumnFilterA,
+                            true
+                    ),
+                    masterMetadata.getColumnCount(),
+                    RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB),
+                    columnIndex
+            );
+
+        } catch (Throwable e) {
+            Misc.free(metadata);
+            throw e;
         }
-
-
-        if (masterMetadata.getTimestampIndex() != -1) {
-            metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
-        }
-
-        return generator.create(
-                configuration,
-                metadata,
-                master,
-                slave,
-                keyTypes,
-                valueTypes,
-                slaveTypes,
-                masterSink,
-                RecordSinkFactory.getInstance(
-                        asm,
-                        slaveMetadata,
-                        listColumnFilterA,
-                        true
-                ),
-                masterMetadata.getColumnCount(),
-                RecordValueSinkFactory.getInstance(asm, slaveMetadata, listColumnFilterB),
-                columnIndex
-        );
     }
 
     private RecordCursorFactory createHashJoin(

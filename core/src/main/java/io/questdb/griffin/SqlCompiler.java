@@ -2182,15 +2182,15 @@ public class SqlCompiler implements Closeable {
             final RecordMetadata metadata = reader.getMetadata();
             final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, reader.getTableName(), structureVersion);
             final int writerTimestampIndex = metadata.getTimestampIndex();
-            final CharSequenceHashSet columnSet = model.getColumnSet();
-            final int columnSetSize = columnSet.size();
+            final ObjList<CharSequence> columnNameList = model.getColumnNameList();
+            final int columnSetSize = columnNameList.size();
             for (int t = 0, n = model.getRowTupleCount(); t < n; t++) {
                 Function timestampFunction = null;
                 listColumnFilter.clear();
                 if (columnSetSize > 0) {
                     valueFunctions = new ObjList<>(columnSetSize);
                     for (int i = 0; i < columnSetSize; i++) {
-                        int index = metadata.getColumnIndexQuiet(columnSet.get(i));
+                        int index = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
                         if (index > -1) {
                             final ExpressionNode node = model.getRowTupleValues(t).getQuick(i);
 
@@ -2218,7 +2218,7 @@ public class SqlCompiler implements Closeable {
                             }
 
                         } else {
-                            throw SqlException.invalidColumn(model.getColumnPosition(i), columnSet.get(i));
+                            throw SqlException.invalidColumn(model.getColumnPosition(i), columnNameList.getQuick(i));
                         }
                     }
                 } else {
@@ -2289,8 +2289,8 @@ public class SqlCompiler implements Closeable {
             final int cursorColumnCount = cursorMetadata.getColumnCount();
 
             final RecordToRowCopier copier;
-            CharSequenceHashSet columnSet = model.getColumnSet();
-            final int columnSetSize = columnSet.size();
+            final ObjList<CharSequence> columnNameList = model.getColumnNameList();
+            final int columnSetSize = columnNameList.size();
             int timestampIndexFound = -1;
             if (columnSetSize > 0) {
                 // validate type cast
@@ -2299,7 +2299,7 @@ public class SqlCompiler implements Closeable {
                 listColumnFilter.clear();
 
                 for (int i = 0; i < columnSetSize; i++) {
-                    CharSequence columnName = columnSet.get(i);
+                    CharSequence columnName = columnNameList.get(i);
                     int index = writerMetadata.getColumnIndexQuiet(columnName);
                     if (index == -1) {
                         throw SqlException.invalidColumn(model.getColumnPosition(i), columnName);
@@ -2416,14 +2416,16 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(tableName.position, "literal expected");
         }
 
-        int columnSetSize = model.getColumnSet().size();
+        int columnNameListSize = model.getColumnNameList().size();
 
         for (int i = 0, n = model.getRowTupleCount(); i < n; i++) {
-            if (columnSetSize > 0 && columnSetSize != model.getRowTupleValues(i).size()) {
+            if (columnNameListSize > 0 && columnNameListSize != model.getRowTupleValues(i).size()) {
                 throw SqlException.$(
                                 model.getEndOfRowTupleValuesPosition(i),
-                                "row value count does not match column count [expected=").put(columnSetSize).put(", actual=").put(model.getRowTupleValues(i).size())
-                        .put(", tuple=").put(i + 1).put(']');
+                                "row value count does not match column count [expected=").put(columnNameListSize)
+                        .put(", actual=").put(model.getRowTupleValues(i).size())
+                        .put(", tuple=").put(i + 1)
+                        .put(']');
             }
         }
 
@@ -2874,8 +2876,8 @@ public class SqlCompiler implements Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final QueryModel queryModel = optimiser.optimise(model.getQueryModel(), executionContext);
-        int targetColumnCount = model.getColumnSet().size();
-        if (targetColumnCount > 0 && queryModel.getBottomUpColumns().size() != targetColumnCount) {
+        int columnNameListSize = model.getColumnNameList().size();
+        if (columnNameListSize > 0 && queryModel.getBottomUpColumns().size() != columnNameListSize) {
             throw SqlException.$(model.getTableName().position, "column count mismatch");
         }
         model.setQueryModel(queryModel);

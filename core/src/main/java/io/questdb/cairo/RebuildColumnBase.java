@@ -94,15 +94,6 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         }
     }
 
-    public void rebuildColumn(CharSequence columnName, TableWriter tableWriter) {
-        rebuildPartitionColumn(null, columnName, tableWriter);
-    }
-
-    // if TableWriter is passed in the lock has to be held already
-    public void rebuildPartitionColumn(CharSequence partitionName, CharSequence columnName, TableWriter tableWriter) {
-        rebuildPartitionColumn(ALL, partitionName, columnName, tableWriter.getColumnVersionWriter(), configuration.getFilesFacade());
-    }
-
     public void rebuildPartitionColumn(long partitionTs, CharSequence columnName, TableWriter tableWriter) {
         rebuildPartitionColumn(partitionTs, null, columnName, tableWriter.getColumnVersionWriter(), configuration.getFilesFacade());
     }
