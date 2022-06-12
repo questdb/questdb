@@ -78,7 +78,7 @@ questdb stop  // 停止 questdb
 
 你可以使用以下接口與 QuestDB 進行交互。
 
-- [web 控制台](https://questdb.io/docs/develop/web-console/) 監聽在端口 `9000`
+- [Web 控制台](https://questdb.io/docs/develop/web-console/) 監聽在端口 `9000`
 - [REST API](https://questdb.io/docs/reference/api/rest/) 監聽在端口 `9000`
 - [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) 監聽在端口
   `8812`， 支持 wire 協議，
@@ -102,7 +102,7 @@ questdb stop  // 停止 questdb
 下表顯示了在 `c5.metal` 實例上使用 96 個線程中的 16 個線程運行 10 億條記錄的查詢
 執行時間。
 
-| 查詢                                                      | 運行時間   |
+| 查詢                                                       | 運行時間    |
 | --------------------------------------------------------- | ---------- |
 | `SELECT sum(double) FROM 1bn`                             | 0.061 secs |
 | `SELECT tag, sum(double) FROM 1bn`                        | 0.179 secs |
