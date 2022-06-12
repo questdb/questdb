@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -54,11 +55,9 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
     }
 
     @Override
-    public void close() {
-        super.close();
-        if (filter != null) {
-            filter.close();
-        }
+    protected void _close() {
+        super._close();
+        Misc.free(filter);
     }
 
     @Override

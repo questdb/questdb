@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class FastMap implements Map {
 
@@ -82,6 +83,7 @@ public class FastMap implements Map {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
+    @TestOnly
     FastMap(
             int pageSize,
             @Transient ColumnTypes keyTypes,

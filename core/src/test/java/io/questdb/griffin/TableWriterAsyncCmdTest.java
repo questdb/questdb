@@ -117,7 +117,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                         qf.await();
                         Assert.fail();
                     } catch (SqlException exception) {
-                        TestUtils.assertContains(exception.getFlyweightMessage(), "Duplicate column name: column5");
+                        TestUtils.assertContains(exception.getFlyweightMessage(), "Duplicate column [name=column5]");
                     }
                 }
             }

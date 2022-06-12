@@ -34,10 +34,6 @@ import io.questdb.std.ObjList;
 
 
 public class EqGeoHashStrFunctionFactory extends EqGeoHashGeoHashFunctionFactory {
-
-    private final static CastStrToGeoHashFunctionFactory STR2GEOHASH_FF = new CastStrToGeoHashFunctionFactory();
-
-
     @Override
     public String getSignature() {
         return "=(GS)";
@@ -49,7 +45,7 @@ public class EqGeoHashStrFunctionFactory extends EqGeoHashGeoHashFunctionFactory
                                 IntList argPositions,
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext) throws SqlException {
-        args.set(1, STR2GEOHASH_FF.newInstance(position, args.getQuick(0).getType(), args.getQuick(1)));
+        args.set(1, CastStrToGeoHashFunctionFactory.newInstance(position, args.getQuick(0).getType(), args.getQuick(1)));
         return super.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
     }
 }

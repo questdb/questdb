@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
@@ -33,13 +34,12 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
+public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final RecordCursorFactory base;
     private final GroupByNotKeyedRecordCursor cursor;
     private final ObjList<GroupByFunction> groupByFunctions;
     // this sink is used to copy recordKeyMap keys to dataMap
-    private final RecordMetadata metadata;
     private final SimpleMapValue simpleMapValue;
     private final VirtualRecord virtualRecordA;
 
@@ -50,9 +50,9 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
             ObjList<Function> recordFunctions,
             int valueCount
     ) {
+        super(groupByMetadata);
         this.simpleMapValue = new SimpleMapValue(valueCount);
         this.base = base;
-        this.metadata = groupByMetadata;
         this.groupByFunctions = groupByFunctions;
         this.virtualRecordA = new VirtualRecordNoRowid(recordFunctions);
         this.virtualRecordA.of(simpleMapValue);
@@ -60,7 +60,7 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         Misc.freeObjList(groupByFunctions);
         Misc.free(base);
     }
@@ -74,11 +74,6 @@ public class GroupByNotKeyedRecordCursorFactory implements RecordCursorFactory {
             Misc.free(baseCursor);
             throw e;
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

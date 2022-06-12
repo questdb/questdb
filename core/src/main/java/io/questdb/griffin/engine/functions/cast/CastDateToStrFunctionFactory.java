@@ -50,15 +50,15 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
             sink.put(func.getDate(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        return new CastDateToStrFunction(args.getQuick(0));
     }
 
-    private static class Func extends StrFunction implements UnaryFunction {
+    public static class CastDateToStrFunction extends StrFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public Func(Function arg) {
+        public CastDateToStrFunction(Function arg) {
             this.arg = arg;
         }
 
@@ -74,7 +74,7 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkA.clear();
-            sinkA.put(value);
+            sinkA.putISODateMillis(value);
             return sinkA;
         }
 
@@ -85,7 +85,7 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkB.clear();
-            sinkB.put(value);
+            sinkB.putISODateMillis(value);
             return sinkB;
         }
 
@@ -96,7 +96,7 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
                 return;
             }
 
-            sink.put(value);
+            sink.putISODateMillis(value);
         }
     }
 }

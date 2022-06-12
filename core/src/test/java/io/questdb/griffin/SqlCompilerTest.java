@@ -3142,6 +3142,76 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testInsertAsSelectDuplicateColumn() throws Exception {
+        compiler.compile(
+                "CREATE TABLE tab (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+
+        engine.releaseAllWriters();
+
+        assertFailure(21, "Duplicate column [name=X]",
+                "insert into tab ( x, 'X', ts ) values ( 7, 10, 11 )");
+    }
+
+    @Test
+    public void testInsertAsSelectDuplicateColumnNonAscii() throws Exception {
+        compiler.compile(
+                "CREATE TABLE tabula (" +
+                        "  ts TIMESTAMP, " +
+                        "  龜 INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+
+        engine.releaseAllWriters();
+
+        assertFailure(24, "Duplicate column [name=龜]",
+                "insert into tabula ( 龜, '龜', ts ) values ( 7, 10, 11 )");
+    }
+
+    @Test
+    public void testJoinWithDuplicateColumns() throws Exception {
+        compiler.compile(
+                "CREATE TABLE t1 (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+        compiler.compile(
+                "CREATE TABLE t2 (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+        compiler.compile("INSERT INTO t1(ts, x) VALUES (1, 1)", sqlExecutionContext);
+        compiler.compile("INSERT INTO t2(ts, x) VALUES (1, 2)", sqlExecutionContext);
+        engine.releaseInactive();
+
+        // 1.- the parser finds column t2.ts with an explicit alias TS (case does not matter - it is equiv. to ts)
+        // 2.- then it finds column t1.ts with no explicit alias, so it attempts to give it what it finds after the dot,
+        //     but alas that alias is taken, so it fabricates alias ts1
+        // 3.- then it finds column t1.ts again, but this time with an explicit alias ts1, which is taken by the prev.
+        //     column and therefore is a duplicate, so the reported error is correct -> Duplicate column 'ts1'
+        assertFailure(35, "Duplicate column [name=ts1]",
+                "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;");
+
+        // in this case, the optimizer, left to right, expands "t1.*" to x, ts1, and then the user defines
+        // t2.ts as ts1 which produces the error
+        assertFailure(29, "Duplicate column [name=ts1]",
+                "select t2.ts as \"TS\", t1.*,  t2.ts as \"ts1\" from t1 asof join (select * from t2) t2;");
+        assertFailure(29, "Duplicate column [name=ts1]",
+                "select t2.ts as \"TS\", t1.*,  t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
+        assertFailure(29, "Duplicate column [name=ts1]",
+                "select t2.ts as \"TS\", t1.*,  t2.ts ts1 from t1 asof join (select * from t2) t2;");
+    }
+
+    @Test
     public void testInsertAsSelectConvertibleList2() throws Exception {
         testInsertAsSelect("a\tb\tn\n" +
                         "SBEOUOJSH\t-2144581835\t\n" +

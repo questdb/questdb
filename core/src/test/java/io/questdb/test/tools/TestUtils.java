@@ -104,8 +104,8 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
-    public static void assertEquals(RecordCursor cursorExpected, RecordMetadata metadataExpected, RecordCursor cursorActual, RecordMetadata metadataActual) {
-        assertEquals(metadataExpected, metadataActual);
+    public static void assertEquals(RecordCursor cursorExpected, RecordMetadata metadataExpected, RecordCursor cursorActual, RecordMetadata metadataActual, boolean symbolsAsStrings) {
+        assertEquals(metadataExpected, metadataActual, symbolsAsStrings);
         Record r = cursorExpected.getRecord();
         Record l = cursorActual.getRecord();
         long rowIndex = 0;
@@ -139,7 +139,9 @@ public final class TestUtils {
                             Assert.assertEquals(r.getGeoInt(i), l.getGeoInt(i));
                             break;
                         case ColumnType.STRING:
-                            TestUtils.assertEquals(r.getStr(i), l.getStr(i));
+                            CharSequence actual = symbolsAsStrings && ColumnType.isSymbol(metadataActual.getColumnType(i)) ? l.getSym(i) : l.getStr(i);
+                            CharSequence expected = r.getStr(i);
+                            TestUtils.assertEquals(expected, actual);
                             break;
                         case ColumnType.SYMBOL:
                             Assert.assertEquals(r.getSym(i), l.getSym(i));
@@ -491,11 +493,15 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual, Log log) throws SqlException {
+        assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, false);
+    }
+
+    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)) {
                     try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
-                        assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata());
+                        assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), symbolsAsStrings);
                     }
                 } catch (AssertionError e) {
                     log.error().$(e).$();
@@ -734,7 +740,6 @@ public final class TestUtils {
     public static Rnd generateRandom() {
         long s0 = System.nanoTime();
         long s1 = System.currentTimeMillis();
-        System.out.println("random seed " + s0 + ", " + s1);
         return new Rnd(s0, s1);
     }
 
@@ -968,11 +973,15 @@ public final class TestUtils {
                 Long.toHexString(expected.getLong3());
     }
 
-    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual) {
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
         Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
             Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
-            Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
+            int columnType1 = metadataExpected.getColumnType(i);
+            columnType1 = symbolsAsStrings && ColumnType.isSymbol(columnType1) ? ColumnType.STRING : columnType1;
+            int columnType2 = metadataActual.getColumnType(i);
+            columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
+            Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
     }
 

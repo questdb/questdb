@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
@@ -50,15 +51,15 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
             sink.put(func.getTimestamp(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        return new CastTimestampToStrFunction(args.getQuick(0));
     }
 
-    private static class Func extends StrFunction implements UnaryFunction {
+    public static class CastTimestampToStrFunction extends StrFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
-        public Func(Function arg) {
+        public CastTimestampToStrFunction(Function arg) {
             this.arg = arg;
         }
 
@@ -69,23 +70,23 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
+            sinkA.clear();
             final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NaN) {
                 return null;
             }
-            sinkA.clear();
-            sinkA.put(value);
+            TimestampFormatUtils.appendDateTimeUSec(sinkA, value);
             return sinkA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
+            sinkB.clear();
             final long value = arg.getTimestamp(rec);
             if (value == Numbers.LONG_NaN) {
                 return null;
             }
-            sinkB.clear();
-            sinkB.put(value);
+            TimestampFormatUtils.appendDateTimeUSec(sinkB, value);
             return sinkB;
         }
 
@@ -96,7 +97,7 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
                 return;
             }
 
-            sink.put(value);
+            TimestampFormatUtils.appendDateTimeUSec(sink, value);
         }
     }
 }

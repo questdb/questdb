@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastLongToDoubleFunctionFactory implements FunctionFactory {
@@ -60,8 +59,7 @@ public class CastLongToDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            final long value = arg.getLong(rec);
-            return value != Numbers.LONG_NaN ? value : Double.NaN;
+            return arg.getDouble(rec);
         }
     }
 }

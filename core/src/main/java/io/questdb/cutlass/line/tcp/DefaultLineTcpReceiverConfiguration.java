@@ -139,6 +139,16 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
+    public boolean getAutoCreateNewColumns() {
+        return true;
+    }
+
+    @Override
+    public boolean getAutoCreateNewTables() {
+        return true;
+    }
+
+    @Override
     public int getDefaultPartitionBy() {
         return PartitionBy.DAY;
     }

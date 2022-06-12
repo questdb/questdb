@@ -43,13 +43,13 @@ public class CastDoubleToTimestampFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastDoubleToTimestampFunction(args.getQuick(0));
     }
 
-    private static class Func extends TimestampFunction implements UnaryFunction {
+    public static class CastDoubleToTimestampFunction extends TimestampFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
+        public CastDoubleToTimestampFunction(Function arg) {
             this.arg = arg;
         }
 

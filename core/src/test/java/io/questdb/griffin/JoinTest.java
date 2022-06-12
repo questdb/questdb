@@ -3813,6 +3813,50 @@ public class JoinTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSpliceOfJoinAliasDuplication() throws Exception {
+        assertMemoryLeak(() -> {
+            // ASKS
+            compiler.compile(
+                    "create table asks(ask int, ts timestamp) timestamp(ts) partition by none",
+                    sqlExecutionContext
+            );
+            executeInsert("insert into asks values(100, 0)");
+            executeInsert("insert into asks values(101, 2);");
+            executeInsert("insert into asks values(102, 4);");
+
+            // BIDS
+            compiler.compile(
+                    "create table bids(bid int, ts timestamp) timestamp(ts) partition by none",
+                    sqlExecutionContext
+            );
+            executeInsert("insert into bids values(101, 1);");
+            executeInsert("insert into bids values(102, 3);");
+            executeInsert("insert into bids values(103, 5);");
+
+            String query =
+                    "SELECT \n" +
+                            "    b.timebid timebid,\n" +
+                            "    a.timeask timeask, \n" +
+                            "    b.b b, \n" +
+                            "    a.a a\n" +
+                            "FROM (select b.bid b, b.ts timebid from bids b) b \n" +
+                            "    SPLICE JOIN\n" +
+                            "(select a.ask a, a.ts timeask from asks a) a\n" +
+                            "    ON (b.timebid != a.timeask);";
+
+            String expected = "timebid\ttimeask\tb\ta\n" +
+                    "\t1970-01-01T00:00:00.000000Z\tNaN\t100\n" +
+                    "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000000Z\t101\t100\n" +
+                    "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000002Z\t101\t101\n" +
+                    "1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000002Z\t102\t101\n" +
+                    "1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000004Z\t102\t102\n" +
+                    "1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000004Z\t103\t102\n";
+
+            printSqlResult(expected, query, null, false, false);
+        });
+    }
+
+    @Test
     public void testTypeMismatch() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x as (select x c, abs(rnd_int() % 650) a from long_sequence(5))", sqlExecutionContext);
@@ -4024,8 +4068,6 @@ public class JoinTest extends AbstractGriffinTest {
                     "y",
                     sink
             );
-
-            System.out.println(sink);
 
             compiler.setFullFatJoins(true);
             assertSql(query, expected);

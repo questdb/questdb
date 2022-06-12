@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToDoubleFunctionFactory implements FunctionFactory {
@@ -49,13 +48,13 @@ public class CastTimestampToDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0));
+        return new CastTimestampToDoubleFunction(args.getQuick(0));
     }
 
-    private static class Func extends DoubleFunction implements UnaryFunction {
+    public static class CastTimestampToDoubleFunction extends DoubleFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
+        public CastTimestampToDoubleFunction(Function arg) {
             this.arg = arg;
         }
 
@@ -66,8 +65,7 @@ public class CastTimestampToDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            final long value = arg.getTimestamp(rec);
-            return value != Numbers.LONG_NaN ? value : Double.NaN;
+            return arg.getDouble(rec);
         }
     }
 }

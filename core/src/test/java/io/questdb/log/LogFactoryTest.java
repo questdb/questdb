@@ -630,6 +630,21 @@ public class LogFactoryTest {
         testCustomLogIsCreated(false);
     }
 
+    private static void assertEnabled(LogRecord r) {
+        Assert.assertTrue(r.isEnabled());
+        r.$();
+    }
+
+    private static void assertDisabled(LogRecord r) {
+        Assert.assertFalse(r.isEnabled());
+        r.$();
+    }
+
+    private void assertFileLength(String file) {
+        long len = new File(file).length();
+        Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
+    }
+
     private void testCustomLogIsCreated(boolean isCreated) throws IOException {
         try (LogFactory factory = new LogFactory()) {
             File logConfDir = Paths.get(temp.getRoot().getPath(), "conf").toFile();
@@ -651,21 +666,6 @@ public class LogFactoryTest {
             File logFile = Paths.get(temp.getRoot().getPath(), "log\\test.log").toFile();
             MatcherAssert.assertThat(logFile.getAbsolutePath(), logFile.exists(), is(isCreated));
         }
-    }
-
-    private static void assertEnabled(LogRecord r) {
-        Assert.assertTrue(r.isEnabled());
-        r.$();
-    }
-
-    private static void assertDisabled(LogRecord r) {
-        Assert.assertFalse(r.isEnabled());
-        r.$();
-    }
-
-    private void assertFileLength(String file) {
-        long len = new File(file).length();
-        Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
     }
 
     private void testRollOnDate(
@@ -742,22 +742,21 @@ public class LogFactoryTest {
     }
 
     private static class TestMicrosecondClock implements MicrosecondClock {
-        private final long base;
         private final long start;
         private final long speed;
         private final long limit;
+        private long k;
 
         public TestMicrosecondClock(long start, long speed, long limit) {
-            this.base = Os.currentTimeMicros();
             this.start = start;
             this.speed = speed;
             this.limit = limit - 1;
+            this.k = 0;
         }
 
         @Override
         public long getTicks() {
-            long wall = Os.currentTimeMicros();
-            return Math.min((wall - base) * speed + start, limit);
+            return Math.min(start + (k++) * speed, limit);
         }
     }
 }
