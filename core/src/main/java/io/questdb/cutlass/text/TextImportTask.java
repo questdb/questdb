@@ -348,7 +348,7 @@ public class TextImportTask {
             try (FileSplitter splitter = new FileSplitter(configuration)) {
                 splitter.setBufferLength(bufferLen);
                 splitter.of(inputFileName, importRoot, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader);
-                splitter.index(chunkStart, chunkEnd, lineNumber, partitionKeys, 0, partitionKeys); //todo: change signature
+                splitter.index(chunkStart, chunkEnd, lineNumber, partitionKeys);
                 this.maxLineLength = splitter.getMaxLineLength();
             }
         }

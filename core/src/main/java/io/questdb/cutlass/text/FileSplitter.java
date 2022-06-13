@@ -141,7 +141,6 @@ public class FileSplitter implements Closeable, Mutable {
     private long fieldLo;
     private long fieldHi;
     private int index;
-    private int errno = -1;
 
     public FileSplitter(CairoConfiguration configuration) {
         final TextConfiguration textConfiguration = configuration.getTextConfiguration();
@@ -161,10 +160,6 @@ public class FileSplitter implements Closeable, Mutable {
         this.fieldRollBufCur = fieldRollBufPtr;
 
         this.timestampField = new DirectByteCharSequence();
-    }
-
-    public int getErrno() {
-        return errno;
     }
 
     public int getMaxLineLength() {
@@ -563,7 +558,7 @@ public class FileSplitter implements Closeable, Mutable {
         this.lastLineStart = this.offset + (this.fieldLo - lo);
     }
 
-    public void index(long chunkLo, long chunkHi, long lineNumber, LongList output, int outputIndex, LongList partitionKeys) {
+    public void index(long chunkLo, long chunkHi, long lineNumber,  LongList partitionKeys) {
         assert chunkHi > 0;
         assert chunkLo >= 0 && chunkLo < chunkHi;
 
@@ -589,16 +584,11 @@ public class FileSplitter implements Closeable, Mutable {
             } while (offset < chunkHi);
 
             if (read < 0 || offset < chunkHi) {
-                this.errno = ff.errno();
-//                throw SqlException.$(0, "could not read file [errno=").put(ff.errno()).put(']');
+                throw CairoException.instance(ff.errno()).put("could not read file");
             } else {
                 parseLast();
             }
 
-            System.err.println("max " + maxLineLength);
-            if (output != null) {
-//                output.set(outputIndex, maxLineLength);
-            }
             collectPartitionKeys(partitionKeys);
         } finally {
             closeOutputFiles();
