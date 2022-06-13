@@ -1062,7 +1062,7 @@ public final class TableUtils {
 
     private static int getInt(MemoryMR metaMem, long memSize, long offset) {
         if (memSize < offset + Integer.BYTES) {
-            throw CairoException.instance(0).put(". File is too small ").put(memSize);
+            throw CairoException.instance(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
         }
         return metaMem.getInt(offset);
     }
@@ -1070,10 +1070,7 @@ public final class TableUtils {
     private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {
         if (strLength < 1 || strLength > 255 || offset + Vm.getStorageLength(strLength) > memSize) {
             // EXT4 and many others do not allow file name length > 255 bytes
-            throw validationException(metaMem)
-                    .put("Symbol value length of ")
-                    .put(strLength).put(" is invalid at offset ")
-                    .put(offset);
+            throw validationException(metaMem).put("String length of ").put(strLength).put(" is invalid at offset ").put(offset);
         }
         return metaMem.getStr(offset);
     }

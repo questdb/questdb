@@ -162,6 +162,10 @@ public class WalWriter implements Closeable {
         return walName;
     }
 
+    public int getTimestampIndex() {
+        return metadataCache.getTimestampIndex();
+    }
+
     public Row newRow() {
         return newRow(0L);
     }
@@ -277,15 +281,6 @@ public class WalWriter implements Closeable {
         }
     }
 
-    private void closeAppendMemoryTruncate(boolean truncate) {
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            MemoryMA m = columns.getQuick(i);
-            if (m != null) {
-                m.close(truncate);
-            }
-        }
-    }
-
     private void configureColumn(int index, int type) {
         final MemoryMA primary;
         final MemoryMA secondary;
@@ -378,7 +373,12 @@ public class WalWriter implements Closeable {
     private void freeColumns(boolean truncate) {
         // null check is because this method could be called from the constructor
         if (columns != null) {
-            closeAppendMemoryTruncate(truncate);
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final MemoryMA m = columns.getQuick(i);
+                if (m != null) {
+                    m.close(truncate);
+                }
+            }
         }
     }
 

@@ -645,28 +645,33 @@ public class WalWriterTest extends AbstractGriffinTest {
     public void testReadAndWriteAllTypes() {
         final String tableName = "testTableAllTypes";
         try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                     .col("int", ColumnType.INT)
-                     .col("byte", ColumnType.BYTE)
-                     .col("long", ColumnType.LONG)
-                     .col("long256", ColumnType.LONG256)
-                     .col("double", ColumnType.DOUBLE)
-                     .col("float", ColumnType.FLOAT)
-                     .col("short", ColumnType.SHORT)
-                     .col("timestamp", ColumnType.TIMESTAMP)
-                     .col("char", ColumnType.CHAR)
-                     .col("boolean", ColumnType.BOOLEAN)
-                     .col("date", ColumnType.DATE)
-                     .col("string", ColumnType.STRING)
-                     .col("geoByte", ColumnType.GEOBYTE)
-                     .col("geoInt", ColumnType.GEOINT)
-                     .col("geoShort", ColumnType.GEOSHORT)
-                     .col("geoLong", ColumnType.GEOLONG)
-                     .col("bin", ColumnType.BINARY)
-                     .col("bin2", ColumnType.BINARY)
-                     .col("long256b", ColumnType.LONG256) // putLong256(int columnIndex, Long256 value)
-                     .col("long256c", ColumnType.LONG256) // putLong256(int columnIndex, CharSequence hexString)
-                     .col("long256d", ColumnType.LONG256) // putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end)
-                     .timestamp("ts")
+                .col("int", ColumnType.INT)
+                .col("byte", ColumnType.BYTE)
+                .col("long", ColumnType.LONG)
+                .col("long256", ColumnType.LONG256)
+                .col("double", ColumnType.DOUBLE)
+                .col("float", ColumnType.FLOAT)
+                .col("short", ColumnType.SHORT)
+                .col("timestamp", ColumnType.TIMESTAMP)
+                .col("char", ColumnType.CHAR)
+                .col("boolean", ColumnType.BOOLEAN)
+                .col("date", ColumnType.DATE)
+                .col("string", ColumnType.STRING)
+                .col("geoByte", ColumnType.GEOBYTE)
+                .col("geoInt", ColumnType.GEOINT)
+                .col("geoShort", ColumnType.GEOSHORT)
+                .col("geoLong", ColumnType.GEOLONG)
+                .col("bin", ColumnType.BINARY)
+                .col("bin2", ColumnType.BINARY)
+                .col("long256b", ColumnType.LONG256) // putLong256(int columnIndex, Long256 value)
+                .col("long256c", ColumnType.LONG256) // putLong256(int columnIndex, CharSequence hexString)
+                .col("long256d", ColumnType.LONG256) // putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end)
+                .col("timestampb", ColumnType.TIMESTAMP) // putTimestamp(int columnIndex, CharSequence value)
+                .col("stringb", ColumnType.STRING) // putStr(int columnIndex, char value)
+                .col("stringc", ColumnType.STRING) // putStr(int columnIndex, CharSequence value, int pos, int len)
+                .col("symbol", ColumnType.SYMBOL) // putSym(int columnIndex, CharSequence value)
+                .col("symbolb", ColumnType.SYMBOL) // putSym(int columnIndex, char value)
+                .timestamp("ts")
         ) {
             createTable(model);
         }
@@ -680,6 +685,8 @@ public class WalWriterTest extends AbstractGriffinTest {
             final DirectBinarySequence binSeq = new DirectBinarySequence();
 
             final String walName;
+            final IntList walSymbolCounts = new IntList();
+            final int timestampIndex;
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 assertEquals(tableName, walWriter.getTableName());
                 walName = walWriter.getWalName();
@@ -718,14 +725,27 @@ public class WalWriterTest extends AbstractGriffinTest {
                     stringSink.put("some rubbish to be ignored");
                     row.putLong256(20, stringSink, 2, strLen);
 
+                    row.putTimestamp(21, "2022-06-10T09:13:46." + (i + 1));
+
+                    row.putStr(22, (char) (65 + i % 26));
+                    row.putStr(23, "abcdefghijklmnopqrstuvwxyz", 0, i % 26 + 1);
+
+                    row.putSym(24, String.valueOf(i));
+                    row.putSym(25, (char) (65 + i % 26));
+
                     row.append();
                 }
+
+                timestampIndex = walWriter.getTimestampIndex();
+                walSymbolCounts.add(walWriter.getSymbolMapWriter(24).getSymbolCount());
+                walSymbolCounts.add(walWriter.getSymbolMapWriter(25).getSymbolCount());
+
                 assertEquals(rowsToInsertTotal, walWriter.size());
                 assertEquals("WalWriter{name=" + tableName + "}", walWriter.toString());
             }
 
-            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), rowsToInsertTotal, 21)) {
-                assertEquals(22, reader.getColumnCount());
+            try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, walSymbolCounts, rowsToInsertTotal, timestampIndex)) {
+                assertEquals(27, reader.getColumnCount());
                 assertEquals(walName, reader.getWalName());
                 assertEquals(tableName, reader.getTableName());
                 assertEquals(rowsToInsertTotal, reader.size());
@@ -774,7 +794,15 @@ public class WalWriterTest extends AbstractGriffinTest {
                     record.getLong256(20, stringSink);
                     assertEquals(testSink.toString(), stringSink.toString());
 
-                    assertEquals(ts, record.getTimestamp(21));
+                    assertEquals(1654852426000000L + (i + 1) * (long) (Math.pow(10, 5 - (int) Math.log10(i + 1))), record.getTimestamp(21));
+
+                    assertEquals(String.valueOf((char) (65 + i % 26)), record.getStr(22).toString());
+                    assertEquals("abcdefghijklmnopqrstuvwxyz".substring(0, i % 26 + 1), record.getStr(23).toString());
+
+                    assertEquals(String.valueOf(i), record.getSym(24));
+                    assertEquals(String.valueOf((char) (65 + i % 26)), record.getSym(25));
+
+                    assertEquals(ts, record.getTimestamp(26));
                     assertEquals(i, record.getRowId());
                     testSink.clear();
                     ((Sinkable) record).toSink(testSink);
