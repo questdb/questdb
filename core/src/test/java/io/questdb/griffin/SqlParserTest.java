@@ -493,6 +493,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    @Ignore
+    public void testRewriteCorrelatedSubQuery() throws Exception {
+        assertQuery(
+                "",
+                "select customerId, (select sum(amount) from payments p where p.customerId = c.customerId)::varchar total from customers c",
+                modelOf("customers")
+                        .col("customerId", ColumnType.SYMBOL),
+                modelOf("payments")
+                        .col("customerId", ColumnType.STRING)
+                        .col("amount", ColumnType.DOUBLE)
+                        .col("timestamp", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testAsOfJoinSubQuerySimpleNoAlias() throws Exception {
         assertQuery(
                 "select-choose c.customerId customerId, _xQdbA0.blah blah, _xQdbA0.lastName lastName, _xQdbA0.customerId customerId1, _xQdbA0.timestamp timestamp from (select [customerId] from customers c asof join select [blah, lastName, customerId, timestamp] from (select-virtual ['1' blah, lastName, customerId, timestamp] '1' blah, lastName, customerId, timestamp from (select-choose [lastName, employeeId customerId, timestamp] lastName, employeeId customerId, timestamp from (select [lastName, employeeId, timestamp] from employees)) order by lastName) _xQdbA0 on _xQdbA0.customerId = c.customerId) c",

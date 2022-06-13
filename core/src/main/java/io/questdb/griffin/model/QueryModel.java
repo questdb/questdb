@@ -45,7 +45,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int JOIN_ASOF = 4;
     public static final int JOIN_SPLICE = 5;
     public static final int JOIN_LT = 6;
-    public static final int JOIN_MAX = JOIN_LT;
+    public static final int JOIN_ONE = 7;
+    public static final int JOIN_MAX = JOIN_ONE;
 
     public static final String SUB_QUERY_ALIAS_PREFIX = "_xQdbA";
 

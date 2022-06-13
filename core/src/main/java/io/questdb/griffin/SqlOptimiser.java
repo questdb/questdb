@@ -1422,6 +1422,27 @@ class SqlOptimiser {
         }
     }
 
+    private void extractCorrelatedQueriesAsJoins(QueryModel model) throws SqlException {
+        System.out.println("ok");
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            traversalAlgo.traverse(qc.getAst(), node -> {
+                QueryModel qm = node.queryModel;
+                if (qm != null) {
+                    qm.setJoinType(QueryModel.JOIN_ONE);
+                    model.addJoinModel(qm);
+                    ExpressionNode where = qm.getWhereClause();
+                    if (where != null) {
+                        model.setWhereClause(concatFilters(model.getWhereClause(), where));
+                        qm.setWhereClause(null);
+                    }
+
+                }
+            });
+        }
+    }
+
     private ObjList<ExpressionNode> getOrderByAdvice(QueryModel model) {
         orderByAdvice.clear();
         final ObjList<ExpressionNode> orderBy = model.getOrderBy();
@@ -1693,7 +1714,7 @@ class SqlOptimiser {
                                     node
                             )
                     );
-                    orderBy.setQuick(i, nextLiteral(""+(++columnCount)));
+                    orderBy.setQuick(i, nextLiteral("" + (++columnCount)));
                     moved = true;
                 }
             }
@@ -1960,7 +1981,8 @@ class SqlOptimiser {
         try {
             optimiseExpressionModels(model, sqlExecutionContext);
             enumerateTableColumns(model, sqlExecutionContext);
-            rewriteColumnsToFunctions(model);
+            rewriteTopLevelLiteralsToFunctions(model);
+//            extractCorrelatedQueriesAsJoins(model);
             modelWithOrderBy = moveOrderByFunctionsIntoSelect(model);
             resolveJoinColumns(modelWithOrderBy);
             optimiseBooleanNot(modelWithOrderBy);
@@ -2291,11 +2313,11 @@ class SqlOptimiser {
                         }
                         n = n.lhs;
                         break;
-                    case JOIN_OP_OR:
-                        // stub: use filter
-                        parent.addParsedWhereNode(n, innerPredicate);
-                        n = null;
-                        break;
+//                    case JOIN_OP_OR:
+//                        // stub: use filter
+//                        parent.addParsedWhereNode(n, innerPredicate);
+//                        n = null;
+//                        break;
                     case JOIN_OP_REGEX:
                         analyseRegex(parent, n);
                         // intentional fallthrough
@@ -2626,36 +2648,6 @@ class SqlOptimiser {
         // and union models too
         if (model.getUnionModel() != null) {
             resolveJoinColumns(model.getUnionModel());
-        }
-    }
-
-    // the intent is to either validate top-level columns in select columns or replace them with function calls
-    // if columns do not exist
-    private void rewriteColumnsToFunctions(QueryModel model) {
-        final QueryModel nested = model.getNestedModel();
-        if (nested != null) {
-            rewriteColumnsToFunctions(nested);
-            final ObjList<QueryColumn> columns = model.getColumns();
-            final int n = columns.size();
-            if (n > 0) {
-                for (int i = 0; i < n; i++) {
-                    final QueryColumn qc = columns.getQuick(i);
-                    final ExpressionNode node = qc.getAst();
-                    if (node.type == LITERAL) {
-                        if (nested.getAliasToColumnMap().contains(node.token)) {
-                            continue;
-                        }
-
-                        if (functionParser.getFunctionFactoryCache().isValidNoArgFunction(node)) {
-                            node.type = FUNCTION;
-                        }
-                    } else {
-                        model.addField(qc);
-                    }
-                }
-            } else {
-                model.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
-            }
         }
     }
 
@@ -3294,6 +3286,36 @@ class SqlOptimiser {
             }
         }
         return root;
+    }
+
+    // the intent is to either validate top-level columns in select columns or replace them with function calls
+    // if columns do not exist
+    private void rewriteTopLevelLiteralsToFunctions(QueryModel model) {
+        final QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            rewriteTopLevelLiteralsToFunctions(nested);
+            final ObjList<QueryColumn> columns = model.getColumns();
+            final int n = columns.size();
+            if (n > 0) {
+                for (int i = 0; i < n; i++) {
+                    final QueryColumn qc = columns.getQuick(i);
+                    final ExpressionNode node = qc.getAst();
+                    if (node.type == LITERAL) {
+                        if (nested.getAliasToColumnMap().contains(node.token)) {
+                            continue;
+                        }
+
+                        if (functionParser.getFunctionFactoryCache().isValidNoArgFunction(node)) {
+                            node.type = FUNCTION;
+                        }
+                    } else {
+                        model.addField(qc);
+                    }
+                }
+            } else {
+                model.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
+            }
+        }
     }
 
     private CharSequence setAndGetModelAlias(QueryModel model) {

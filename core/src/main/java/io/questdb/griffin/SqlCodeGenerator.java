@@ -4045,6 +4045,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         joinsRequiringTimestamp[JOIN_ASOF] = true;
         joinsRequiringTimestamp[JOIN_SPLICE] = true;
         joinsRequiringTimestamp[JOIN_LT] = true;
+        joinsRequiringTimestamp[JOIN_ONE] = false;
     }
 
     static {
