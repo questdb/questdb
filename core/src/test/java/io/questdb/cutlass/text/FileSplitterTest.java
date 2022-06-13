@@ -2057,6 +2057,11 @@ public class FileSplitterTest extends AbstractGriffinTest {
                     }
 
                     @Override
+                    public int getLatestByQueueCapacity() {
+                        return queueCapacity;
+                    }
+
+                    @Override
                     public CharSequence getInputWorkRoot() {
                         return FileSplitterTest.inputWorkRoot;
                     }

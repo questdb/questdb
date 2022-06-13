@@ -495,7 +495,9 @@ public class FileIndexer implements Closeable, Mutable {
         if (fd < 0) {
             throw TextException.$("Can't open input file=").put(inputFilePath).put(", errno=").put(ff.errno());
         }
-
+        if (this.queue.getCycle() <= 0) {
+            throw SqlException.$(0, "Unable to process, the processing queue is misconfigured");
+        }
         try (TableWriter writer = cairoEngine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, LOCK_REASON)) {
             findChunkBoundaries(fd);
             indexChunks();
