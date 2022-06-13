@@ -361,7 +361,7 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Auxiliary class to configure client -> server authentication.
+         * Auxiliary class to configure client authentication.
          * If you have an instance of {@link PrivateKey} then you can pass it directly.
          * Alternative a private key encoded as a string token can be used too.
          *
