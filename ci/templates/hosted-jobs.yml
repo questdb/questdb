@@ -25,21 +25,21 @@ jobs:
           testset: "all"
           excludeTests: "**/griffin/**,**/cairo/**"
         windows-griffin:
-          imageName: "windows-2019"
+          imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.11"
           testset: "all"
           includeTests: "griffin.**.*?"
         windows-cairo:
-          imageName: "windows-2019"
+          imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.11"
           testset: "all"
           includeTests: "cairo.**.*?"
         windows-other:
-          imageName: "windows-2019"
+          imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
           jdk: "1.11"

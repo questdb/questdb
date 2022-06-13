@@ -11,11 +11,6 @@ steps:
       key: '"questdb_main" | "maven"'
       restoreKeys: |
       path: $(MAVEN_CACHE_FOLDER)
-  - task: DockerInstaller@0
-    displayName: Docker Installer
-    inputs:
-      dockerVersion: 20.10.9
-      releaseType: stable
   - task: Maven@3
     displayName: "Compile with Maven"
     inputs:
