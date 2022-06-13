@@ -24,9 +24,21 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedAttrDefCatalogueFunctionFactory extends AttrDefCatalogueFunctionFactory {
-    @Override
-    public String getSignature() {
-        return "pg_catalog.pg_attrdef()";
+import io.questdb.griffin.AbstractGriffinTest;
+import org.junit.Test;
+
+public class PrefixedPgIndexFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testPgIndexFunc() throws Exception {
+        assertQuery(
+                "indkey\tindrelid\tindexrelid\tindisprimary\n",
+                "pg_catalog.pg_index;",
+                "create table x(a int)",
+                null,
+                false,
+                false,
+                true
+        );
     }
 }

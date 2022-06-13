@@ -33,15 +33,14 @@ import io.questdb.griffin.engine.functions.GenericRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class TypeCatalogueFunctionFactory implements FunctionFactory {
-
+public class PrefixedPgNamespaceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "pg_type()";
+        return "pg_catalog.pg_namespace()";
     }
 
     @Override
-    public boolean isCursor() {
+    public boolean isRuntimeConstant() {
         return true;
     }
 
@@ -49,10 +48,15 @@ public class TypeCatalogueFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
                 new GenericRecordCursorFactory(
-                        TypeCatalogueCursor.METADATA,
-                        new TypeCatalogueCursor(),
+                        PgNamespaceRecordCursor.METADATA,
+                        new PgNamespaceRecordCursor(),
                         false
                 )
-        );
+        ) {
+            @Override
+            public boolean isRuntimeConstant() {
+                return true;
+            }
+        };
     }
 }

@@ -29,10 +29,10 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 
-public class LocksCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+public class PrefixedPgLocksFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
     private final static RecordMetadata METADATA;
 
-    public LocksCatalogueFunctionFactory() {
+    public PrefixedPgLocksFunctionFactory() {
         super("pg_catalog.pg_locks()", METADATA);
     }
 

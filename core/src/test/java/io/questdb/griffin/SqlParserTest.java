@@ -76,16 +76,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMoveOrderByFlat() throws Exception {
         assertQuery(
-                "select-virtual" +
-                        " cast(cast(transactionid,varchar),bigint) transaction_id," +
-                        " pg_catalog.age(transactionid1) age " +
-                        "from (" +
-                        "select-choose [transactionid, transactionid transactionid1]" +
-                        " transactionid," +
-                        " transactionid transactionid1 " +
-                        "from (" +
-                        "select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L" +
-                        ") L order by age desc limit 1",
+                "select-choose transaction_id from (select-virtual [cast(cast(transactionid,varchar),bigint) transaction_id, pg_catalog.age(transactionid1) age] cast(cast(transactionid,varchar),bigint) transaction_id, pg_catalog.age(transactionid1) age from (select-choose [transactionid, transactionid transactionid1] transactionid, transactionid transactionid1 from (select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L) L order by age desc limit 1)",
                 "select L.transactionid::varchar::bigint as transaction_id\n" +
                         "from pg_catalog.pg_locks L\n" +
                         "where L.transactionid is not null\n" +

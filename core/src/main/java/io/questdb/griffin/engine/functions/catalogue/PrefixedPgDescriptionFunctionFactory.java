@@ -24,27 +24,9 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.RecordMetadata;
-
-public class ProcCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
-    private static final RecordMetadata METADATA;
-
-    public ProcCatalogueFunctionFactory() {
-        super("pg_proc()", METADATA);
-    }
-
+public class PrefixedPgDescriptionFunctionFactory extends PgDescriptionFunctionFactory {
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("oid", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("proname", 2, ColumnType.STRING));
-        METADATA = metadata;
+    public String getSignature() {
+        return "pg_catalog.pg_description()";
     }
 }

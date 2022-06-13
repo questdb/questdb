@@ -31,7 +31,7 @@ import org.junit.Test;
 public class DataGripTest extends AbstractGriffinTest {
 
     @Test
-    public void testGetDatabases() throws SqlException {
+    public void testGetCurrentDatabase() throws SqlException {
         assertQuery(
                 "id\tname\tdescription\tis_template\tallow_connections\towner\n" +
                         "1\tquestdb\t\tfalse\ttrue\tpublic\n",
@@ -42,9 +42,10 @@ public class DataGripTest extends AbstractGriffinTest {
                         "       datallowconn as allow_connections,\n" +
                         "       pg_catalog.pg_get_userbyid(N.datdba) as \"owner\"\n" +
                         "from pg_catalog.pg_database N\n" +
-                        "  left join pg_catalog.pg_shdescription D on N.oid = D.objoid",
+                        "  left join pg_catalog.pg_shdescription D on N.oid = D.objoid\n" +
+                        "order by case when datname = pg_catalog.current_database() then -1::bigint else N.oid::bigint end;\n",
                 null,
-                false,
+                true,
                 sqlExecutionContext,
                 false,
                 false
@@ -52,15 +53,11 @@ public class DataGripTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testGetDatabaseOwner() throws SqlException {
-        // todo: current_schema is function used without parentheses, we need to support this
-        //     if column exists, it is column, otherwise we convert this to function
-        //     except when function doesn't exist either, we leave error message as invalid columns
         assertQuery(
-                "id\tstate_number\tname\tdescription\towner\tcase\n" +
-                        "2200\t0\tpublic\t\tpublic\t-1\n" +
-                        "11\t0\tpg_catalog\t\tpublic\t11\n",
+                "id\tstate_number\tname\tdescription\towner\n" +
+                        "2200\t0\tpublic\t\tpublic\n" +
+                        "11\t0\tpg_catalog\t\tpublic\n",
                 "select N.oid::bigint as id,\n" +
                         "       N.xmin as state_number,\n" +
                         "       nspname as name,\n" +
@@ -79,10 +76,10 @@ public class DataGripTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGetCurrentDatabase() throws SqlException {
+    public void testGetDatabases() throws SqlException {
         assertQuery(
-                "id\tname\tdescription\tis_template\tallow_connections\towner\tcase\n" +
-                        "1\tquestdb\t\tfalse\ttrue\tpublic\t-1\n",
+                "id\tname\tdescription\tis_template\tallow_connections\towner\n" +
+                        "1\tquestdb\t\tfalse\ttrue\tpublic\n",
                 "select N.oid::bigint as id,\n" +
                         "       datname as name,\n" +
                         "       D.description,\n" +
@@ -90,10 +87,9 @@ public class DataGripTest extends AbstractGriffinTest {
                         "       datallowconn as allow_connections,\n" +
                         "       pg_catalog.pg_get_userbyid(N.datdba) as \"owner\"\n" +
                         "from pg_catalog.pg_database N\n" +
-                        "  left join pg_catalog.pg_shdescription D on N.oid = D.objoid\n" +
-                        "order by case when datname = pg_catalog.current_database() then -1::bigint else N.oid::bigint end;\n",
+                        "  left join pg_catalog.pg_shdescription D on N.oid = D.objoid",
                 null,
-                true,
+                false,
                 sqlExecutionContext,
                 false,
                 false
@@ -129,6 +125,20 @@ public class DataGripTest extends AbstractGriffinTest {
                             "10\n"
             );
         });
+    }
+
+    @Test
+    public void testShowDateStyles() throws SqlException {
+        assertQuery(
+                "DateStyle\n" +
+                        "ISO,YMD\n",
+                "show datestyle",
+                null,
+                false,
+                sqlExecutionContext,
+                false,
+                true
+        );
     }
 
     @Test

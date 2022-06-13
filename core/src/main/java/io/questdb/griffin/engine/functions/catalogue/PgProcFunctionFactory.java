@@ -29,11 +29,11 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 
-public class IndexCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
-    private final static RecordMetadata METADATA;
+public class PgProcFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private static final RecordMetadata METADATA;
 
-    public IndexCatalogueFunctionFactory() {
-        super("pg_catalog.pg_index()", METADATA);
+    public PgProcFunctionFactory() {
+        super("pg_proc()", METADATA);
     }
 
     @Override
@@ -43,10 +43,8 @@ public class IndexCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctio
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("indkey", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indrelid", 2, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indexrelid", 3, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("indisprimary", 4, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("oid", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("proname", 2, ColumnType.STRING));
         METADATA = metadata;
     }
 }

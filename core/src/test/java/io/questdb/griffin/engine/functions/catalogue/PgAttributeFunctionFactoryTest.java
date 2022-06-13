@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Test;
 
-public class AttributeCatalogueFunctionFactoryTest extends AbstractGriffinTest {
+public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testKafkaMetadataQuery() throws Exception {

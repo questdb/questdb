@@ -1671,14 +1671,15 @@ class SqlOptimiser {
         return result;
     }
 
-    private void moveOrderByFunctionIntoSelect(QueryModel model) {
+    private QueryModel moveOrderByFunctionsIntoSelect(QueryModel model) {
         // at this point order by should be on the nested model of this model :)
-        //todo: make recursive and test thoroughly
         QueryModel nested = model.getNestedModel();
         if (nested != null) {
             final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
             final int n = orderBy.size();
             int columnCount = model.getBottomUpColumns().size();
+            final int originalColumnCount = columnCount;
+            boolean moved = false;
             for (int i = 0; i < n; i++) {
                 ExpressionNode node = orderBy.getQuick(i);
                 if (node.type == FUNCTION || node.type == OPERATION) {
@@ -1689,9 +1690,38 @@ class SqlOptimiser {
                             )
                     );
                     orderBy.setQuick(i, nextLiteral(""+(++columnCount)));
+                    moved = true;
                 }
             }
+
+            if (moved) {
+                // these are early stages of model processing
+                // to create outer query, we will need a pair of models
+                QueryModel _model = queryModelPool.next();
+                QueryModel _nested = queryModelPool.next();
+
+                // nest them
+                _model.setNestedModel(_nested);
+                _nested.setNestedModel(model);
+
+                // then create columns on the outermost model
+                for (int i = 0; i < originalColumnCount; i++) {
+                    QueryColumn qcFrom = model.getBottomUpColumns().getQuick(i);
+                    QueryColumn qcTo = queryColumnPool.next().of(
+                            qcFrom.getAlias(),
+                            nextLiteral(qcFrom.getAlias())
+                    );
+                    _model.getBottomUpColumns().add(qcTo);
+                }
+
+                return _model;
+            }
+            QueryModel nestedNested = nested.getNestedModel();
+            if (nestedNested != null) {
+                nested.setNestedModel(moveOrderByFunctionsIntoSelect(nestedNested));
+            }
         }
+        return model;
     }
 
     private void moveTimestampToChooseModel(QueryModel model) {
@@ -1920,20 +1950,21 @@ class SqlOptimiser {
         }
     }
 
-    QueryModel optimise(QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    QueryModel optimise(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final QueryModel rewrittenModel;
+        final QueryModel modelWithOrderBy;
         try {
             optimiseExpressionModels(model, sqlExecutionContext);
             enumerateTableColumns(model, sqlExecutionContext);
             rewriteColumnsToFunctions(model);
-            moveOrderByFunctionIntoSelect(model);
-            resolveJoinColumns(model);
-            optimiseBooleanNot(model);
+            modelWithOrderBy = moveOrderByFunctionsIntoSelect(model);
+            resolveJoinColumns(modelWithOrderBy);
+            optimiseBooleanNot(modelWithOrderBy);
             rewrittenModel = rewriteOrderBy(
                     rewriteOrderByPositionForUnionModels(
                             rewriteOrderByPosition(
                                     rewriteSelectClause(
-                                            model,
+                                            modelWithOrderBy,
                                             true,
                                             sqlExecutionContext
                                     )
@@ -2532,7 +2563,15 @@ class SqlOptimiser {
             boolean analyticCall
     ) throws SqlException {
         if (node != null && node.type == LITERAL) {
-            return doReplaceLiteral(node, translatingModel, innerModel, validatingModel, analyticCall);
+            try {
+                return doReplaceLiteral(node, translatingModel, innerModel, validatingModel, analyticCall);
+            } catch (SqlException e) {
+                if (functionParser.findNoArgFunction(node)) {
+                    node.type = FUNCTION;
+                } else {
+                    throw e;
+                }
+            }
         }
         return node;
     }

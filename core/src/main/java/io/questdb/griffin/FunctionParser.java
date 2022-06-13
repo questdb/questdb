@@ -174,6 +174,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return cast;
     }
 
+    public boolean findNoArgFunction(ExpressionNode node) throws SqlException {
+        final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
+        if (overload != null) {
+            for (int i = 0, n = overload.size(); i < n; i++) {
+                if (overload.getQuick(i).getSigArgCount() == 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionFactoryCache;
     }
@@ -359,11 +371,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             FunctionFactory factory,
             @Transient ObjList<Function> args,
             @Transient IntList argPositions,
-            int position,
+            @Transient ExpressionNode node,
             CairoConfiguration configuration
     ) throws SqlException {
+        final int position = node.position;
         Function function;
         try {
+            LOG.debug().$("call ").$(node).$(" -> ").$(factory.getSignature()).$();
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         } catch (SqlException e) {
             Misc.freeObjList(args);
@@ -548,7 +562,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
             if (argCount == 0 && sigArgCount == 0) {
                 // this is no-arg function, match right away
-                return checkAndCreateFunction(factory, args, argPositions, node.position, configuration);
+                return checkAndCreateFunction(factory, args, argPositions, node, configuration);
             }
 
             // otherwise, is number of arguments the same?
@@ -736,9 +750,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
             }
         }
-
-        LOG.debug().$("call ").$(node).$(" -> ").$(candidate.getSignature()).$();
-        return checkAndCreateFunction(candidate, args, argPositions, node.position, configuration);
+        return checkAndCreateFunction(candidate, args, argPositions, node, configuration);
     }
 
     @Nullable

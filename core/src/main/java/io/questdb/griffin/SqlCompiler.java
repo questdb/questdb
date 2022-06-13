@@ -2640,6 +2640,10 @@ public class SqlCompiler implements Closeable {
                 return compiledQuery.of(new ShowSearchPathCursorFactory());
             }
 
+            if (isDateStyle(tok)) {
+                return compiledQuery.of(new ShowDateStyleCursorFactory());
+            }
+
             if (SqlKeywords.isTimeKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && SqlKeywords.isZoneKeyword(tok)) {

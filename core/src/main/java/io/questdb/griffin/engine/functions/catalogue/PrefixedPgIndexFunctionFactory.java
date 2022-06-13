@@ -24,11 +24,29 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedTypeCatalogueFunctionFactory extends TypeCatalogueFunctionFactory {
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordMetadata;
 
-    @Override
-    public String getSignature() {
-        return "pg_catalog.pg_type()";
+public class PrefixedPgIndexFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private final static RecordMetadata METADATA;
+
+    public PrefixedPgIndexFunctionFactory() {
+        super("pg_catalog.pg_index()", METADATA);
     }
 
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("indkey", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indrelid", 2, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indexrelid", 3, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("indisprimary", 4, ColumnType.BOOLEAN));
+        METADATA = metadata;
+    }
 }

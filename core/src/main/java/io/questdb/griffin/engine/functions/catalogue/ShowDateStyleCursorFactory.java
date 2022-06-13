@@ -24,30 +24,34 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.SqlExecutionContext;
 
-public class DescriptionCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
-    private static final RecordMetadata METADATA;
+public class ShowDateStyleCursorFactory extends AbstractRecordCursorFactory {
+    private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
+    private final static StringValueRecord RECORD = new StringValueRecord("ISO,YMD");
+    private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(RECORD);
 
-    public DescriptionCatalogueFunctionFactory() {
-        super("pg_description()", METADATA);
+    public ShowDateStyleCursorFactory() {
+        super(METADATA);
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public RecordCursor getCursor(SqlExecutionContext executionContext) {
+        cursor.toTop();
+        return cursor;
+    }
+
+    @Override
+    public boolean recordCursorSupportsRandomAccess() {
+        return false;
     }
 
     static {
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("objoid", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("classoid", 2, ColumnType.INT));
-        //TODO the below column was downgraded to short. We need to support type downgrading of compatible types when joining
-        metadata.add(new TableColumnMetadata("objsubid", 3, ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("description", 4, ColumnType.STRING));
-        METADATA = metadata;
+        METADATA.add(new TableColumnMetadata("DateStyle", 1, ColumnType.STRING));
     }
 }

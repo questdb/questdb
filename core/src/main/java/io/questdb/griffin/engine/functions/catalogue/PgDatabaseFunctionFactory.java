@@ -178,13 +178,18 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(int col) {
-            if (col == 1) {// datname
-                return Constants.DB_NAME;
+            switch (col) {
+                case 1:
+                    // datname
+                    return Constants.DB_NAME;
+                case 13:
+                    // datacl
+                    return "";
+                default:
+                    // datcollate
+                    // datctype
+                    return "en_US.UTF-8";
             }
-
-            // datcollate
-            // datctype
-            return "en_US.UTF-8";
         }
 
         @Override
@@ -213,6 +218,7 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("datfrozenxid", 11, ColumnType.LONG));
         metadata.add(new TableColumnMetadata("datminmxid", 12, ColumnType.LONG));
         metadata.add(new TableColumnMetadata("dattablespace", 13, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("datacl", 14, ColumnType.STRING));
         METADATA = metadata;
     }
 }

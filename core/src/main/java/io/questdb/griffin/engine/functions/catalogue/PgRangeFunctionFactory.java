@@ -29,10 +29,10 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 
-public class RangeCatalogueFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+public class PgRangeFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
     private static final RecordMetadata METADATA;
 
-    public RangeCatalogueFunctionFactory() {
+    public PgRangeFunctionFactory() {
         super("pg_range()", METADATA);
     }
 

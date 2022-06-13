@@ -27,22 +27,25 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
-public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
+import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 
-    private static final Log LOG = LogFactory.getLog(DescriptionCatalogueFunctionFactory.class);
-    static final RecordMetadata METADATA;
+public class PgAttributeFunctionFactory implements FunctionFactory {
+
+    private static final RecordMetadata METADATA;
 
     @Override
     public String getSignature() {
-        return "pg_attrdef()";
+        return "pg_catalog.pg_attribute()";
     }
 
     @Override
@@ -51,9 +54,18 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new CursorFunction(
-                new AttrDefCatalogueCursorFactory(configuration, METADATA)
+                new AttributeCatalogueCursorFactory(
+                        configuration,
+                        METADATA
+                )
         ) {
             @Override
             public boolean isRuntimeConstant() {
@@ -62,22 +74,21 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static class AttrDefCatalogueCursorFactory extends AbstractRecordCursorFactory {
+    private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final Path path = new Path();
-        private final AttrDefCatalogueCursor cursor;
-        private final long tempMem;
+        private final MemoryMR metaMem = Vm.getMRInstance();
+        private final AttributeClassCatalogueCursor cursor;
 
-        public AttrDefCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
+        public AttributeCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
-            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
-            this.cursor = new AttrDefCatalogueCursor(configuration, path, tempMem);
+            this.cursor = new AttributeClassCatalogueCursor(configuration, path, metaMem);
         }
 
         @Override
         protected void _close() {
             Misc.free(path);
-            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            Misc.free(metaMem);
         }
 
         @Override
@@ -92,31 +103,32 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class AttrDefCatalogueCursor implements NoRandomAccessRecordCursor {
+    private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
         private final Path path;
         private final FilesFacade ff;
-        private final AttrDefCatalogueCursor.DiskReadingRecord diskReadingRecord = new AttrDefCatalogueCursor.DiskReadingRecord();
+        private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
         private final int plimit;
-        private final long tempMem;
-        private int tableId = -1;
+        private final MemoryMR metaMem;
         private long findFileStruct = 0;
         private int columnIndex = 0;
+        private int tableId = 1000;
         private boolean readNextFileFromDisk = true;
         private int columnCount;
         private boolean hasNextFile = true;
         private boolean foundMetadataFile = false;
 
-        public AttrDefCatalogueCursor(CairoConfiguration configuration, Path path, long tempMem) {
+        public AttributeClassCatalogueCursor(CairoConfiguration configuration, Path path, MemoryMR metaMem) {
             this.ff = configuration.getFilesFacade();
             this.path = path;
             this.path.of(configuration.getRoot()).$();
             this.plimit = this.path.length();
-            this.tempMem = tempMem;
+            this.metaMem = metaMem;
         }
 
         @Override
         public void close() {
             findFileStruct = ff.findClose(findFileStruct);
+            metaMem.close();
         }
 
         @Override
@@ -158,24 +170,12 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
                         final long type = ff.findType(findFileStruct);
                         if (Files.isDir(pUtf8NameZ, type)) {
                             path.trimTo(plimit);
-                            if (ff.exists(path.concat(pUtf8NameZ).concat(TableUtils.META_FILE_NAME).$())) {
-                                long fd = ff.openRO(path);
-                                if (fd > -1) {
-                                    if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID) == Integer.BYTES) {
-                                        tableId = Unsafe.getUnsafe().getInt(tempMem);
-                                        if (ff.read(fd, tempMem, Integer.BYTES, TableUtils.META_OFFSET_COUNT) == Integer.BYTES) {
-                                            foundMetadataFile = true;
-                                            columnCount = Unsafe.getUnsafe().getInt(tempMem);
-                                        } else {
-                                            LOG.error().$("Could not read column count [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-                                        }
-                                    } else {
-                                        LOG.error().$("Could not read table id [fd=").$(fd).$(", errno=").$(ff.errno()).$(']').$();
-                                    }
-                                    ff.close(fd);
-                                } else {
-                                    LOG.error().$("could not read metadata [file=").$(path).$(']').$();
-                                }
+                            path.concat(pUtf8NameZ);
+                            if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
+                                foundMetadataFile = true;
+                                metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                                columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+                                tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
                             }
                         }
                         hasNextFile = ff.findNext(findFileStruct) > 0;
@@ -183,9 +183,16 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
                 }
 
                 if (foundMetadataFile) {
+                    long offset = TableUtils.getColumnNameOffset(columnCount);
                     for (int i = 0; i < columnCount; i++) {
+                        CharSequence name = metaMem.getStr(offset);
                         if (columnIndex == i) {
-                            diskReadingRecord.columnNumber = (short) (i + 1);
+                            int type = PGOids.getTypeOid(TableUtils.getColumnType(metaMem, i));
+                            diskReadingRecord.intValues[3] = type;
+                            diskReadingRecord.name = name;
+                            diskReadingRecord.shortValues[2] = (short) (i + 1);
+                            diskReadingRecord.shortValues[6] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
+                            diskReadingRecord.intValues[0] = tableId;
                             columnIndex++;
                             if (columnIndex == columnCount) {
                                 readNextFileFromDisk = true;
@@ -195,6 +202,7 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
                             }
                             return true;
                         }
+                        offset += Vm.getStorageLength(name);
                     }
                 }
             } while (hasNextFile);
@@ -202,32 +210,50 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
             findFileStruct = ff.findClose(findFileStruct);
             hasNextFile = true;
             foundMetadataFile = false;
-            tableId = -1;
             return false;
         }
 
-        private class DiskReadingRecord implements Record {
+        static class DiskReadingRecord implements Record {
+            public final short[] shortValues = new short[9];
+            public final int[] intValues = new int[9];
+            public CharSequence name = null;
+            private final StringSink strBSink = new StringSink();
 
-            public short columnNumber = 0;
+            @Override
+            public boolean getBool(int col) {
+                return col == 9;
+            }
+
+            @Override
+            public char getChar(int col) {
+                //from the PG docs:
+                // attidentity ->	If a zero byte (''), then not an identity column. Otherwise, a = generated always, d = generated by default.
+                return Character.MIN_VALUE;
+            }
 
             @Override
             public int getInt(int col) {
-                return tableId;
+                return intValues[col];
             }
 
             @Override
             public short getShort(int col) {
-                return columnNumber;
+                return shortValues[col];
             }
 
             @Override
             public CharSequence getStr(int col) {
-                return "";
+                return name;
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                if (name != null) {
+                    strBSink.clear();
+                    strBSink.put(name);
+                    return strBSink;
+                }
+                return null;
             }
 
             @Override
@@ -239,9 +265,16 @@ public class AttrDefCatalogueFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("adrelid", 1, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("adnum", 2, ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("adbin", 3, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("attrelid", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("attname", 2, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("attnum", 3, ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("atttypid", 4, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("attnotnull", 5, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("atttypmod", 6, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("attlen", 7, ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("attidentity", 8, ColumnType.CHAR));
+        metadata.add(new TableColumnMetadata("attisdropped", 9, ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("atthasdef", 10, ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

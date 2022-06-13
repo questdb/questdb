@@ -24,9 +24,24 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedDescriptionCatalogueFunctionFactory extends DescriptionCatalogueFunctionFactory {
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+
+public class PrefixedPgIsInRecoveryFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_description()";
+        return "pg_catalog.pg_is_in_recovery()";
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return BooleanConstant.FALSE;
     }
 }

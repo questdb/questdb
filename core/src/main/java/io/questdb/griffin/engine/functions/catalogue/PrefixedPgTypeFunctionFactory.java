@@ -24,24 +24,11 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+public class PrefixedPgTypeFunctionFactory extends PgTypeFunctionFactory {
 
-public class PrefixedInRecoveryFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "pg_catalog.pg_is_in_recovery()";
+        return "pg_catalog.pg_type()";
     }
 
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return BooleanConstant.FALSE;
-    }
 }
