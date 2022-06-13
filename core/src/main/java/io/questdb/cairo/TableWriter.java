@@ -481,7 +481,7 @@ public class TableWriter implements Closeable {
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
     }
 
-    public void addIndex(CharSequence columnName, int indexValueBlockSize) {
+    public void addColumnIndex(CharSequence columnName, int indexValueBlockSize) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
 
         checkDistressed();
@@ -558,71 +558,81 @@ public class TableWriter implements Closeable {
     }
 
     public void dropColumnIndex(CharSequence colName) {
+
         checkDistressed();
-        final int colIdx = getColumnIndexQuiet(metaMem, colName, columnCount);
-        if (colIdx == -1) {
+
+        final int columnIndex = getColumnIndexQuiet(metaMem, colName, columnCount);
+
+        if (columnIndex == -1) {
             throw CairoException.instance(0).put("column '").put(colName).put("' does not exist");
         }
-        if (!isColumnIndexed(metaMem, colIdx)) {
+
+        if (!isColumnIndexed(metaMem, columnIndex)) {
             throw CairoException.instance(0).put("column '").put(colName).put("' is not indexed");
         }
 
+
+        // set index flag in metadata and  create new _meta.swp
+        final int idxValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
+        metaSwapIndex = copyMetadataAndSetIndexedFlag(columnIndex, META_FLAG_BIT_NOT_INDEXED, idxValueBlockSize);
+
+        swapMetaFile(colName);
+
+        // update column logic to drop index, hard link etc
+
         commit();
 
-        final int idxValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
-        metaSwapIndex = copyMetadataAndSetIndexedFlag(colIdx, META_FLAG_BIT_NOT_INDEXED, idxValueBlockSize);
-        swapMetaFile(colName);
-        TableColumnMetadata colMeta = metadata.getColumnQuick(colIdx);
-        colMeta.setIndexed(false);
-        colMeta.setIndexValueBlockCapacity(idxValueBlockSize);
+        TableColumnMetadata columnMeta = metadata.getColumnQuick(columnIndex);
+        columnMeta.setIndexed(false);
+        columnMeta.setIndexValueBlockCapacity(idxValueBlockSize);
 
         // remove indexer
-        ColumnIndexer colIndexer = indexers.getQuick(colIdx);
-        if (colIndexer != null) {
-            colIndexer.close();
-            indexers.remove(colIdx);
+        ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
+        if (columnIndexer != null) {
+            indexers.remove(columnIndex);
+            Misc.free(columnIndexer);
             populateDenseIndexerList();
         }
 
         LOG.info().$("DROPPED index for '").utf8(colName).$(" to ").$(path).$();
 
-        // remove index files
-        final long txn = txWriter.getTxn();
-        boolean canDeleteIndexFiles = false;
-        try {
-            if (txnScoreboard.acquireTxn(txn)) {
-                txnScoreboard.releaseTxn(txn);
-                canDeleteIndexFiles = txnScoreboard.getMin() == txn && txnScoreboard.getActiveReaderCount(txn) == 0;
-            }
-        } catch (CairoException ignore) {
-            // max transactions in-flight, bad time to delete files
-            System.out.printf("CairoException!!: %s%n", ignore.getFlyweightMessage());
-        }
-        if (canDeleteIndexFiles) {
-            if (PartitionBy.isPartitioned(partitionBy)) {
-                for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
-                    removeIndexFilesInPartition(
-                            colName,
-                            colIdx,
-                            txWriter.getPartitionTimestamp(i),
-                            txWriter.getPartitionNameTxn(i)
-                    );
-                }
-            } else {
-                removeIndexFilesInPartition(
-                        colName,
-                        colIdx,
-                        txWriter.getLastPartitionTimestamp(),
-                        -1L
-                );
-            }
-        } else {
-            LOG.error()
-                    .$("column index is being read concurrently, index files ")
-                    .$("cannot be deleted now. Manually issue a [VACUUM TABLE ")
-                    .$(tableName)
-                    .$(" ] command at a quieter time.");
-        }
+//        // remove index files
+//        final long txn = txWriter.getTxn();
+//        boolean canDeleteIndexFiles = false;
+//        try {
+//            if (txnScoreboard.acquireTxn(txn)) {
+//                txnScoreboard.releaseTxn(txn);
+//                canDeleteIndexFiles = txnScoreboard.getMin() == txn && txnScoreboard.getActiveReaderCount(txn) == 0;
+//            }
+//        } catch (CairoException ignore) {
+//            // max transactions in-flight, bad time to delete files
+//            System.out.printf("CairoException!!: %s%n", ignore.getFlyweightMessage());
+//        }
+//        if (canDeleteIndexFiles) {
+//            if (PartitionBy.isPartitioned(partitionBy)) {
+//                for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
+//                    removeIndexFilesInPartition(
+//                            colName,
+//                            columnIndex,
+//                            txWriter.getPartitionTimestamp(i),
+//                            txWriter.getPartitionNameTxn(i)
+//                    );
+//                }
+//            } else {
+//                removeIndexFilesInPartition(
+//                        colName,
+//                        columnIndex,
+//                        txWriter.getLastPartitionTimestamp(),
+//                        -1L
+//                );
+//            }
+//        } else {
+//            LOG.error()
+//                    .$("column index is being read concurrently, index files ")
+//                    .$("cannot be deleted now. Manually issue a [VACUUM TABLE ")
+//                    .$(tableName)
+//                    .$(" ] command at a quieter time.");
+//        }
     }
 
     public void addPhysicallyWrittenRows(long rows) {

@@ -241,7 +241,7 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
         CharSequence columnName = charSequenceList.getStrA(0);
         try {
             int indexValueBlockSize = (int) longList.get(0);
-            tableWriter.addIndex(columnName, indexValueBlockSize);
+            tableWriter.addColumnIndex(columnName, indexValueBlockSize);
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
                     .put("[errno=").put(e.getErrno()).put(']');
@@ -253,8 +253,11 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
         try {
             tableWriter.dropColumnIndex(columnName);
         } catch (CairoException e) {
-            throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
-                    .put("[errno=").put(e.getErrno()).put(']');
+            throw SqlException.position(tableNamePosition)
+                    .put(e.getFlyweightMessage())
+                    .put("[errno=")
+                    .put(e.getErrno())
+                    .put(']');
         }
     }
 
