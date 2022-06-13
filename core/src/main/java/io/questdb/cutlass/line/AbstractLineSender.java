@@ -353,8 +353,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
-    public final AbstractLineSender symbol(String symbol, String value) {
-        return tag(symbol, value);
+    public final AbstractLineSender symbol(String name, String value) {
+        return tag(name, value);
     }
 
     private CharSink field(CharSequence name) {
