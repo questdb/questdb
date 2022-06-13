@@ -34,7 +34,7 @@ import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
-public class TableMetadataCursorFactoryTest extends AbstractGriffinTest {
+public class TableListFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testMetadataQuery() throws Exception {
         try (TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY)) {

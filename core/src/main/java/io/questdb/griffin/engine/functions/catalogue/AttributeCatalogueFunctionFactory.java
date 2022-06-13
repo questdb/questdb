@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 
@@ -85,7 +86,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void close() {
+        protected void _close() {
             Misc.free(path);
             Misc.free(metaMem);
         }
@@ -126,10 +127,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            if (findFileStruct != 0) {
-                ff.findClose(findFileStruct);
-                findFileStruct = 0;
-            }
+            findFileStruct = ff.findClose(findFileStruct);
             metaMem.close();
         }
 
@@ -155,10 +153,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-            if (findFileStruct != 0) {
-                ff.findClose(findFileStruct);
-                findFileStruct = 0;
-            }
+            findFileStruct = ff.findClose(findFileStruct);
         }
 
         @Override
@@ -212,8 +207,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
                 }
             } while (hasNextFile);
 
-            ff.findClose(findFileStruct);
-            findFileStruct = 0;
+            findFileStruct = ff.findClose(findFileStruct);
             hasNextFile = true;
             foundMetadataFile = false;
             return false;
@@ -223,6 +217,7 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
             public final short[] shortValues = new short[9];
             public final int[] intValues = new int[9];
             public CharSequence name = null;
+            private final StringSink strBSink = new StringSink();
 
             @Override
             public boolean getBool(int col) {
@@ -253,7 +248,12 @@ public class AttributeCatalogueFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                return name;
+                if (name != null) {
+                    strBSink.clear();
+                    strBSink.put(name);
+                    return strBSink;
+                }
+                return null;
             }
 
             @Override

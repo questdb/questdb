@@ -803,6 +803,87 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
+    public void testNewColumnsNotAllowed() throws Exception {
+        String table = "testNewColumnsNotAllowed";
+        autoCreateNewColumns = false;
+        disconnectOnError = true;
+        runInContext(() -> {
+            recvBuffer = table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
+                    table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+
+            Assert.assertTrue(disconnected);
+        });
+
+        Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST,
+                engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), table)
+        );
+
+        try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist");
+        }
+    }
+
+    @Test
+    public void testNewColumnsNotAllowedExistingTable() throws Exception {
+        String table = "testNewColumnsNotAllowed";
+        autoCreateNewColumns = false;
+        disconnectOnError = true;
+        try (
+                SqlCompiler compiler = new SqlCompiler(engine);
+                SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+            compiler.compile(
+                    "create table " + table + " (location SYMBOL, timestamp TIMESTAMP) timestamp(timestamp);",
+                    sqlExecutionContext);
+        } catch (SqlException ex) {
+            throw new RuntimeException(ex);
+        }
+
+        engine.releaseInactive();
+        runInContext(() -> {
+            recvBuffer = table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
+                    table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+
+            Assert.assertTrue(disconnected);
+        });
+        assertTable("location\ttimestamp\n", table);
+    }
+
+    @Test
+    public void testNewTableNotAllowed() throws Exception {
+        String table = "testNewTableNotAllowed";
+        autoCreateNewTables = false;
+        disconnectOnError = true;
+        runInContext(() -> {
+            recvBuffer = table + ",location=us-midwest temperature=82,timestamp=1465839830100200200t\n" +
+                    table + ",location=us-midwest temperature=83 1465839830100500200\n" +
+                    table + ",location=us-eastcoast temperature=80 1465839830102400200\n";
+            do {
+                handleContextIO();
+            } while (recvBuffer.length() > 0);
+
+            Assert.assertTrue(disconnected);
+        });
+
+        Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST,
+                engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, Path.getThreadLocal(""), table)
+        );
+
+        try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, table)) {
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "table does not exist");
+        }
+    }
+
+    @Test
     public void testInvalidTableName() throws Exception {
         String table = "testInvalidEmptyTableName";
         Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TXN_FILE_NAME).$());

@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 
 open module io.questdb {
@@ -564,7 +565,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.ProcCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.RangeCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.TableMetadataCursorFactory,
+            io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory,

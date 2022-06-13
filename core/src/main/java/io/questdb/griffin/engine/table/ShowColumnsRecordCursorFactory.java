@@ -23,17 +23,13 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 
-public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
+public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final RecordMetadata METADATA;
     private static final int N_NAME_COL = 0;
     private static final int N_TYPE_COL = 1;
@@ -45,17 +41,13 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final CharSequence tableName;
     public ShowColumnsRecordCursorFactory(CharSequence tableName) {
+        super(METADATA);
         this.tableName = tableName.toString();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         return cursor.of(executionContext);
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return METADATA;
     }
 
     @Override

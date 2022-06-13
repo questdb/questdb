@@ -27,6 +27,7 @@ package io.questdb.griffin.model;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
@@ -50,17 +51,20 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private CreateTableModel() {
     }
 
-    public boolean addColumn(CharSequence name, int type, int symbolCapacity, long columnHash) {
-        if (columnNameIndexMap.put(name, columnNames.size())) {
-            columnNames.add(Chars.toString(name));
-            columnBits.add(
-                    Numbers.encodeLowHighInts(type, symbolCapacity),
-                    Numbers.encodeLowHighInts(COLUMN_FLAG_CACHED, 0)
-            );
-            columnHashes.add(columnHash);
-            return true;
+    public void addColumn(CharSequence name, int type, int symbolCapacity, long columnHash) throws SqlException {
+        addColumn(0, name, type, symbolCapacity, columnHash);
+    }
+
+    public void addColumn(int position, CharSequence name, int type, int symbolCapacity, long columnHash) throws SqlException {
+        if (!columnNameIndexMap.put(name, columnNames.size())) {
+            throw SqlException.duplicateColumn(position, name);
         }
-        return false;
+        columnNames.add(Chars.toString(name));
+        columnBits.add(
+                Numbers.encodeLowHighInts(type, symbolCapacity),
+                Numbers.encodeLowHighInts(COLUMN_FLAG_CACHED, 0)
+        );
+        columnHashes.add(columnHash);
     }
 
     public boolean addColumnCastModel(ColumnCastModel model) {

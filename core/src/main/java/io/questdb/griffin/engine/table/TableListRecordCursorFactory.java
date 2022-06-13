@@ -23,20 +23,21 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
-public class TableListRecordCursorFactory implements RecordCursorFactory {
+public class TableListRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public static final String TABLE_NAME_COLUMN = "table";
     private static final RecordMetadata METADATA;
@@ -46,27 +47,20 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
     private Path path;
 
     public TableListRecordCursorFactory(FilesFacade ff, CharSequence dbRoot) {
+        super(METADATA);
         this.ff = ff;
         path = new Path().of(dbRoot).$();
         cursor = new TableListRecordCursor();
     }
 
     @Override
-    public void close() {
-        if (null != path) {
-            path.close();
-            path = null;
-        }
+    protected void _close() {
+        path = Misc.free(path);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         return cursor.of();
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return METADATA;
     }
 
     @Override
@@ -81,10 +75,7 @@ public class TableListRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         public void close() {
-            if (findPtr > 0) {
-                ff.findClose(findPtr);
-                findPtr = 0;
-            }
+            findPtr = ff.findClose(findPtr);
         }
 
         @Override
