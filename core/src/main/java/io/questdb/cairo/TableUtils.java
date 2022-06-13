@@ -943,7 +943,7 @@ public final class TableUtils {
                 if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
                     offset += Vm.getStorageLength(name);
                 } else {
-                    throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
+                    throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
                 }
             }
         } catch (Throwable e) {

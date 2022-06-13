@@ -98,8 +98,8 @@ public final class SqlParser {
         return n != null && (n.type == ExpressionNode.CONSTANT || (n.type == ExpressionNode.LITERAL && isValidSampleByPeriodLetter(n.token)));
     }
 
-    private static SqlException err(GenericLexer lexer, String msg) {
-        return SqlException.$(lexer.lastTokenPosition(), msg);
+    private static SqlException err(GenericLexer lexer, @Nullable CharSequence tok, @NotNull String msg) {
+        return SqlException.parserErr(lexer.lastTokenPosition(), tok, msg);
     }
 
     private static SqlException errUnexpected(GenericLexer lexer, CharSequence token) {
@@ -206,7 +206,7 @@ public final class SqlParser {
             int result = Numbers.parseInt(tok);
             return negative ? -result : result;
         } catch (NumericException e) {
-            throw err(lexer, "bad integer");
+            throw err(lexer, tok, "bad integer");
         }
     }
 
@@ -230,7 +230,7 @@ public final class SqlParser {
             long result = Numbers.parseLong(tok);
             return negative ? -result : result;
         } catch (NumericException e) {
-            throw err(lexer, "bad long integer");
+            throw err(lexer, tok, "bad long integer");
         }
     }
 
@@ -360,7 +360,7 @@ public final class SqlParser {
     private CharSequence notTermTok(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "')' or ','");
         if (isFieldTerm(tok)) {
-            throw err(lexer, "missing column definition");
+            throw err(lexer, tok, "missing column definition");
         }
         return tok;
     }
@@ -646,9 +646,7 @@ public final class SqlParser {
                 throw SqlException.$(position, " new column name contains invalid characters");
             }
 
-            if (!model.addColumn(name, type, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong())) {
-                throw SqlException.$(position, "Duplicate column");
-            }
+            model.addColumn(position, name, type, configuration.getDefaultSymbolCapacity(), configuration.getRandom().nextLong());
 
             CharSequence tok;
             if (ColumnType.isSymbol(type)) {
@@ -704,7 +702,7 @@ public final class SqlParser {
             }
 
             if (!Chars.equals(tok, ',')) {
-                throw err(lexer, "',' or ')' expected");
+                throw err(lexer, tok, "',' or ')' expected");
             }
         }
     }
@@ -991,7 +989,7 @@ public final class SqlParser {
             updateQueryModel.getUpdateExpressions().add(setColumnExpression);
 
             QueryColumn valueColumn = queryColumnPool.next().of(col, expr);
-            fromModel.addBottomUpColumn(valueColumn);
+            fromModel.addBottomUpColumn(colPosition, valueColumn, false, "in SET clause");
 
             tok = optTok(lexer);
             if (tok == null) {
@@ -1215,7 +1213,7 @@ public final class SqlParser {
                 }
 
                 if (model.getOrderBy().size() >= MAX_ORDER_BY_COLUMNS) {
-                    throw err(lexer, "Too many columns");
+                    throw err(lexer, tok, "Too many columns");
                 }
 
             } while (tok != null && Chars.equals(tok, ','));
@@ -1272,12 +1270,10 @@ public final class SqlParser {
             do {
                 tok = tok(lexer, "column");
                 if (Chars.equals(tok, ')')) {
-                    throw err(lexer, "missing column name");
+                    throw err(lexer, tok, "missing column name");
                 }
 
-                if (!model.addColumn(GenericLexer.immutableOf(GenericLexer.unquote(tok)), lexer.lastTokenPosition())) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("duplicate column name: ").put(tok);
-                }
+                model.addColumn(GenericLexer.unquote(tok), lexer.lastTokenPosition());
 
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
 
@@ -1316,7 +1312,7 @@ public final class SqlParser {
             } while (true);
         }
 
-        throw err(lexer, "'select' or 'values' expected");
+        throw err(lexer, tok, "'select' or 'values' expected");
     }
 
     private QueryModel parseJoin(GenericLexer lexer, CharSequence tok, int joinType, LowerCaseCharSequenceObjHashMap<WithClauseModel> parent) throws SqlException {
@@ -1534,6 +1530,7 @@ public final class SqlParser {
             tok = optTok(lexer);
 
             QueryColumn col;
+            final int colPosition = lexer.lastTokenPosition();
 
             if (tok != null && isOverKeyword(tok)) {
                 // analytic
@@ -1584,7 +1581,6 @@ public final class SqlParser {
 
             if (tok != null && Chars.equals(tok, ';')) {
                 alias = createColumnAlias(expr, model);
-                //tok = optTok(lexer);
             } else if (tok != null && columnAliasStop.excludes(tok)) {
                 assertNotDot(lexer, tok);
 
@@ -1599,7 +1595,7 @@ public final class SqlParser {
             }
 
             col.setAlias(alias);
-            model.addBottomUpColumn(col);
+            model.addBottomUpColumn(colPosition, col, false);
 
             if (tok == null || Chars.equals(tok, ';')) {
                 lexer.unparseLast();
@@ -1617,7 +1613,7 @@ public final class SqlParser {
             }
 
             if (!Chars.equals(tok, ',')) {
-                throw err(lexer, "',', 'from' or 'over' expected");
+                throw err(lexer, tok, "',', 'from' or 'over' expected");
             }
         }
     }

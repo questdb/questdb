@@ -30,7 +30,6 @@ import io.questdb.std.ObjList;
 
 public class GenericRecordMetadata extends BaseRecordMetadata {
     public static final GenericRecordMetadata EMPTY = new GenericRecordMetadata();
-    private final LowerCaseCharSequenceIntHashMap columnNameIndexMap;
 
     public GenericRecordMetadata() {
         this.columnMetadata = new ObjList<>();
@@ -99,9 +98,8 @@ public class GenericRecordMetadata extends BaseRecordMetadata {
             columnMetadata.extendAndSet(i, meta);
             columnCount++;
             return this;
-        } else {
-            throw CairoException.instance(0).put("Duplicate column [name=").put(meta.getName()).put(']');
         }
+        throw CairoException.duplicateColumn(meta.getName());
     }
 
     public void clear() {

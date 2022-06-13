@@ -414,7 +414,7 @@ public class TableWriter implements Closeable, WalWriterFactory {
         checkColumnName(name);
 
         if (getColumnIndexQuiet(metaMem, name, columnCount) != -1) {
-            throw CairoException.instance(0).put("Duplicate column name: ").put(name);
+            throw CairoException.duplicateColumn(name);
         }
 
         commit();
@@ -2107,7 +2107,7 @@ public class TableWriter implements Closeable, WalWriterFactory {
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
 
         if (indexFlag) {
-            indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
+            indexers.extendAndSet(index, new SymbolColumnIndexer());
         }
         rowValueIsNotNull.add(0);
     }
@@ -2133,10 +2133,6 @@ public class TableWriter implements Closeable, WalWriterFactory {
 
                 symbolMapWriters.extendAndSet(i, symbolMapWriter);
                 denseSymbolMapWriters.add(symbolMapWriter);
-            }
-
-            if (metadata.isColumnIndexed(i)) {
-                indexers.extendAndSet(i, new SymbolColumnIndexer());
             }
         }
         final int timestampIndex = metadata.getTimestampIndex();
