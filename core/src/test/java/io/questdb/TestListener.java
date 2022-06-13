@@ -24,8 +24,10 @@
 
 package io.questdb;
 
+import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Os;
 import org.junit.runner.Description;
 import org.junit.runner.notification.Failure;
 import org.junit.runner.notification.RunListener;
@@ -33,6 +35,18 @@ import org.junit.runner.notification.RunListener;
 @RunListener.ThreadSafe
 public class TestListener extends RunListener {
     private final static Log LOG = LogFactory.getLog(TestListener.class);
+
+    static {
+        Thread monitor = new Thread(() -> {
+            while (true) {
+                DumpThreadStacksFunctionFactory.dumpThreadStacks();
+                Os.sleep(10 * 60 * 1000);
+            }
+        });
+
+        monitor.setDaemon(true);
+        monitor.start();
+    }
 
     @Override
     public void testStarted(Description description) {

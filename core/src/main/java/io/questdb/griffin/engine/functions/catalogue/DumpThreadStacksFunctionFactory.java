@@ -62,29 +62,33 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
     private static class DumpThreadStacksFunction extends BooleanFunction {
         @Override
         public boolean getBool(Record rec) {
-            final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
-            final ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadMXBean.getAllThreadIds(), 20);
-            // Each thread stack on its own LOG message to avoid overrunning log buffer
-            // Generally overrun will truncate the log message. We are likely to overrun considering how
-            // many threads we could be running
-            for (ThreadInfo threadInfo : threadInfos) {
-                final LogRecord record = LOG.advisory();
-                final Thread.State state = threadInfo.getThreadState();
-                record.$('\n');
-                record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
-                final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
-                for (final StackTraceElement stackTraceElement : stackTraceElements) {
-                    record.$("\n\t\tat ").$(stackTraceElement);
-                }
-                record.$("\n\n");
-                record.$();
-            }
+            dumpThreadStacks();
             return true;
         }
 
         @Override
         public boolean isReadThreadSafe() {
             return true;
+        }
+    }
+
+    public static void dumpThreadStacks() {
+        final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
+        final ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadMXBean.getAllThreadIds(), 20);
+        // Each thread stack on its own LOG message to avoid overrunning log buffer
+        // Generally overrun will truncate the log message. We are likely to overrun considering how
+        // many threads we could be running
+        for (ThreadInfo threadInfo : threadInfos) {
+            final LogRecord record = LOG.advisory();
+            final Thread.State state = threadInfo.getThreadState();
+            record.$('\n');
+            record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
+            final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
+            for (final StackTraceElement stackTraceElement : stackTraceElements) {
+                record.$("\n\t\tat ").$(stackTraceElement);
+            }
+            record.$("\n\n");
+            record.$();
         }
     }
 }
