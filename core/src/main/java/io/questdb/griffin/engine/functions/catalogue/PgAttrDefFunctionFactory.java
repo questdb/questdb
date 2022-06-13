@@ -37,7 +37,7 @@ import io.questdb.std.str.Path;
 
 public class PgAttrDefFunctionFactory implements FunctionFactory {
 
-    private static final Log LOG = LogFactory.getLog(PgDescriptionFunctionFactory.class);
+    private static final Log LOG = LogFactory.getLog(PgAttrDefFunctionFactory.class);
     static final RecordMetadata METADATA;
 
     @Override

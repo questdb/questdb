@@ -24,14 +24,28 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-public class PrefixedPgClassFunctionFactory extends AbstractPgClassFunctionFactory {
-    @Override
-    public String getSignature() {
-        return "pg_catalog.pg_class()";
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordMetadata;
+
+public class PgInheritsFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private static final RecordMetadata METADATA;
+
+    public PgInheritsFunctionFactory() {
+        super("pg_inherits()", METADATA);
     }
 
     @Override
     public boolean isRuntimeConstant() {
         return true;
+    }
+
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("inhrelid", 1, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("inhparent", 2, ColumnType.INT));
+        metadata.add(new TableColumnMetadata("inhseqno", 3, ColumnType.INT));
+        METADATA = metadata;
     }
 }

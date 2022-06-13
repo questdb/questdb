@@ -144,9 +144,9 @@ public class DBeaverTest extends AbstractGriffinTest {
             compiler.compile("create table xyz(a int)", sqlExecutionContext);
             compiler.compile("create table tab2(b long)", sqlExecutionContext);
             assertQuery(
-                    "oid tral\trelname\trelnamespace\trelkind\trelowner\toid\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\tdescription\tpartition_expr\tpartition_key\n" +
-                            "2\ttab2\t2200\tr\t0\t2\t\tfalse\tfalse\tfalse\t\t\t\n" +
-                            "1\txyz\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\t\t\t\n",
+                    "oid tral\toid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\tdescription\tpartition_expr\tpartition_key\n" +
+                            "2\t2\ttab2\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n" +
+                            "1\t1\txyz\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n",
                     "SELECT c.oid \"oid tral\",c.*,d.description,pg_catalog.pg_get_expr(c.relpartbound, c.oid) as partition_expr,  pg_catalog.pg_get_partkeydef(c.oid) as partition_key \n" +
                             "FROM pg_catalog.pg_class c\n" +
                             "LEFT OUTER JOIN pg_catalog.pg_description d ON d.objoid=c.oid AND d.objsubid=0 AND d.classoid='pg_class'::regclass\n" +

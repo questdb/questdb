@@ -41,11 +41,11 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
         // LEFT JOIN is outer, therefore it does not reduce one of other tables to 0 rows, hence we
         // expect row duplication
         assertQuery(
-                "nspname\toid\txmin\tnspowner\trelname\trelnamespace\trelkind\trelowner\toid1\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\tobjoid\tclassoid\tobjsubid\tdescription\n" +
-                        "pg_catalog\t11\t0\t1\tpg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\tNaN\tNaN\t0\t\n" +
-                        "public\t2200\t0\t1\tpg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\tNaN\tNaN\t0\t\n" +
-                        "pg_catalog\t11\t0\t1\tbeta\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\tNaN\tNaN\t0\t\n" +
-                        "public\t2200\t0\t1\tbeta\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\tNaN\tNaN\t0\t\n",
+                "nspname\toid\txmin\tnspowner\toid1\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin1\tobjoid\tclassoid\tobjsubid\tdescription\n" +
+                        "pg_catalog\t11\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tNaN\tNaN\t0\t\n" +
+                        "public\t2200\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tNaN\tNaN\t0\t\n" +
+                        "pg_catalog\t11\t0\t1\t1\tbeta\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tNaN\tNaN\t0\t\n" +
+                        "public\t2200\t0\t1\t1\tbeta\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tNaN\tNaN\t0\t\n",
                 "    pg_catalog.pg_namespace n, \n" +
                         "    pg_catalog.pg_class c  \n" +
                         "    LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n",
@@ -141,8 +141,8 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals(
-                            "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\n" +
-                                    "pg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\n",
+                            "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+                                    "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
                             sink
                     );
 
@@ -200,9 +200,9 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPgClassOneTable() throws Exception {
         assertQuery(
-                "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\n" +
-                        "pg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\n" +
-                        "x\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\n",
+                "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
+                        "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
                 "pg_catalog.pg_class",
                 "create table x(a int)",
                 null,
@@ -214,17 +214,17 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testPgClassTwoTables() throws Exception {
         assertQuery(
-                "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\n" +
-                        "pg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\n" +
-                        "x\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\n",
+                "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+                        "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
+                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
                 "pg_catalog.pg_class order by 1",
                 "create table x(a int)",
                 null,
                 "create table y(a int)",
-                "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\n" +
-                        "pg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\n" +
-                        "x\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\n" +
-                        "y\t2200\tr\t0\t2\t\tfalse\tfalse\tfalse\n",
+                "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+                        "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
+                        "2\ty\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
+                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
                 true,
                 false,
                 false
@@ -314,8 +314,8 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                 try {
                     printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals(
-                            "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\n" +
-                                    "pg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\n",
+                            "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+                                    "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
                             sink
                     );
 
@@ -327,9 +327,9 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
                     TestUtils.assertEquals(
-                            "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\n" +
-                                    "pg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\n" +
-                                    "xyz\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\n",
+                            "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+                                    "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
+                                    "1\txyz\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
                             sink
                     );
 
@@ -347,10 +347,10 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                     sink.clear();
                     printer.print(cursor, factory.getMetadata(), true, sink);
 
-                    TestUtils.assertEquals("relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\n" +
-                                    "pg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\n" +
-                                    "xyz\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\n" +
-                                    "автомобилей\t2200\tr\t0\t2\t\tfalse\tfalse\tfalse\n"
+                    TestUtils.assertEquals("oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+                                    "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
+                                    "1\txyz\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
+                                    "2\tавтомобилей\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n"
                             , sink);
 
                     compiler.compile("drop table автомобилей;", sqlExecutionContext);
@@ -362,9 +362,9 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractGriffinTest {
                     printer.print(cursor, factory.getMetadata(), true, sink);
 
                     TestUtils.assertEquals(
-                            "relname\trelnamespace\trelkind\trelowner\toid\trelpartbound\trelhasrules\trelhasoids\trelhassubclass\n" +
-                                    "pg_class\t11\tr\t0\t1259\t\tfalse\tfalse\tfalse\n" +
-                                    "xyz\t2200\tr\t0\t1\t\tfalse\tfalse\tfalse\n",
+                            "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+                                    "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
+                                    "1\txyz\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
                             sink
                     );
 

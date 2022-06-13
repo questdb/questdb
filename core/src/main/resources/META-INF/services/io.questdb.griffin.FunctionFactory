@@ -517,7 +517,7 @@ io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgAttrDefFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgAttrDefFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgAttributeFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.ClassCatalogueFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PgClassFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgClassFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgIndexFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgRolesFunctionFactory
@@ -534,6 +534,7 @@ io.questdb.griffin.engine.functions.catalogue.PrefixedPgLocksFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemasFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgDescriptionFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PgInheritsFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CurrentSchemaFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentSchemaFunctionFactory
