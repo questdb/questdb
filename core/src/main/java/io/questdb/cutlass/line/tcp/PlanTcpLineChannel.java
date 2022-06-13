@@ -25,9 +25,9 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cutlass.line.LineChannel;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 
 public final class PlanTcpLineChannel implements LineChannel {
@@ -43,7 +43,7 @@ public final class PlanTcpLineChannel implements LineChannel {
 
         this.fd = nf.socketTcp(true);
         if (nf.connect(fd, sockaddr) != 0) {
-            throw NetworkError.instance(nf.errno(), "could not connect to ").ip(address);
+            throw new LineSenderException("could not connect to " + address + ", [errno=" + nf.errno() + "]");
         }
         int orgSndBufSz = nf.getSndBuf(fd);
         nf.setSndBuf(fd, sndBufferSize);
@@ -62,7 +62,7 @@ public final class PlanTcpLineChannel implements LineChannel {
     @Override
     public void send(long ptr, int len) {
         if (nf.send(fd, ptr, len) != len) {
-            throw NetworkError.instance(nf.errno()).put("send error");
+            throw new LineSenderException("send error [errno=" + nf.errno() + "]");
         }
     }
 

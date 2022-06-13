@@ -64,7 +64,7 @@ public final class DelegatingTlsChannel implements LineChannel {
     private static final int CLOSED = 3;
 
 
-    private final LineChannel upstream;
+    private final LineChannel delegate;
     private final SSLEngine sslEngine;
 
     private final ByteBuffer wrapInputBuffer;
@@ -96,12 +96,8 @@ public final class DelegatingTlsChannel implements LineChannel {
         CAPACITY_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(capacityField);
     }
 
-    public DelegatingTlsChannel(LineChannel upstream) {
-        this(upstream, null, null);
-    }
-
-    public DelegatingTlsChannel(LineChannel upstream, String trustStorePath, char[] password) {
-        this.upstream = upstream;
+    public DelegatingTlsChannel(LineChannel delegate, String trustStorePath, char[] password) {
+        this.delegate = delegate;
         this.sslEngine = createSslEngine(trustStorePath, password);
 
         // wrapInputBuffer is just a placeholder, we set the internal address, capacity and limit in send()
@@ -263,7 +259,7 @@ public final class DelegatingTlsChannel implements LineChannel {
         int len = wrapOutputBuffer.position();
 
         assert Unsafe.getUnsafe().getLong(wrapOutputBuffer, ADDRESS_FIELD_OFFSET) == wrapOutputBufferPtr;
-        upstream.send(wrapOutputBufferPtr, len);
+        delegate.send(wrapOutputBufferPtr, len);
 
         // we know limit == capacity
         // thus setting the position to 0 is equivalent to clearing
@@ -286,7 +282,7 @@ public final class DelegatingTlsChannel implements LineChannel {
         assert Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET) == unwrapInputBufferPtr;
         long adjustedPtr = unwrapInputBufferPtr + unwrapInputBuffer.position();
 
-        int receive = upstream.receive(adjustedPtr, remainingLen);
+        int receive = delegate.receive(adjustedPtr, remainingLen);
         if (receive < 0) {
             throw new LineSenderException("connection closed");
         }
@@ -352,8 +348,7 @@ public final class DelegatingTlsChannel implements LineChannel {
 
     @Override
     public int errno() {
-        // for now, we throw exception eagerly so this is not really useful
-        return 0;
+        return delegate.errno();
     }
 
     @Override
@@ -366,7 +361,7 @@ public final class DelegatingTlsChannel implements LineChannel {
         } catch (NetworkError e) {
             // best effort TLS close
         }
-        Misc.free(upstream);
+        Misc.free(delegate);
         state = CLOSED;
     }
 }

@@ -24,17 +24,10 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.cutlass.line.tcp.AuthDb;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlanTcpLineChannel;
-import io.questdb.network.Net;
-import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacadeImpl;
 
-import javax.security.auth.DestroyFailedException;
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.security.PrivateKey;
 
 public class LineTcpSender extends AbstractLineSender {

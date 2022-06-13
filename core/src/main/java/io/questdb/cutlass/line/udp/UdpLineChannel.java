@@ -25,11 +25,14 @@
 package io.questdb.cutlass.line.udp;
 
 import io.questdb.cutlass.line.LineChannel;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.tcp.PlanTcpLineChannel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.NetworkError;
+import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 public final class UdpLineChannel implements LineChannel {
     private static final Log LOG = LogFactory.getLog(PlanTcpLineChannel.class);
@@ -38,25 +41,29 @@ public final class UdpLineChannel implements LineChannel {
     private final long fd;
     private final long sockaddr;
 
-    public UdpLineChannel(NetworkFacade nf, int interfaceIPv4Address, int sendToAddress, int port, int ttl) throws NetworkError {
+    public UdpLineChannel(NetworkFacade nf, int interfaceIPv4Address, int sendToAddress, int port, int ttl) {
         this.nf = nf;
         this.fd = nf.socketUdp();
         this.sockaddr = nf.sockaddr(sendToAddress, port);
 
         if (fd == -1) {
-            throw NetworkError.instance(nf.errno()).put("could not create UDP socket");
+            throw new LineSenderException("could not create UDP socket [errno=" + nf.errno() + "]");
         }
 
         if (nf.setMulticastInterface(fd, interfaceIPv4Address) != 0) {
             final int errno = nf.errno();
             nf.close(fd, LOG);
-            throw NetworkError.instance(errno).put("could not bind to ").ip(interfaceIPv4Address);
+
+            CharSink stringSink = new StringSink().put("could not bind to ");
+            Net.appendIP4(stringSink, interfaceIPv4Address);
+            stringSink.put(" [errno=").put(errno).put("]");
+            throw new LineSenderException(stringSink.toString());
         }
 
         if (nf.setMulticastTtl(fd, ttl) != 0) {
             final int errno = nf.errno();
             nf.close(fd, LOG);
-            throw NetworkError.instance(errno).put("could not set ttl [fd=").put(fd).put(", ttl=").put(ttl).put(']');
+            throw new LineSenderException("could not set ttl [fd=" + fd + " , ttl=" + ttl + ", errno=" + errno + "]");
         }
     }
 
@@ -71,7 +78,7 @@ public final class UdpLineChannel implements LineChannel {
     @Override
     public void send(long ptr, int len) {
         if (nf.sendTo(fd, ptr, len, sockaddr) != len) {
-            throw NetworkError.instance(nf.errno()).put("send error");
+            throw new LineSenderException("send error [errno=" + nf.errno() + "]");
         }
     }
 

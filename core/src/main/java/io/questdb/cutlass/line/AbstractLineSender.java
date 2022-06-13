@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.cutlass.line.tcp.AuthDb;
-import io.questdb.network.NetworkError;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -461,7 +460,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             int rc = lineChannel.receive(ptr + n, capacity - n);
             if (rc < 0) {
                 close();
-                throw NetworkError.instance(lineChannel.errno()).put("disconnected during authentication");
+                throw new LineSenderException("disconnected during authentication [errno=" + lineChannel.errno() + "]");
             }
             int eol = findEOL(ptr + n, rc);
             if (eol != -1) {
@@ -471,7 +470,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             n += rc;
             if (n == capacity) {
                 close();
-                throw NetworkError.instance(0).put("challenge did not fit into buffer");
+                throw new LineSenderException("challenge did not fit into buffer");
             }
         }
         int sz = n;
@@ -491,13 +490,13 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             rawSignature = sig.sign();
         } catch (InvalidKeyException ex) {
             close();
-            throw NetworkError.instance(0).put("invalid key");
+            throw new LineSenderException("invalid key");
         } catch (SignatureException ex) {
             close();
-            throw NetworkError.instance(0).put("cannot sign challenge");
+            throw new LineSenderException("cannot sign challenge");
         } catch (NoSuchAlgorithmException ex) {
             close();
-            throw NetworkError.instance(0).put("unsupported signing algorithm");
+            throw new LineSenderException("unsupported signing algorithm");
         }
         return Base64.getEncoder().encode(rawSignature);
     }

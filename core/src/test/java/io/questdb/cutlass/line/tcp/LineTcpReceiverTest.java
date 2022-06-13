@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.AuthenticatedLineTcpSender;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -327,17 +328,17 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1, 768, 1_000, false);
     }
 
-    @Test(expected = NetworkError.class)
+    @Test(expected = LineSenderException.class)
     public void testInvalidSignature() throws Exception {
         test(AUTH_KEY_ID1, AUTH_PRIVATE_KEY2, 768, 6_000, true);
     }
 
-    @Test(expected = NetworkError.class)
+    @Test(expected = LineSenderException.class)
     public void testInvalidUser() throws Exception {
         test(AUTH_KEY_ID2, AUTH_PRIVATE_KEY2, 768, 6_000, true);
     }
 
-    @Test(expected = NetworkError.class)
+    @Test(expected = LineSenderException.class)
     public void testInvalidZeroSignature() throws Exception {
         test(AUTH_KEY_ID1, 768, 100, true, bufferSize ->
                 new AuthenticatedLineTcpSender(

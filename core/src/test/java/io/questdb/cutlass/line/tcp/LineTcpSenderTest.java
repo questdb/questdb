@@ -89,7 +89,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         sender.flush();
                     }
                     fail("Client fail to detected qdb server closed a connection due to wrong credentials");
-                } catch (NetworkError e) {
+                } catch (LineSenderException e) {
                     // expected
                 }
             }
