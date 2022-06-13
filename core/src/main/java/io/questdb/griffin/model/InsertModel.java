@@ -24,12 +24,14 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
 public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<InsertModel> FACTORY = InsertModel::new;
-    private final CharSequenceHashSet columnSet = new CharSequenceHashSet();
+    private final LowerCaseCharSequenceHashSet columnNameSet = new LowerCaseCharSequenceHashSet();
+    private final ObjList<CharSequence> columnNameList = new ObjList<>();
     private final ObjList<ObjList<ExpressionNode>> rowTupleValues = new ObjList<>();
     private final IntList endOfRowTupleValuesPositions = new IntList();
     private final IntList columnPositions = new IntList();
@@ -42,12 +44,16 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     private InsertModel() {
     }
 
-    public boolean addColumn(CharSequence columnName, int columnPosition) {
-        if (columnSet.add(columnName)) {
+    public void addColumn(CharSequence columnName, int columnPosition) throws SqlException {
+        int keyIndex = columnNameSet.keyIndex(columnName);
+        if (keyIndex > -1) {
+            String name = Chars.toString(columnName);
+            columnNameSet.addAt(keyIndex, name);
             columnPositions.add(columnPosition);
-            return true;
+            columnNameList.add(name);
+            return;
         }
-        return false;
+        throw SqlException.duplicateColumn(columnPosition, columnName);
     }
 
     public void addRowTupleValues(ObjList<ExpressionNode> row) {
@@ -58,8 +64,9 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     public void clear() {
         this.tableName = null;
         this.queryModel = null;
-        this.columnSet.clear();
+        this.columnNameSet.clear();
         this.columnPositions.clear();
+        this.columnNameList.clear();
         for (int i = 0, n = this.rowTupleValues.size(); i < n; i++) {
             this.rowTupleValues.get(i).clear();
         }
@@ -74,8 +81,8 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         return columnPositions.getQuick(columnIndex);
     }
 
-    public CharSequenceHashSet getColumnSet() {
-        return columnSet;
+    public ObjList<CharSequence> getColumnNameList() {
+        return columnNameList;
     }
 
     public ObjList<ExpressionNode> getRowTupleValues(int index) {
@@ -149,14 +156,14 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         }
 
         sink.put(" into ").put(tableName.token).put(' ');
-        int n = columnSet.size();
+        int n = columnNameList.size();
         if (n > 0) {
             sink.put('(');
             for (int i = 0; i < n; i++) {
                 if (i > 0) {
                     sink.put(", ");
                 }
-                sink.put(columnSet.get(i));
+                sink.put(columnNameList.getQuick(i));
             }
             sink.put(") ");
         }

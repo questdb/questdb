@@ -30,6 +30,8 @@ import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
 
@@ -52,6 +54,18 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException ambiguousColumn(int position) {
         return position(position).put("Ambiguous column name");
+    }
+
+    public static SqlException duplicateColumn(int position, CharSequence colName) {
+        return duplicateColumn(position, colName, null);
+    }
+
+    public static SqlException duplicateColumn(int position, CharSequence colName, CharSequence additionalMessage) {
+        SqlException exception = SqlException.$(position, "Duplicate column [name=").put(colName).put(']');
+        if (additionalMessage != null) {
+            exception.put(' ').put(additionalMessage);
+        }
+        return exception;
     }
 
     public static SqlException inconvertibleTypes(int position, int fromType, CharSequence fromName, int toType, CharSequence toName) {
@@ -93,6 +107,18 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException invalidDate(int position) {
         return position(position).put("Invalid date");
+    }
+
+    public static SqlException parserErr(int position, @Nullable CharSequence tok, @NotNull CharSequence msg) {
+        return tok == null ?
+                SqlException.$(position, msg)
+                :
+                SqlException.$(position, "found [tok='")
+                        .put(tok)
+                        .put("', len=")
+                        .put(tok.length())
+                        .put("] ")
+                        .put(msg);
     }
 
     public static SqlException position(int position) {

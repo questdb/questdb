@@ -448,10 +448,10 @@ public class CoalesceFunctionFactoryTest extends AbstractGriffinTest {
                         "WITH tx as (\n" +
                         "select CAST(dateadd('d', CAST(x as INT), CAST(0 AS DATE)) AS DATE) as x, \n" +
                         "CAST(dateadd('d', CAST(x as INT) * 10, CAST(0 AS DATE)) AS DATE) as xx, \n" +
-                        "CAST(x AS DATE) x," +
+                        "CAST(x AS DATE) xxx," +
                         "x as n from long_sequence(5))\n" +
                         "select " +
-                        "CASE WHEN n > 3 THEN x ELSE CAST(NULL as DATE) END as x, \n" +
+                        "CASE WHEN n > 3 THEN xxx ELSE CAST(NULL as DATE) END as x, \n" +
                         "CASE WHEN n % 3 = 0 THEN xx ELSE CAST(NULL as DATE) END as a, \n" +
                         "CASE WHEN n % 3 = 1 THEN xx ELSE CAST(NULL as DATE) END as b \n" +
                         "from tx " +
