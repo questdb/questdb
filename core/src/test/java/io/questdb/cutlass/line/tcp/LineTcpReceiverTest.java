@@ -768,6 +768,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
                 try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender.disableValidation();
                     lineTcpSender
                             .metric("table")
                             .tag("tag1", "value 1")
@@ -826,6 +827,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             String tableName = "table";
             send(receiver,  tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
                 try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender.disableValidation();
                     lineTcpSender
                             .metric(tableName)
                             .tag("tag\n1", "value 1")
@@ -874,6 +876,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             String tableName = "ta\nble";
             send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
                 try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender.disableValidation();
                     lineTcpSender
                             .metric(tableName)
                             .tag("tag1", "value 1")
@@ -920,6 +923,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
                 try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender.disableValidation();
                     lineTcpSender
                             .metric("table")
                             .tag("tag1", "value 1")
@@ -955,6 +959,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             send(receiver,  "table", WAIT_ENGINE_TABLE_RELEASE, () -> {
                 try (LineTcpSender lineTcpSender = new LineTcpSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    lineTcpSender.disableValidation();
                     lineTcpSender
                             .metric("table")
                             .tag("tag/2", "value=\2") // Invalid column name, line is not saved

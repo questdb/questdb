@@ -54,7 +54,7 @@ public interface Sender extends Closeable {
         // indicates buffer capacity was not set explicitly
         private static final byte BUFFER_CAPACITY_DEFAULT = 0;
 
-        private static final int  DEFAULT_BUFFER_CAPACITY = 256 * 1024;
+        private static final int  DEFAULT_BUFFER_CAPACITY = 64 * 1024;
 
         private int port;
         private int host;

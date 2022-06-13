@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.tcp.AuthDb;
 import io.questdb.network.NetworkError;
 import io.questdb.std.Chars;
@@ -54,13 +53,16 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     private long hi;
     private long ptr;
     private long lineStart;
-    private boolean hasMetric = false;
-    private boolean noFields = true;
+    private boolean hasTable;
+    private boolean hasColumns;
+    private boolean hasSymbols;
     protected final LineChannel lineChannel;
+    private boolean enableValidation;
 
     public AbstractLineSender(LineChannel lineChannel, int capacity) {
         this.lineChannel = lineChannel;
         this.capacity = capacity;
+        this.enableValidation = true;
 
         bufA = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
         bufB = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
@@ -81,16 +83,21 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     @Override
     public final void atNow() {
+        if (!hasColumns && !hasSymbols && enableValidation) {
+            throw new LineSenderException("no symbols or columns were provided");
+        }
+
         put('\n');
         lineStart = ptr;
-        hasMetric = false;
-        noFields = true;
+        hasTable = false;
+        hasColumns = false;
+        hasSymbols = false;
     }
 
     @Override
     public final void at(long timestamp) {
         put(' ').put(timestamp);
-        $();
+        atNow();
     }
 
     @Override
@@ -101,6 +108,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender field(CharSequence name, long value) {
+        validateColumnName(name);
         field(name).put(value).put('i');
         return this;
     }
@@ -110,6 +118,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender field(CharSequence name, CharSequence value) {
+        validateColumnName(name);
         field(name).put('"');
         quoted = true;
         encodeUtf8(value);
@@ -124,6 +133,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender field(CharSequence name, double value) {
+        validateColumnName(name);
         field(name).put(value);
         return this;
     }
@@ -134,6 +144,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender field(CharSequence name, boolean value) {
+        validateColumnName(name);
         field(name).put(value ? 't' : 'f');
         return this;
     }
@@ -159,7 +170,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             if (ptr + l < hi) {
                 Chars.asciiStrCpy(cs, l, ptr);
             } else {
-                throw CairoException.instance(0).put("value too long");
+                throw new LineSenderException("value too long. increase buffer size.");
             }
         }
         ptr += l;
@@ -184,7 +195,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             if (ptr + len < hi) {
                 Chars.asciiCopyTo(chars, start, len, ptr);
             } else {
-                throw CairoException.instance(0).put("value too long");
+                throw new LineSenderException("value too long. increase buffer size.");
             }
         }
         ptr += len;
@@ -192,13 +203,138 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender metric(CharSequence metric) {
-        if (hasMetric) {
-            throw CairoException.instance(0).put("duplicate metric");
+        validateTableName(metric);
+        if (hasTable) {
+            throw new LineSenderException("duplicate table");
+        }
+        if (metric.length() == 0) {
+            throw new LineSenderException("table name cannot be empty");
         }
         quoted = false;
-        hasMetric = true;
+        hasTable = true;
         encodeUtf8(metric);
         return this;
+    }
+
+    private void validateColumnName(CharSequence name) {
+        if (!enableValidation) {
+            return;
+        }
+        if (name.length() == 0) {
+            throw new LineSenderException("column name cannot be empty");
+        }
+        for (int i = 0; i < name.length(); i++) {
+            if (isIllegalColumnNameChar(name.charAt(i))) {
+                throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
+                        ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: " + name);
+            }
+        }
+    }
+
+    /**
+     * This is for testing only. Where we want to test server with a misbehaving client.
+     */
+    public void disableValidation() {
+        enableValidation = false;
+    }
+
+    private void validateTableName(CharSequence name) {
+        if (!enableValidation) {
+            return;
+        }
+        if (name.length() == 0) {
+            throw new LineSenderException("table name cannot be empty");
+        }
+        if (name.charAt(0) == '.') {
+            throw new LineSenderException("table cannot start with a dot");
+        }
+        if (name.charAt(name.length() - 1) == '.') {
+            throw new LineSenderException("table cannot end with a dot");
+        }
+        for (int i = 0; i < name.length(); i++) {
+            if (isIllegalTableNameChar(name.charAt(i))) {
+                throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
+                        "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: " + name);
+            }
+        }
+    }
+
+    private static boolean isIllegalColumnNameChar(char c) {
+        switch (c) {
+            case '\n':
+            case '\r':
+            case '?':
+            case '.':
+            case ',':
+            case '\'':
+            case '"':
+            case '\\':
+            case '/':
+            case ':':
+            case ')':
+            case '(':
+            case '+':
+            case '-':
+            case '*':
+            case '%':
+            case '~':
+            case '\u0000':
+            case '\u0001':
+            case '\u0002':
+            case '\u0003':
+            case '\u0004':
+            case '\u0005':
+            case '\u0006':
+            case '\u0007':
+            case '\u0008':
+            case '\u0009':
+            case '\u000b':
+            case '\u000c':
+            case '\u000e':
+            case '\u000f':
+            case '\u007f':
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static boolean isIllegalTableNameChar(char c) {
+        switch (c) {
+            case '\n':
+            case '\r':
+            case '?':
+            case ',':
+            case '\'':
+            case '"':
+            case '\\':
+            case '/':
+            case ':':
+            case ')':
+            case '(':
+            case '+':
+            case '*':
+            case '%':
+            case '~':
+            case '\u0000':
+            case '\u0001':
+            case '\u0002':
+            case '\u0003':
+            case '\u0004':
+            case '\u0005':
+            case '\u0006':
+            case '\u0007':
+            case '\u0008':
+            case '\u0009':
+            case '\u000b':
+            case '\u000c':
+            case '\u000e':
+            case '\u000f':
+            case '\u007f':
+                return true;
+            default:
+                return false;
+        }
     }
 
     @Override
@@ -207,11 +343,13 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender tag(CharSequence tag, CharSequence value) {
-        if (hasMetric) {
+        validateColumnName(tag);
+        if (hasTable) {
             put(',').encodeUtf8(tag).put('=').encodeUtf8(value);
+            hasSymbols = true;
             return this;
         }
-        throw CairoException.instance(0).put("metric expected");
+        throw new LineSenderException("table expected");
     }
 
     @Override
@@ -220,17 +358,17 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     private CharSink field(CharSequence name) {
-        if (hasMetric) {
-            if (noFields) {
+        if (hasTable) {
+            if (!hasColumns) {
                 put(' ');
-                noFields = false;
+                hasColumns = true;
             } else {
                 put(',');
             }
 
             return encodeUtf8(name).put('=');
         }
-        throw CairoException.instance(0).put("metric expected");
+        throw new LineSenderException("table expected");
     }
 
     @Override
@@ -281,11 +419,11 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             ptr = target + len;
             hi = lo + capacity;
         } else {
-            throw NetworkError.instance(0).put("line too long");
+            throw new LineSenderException("line too long. increase buffer size.");
         }
     }
 
-    protected final void authenticate(String authKey, PrivateKey privateKey) throws NetworkError {
+    protected final void authenticate(String authKey, PrivateKey privateKey) {
         encodeUtf8(authKey).put('\n');
         sendAll();
 

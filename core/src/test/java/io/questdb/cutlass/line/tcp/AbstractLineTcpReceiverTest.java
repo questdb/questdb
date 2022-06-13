@@ -53,7 +53,7 @@ import java.nio.charset.StandardCharsets;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.assertEquals;
 
-class AbstractLineTcpReceiverTest extends AbstractCairoTest {
+public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected static final int WAIT_NO_WAIT = 0x0;
     protected static final int WAIT_ENGINE_TABLE_RELEASE = 0x1;
     protected static final int WAIT_ILP_TABLE_RELEASE = 0x2;
