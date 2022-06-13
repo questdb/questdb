@@ -25,6 +25,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
@@ -195,7 +196,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
-    public void addBottomUpColumn(QueryColumn column) {
+    public void addBottomUpColumn(QueryColumn column) throws SqlException {
+        addBottomUpColumn(0, column, false, null);
+    }
+
+    public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates) throws SqlException {
+        addBottomUpColumn(position, column, allowDuplicates, null);
+    }
+
+    public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates, CharSequence additionalMessage) throws SqlException {
+        if (!allowDuplicates && containsColumnByName(bottomUpColumns, column)) {
+            throw SqlException.duplicateColumn(position, column.getName(), additionalMessage);
+        }
         bottomUpColumns.add(column);
         addField(column);
     }
@@ -941,6 +953,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Override
     public CharSequence translateAlias(CharSequence column) {
         return aliasToColumnNameMap.get(column);
+    }
+
+    private static boolean containsColumnByName(ObjList<QueryColumn> columns, QueryColumn col) {
+        CharSequence colName = col.getName();
+        for (int i = 0, limit = columns.size(); i < limit; i++) {
+            if (Chars.equalsIgnoreCase(columns.getQuick(i).getName(), colName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void aliasToSink(CharSequence alias, CharSink sink) {
