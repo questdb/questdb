@@ -188,22 +188,18 @@ public final class TlsProxy {
                 int i;
                 try {
                     i = from.read(buffer);
-                    System.out.println(name +" read " + i + " bytes");
                     if (i < 0) {
                         break;
                     }
                     totalRead += i;
                 } catch (IOException e) {
-                    System.out.println(name +" has an exception while reading");
                     break;
                 }
                 try {
                     to.write(buffer, 0, i);
                     to.flush();
                     totalWritten += i;
-                    System.out.println(name +" wrote " + i + " bytes");
                 } catch (IOException e) {
-                    System.out.println(name +" has an exception while writing");
                     break;
                 }
             }
@@ -221,7 +217,6 @@ public final class TlsProxy {
     }
 
     private static void closeQuietly(Closeable closeable) {
-        System.out.println("Closing: " + closeable);
         if (closeable != null) {
             try {
                 closeable.close();

@@ -358,7 +358,7 @@ public final class DelegatingTlsChannel implements LineChannel {
         wrapLoop(dummyBuffer);
         try {
             writeToUpstreamAndClear();
-        } catch (NetworkError e) {
+        } catch (LineSenderException e) {
             // best effort TLS close
         }
         Misc.free(delegate);
