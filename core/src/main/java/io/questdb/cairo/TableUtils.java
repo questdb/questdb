@@ -565,6 +565,10 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
+    public static void lockName(Path root, int pathRootLen, @NotNull CharSequence name) {
+        root.trimTo(pathRootLen).concat(name).put(".lock").$();
+    }
+
     public static long mapRO(FilesFacade ff, long fd, long size, int memoryTag) {
         return mapRO(ff, fd, size, 0, memoryTag);
     }

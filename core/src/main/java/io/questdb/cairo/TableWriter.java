@@ -53,6 +53,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -194,25 +195,6 @@ public class TableWriter implements Closeable {
     private long commitInterval;
     private UpdateOperator updateOperator;
 
-    public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
-    }
-
-    public TableWriter(CairoConfiguration configuration, CharSequence tableName, @NotNull MessageBus messageBus, Metrics metrics) {
-        this(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, metrics);
-    }
-
-    public TableWriter(
-            CairoConfiguration configuration,
-            CharSequence tableName,
-            @NotNull MessageBus messageBus,
-            boolean lock,
-            LifecycleManager lifecycleManager,
-            Metrics metrics
-    ) {
-        this(configuration, tableName, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
-    }
-
     public TableWriter(
             CairoConfiguration configuration,
             CharSequence tableName,
@@ -245,8 +227,7 @@ public class TableWriter implements Closeable {
         this.o3PartitionUpdateSubSeq = new SCSequence();
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
         this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
-        this.path = new Path();
-        this.path.of(root).concat(tableName);
+        this.path = new Path().of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
         this.rootLen = path.length();
         try {
@@ -267,7 +248,7 @@ public class TableWriter implements Closeable {
             }
             this.ddlMem = Vm.getMARInstance();
             this.metaMem = Vm.getMRInstance();
-            this.columnVersionWriter = openColumnVersionFile(ff, path, rootLen);
+            this.columnVersionWriter = openColumnVersionFile();
 
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(metaMem);
@@ -333,6 +314,28 @@ public class TableWriter implements Closeable {
             doClose(false);
             throw e;
         }
+    }
+
+    @TestOnly
+    public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
+        this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
+    }
+
+    @TestOnly
+    public TableWriter(CairoConfiguration configuration, CharSequence tableName, @NotNull MessageBus messageBus, Metrics metrics) {
+        this(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, metrics);
+    }
+
+    @TestOnly
+    TableWriter(
+            CairoConfiguration configuration,
+            CharSequence tableName,
+            @NotNull MessageBus messageBus,
+            boolean lock,
+            LifecycleManager lifecycleManager,
+            Metrics metrics
+    ) {
+        this(configuration, tableName, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
     }
 
     public static int getPrimaryColumnIndex(int index) {
@@ -1692,7 +1695,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private static ColumnVersionWriter openColumnVersionFile(FilesFacade ff, Path path, int rootLen) {
+    private ColumnVersionWriter openColumnVersionFile() {
         path.concat(COLUMN_VERSION_FILE_NAME).$();
         try {
             return new ColumnVersionWriter(ff, path, 0);

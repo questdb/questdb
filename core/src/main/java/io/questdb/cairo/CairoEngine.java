@@ -191,13 +191,24 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.checkWritePermission();
         // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
-        return new TableWriter(configuration, tableName, messageBus, null, true, DefaultLifecycleManager.INSTANCE, backupDirName, Metrics.disabled());
+        return new TableWriter(
+                configuration,
+                tableName,
+                messageBus,
+                null,
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                backupDirName,
+                Metrics.disabled()
+        );
     }
 
+    @TestOnly
     public int getBusyReaderCount() {
         return readerPool.getBusyCount();
     }
 
+    @TestOnly
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
     }
@@ -232,10 +243,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return next + 1;
     }
 
-    public PoolListener getPoolListener() {
+    @TestOnly
+    PoolListener getPoolListener() {
         return this.writerPool.getPoolListener();
     }
 
+    @TestOnly
     public void setPoolListener(PoolListener poolListener) {
         this.writerPool.setPoolListener(poolListener);
         this.readerPool.setPoolListener(poolListener);
@@ -459,6 +472,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     // This is not thread safe way to reset table ID back to 0
     // It is useful for testing only
+    @TestOnly
     public void resetTableId() {
         Unsafe.getUnsafe().putLong(tableIdMem, 0);
     }

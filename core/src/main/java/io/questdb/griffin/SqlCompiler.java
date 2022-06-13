@@ -1920,7 +1920,15 @@ public class SqlCompiler implements Closeable {
 
     //sets insertCount to number of copied rows
     private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
-        TableWriter writer = new TableWriter(configuration, tableName, messageBus, false, DefaultLifecycleManager.INSTANCE, engine.getMetrics());
+        TableWriter writer = new TableWriter(
+                configuration,
+                tableName,
+                messageBus,
+                null,
+                false,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getRoot(),
+                engine.getMetrics());
         try {
             RecordMetadata writerMetadata = writer.getMetadata();
             entityColumnFilter.of(writerMetadata.getColumnCount());
