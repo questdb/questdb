@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
 import io.questdb.griffin.SqlException;
@@ -37,7 +36,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
-import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
@@ -93,7 +91,6 @@ public class FileIndexer implements Closeable, Mutable {
     private final Sequence pubSeq;
     private final Sequence subSeq;
     private final int workerCount;
-    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
 
     private final CharSequence inputRoot;
     private final CharSequence inputWorkRoot;
@@ -212,42 +209,6 @@ public class FileIndexer implements Closeable, Mutable {
         this.textDelimiterScanner.close();
     }
 
-    public static void mergeColumnSymbolTables(final CairoConfiguration cfg,
-                                               final CharSequence importRoot,
-                                               final TableWriter writer,
-                                               final CharSequence table,
-                                               final CharSequence column,
-                                               int columnIndex,
-                                               int symbolColumnIndex,
-                                               int tmpTableCount,
-                                               int partitionBy
-    ) {
-        final FilesFacade ff = cfg.getFilesFacade();
-        try (Path path = new Path()) {
-            path.of(importRoot).concat(table);
-            int plen = path.length();
-            for (int i = 0; i < tmpTableCount; i++) {
-                path.trimTo(plen);
-                path.put("_").put(i);
-                try (TxReader txFile = new TxReader(ff).ofRO(path, partitionBy)) {
-                    txFile.unsafeLoadAll();
-                    int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex);
-                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(cfg, path, column, TableUtils.COLUMN_NAME_TXN_NONE, symbolCount)) {
-                        try (MemoryCMARW mem = Vm.getSmallCMARWInstance(
-                                ff,
-                                path.concat(column).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),
-                                MemoryTag.MMAP_DEFAULT,
-                                cfg.getWriterFileOpenOpts()
-                        )
-                        ) {
-                            SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(columnIndex), reader, mem);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     public IntList importPartitions() throws TextException {
         if (partitionNames.size() == 0) {
             throw TextException.$("No partitions to merge and load found");
@@ -260,6 +221,7 @@ public class FileIndexer implements Closeable, Mutable {
         final int taskCount = (partitionCount + chunkSize - 1) / chunkSize;
 
         int queuedCount = 0;
+        int collectedCount = 0;
         taskDistribution.clear();
         for (int i = 0; i < taskCount; ++i) {
             final int lo = i * chunkSize;
@@ -275,7 +237,7 @@ public class FileIndexer implements Closeable, Mutable {
                     queuedCount++;
                     break;
                 } else {
-                    stealWork(queue, subSeq);
+                    collectedCount += collect(queuedCount - collectedCount, this::collectStub);
                 }
             }
 
@@ -284,7 +246,8 @@ public class FileIndexer implements Closeable, Mutable {
             taskDistribution.add(hi);
         }
 
-        collect(queuedCount, this::collectImportDataResults);
+        collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+        assert collectedCount == queuedCount;
         LOG.info().$("Finished index merge and partition load").$();
         return taskDistribution;
     }
@@ -293,7 +256,7 @@ public class FileIndexer implements Closeable, Mutable {
         LOG.info().$("Started symbol table merge").$();
 
         int queuedCount = 0;
-        doneLatch.reset();
+        int collectedCount = 0;
         TableWriterMetadata metadata = writer.getMetadata();
         int symbolColumnIndex = -1;
         for (int c = 0, size = metadata.getColumnCount(); c < size; c++) {
@@ -311,14 +274,15 @@ public class FileIndexer implements Closeable, Mutable {
                         queuedCount++;
                         break;
                     } else {
-                        stealWork(queue, subSeq);
+                        collectedCount += collect(queuedCount - collectedCount, this::collectStub);
                     }
                 }
 
             }
         }
 
-        collect(queuedCount, this::collectImportDataResults);//todo: new handler
+        collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+        assert collectedCount == queuedCount;
         LOG.info().$("Finished symbol table merge").$();
     }
 
@@ -326,6 +290,7 @@ public class FileIndexer implements Closeable, Mutable {
         LOG.info().$("Started symbol keys update").$();
 
         int queuedCount = 0;
+        int collectedCount = 0;
         for (int t = 0; t < tmpTableCount; ++t) {
             tmpPath.of(importRoot).concat(tableName).put("_").put(t);
             try (TxReader txFile = new TxReader(ff).ofRO(tmpPath, partitionBy)) {
@@ -351,7 +316,7 @@ public class FileIndexer implements Closeable, Mutable {
                                     queuedCount++;
                                     break;
                                 } else {
-                                    stealWork(queue, subSeq);
+                                    collectedCount += collect(queuedCount - collectedCount, this::collectStub);
                                 }
                             }
 
@@ -361,7 +326,8 @@ public class FileIndexer implements Closeable, Mutable {
             }
         }
 
-        collect(queuedCount, this::collectImportDataResults);//todo: new handler
+        collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+        assert collectedCount == queuedCount;
         LOG.info().$("Finished symbol keys update").$();
     }
 
@@ -386,7 +352,6 @@ public class FileIndexer implements Closeable, Mutable {
 
     @Override
     public void clear() {
-        doneLatch.reset();
         chunkStats.clear();
         indexChunkStats.clear();
         indexStats.clear();
@@ -488,8 +453,19 @@ public class FileIndexer implements Closeable, Mutable {
         }
     }
 
-    private void collectImportDataResults(final TextImportTask task) {
-        //collect errors
+    private int collect(int queuedCount, Consumer<TextImportTask> consumer) {
+        int collectedCount = 0;
+        while (collectedCount < queuedCount) {
+            final long seq = collectSeq.next();
+            if (seq > -1) {
+                consumer.accept(queue.get(seq));
+                collectSeq.done(seq);
+                collectedCount += 1;
+            } else {
+                stealWork(queue, subSeq);
+            }
+        }
+        return collectedCount;
     }
 
     private void movePartitionsToDst(IntList taskDistribution, int taskCount) {
@@ -536,17 +512,8 @@ public class FileIndexer implements Closeable, Mutable {
         }
     }
 
-    private void collect(int queuedCount, Consumer<TextImportTask> consumer) {
-        while (queuedCount > 0) {
-            final long seq = collectSeq.next();
-            if (seq > -1) {
-                consumer.accept(queue.get(seq));
-                collectSeq.done(seq);
-                --queuedCount;
-            } else {
-                stealWork(queue, subSeq);
-            }
-        }
+    private void collectStub(final TextImportTask task) {
+        //collect errors
     }
 
     private void attachPartitions(TableWriter writer) throws TextException {
@@ -587,45 +554,9 @@ public class FileIndexer implements Closeable, Mutable {
         final TextImportTask.BuildPartitionIndexStage buildPartitionIndexStage = task.getBuildPartitionIndexStage();
         final int chunkIndex = task.getIndex();
         final long lineLength = buildPartitionIndexStage.getMaxLineLength();
-        System.err.println("len: " + lineLength);
         this.maxLineLength = (int) Math.max(maxLineLength, lineLength);
         final LongList keys = buildPartitionIndexStage.getPartitionKeys();
         this.partitionKeys.add(keys);
-    }
-
-    private void parallelBuildColumnIndexes(int tmpTableCount, TableWriter writer) {
-        final RecordMetadata metadata = writer.getMetadata();
-        final int columnCount = metadata.getColumnCount();
-
-        boolean isAnyIndexed = false;
-        for (int i = 0; i < columnCount; i++) {
-            isAnyIndexed |= metadata.isColumnIndexed(i);
-        }
-
-        if (isAnyIndexed) {
-            LOG.info().$("Started build column indexes").$();
-
-            int queuedCount = 0;
-            doneLatch.reset();
-            for (int t = 0; t < tmpTableCount; ++t) {
-                while (true) {
-                    final long seq = pubSeq.next();
-                    if (seq > -1) {
-                        final TextImportTask task = queue.get(seq);
-                        task.setIndex(t);
-                        task.ofBuildSymbolColumnIndexStage(cairoEngine, targetTableStructure, importRoot, t, metadata);
-                        pubSeq.done(seq);
-                        queuedCount++;
-                        break;
-                    } else {
-                        stealWork(queue, subSeq);
-                    }
-                }
-            }
-
-            collect(queuedCount, this::collectImportDataResults);//todo: new handler
-            LOG.info().$("Finished build column indexes").$();
-        }
     }
 
     //returns list with N chunk boundaries
@@ -650,7 +581,7 @@ public class FileIndexer implements Closeable, Mutable {
         final int chunks = (int) Math.max(fileLength / chunkSize, 1);
 
         int queuedCount = 0;
-        doneLatch.reset();
+        int collectedCount = 0;
 
         chunkStats.setPos(chunks * 5);
         chunkStats.zero(0);
@@ -668,12 +599,13 @@ public class FileIndexer implements Closeable, Mutable {
                     queuedCount++;
                     break;
                 } else {
-                    stealWork(queue, subSeq);
+                    collectedCount += collect(queuedCount - collectedCount, this::collectChunkStats);
                 }
             }
         }
 
-        collect(queuedCount, this::collectChunkStats);
+        collectedCount += collect(queuedCount - collectedCount, this::collectChunkStats);
+        assert collectedCount == queuedCount;
 
         processChunkStats(fileLength, chunks);
 
@@ -684,7 +616,7 @@ public class FileIndexer implements Closeable, Mutable {
 
     void indexChunks() throws TextException {
         int queuedCount = 0;
-        doneLatch.reset();
+        int collectedCount = 0;
 
         if (indexChunkStats.size() < 2) {
             throw TextException.$("No chunks found for indexing in file=").put(inputFilePath);
@@ -716,17 +648,53 @@ public class FileIndexer implements Closeable, Mutable {
                     queuedCount++;
                     break;
                 } else {
-                    stealWork(queue, subSeq);
+                    collectedCount += collect(queuedCount - collectedCount, this::collectIndexStats);
                 }
             }
         }
 
         this.maxLineLength = 0;
-        collect(queuedCount, this::collectIndexStats);
-
+        collectedCount += collect(queuedCount - collectedCount, this::collectIndexStats);
+        assert collectedCount == queuedCount;
         processIndexStats(partitionKeys);
 
         LOG.info().$("Finished indexing file=").$(inputFilePath).$();
+    }
+
+    private void parallelBuildColumnIndexes(int tmpTableCount, TableWriter writer) {
+        final RecordMetadata metadata = writer.getMetadata();
+        final int columnCount = metadata.getColumnCount();
+
+        boolean isAnyIndexed = false;
+        for (int i = 0; i < columnCount; i++) {
+            isAnyIndexed |= metadata.isColumnIndexed(i);
+        }
+
+        if (isAnyIndexed) {
+            LOG.info().$("Started build column indexes").$();
+
+            int queuedCount = 0;
+            int collectedCount = 0;
+            for (int t = 0; t < tmpTableCount; ++t) {
+                while (true) {
+                    final long seq = pubSeq.next();
+                    if (seq > -1) {
+                        final TextImportTask task = queue.get(seq);
+                        task.setIndex(t);
+                        task.ofBuildSymbolColumnIndexStage(cairoEngine, targetTableStructure, importRoot, t, metadata);
+                        pubSeq.done(seq);
+                        queuedCount++;
+                        break;
+                    } else {
+                        collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+                    }
+                }
+            }
+
+            collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+            assert collectedCount == queuedCount;
+            LOG.info().$("Finished build column indexes").$();
+        }
     }
 
     private void processIndexStats(ObjList<LongList> partitionKeys) {

@@ -1423,7 +1423,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportCsvIntoExistingTableWithSymbol() throws Exception {
-        executeWithPool(8, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
 
             final String tableName = "tableName";
             compiler.compile("create table " + tableName + " ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
@@ -1933,7 +1933,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportCsvIntoExistingTableWithSymbolsReordered() throws Exception {
-        executeWithPool(8, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
 
             final String tableName = "tableName";
             compiler.compile("create table " + tableName + " ( ts timestamp, line symbol, d double, description symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
@@ -1991,7 +1991,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
         assertMemoryLeak(code);
     }
 
-    private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws TextException {
+    private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
 
