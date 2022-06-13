@@ -1922,7 +1922,6 @@ public class SqlCompiler implements Closeable {
 
                     try (FileIndexer indexer = new FileIndexer(executionContext)) {
                         indexer.of(model.getTableName().token, name, model.getPartitionBy(), model.getDelimiter(), model.getTimestampColumnName(), model.getTimestampFormat(), model.isHeader());
-                        indexer.parseStructure();
                         indexer.process();
                     }
 

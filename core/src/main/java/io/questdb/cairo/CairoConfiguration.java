@@ -95,6 +95,8 @@ public interface CairoConfiguration {
 
     int getMaxFileNameLength();
 
+    int getParallelImportQueueCapacity();
+
     CharSequence getSnapshotRoot(); // same as root/../snapshot
 
     /**

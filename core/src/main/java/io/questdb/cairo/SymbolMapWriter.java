@@ -304,7 +304,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             }
         }
         dst.updateNullFlag(dst.getNullFlag() || src.containsNullValue());
-        return remapped;
+        return remapped;//TODO: why return if it's not used ?
     }
 
     @Override

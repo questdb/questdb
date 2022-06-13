@@ -169,6 +169,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getParallelImportQueueCapacity() {
+        return 32;
+    }
+
+    @Override
     public CharSequence getSnapshotRoot() {
         return snapshotRoot;
     }

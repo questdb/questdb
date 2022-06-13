@@ -201,6 +201,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
     // metadata detector is essentially part of text lexer
     // we can potentially keep a cache of char sequences until the whole
     // system is reset, similar to flyweight char sequence over array of chars
+    //NOTE! should be kept consistent with TableUtils.isValidColumnName() 
     private String normalise(CharSequence seq) {
         boolean capNext = false;
         tempSink.clear();
@@ -215,7 +216,6 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
                 case '\"':
                 case '\\':
                 case '/':
-                case '\0':
                 case ':':
                 case ')':
                 case '(':
@@ -224,11 +224,27 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
                 case '*':
                 case '%':
                 case '~':
+                case '\u0000':
+                case '\u0001':
+                case '\u0002':
+                case '\u0003':
+                case '\u0004':
+                case '\u0005':
+                case '\u0006':
+                case '\u0007':
+                case '\u0008':
+                case '\u0009':
+                case '\u000B':
+                case '\u000c':
+                case '\r':
+                case '\n':
+                case '\u000e':
+                case '\u000f':
+                case '\u007f':
                     capNext = true;
                 case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
                     break;
                 default:
-
                     if (tempSink.length() == 0 && Character.isDigit(c)) {
                         tempSink.put('_');
                     }

@@ -45,12 +45,17 @@ import static io.questdb.cutlass.text.FileIndexer.createTable;
 
 public class TextImportTask {
 
+    private static final Log LOG = LogFactory.getLog(TextImportTask.class);
+
     public static final byte PHASE_BOUNDARY_CHECK = 1;
     public static final byte PHASE_INDEXING = 2;
     public static final byte PHASE_PARTITION_IMPORT = 3;
     public static final byte PHASE_SYMBOL_TABLE_MERGE = 4;
     public static final byte PHASE_UPDATE_SYMBOL_KEYS = 5;
     public static final byte PHASE_BUILD_INDEX = 6;
+
+    public static final byte STATUS_OK = 0;
+    public static final byte STATUS_ERROR = 1;
 
     private byte phase;
     private int index;
@@ -62,6 +67,9 @@ public class TextImportTask {
     private final UpdateSymbolColumnKeysStage updateSymbolColumnKeysStage = new UpdateSymbolColumnKeysStage();
     private final BuildSymbolColumnIndexStage buildSymbolColumnIndexStage = new BuildSymbolColumnIndexStage();
 
+    private byte status;
+    private CharSequence errorMessage;
+
     public BuildPartitionIndexStage getBuildPartitionIndexStage() {
         return buildPartitionIndexStage;
     }
@@ -70,8 +78,16 @@ public class TextImportTask {
         return countQuotesStage;
     }
 
+    public CharSequence getErrorMessage() {
+        return errorMessage;
+    }
+
     public int getIndex() {
         return index;
+    }
+
+    public boolean isError() {
+        return this.status != STATUS_OK;
     }
 
     public void setIndex(int index) {
@@ -164,6 +180,8 @@ public class TextImportTask {
 
     public boolean run() {
         try {
+            status = STATUS_OK;
+
             if (phase == PHASE_BOUNDARY_CHECK) {
                 countQuotesStage.run();
             } else if (phase == PHASE_INDEXING) {
@@ -179,11 +197,14 @@ public class TextImportTask {
             } else {
                 throw TextException.$("Unexpected phase ").put(phase);
             }
+
         } catch (Throwable t) {
-            t.printStackTrace();//TODO: how can we react to job failing
+            LOG.error().$(t).$();
+            this.status = STATUS_ERROR;
+            this.errorMessage = t.getMessage();
             return false;
-        } finally {
         }
+
         return true;
     }
 
@@ -404,7 +425,7 @@ public class TextImportTask {
             tableNameSink.put(targetTableStructure.getTableName()).put('_').put(index);
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
-            createTable(ff, configuration.getMkDirMode(), importRoot, tableNameSink, targetTableStructure, 0);
+            createTable(ff, configuration.getMkDirMode(), importRoot, tableNameSink, targetTableStructure, 0, configuration);
 
             try (TableWriter writer = new TableWriter(configuration,
                     tableNameSink,
@@ -631,8 +652,7 @@ public class TextImportTask {
                                     path.concat(column).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),
                                     MemoryTag.MMAP_DEFAULT,
                                     cfg.getWriterFileOpenOpts()
-                            )
-                            ) {
+                            )) {
                                 SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(columnIndex), reader, mem);
                             }
                         }

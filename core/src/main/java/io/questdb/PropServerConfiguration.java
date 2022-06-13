@@ -312,6 +312,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean httpReadOnlySecurityContext;
     private long maxHttpQueryResponseRowLimit;
     private boolean interruptOnClosedConnection;
+    private int parallelImportQueueCapacity;
     private int pgNetConnectionLimit;
     private boolean pgNetConnectionHint;
     private int pgNetBindIPv4Address;
@@ -782,8 +783,9 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.inputRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
             this.inputWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.inputRoot);
-            this.maxImportIndexChunkSize = getLong(properties, env, PropertyKey.CAIRO_MAX_IMPORT_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
+            this.maxImportIndexChunkSize = getLong(properties, env, PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
             this.maxImportIndexChunkSize -= (maxImportIndexChunkSize % FileSplitter.INDEX_ENTRY_SIZE);
+            this.parallelImportQueueCapacity = getInt(properties, env, PropertyKey.CAIRO_IMPORT_QUEUE_CAPACITY, 32);
 
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
@@ -1890,6 +1892,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxFileNameLength() {
             return maxFileNameLength;
+        }
+
+        @Override
+        public int getParallelImportQueueCapacity() {
+            return parallelImportQueueCapacity;
         }
 
         @Override

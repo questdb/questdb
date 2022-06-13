@@ -133,6 +133,9 @@ public class FileIndexer implements Closeable, Mutable {
     private final SCSequence collectSeq = new SCSequence();
     private int bufferLength;
 
+    private byte status;
+    private String errorMessage;
+
     public FileIndexer(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
         this.cairoEngine = sqlExecutionContext.getCairoEngine();
@@ -163,13 +166,18 @@ public class FileIndexer implements Closeable, Mutable {
 
         this.targetTableStructure = new TableStructureAdapter(configuration);
         this.bufferLength = configuration.getSqlCopyBufferSize();
+    }
 
-        for (int i = 0; i < workerCount; i++) {
-            partitionKeys.add(new LongList());
+    private static void checkTableName(CharSequence tableName, CairoConfiguration configuration) {
+        if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
+            throw CairoException.instance(0)
+                    .put("invalid table name [table=").putAsPrintable(tableName)
+                    .put(']');
         }
     }
 
-    public static void createTable(final FilesFacade ff, int mkDirMode, final CharSequence root, final CharSequence tableName, TableStructure structure, int tableId) {
+    public static void createTable(final FilesFacade ff, int mkDirMode, final CharSequence root, final CharSequence tableName, TableStructure structure, int tableId, CairoConfiguration configuration) {
+        checkTableName(tableName, configuration);
         try (Path path = new Path()) {
             switch (TableUtils.exists(ff, path, root, tableName, 0, tableName.length())) {
                 case TableUtils.TABLE_EXISTS:
@@ -252,13 +260,14 @@ public class FileIndexer implements Closeable, Mutable {
         return taskDistribution;
     }
 
-    public void parallelMergeSymbolTables(final int tmpTableCount, final TableWriter writer) {
+    public void mergeSymbolTables(final int tmpTableCount, final TableWriter writer) {
         LOG.info().$("Started symbol table merge").$();
 
         int queuedCount = 0;
         int collectedCount = 0;
         TableWriterMetadata metadata = writer.getMetadata();
         int symbolColumnIndex = -1;
+
         for (int c = 0, size = metadata.getColumnCount(); c < size; c++) {
             if (ColumnType.isSymbol(metadata.getColumnType(c))) {
                 symbolColumnIndex++;
@@ -277,7 +286,6 @@ public class FileIndexer implements Closeable, Mutable {
                         collectedCount += collect(queuedCount - collectedCount, this::collectStub);
                     }
                 }
-
             }
         }
 
@@ -286,21 +294,24 @@ public class FileIndexer implements Closeable, Mutable {
         LOG.info().$("Finished symbol table merge").$();
     }
 
-    public void parallelUpdateSymbolKeys(int tmpTableCount, final TableWriter writer) {
+    public void updateSymbolKeys(int tmpTableCount, final TableWriter writer) {
         LOG.info().$("Started symbol keys update").$();
 
         int queuedCount = 0;
         int collectedCount = 0;
         for (int t = 0; t < tmpTableCount; ++t) {
             tmpPath.of(importRoot).concat(tableName).put("_").put(t);
+
             try (TxReader txFile = new TxReader(ff).ofRO(tmpPath, partitionBy)) {
                 txFile.unsafeLoadAll();
                 final int partitionCount = txFile.getPartitionCount();
+
                 for (int p = 0; p < partitionCount; p++) {
                     final long partitionSize = txFile.getPartitionSize(p);
                     final long partitionTimestamp = txFile.getPartitionTimestamp(p);
                     TableWriterMetadata metadata = writer.getMetadata();
                     int symbolColumnIndex = 0;
+
                     for (int c = 0, size = metadata.getColumnCount(); c < size; c++) {
                         if (ColumnType.isSymbol(metadata.getColumnType(c))) {
                             final CharSequence symbolColumnName = metadata.getColumnName(c);
@@ -319,7 +330,6 @@ public class FileIndexer implements Closeable, Mutable {
                                     collectedCount += collect(queuedCount - collectedCount, this::collectStub);
                                 }
                             }
-
                         }
                     }
                 }
@@ -347,7 +357,7 @@ public class FileIndexer implements Closeable, Mutable {
         this.forceHeader = forceHeader;
         this.timestampIndex = -1;
 
-        inputFilePath.of(inputRoot).slash().concat(inputFileName).$();
+        inputFilePath.of(inputRoot).concat(inputFileName).$();
     }
 
     @Override
@@ -371,10 +381,6 @@ public class FileIndexer implements Closeable, Mutable {
         timestampAdapter = null;
         forceHeader = false;
         maxLineLength = 0;
-
-        for (int i = 0; i < partitionKeys.size(); i++) {
-            partitionKeys.get(i).clear();
-        }
     }
 
     private void removeWorkDir() {
@@ -402,25 +408,14 @@ public class FileIndexer implements Closeable, Mutable {
         LOG.info().$("created import dir ").$(workDirPath).$();
     }
 
-    public void parseStructure() throws TextException {
+    void parseStructure(long fd) throws TextException {
         final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
 
         final int textAnalysisMaxLines = configuration.getTextConfiguration().getTextAnalysisMaxLines();
         int len = configuration.getSqlCopyBufferSize();
         long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-        long fd = -1;
 
         try (TextLexer lexer = new TextLexer(configuration.getTextConfiguration(), typeManager)) {
-            tmpPath.of(inputRoot).concat(inputFileName).$();
-            fd = ff.openRO(tmpPath);
-
-            if (fd == -1) {
-                throw TextException.$("could not open file [errno=").put(Os.errno()).put(", path=").put(tmpPath).put(']');
-            }
-            if (ff.length(fd) < 1) {
-                throw TextException.$("Ignoring file because it's empty. Path=").put(inputFilePath);
-            }
-
             long n = ff.read(fd, buf, len, 0);
             if (n > 0) {
                 if (columnDelimiter < 0) {
@@ -442,13 +437,9 @@ public class FileIndexer implements Closeable, Mutable {
                 textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
                 forceHeader = textMetadataDetector.isHeader();
 
-                prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), tmpPath, typeManager);
-                targetTableStructure.setIgnoreColumnIndexedFlag(true);
+                prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), inputFilePath, typeManager);
             }
         } finally {
-            if (fd != -1) {
-                ff.close(fd);
-            }
             Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
         }
     }
@@ -475,14 +466,13 @@ public class FileIndexer implements Closeable, Mutable {
             int hi = taskDistribution.getQuick(i * 3 + 2);
             final Path srcPath = Path.getThreadLocal(importRoot).concat(tableName).put("_").put(index);
             final Path dstPath = Path.getThreadLocal2(configuration.getRoot()).concat(tableName);
-            int srcPlen = srcPath.length();
-            int dstPlen = dstPath.length();
+            final int srcPlen = srcPath.length();
+            final int dstPlen = dstPath.length();
+
             for (int j = lo; j < hi; j++) {
                 final CharSequence partitionName = partitionNames.get(j);
-                srcPath.trimTo(srcPlen);
-                srcPath.concat(partitionName).$();
-                dstPath.trimTo(dstPlen);
-                dstPath.concat(partitionName).$();
+                srcPath.trimTo(srcPlen).concat(partitionName).$();
+                dstPath.trimTo(dstPlen).concat(partitionName).$();
                 if (!ff.rename(srcPath, dstPath)) {
                     LOG.error().$("Can't move ").$(srcPath).$(" to ").$(dstPath).$(" errno=").$(ff.errno()).$();
                 }
@@ -493,19 +483,31 @@ public class FileIndexer implements Closeable, Mutable {
     public void process() throws SqlException, TextException {
         long fd = ff.openRO(inputFilePath);
         if (fd < 0) {
-            throw TextException.$("Can't open input file=").put(inputFilePath).put(", errno=").put(ff.errno());
+            throw TextException.$("Can't open input file [path='").put(inputFilePath).put("', errno=").put(ff.errno()).put(']');
         }
         if (this.queue.getCycle() <= 0) {
             throw SqlException.$(0, "Unable to process, the processing queue is misconfigured");
         }
+
+        try {
+            if (ff.length(fd) < 1) {
+                throw TextException.$("Ignoring file because it's empty [path='").put(inputFilePath).put(']');
+            }
+
+            parseStructure(fd);
+        } catch (Throwable t) {
+            ff.close(fd);
+            throw t;
+        }
+
         try (TableWriter writer = cairoEngine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, LOCK_REASON)) {
             findChunkBoundaries(fd);
             indexChunks();
-            IntList taskDistribution = importPartitions();
+            importPartitions();
             int taskCount = taskDistribution.size() / 3;
-            parallelMergeSymbolTables(taskCount, writer);
-            parallelUpdateSymbolKeys(taskCount, writer);
-            parallelBuildColumnIndexes(taskCount, writer);
+            mergeSymbolTables(taskCount, writer);
+            updateSymbolKeys(taskCount, writer);
+            buildColumnIndexes(taskCount, writer);
             movePartitionsToDst(taskDistribution, taskCount);
             attachPartitions(writer);
         } finally {
@@ -558,7 +560,7 @@ public class FileIndexer implements Closeable, Mutable {
         final long lineLength = buildPartitionIndexStage.getMaxLineLength();
         this.maxLineLength = (int) Math.max(maxLineLength, lineLength);
         final LongList keys = buildPartitionIndexStage.getPartitionKeys();
-        this.partitionKeys.add(keys);
+        this.partitionKeys.add(keys);//TODO: keys belong to task, we've to copy them 
     }
 
     //returns list with N chunk boundaries
@@ -610,9 +612,7 @@ public class FileIndexer implements Closeable, Mutable {
         assert collectedCount == queuedCount;
 
         processChunkStats(fileLength, chunks);
-
         LOG.info().$("Finished checking boundaries in file=").$(inputFilePath).$();
-
         return indexChunkStats;
     }
 
@@ -663,7 +663,7 @@ public class FileIndexer implements Closeable, Mutable {
         LOG.info().$("Finished indexing file=").$(inputFilePath).$();
     }
 
-    private void parallelBuildColumnIndexes(int tmpTableCount, TableWriter writer) {
+    private void buildColumnIndexes(int tmpTableCount, TableWriter writer) {
         final RecordMetadata metadata = writer.getMetadata();
         final int columnCount = metadata.getColumnCount();
 
@@ -889,14 +889,13 @@ public class FileIndexer implements Closeable, Mutable {
             Path path,
             TypeManager typeManager
     ) throws TextException {
-
         if (types.size() == 0) {
             throw CairoException.instance(0).put("cannot determine text structure");
         }
         if (partitionBy == PartitionBy.NONE) {
             throw CairoException.instance(-1).put("partition by unit can't be NONE for parallel import");
         }
-        TableWriter writer = null;
+
         if (partitionBy < 0) {
             partitionBy = PartitionBy.NONE;
         }
@@ -910,6 +909,7 @@ public class FileIndexer implements Closeable, Mutable {
             }
         }
 
+        TableWriter writer = null;
         try {
             switch (cairoEngine.getStatus(cairoSecurityContext, path, tableName)) {
                 case TableUtils.TABLE_DOES_NOT_EXIST:
@@ -925,7 +925,7 @@ public class FileIndexer implements Closeable, Mutable {
 
                     validate(names, types, null, NO_INDEX);
                     targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
-                    createTable(ff, dirMode, configuration.getRoot(), tableName, targetTableStructure, (int) cairoEngine.getNextTableId());
+                    createTable(ff, dirMode, configuration.getRoot(), tableName, targetTableStructure, (int) cairoEngine.getNextTableId(), configuration);
                     writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
                     partitionBy = writer.getPartitionBy();
                     break;
@@ -951,6 +951,8 @@ public class FileIndexer implements Closeable, Mutable {
                 default:
                     throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
             }
+
+            targetTableStructure.setIgnoreColumnIndexedFlag(true);
         } finally {
             if (writer != null) {
                 writer.close();
@@ -968,7 +970,8 @@ public class FileIndexer implements Closeable, Mutable {
 
     void validate(ObjList<CharSequence> names,
                   ObjList<TypeAdapter> types,
-                  CharSequence designatedTimestampColumnName, int designatedTimestampIndex) throws TextException {
+                  CharSequence designatedTimestampColumnName,
+                  int designatedTimestampIndex) throws TextException {
         if (timestampColumn == null && designatedTimestampColumnName == null) {
             timestampIndex = NO_INDEX;
         } else if (timestampColumn != null) {
@@ -1084,6 +1087,7 @@ public class FileIndexer implements Closeable, Mutable {
         ) {
             this.tableName = tableName;
             this.columnNames = names;
+            this.ignoreColumnIndexedFlag = false;
 
             this.columnBits.clear();
             for (int i = 0, size = types.size(); i < size; i++) {

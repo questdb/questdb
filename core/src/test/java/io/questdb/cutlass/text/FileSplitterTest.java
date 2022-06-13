@@ -1306,7 +1306,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.setMinChunkSize(10);
                 indexer.of("t", "test-quotes-empty.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                indexer.parseStructure();
                 indexer.process();
             } catch (TextException e) {
                 MatcherAssert.assertThat(e.getMessage(), containsString("Ignoring file because it's empty"));
@@ -1322,7 +1321,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.setMinChunkSize(10);
                 indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                indexer.parseStructure();
                 indexer.process();
             }
             assertQuery("line\tts\td\tdescription\n" +
@@ -1362,7 +1360,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
                     ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("alltypes", "test-alltypes-with-gaps.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
             }
 
@@ -1402,7 +1399,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
                     ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("alltypes", "test-alltypes-with-gaps.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
             }
 
@@ -1431,7 +1427,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.setMinChunkSize(10);
                 indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                indexer.parseStructure();
                 indexer.process();
             }
             assertQuery("line\tts\td\tdescription\n" +
@@ -1450,6 +1445,72 @@ public class FileSplitterTest extends AbstractGriffinTest {
         });
     }
 
+    @Ignore
+    @Test
+    public void testImportCsvWithMissingSymbolColumn() {
+        Assert.fail("implement");
+    }
+
+    @Ignore
+    @Test
+    public void testImportCsvWithMultipleReorderedSymbolColumns() {
+        Assert.fail("implement");
+    }
+
+    @Ignore
+    @Test
+    public void testImportCsvWithNoValidRows() {
+        Assert.fail("implement");
+    }
+
+    @Ignore
+    @Test
+    public void testImportCsvWithRowLimit() {
+        Assert.fail("implement");
+    }
+
+    @Ignore
+    @Test
+    public void testImportCsvWithTsThatDontMatchGivenFormat() {
+        Assert.fail("implement");
+    }
+
+    //atomicity  handling , skip row or  file or chunk  or error ?
+    @Ignore
+    @Test
+    public void testImportCsvWithSkipAllAtomicity() {
+        Assert.fail("implement");
+    }
+
+    @Ignore
+    @Test
+    public void testImportCsvWithSkipRowAtomicity() {
+        Assert.fail("implement");
+    }
+
+    //no records get imported from chunk because skip_all or skip_row for all rows 
+    //no records get imported at all from all chunks
+    @Ignore
+    @Test
+    public void testImportCsvWithSkipColumnAtomicity() {
+        Assert.fail("implement");
+    }
+
+    @Test
+    public void testImportCsvFromFileWithBadColumnNamesInHeaderIntoNewTableFiltersOutBadCharacters() throws Exception {
+        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(10);
+                indexer.of("t", "test-badheadernames.csv", PartitionBy.MONTH, (byte) ',', "Ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+            }
+            assertQuery("Line\tTs\tD\tDescRipTION\n" +
+                            "line1\t1970-01-02T00:00:00.000000Z\t0.490933692472\tdesc 1\n" +
+                            "line2\t1970-01-03T00:00:00.000000Z\t0.105484410855\tdesc 2\n",
+                    "select * from t", "ts", true, false, true);
+        });
+    }
+
     @Test
     public void testImportCsvIntoNewTable() throws Exception {
         executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
@@ -1457,7 +1518,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.setMinChunkSize(10);
                 indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                indexer.parseStructure();
                 indexer.process();
             }
             assertQuery("line\tts\td\tdescription\n" +
@@ -1493,7 +1553,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
             Assert.assertTrue(fd > -1);
 
             try {
-                indexer.parseStructure();
+                indexer.parseStructure(fd);
                 indexer.findChunkBoundaries(fd);
                 indexer.indexChunks();
 
@@ -1586,7 +1646,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
 
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("tableName", fileName, partitionBy, (byte) ',', tsCol, tsFormat, true);
-                indexer.parseStructure();
                 indexer.process();
                 Assert.fail("exception expected");
             } catch (Exception e) {
@@ -1601,7 +1660,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             compiler.compile("create table someTable ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by DAY;", sqlExecutionContext);
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("someTable", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -1616,7 +1674,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             compiler.compile("create table someTable ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("someTable", "test-quotes-big.csv", -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -1631,7 +1688,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             compiler.compile("create table someTable ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("someTable", "test-quotes-big.csv", -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -1645,7 +1701,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("tableName", "test-quotes-big.csv", PartitionBy.NONE, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -1659,7 +1714,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("tableName", "test-quotes-big.csv", -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -1673,7 +1727,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
 
                 assertQuery("count\n1000\n",
@@ -1689,7 +1742,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
 
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", null, true);
-                indexer.parseStructure();
                 indexer.process();
             }
 
@@ -1706,7 +1758,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
 
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("t", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true);
-                indexer.parseStructure();
                 indexer.process();
                 Assert.fail();
             } catch (CairoException e) {
@@ -1724,7 +1775,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
             compiler.compile("create table t ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("t", "test-noheader.csv", PartitionBy.DAY, (byte) ',', null, null, false);
-                indexer.parseStructure();
+                indexer.process();
                 Assert.fail();
             } catch (TextException e) {
                 Assert.assertEquals("column no=0, name='' is not a timestamp", e.getMessage());
@@ -1737,7 +1788,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("t", "test-noheader.csv", PartitionBy.DAY, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
-                indexer.parseStructure();
+                indexer.process();
                 Assert.fail();
             } catch (TextException e) {
                 Assert.assertEquals("timestamp column 'ts' not found in file header", e.getMessage());
@@ -1751,7 +1802,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("t", "test-noheader.csv", PartitionBy.DAY, (byte) ',', "f1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
-                indexer.parseStructure();
                 indexer.process();
             }
             assertQuery("count\n3\n", "select count(*) from t", null, false, false, true);
@@ -1763,7 +1813,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("t", "test-quotes-oneline.csv", PartitionBy.DAY, (byte) ',', "ts2", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", false);
-                indexer.parseStructure();
+                indexer.process();
                 Assert.fail();
             } catch (TextException e) {
                 Assert.assertEquals("timestamp column 'ts2' not found in file header", e.getMessage());
@@ -1777,7 +1827,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             compiler.compile("create table t ( s string, ts timestamp, d double, s2 string ) timestamp(ts) partition by day;", sqlExecutionContext);
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("t", "test-noheader.csv", PartitionBy.DAY, (byte) ',', null, null, false);
-                indexer.parseStructure();
                 indexer.process();
             }
             assertQuery("count\n3\n", "select count(*) from t", null, false, false, true);
@@ -1790,7 +1839,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             compiler.compile("create table t ( line string, ts timestamp, d double, description string, i int, l long ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
             }
 
@@ -1805,7 +1853,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             compiler.compile("create table someTable ( line string, ts timestamp, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("someTable", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
                 Assert.fail("exception expected");
             } catch (Exception e) {
@@ -1819,7 +1866,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("alltypes", "test-alltypes.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
             }
 
@@ -1875,7 +1921,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
                     ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("alltypes", "test-alltypes.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
             }
 
@@ -1902,7 +1947,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.setMinChunkSize(10);
                 indexer.of("t", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                indexer.parseStructure();
                 indexer.process();
 
                 assertQuery("count\n1000\n", "select count(*) from t",
@@ -1922,7 +1966,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             inputRoot = new File("E:/dev/tmp").getAbsolutePath();
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("t", "trips300mil.csv", PartitionBy.MONTH, (byte) ',', "pickup_datetime", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
             }
 
@@ -1941,7 +1984,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.setMinChunkSize(10);
                 indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                indexer.parseStructure();
                 indexer.process();
             }
             assertQuery("line\tts\td\tdescription\n" +
@@ -1968,7 +2010,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
 
             try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
                 indexer.of("someTable", "unordered_trips_300mil.csv", PartitionBy.MONTH, (byte) ',', "pickup_datetime", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
-                indexer.parseStructure();
                 indexer.process();
             }
 

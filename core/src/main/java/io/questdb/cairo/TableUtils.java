@@ -556,6 +556,7 @@ public final class TableUtils {
                 case '\u000B': // New line allowed for compatibility, there are tests to make sure it works
                 case '\u000c':
                 case '\r':
+                case '\n':
                 case '\u000e':
                 case '\u000f':
                 case '\u007f':

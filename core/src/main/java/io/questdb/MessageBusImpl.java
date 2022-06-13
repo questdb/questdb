@@ -176,7 +176,7 @@ public class MessageBusImpl implements MessageBus {
             pageFrameCollectFanOut[i] = collectFanOut;
         }
 
-        this.textImportQueue = new RingQueue<>(TextImportTask::new, configuration.getLatestByQueueCapacity()); //todo: add dedicated cfg option
+        this.textImportQueue = new RingQueue<>(TextImportTask::new, configuration.getParallelImportQueueCapacity());
         this.textImportPubSeq = new MPSequence(textImportQueue.getCycle());
         this.textImportSubSeq = new MCSequence(textImportQueue.getCycle());
         this.textImportFanOut = new FanOut();
