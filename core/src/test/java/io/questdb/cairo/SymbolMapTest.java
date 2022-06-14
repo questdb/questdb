@@ -242,27 +242,25 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testForceDisableReaderCache() throws Exception {
+    public void testReaderCache() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getRoot())) {
                 create(path, "x", 16, true);
 
-                int key;
+                int[] keys = new int[16];
                 try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR)) {
-                    key = writer.put("foobar");
+                    for (int i = 0; i < keys.length; i++) {
+                        keys[i] = writer.put("key" + i);
+                    }
                 }
 
-                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 1)) {
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, keys.length)) {
                     Assert.assertTrue(reader.isCached());
-                    TestUtils.assertEquals("foobar", reader.valueOf(key));
-                    Assert.assertEquals(1, reader.getCacheSize());
-                }
-
-                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl()) {
-                    reader.of(configuration, path, "x", COLUMN_NAME_TXN_NONE, 1, true);
-                    Assert.assertFalse(reader.isCached());
-                    TestUtils.assertEquals("foobar", reader.valueOf(key));
                     Assert.assertEquals(0, reader.getCacheSize());
+                    for (int i = 0; i < keys.length; i++) {
+                        TestUtils.assertEquals("key" + i, reader.valueOf(keys[i]));
+                        Assert.assertEquals(i + 1, reader.getCacheSize());
+                    }
                 }
             }
         });

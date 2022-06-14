@@ -109,8 +109,7 @@ class SymbolCache implements Closeable, SymbolLookup {
         this.txReader = txReader;
         int symCount = safeReadUncommittedSymbolCount(symbolIndexInTxFile, false);
         path.trimTo(plen);
-        // Make sure to forcefully disable symbolMapReader's own cache.
-        symbolMapReader.of(configuration, path, columnName, columnNameTxn, symCount, true);
+        symbolMapReader.of(configuration, path, columnName, columnNameTxn, symCount);
     }
 
     private int safeReadUncommittedSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {

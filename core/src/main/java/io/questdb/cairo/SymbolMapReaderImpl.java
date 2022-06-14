@@ -116,10 +116,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, int symbolCount) {
-        of(configuration, path, columnName, columnNameTxn, symbolCount, false);
-    }
-
-    public void of(CairoConfiguration configuration, Path path, CharSequence columnName, long columnNameTxn, int symbolCount, boolean forceDisableCache) {
         FilesFacade ff = configuration.getFilesFacade();
         this.configuration = configuration;
         this.path.of(path);
@@ -152,7 +148,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             this.offsetMem.of(ff, path, offsetMemSize, offsetMemSize, MemoryTag.MMAP_INDEX_READER);
             this.symbolCapacity = offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY);
             assert this.symbolCapacity > 0;
-            this.cached = !forceDisableCache && offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
+            this.cached = offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
             this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
 
             // index reader is used to identify attempts to store duplicate symbol value
