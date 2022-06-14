@@ -1,3 +1,27 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.cutlass.text;
 
 import io.questdb.Metrics;
@@ -29,9 +53,6 @@ import java.util.*;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.equalTo;
 
-/**
- *
- */
 public class FileSplitterTest extends AbstractGriffinTest {
 
     private static final Rnd rnd = new Rnd();
@@ -1550,11 +1571,11 @@ public class FileSplitterTest extends AbstractGriffinTest {
             indexer.of("tableName", fileName, partitionBy, (byte) ',', "ts", format, false);
 
             long fd = ff.openRO(path);
+            long length = ff.length(fd);
             Assert.assertTrue(fd > -1);
 
-            try {
-                indexer.parseStructure(fd);
-                indexer.findChunkBoundaries(fd);
+            try (TableWriter writer = indexer.parseStructure(fd)) {
+                indexer.findChunkBoundaries(length);
                 indexer.indexChunks();
 
                 Assert.assertEquals("line length", expectedLineLength, indexer.getMaxLineLength());
@@ -2042,10 +2063,11 @@ public class FileSplitterTest extends AbstractGriffinTest {
             indexer.of("table", fileName, PartitionBy.DAY, (byte) ',', "unknown", null, false);
 
             long fd = ff.openRO(path);
+            long length = ff.length(fd);
             Assert.assertTrue(fd > -1);
 
             try {
-                LongList actualBoundaries = indexer.findChunkBoundaries(fd);
+                LongList actualBoundaries = indexer.findChunkBoundaries(length);
                 Assert.assertEquals(expectedBoundaries, actualBoundaries);
             } finally {
                 ff.close(fd);
@@ -2152,8 +2174,8 @@ public class FileSplitterTest extends AbstractGriffinTest {
                     }
                     inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
                     runnable.run(engine, compiler, sqlExecutionContext);
-                    Assert.assertEquals(0, engine.getBusyWriterCount());
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                    Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
+                    Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
                 } finally {
                     if (pool != null) {
                         pool.halt();

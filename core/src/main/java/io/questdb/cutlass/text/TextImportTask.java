@@ -128,9 +128,9 @@ public class TextImportTask {
         this.buildSymbolColumnIndexStage.of(cairoEngine, tableStructure, root, index, metadata);
     }
 
-    public void ofCountQuotesStage(final FilesFacade ff, long fd, long chunkStart, long chunkEnd, int bufferLength) {
+    public void ofCountQuotesStage(final FilesFacade ff, Path path, long chunkStart, long chunkEnd, int bufferLength) {
         this.phase = PHASE_BOUNDARY_CHECK;
-        this.countQuotesStage.of(ff, fd, chunkStart, chunkEnd, bufferLength);
+        this.countQuotesStage.of(ff, path, chunkStart, chunkEnd, bufferLength);
     }
 
     public void ofImportPartitionDataStage(CairoEngine cairoEngine,
@@ -217,7 +217,7 @@ public class TextImportTask {
 
         private long chunkStart;
         private long chunkEnd;
-        private long fd;
+        private Path path;
         private FilesFacade ff;
         private int bufferLength;
 
@@ -241,20 +241,20 @@ public class TextImportTask {
             return quoteCount;
         }
 
-        public void of(final FilesFacade ff, long fd, long chunkStart, long chunkEnd, int bufferLength) {
+        public void of(final FilesFacade ff, Path path, long chunkStart, long chunkEnd, int bufferLength) {
             assert ff != null;
-            assert fd > 2;
+            assert path != null;
             assert chunkStart >= 0 && chunkEnd > chunkStart;
             assert bufferLength > 0;
 
             this.ff = ff;
-            this.fd = fd;
+            this.path = path;
             this.chunkStart = chunkStart;
             this.chunkEnd = chunkEnd;
             this.bufferLength = bufferLength;
         }
 
-        public void run() {
+        public void run() throws TextException {
 
             long offset = chunkStart;
 
@@ -267,37 +267,47 @@ public class TextImportTask {
             long ptr;
             long hi;
 
-            long fileBufferPtr = Unsafe.malloc(bufferLength, MemoryTag.NATIVE_DEFAULT);
-            do {
-                long leftToRead = Math.min(chunkEnd - offset, bufferLength);
-                read = (int) ff.read(fd, fileBufferPtr, leftToRead, offset);
-                if (read < 1) {
-                    break;
-                }
-                hi = fileBufferPtr + read;
-                ptr = fileBufferPtr;
+            long fd = ff.openRO(path);
+            if (fd < 0) {
+                throw TextException.$("Can't open file path='").put(path).put("', errno=").put(ff.errno());
+            }
+            long fileBufferPtr = -1;
+            try {
+                fileBufferPtr = Unsafe.malloc(bufferLength, MemoryTag.NATIVE_DEFAULT);
 
-                while (ptr < hi) {
-                    final byte c = Unsafe.getUnsafe().getByte(ptr++);
-                    if (c == '"') {
-                        quotes++;
-                    } else if (c == '\n') {
-                        nlCount[(int) (quotes & 1)]++;
-                        if (nlFirst[(int) (quotes & 1)] == -1) {
-                            nlFirst[(int) (quotes & 1)] = offset + (ptr - fileBufferPtr);
+
+                do {
+                    long leftToRead = Math.min(chunkEnd - offset, bufferLength);
+                    read = (int) ff.read(fd, fileBufferPtr, leftToRead, offset);
+                    if (read < 1) {
+                        break;
+                    }
+                    hi = fileBufferPtr + read;
+                    ptr = fileBufferPtr;
+
+                    while (ptr < hi) {
+                        final byte c = Unsafe.getUnsafe().getByte(ptr++);
+                        if (c == '"') {
+                            quotes++;
+                        } else if (c == '\n') {
+                            nlCount[(int) (quotes & 1)]++;
+                            if (nlFirst[(int) (quotes & 1)] == -1) {
+                                nlFirst[(int) (quotes & 1)] = offset + (ptr - fileBufferPtr);
+                            }
                         }
                     }
+
+                    offset += read;
+                } while (offset < chunkEnd);
+
+                if (read < 0 || offset < chunkEnd) {
+                    throw CairoException.instance(ff.errno()).put("could not read import file [path='").put(path).put("',read bytes=").put(read).put(",offset=").put(offset).put("]");
                 }
-
-                offset += read;
-            } while (offset < chunkEnd);
-
-            if (read < 0 || offset < chunkEnd) {
-                throw CairoException.instance(ff.errno()).put("could not read import file");
-            }
-
-            if (fileBufferPtr > 0) {
-                Unsafe.free(fileBufferPtr, bufferLength, MemoryTag.NATIVE_DEFAULT);
+            } finally {
+                ff.close(fd);
+                if (fileBufferPtr > 0) {
+                    Unsafe.free(fileBufferPtr, bufferLength, MemoryTag.NATIVE_DEFAULT);
+                }
             }
 
             this.quoteCount = quotes;
