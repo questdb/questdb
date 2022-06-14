@@ -147,12 +147,17 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     protected void closeContext() {
         if (null != scheduler) {
-            workerPool.halt();
-            Assert.assertFalse(context.invalid());
-            Assert.assertEquals(FD, context.getFd());
-            context.close();
-            Assert.assertTrue(context.invalid());
-            Assert.assertEquals(-1, context.getFd());
+            if (workerPool != null) {
+                workerPool.halt();
+            }
+
+            if (context != null) {
+                Assert.assertFalse(context.invalid());
+                Assert.assertEquals(FD, context.getFd());
+                context.close();
+                Assert.assertTrue(context.invalid());
+                Assert.assertEquals(-1, context.getFd());
+            }
             context = null;
             scheduler.close();
             scheduler = null;
@@ -264,8 +269,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     protected void runInAuthContext(Runnable r) throws Exception {
         assertMemoryLeak(() -> {
-            setupContext(new AuthDb(lineTcpConfiguration), null);
             try {
+                setupContext(new AuthDb(lineTcpConfiguration), null);
                 r.run();
             } finally {
                 closeContext();
@@ -316,6 +321,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 return super.scheduleEvent(netIoJob, parser, floatingDirectCharSink);
             }
         };
+        workerPool.assignCleaner(Path.CLEANER);
+        workerPool.start(LOG);
         if (authDb == null) {
             context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
         } else {
@@ -358,8 +365,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         });
         Assert.assertFalse(context.invalid());
         Assert.assertEquals(FD, context.getFd());
-        workerPool.assignCleaner(Path.CLEANER);
-        workerPool.start(LOG);
     }
 
     protected void waitForIOCompletion() {

@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
@@ -36,16 +37,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
-import io.questdb.std.Os;
-import io.questdb.std.QuietClosable;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -61,10 +56,17 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     private SqlCompiler[] compilers;
     private SqlExecutionContext[] executionContexts;
 
+    @After
+    public void closeCompilers() {
+        for (int i = 0; i < compilers.length; i++) {
+            Misc.free(compilers[i]);
+        }
+    }
+
     @BeforeClass
     public static void setUpStatic() {
         writerCommandQueueCapacity = 1024;
-        AbstractGriffinTest.setUpStatic();
+        AbstractCairoTest.setUpStatic();
     }
 
     @Override

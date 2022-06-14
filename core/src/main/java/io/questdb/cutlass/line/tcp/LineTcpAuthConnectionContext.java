@@ -76,6 +76,7 @@ class LineTcpAuthConnectionContext extends LineTcpConnectionContext {
     LineTcpAuthConnectionContext(LineTcpReceiverConfiguration configuration, AuthDb authDb, LineTcpMeasurementScheduler scheduler, Metrics metrics) {
         super(configuration, scheduler, metrics);
         if (configuration.getNetMsgBufferSize() < MIN_BUF_SIZE) {
+            super.close(); // otherwise there is no way to release resources allocated by the superclass <init>
             throw CairoException.instance(0).put("Minimum buffer length is ").put(MIN_BUF_SIZE);
         }
         this.authDb = authDb;
