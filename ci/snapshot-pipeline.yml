@@ -8,8 +8,6 @@ pr: none
 variables:
   MVN_VERSION: "3.6.3"
   MVN: "apache-maven-$(MVN_VERSION)"
-  NODE_VERSION: "16"
-  NVM_VERSION: "0.39.0"
 
 stages:
   - stage: BuildSnapshotMaster
@@ -35,10 +33,6 @@ stages:
               tar xf "$MVN"-bin.tar.gz
 
               cd "$HOME"
-              curl -q https://raw.githubusercontent.com/nvm-sh/nvm/v"$NVM_VERSION"/install.sh | bash &>/dev/null
-              export NVM_DIR="$HOME/.nvm"
-              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-              nvm install --no-progress "$NODE_VERSION"
 
               cd "$(Build.SourcesDirectory)"/core
               /tmp/"$MVN"/bin/mvn clean package --batch-mode --quiet -DskipTests -P build-web-console,build-binaries
