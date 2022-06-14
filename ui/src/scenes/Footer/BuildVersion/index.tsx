@@ -23,13 +23,12 @@
  ******************************************************************************/
 
 import { QuestContext } from "providers"
-import React, { useCallback, useContext, useEffect, useState } from "react"
+import React, { useContext, useEffect, useState } from "react"
 import styled from "styled-components"
 import * as QuestDB from "utils/questdb"
-import { ClipboardCopy } from "@styled-icons/heroicons-outline/ClipboardCopy"
 import { SecondaryButton } from "components"
-import { formatVersion } from "./services"
-import { copyToClipboard } from "../../../utils"
+import { formatCommitHash, formatVersion } from "./services"
+import { ExternalLink } from "@styled-icons/remix-line"
 
 const Wrapper = styled.div`
   display: flex;
@@ -41,36 +40,48 @@ const Wrapper = styled.div`
     margin-right: 1rem;
   }
 `
-const CopyButton = styled(SecondaryButton)`
+const ReleaseNotesButton = styled(SecondaryButton)`
   & > :not(:last-child) {
-    margin-right: 1rem;
+    margin-right: 0.5rem;
   }
 `
 
 const BuildVersion = () => {
   const { quest } = useContext(QuestContext)
   const [buildVersion, setBuildVersion] = useState("")
+  const [commitHash, setCommitHash] = useState("")
 
   useEffect(() => {
     void quest.queryRaw("select build", { limit: "0,1000" }).then((result) => {
       if (result.type === QuestDB.Type.DQL) {
         if (result.count === 1) {
           setBuildVersion(formatVersion(result.dataset[0][0]))
+          setCommitHash(formatCommitHash(result.dataset[0][0]))
         }
       }
     })
-  })
+  }, [])
 
-  const handleCopy = useCallback(() => {
-    void copyToClipboard(buildVersion)
-  }, [buildVersion])
+  if (!buildVersion.length && !commitHash.length) return null
 
   return (
     <Wrapper>
-      <CopyButton onClick={handleCopy} title="Copy Build Version">
-        <span>{buildVersion}</span>
-        <ClipboardCopy size="18px" />
-      </CopyButton>
+      <a
+        href={`https://github.com/questdb/questdb${
+          buildVersion
+            ? `/releases/tag/${buildVersion}`
+            : `/commit/${commitHash}`
+        }`}
+        rel="noopener noreferrer"
+        target="_blank"
+      >
+        <ReleaseNotesButton
+          title={`Show ${buildVersion ? "release notes" : "commit details"}`}
+        >
+          <span>QuestDB {buildVersion || "Dev"}</span>
+          <ExternalLink size="16px" />
+        </ReleaseNotesButton>
+      </a>
     </Wrapper>
   )
 }
