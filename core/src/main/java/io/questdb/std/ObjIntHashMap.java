@@ -65,8 +65,10 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
 
     @Override
     public final void clear() {
-        free = capacity;
-        Arrays.fill(keys, noEntryValue);
+        if (free != capacity) {
+            free = capacity;
+            Arrays.fill(keys, noEntryValue);
+        }
     }
 
     public void reset() {
