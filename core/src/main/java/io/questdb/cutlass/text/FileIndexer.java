@@ -240,6 +240,7 @@ public class FileIndexer implements Closeable, Mutable {
                 if (seq > -1) {
                     final TextImportTask task = queue.get(seq);
                     task.setIndex(i);
+                    //
                     task.ofImportPartitionDataStage(cairoEngine, targetTableStructure, textMetadataDetector.getColumnTypes(), Atomicity.SKIP_ALL, columnDelimiter, importRoot, inputFileName, i, lo, hi, partitionNames, maxLineLength);
                     pubSeq.done(seq);
                     queuedCount++;
@@ -415,7 +416,7 @@ public class FileIndexer implements Closeable, Mutable {
         int len = configuration.getSqlCopyBufferSize();
         long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
 
-        try (TextLexer lexer = new TextLexer(configuration.getTextConfiguration(), typeManager)) {
+        try (TextLexer lexer = new TextLexer(configuration.getTextConfiguration())) {
             long n = ff.read(fd, buf, len, 0);
             if (n > 0) {
                 if (columnDelimiter < 0) {
@@ -488,7 +489,7 @@ public class FileIndexer implements Closeable, Mutable {
             throw TextException.$("Can't open input file [path='").put(inputFilePath).put("', errno=").put(ff.errno()).put(']');
         }
         if (this.queue.getCycle() <= 0) {
-            throw SqlException.$(0, "Unable to process, the processing queue is misconfigured");
+            throw TextException.$("Unable to process, the processing queue is misconfigured");
         }
         long length = ff.length(fd);
         if (length < 1) {

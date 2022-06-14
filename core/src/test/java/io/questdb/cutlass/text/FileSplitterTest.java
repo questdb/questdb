@@ -2120,7 +2120,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public int getLatestByQueueCapacity() {
+                    public int getParallelImportQueueCapacity() {
                         return queueCapacity;
                     }
 
@@ -2145,7 +2145,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public int getLatestByQueueCapacity() {
+                    public int getParallelImportQueueCapacity() {
                         return queueCapacity;
                     }
                 };

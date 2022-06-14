@@ -30,7 +30,6 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeAdapter;
-import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.griffin.engine.functions.columns.ColumnUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -402,6 +401,8 @@ public class TextImportTask {
         private int maxLineLength;
 
         private TableWriter tableWriterRef;
+        private int timestampIndex;
+        private TimestampAdapter timestampAdapter;
 
         public void of(CairoEngine cairoEngine,
                        TableStructure targetTableStructure,
@@ -428,6 +429,8 @@ public class TextImportTask {
             this.hi = hi;
             this.partitionNames = partitionNames;
             this.maxLineLength = maxLineLength;
+            this.timestampIndex = targetTableStructure.getTimestampIndex();
+            this.timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
         }
 
         public void run() {
@@ -449,25 +452,21 @@ public class TextImportTask {
                 tableWriterRef = writer;
 
                 final TextConfiguration textConfiguration = configuration.getTextConfiguration();
-                try (DirectCharSink utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize())) {
-                    TypeManager typeManager = new TypeManager(textConfiguration, utf8Sink);
-                    final ObjList<TypeAdapter> types = typeManager.adjust(this.types);
-                    try (TextLexer lexer = new TextLexer(textConfiguration, typeManager)) {
-                        lexer.setTableName(tableNameSink);
-                        lexer.of(columnDelimiter);
-                        lexer.setSkipLinesWithExtraValues(false);
-                        try {
-                            lexer.restart(false);
-                            for (int i = (int) lo; i < hi; i++) {
-                                final CharSequence name = partitionNames.get(i);
-                                try (Path path = new Path().of(importRoot).concat(name)) {
-                                    mergePartitionIndexAndImportData(ff, path, lexer, types, maxLineLength);
-                                }
+                try (TextLexer lexer = new TextLexer(textConfiguration)) {
+                    lexer.setTableName(tableNameSink);
+                    lexer.of(columnDelimiter);
+                    lexer.setSkipLinesWithExtraValues(false);
+                    try {
+                        lexer.restart(false);
+                        for (int i = (int) lo; i < hi; i++) {
+                            final CharSequence name = partitionNames.get(i);
+                            try (Path path = new Path().of(importRoot).concat(name)) {
+                                mergePartitionIndexAndImportData(ff, path, lexer, types, maxLineLength);
                             }
-                        } finally {
-                            lexer.parseLast();
-                            writer.commit(CommitMode.SYNC);
                         }
+                    } finally {
+                        lexer.parseLast();
+                        writer.commit(CommitMode.SYNC);
                     }
                 }
             }
@@ -482,23 +481,22 @@ public class TextImportTask {
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
-            int timestampIndex = targetTableStructure.getTimestampIndex();
-            TimestampAdapter timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
-
             long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
                 long fd;
                 try (Path path = new Path().of(configuration.getInputRoot()).concat(inputFileName)) {
                     fd = ff.openRO(path.$());
                 }
-                try {
+                int utf8SinkSize = cairoEngine.getConfiguration().getTextConfiguration().getUtf8SinkSize();
+                try(DirectCharSink utf8Sink = new DirectCharSink(utf8SinkSize)) {
                     final long count = size / (2 * Long.BYTES);
                     for (long i = 0; i < count; i++) {
                         final long offset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
                         long n = ff.read(fd, buf, len, offset);
                         if (n > 0) {
                             lexer.parse(buf, buf + n, 0,
-                                    (long line, final ObjList<DirectByteCharSequence> values, int valuesLength) -> this.onFieldsPartitioned(types, timestampIndex, timestampAdapter, line, values, valuesLength));
+                                    (long line, ObjList<DirectByteCharSequence> fields, int hi) ->
+                                            this.onFieldsPartitioned(line, fields, hi, utf8Sink));
                         }
                     }
                 } finally {
@@ -545,9 +543,19 @@ public class TextImportTask {
             }
         }
 
-        private boolean onField(final ObjList<TypeAdapter> types, long line, final DirectByteCharSequence dbcs, TableWriter.Row w, int i) {
+        private boolean onField(long line, final DirectByteCharSequence dbcs, TableWriter.Row w, int i, DirectCharSink utf8Sink) {
+            TypeAdapter type = this.types.getQuick(i);
             try {
-                types.getQuick(i).write(w, i, dbcs);
+                switch (ColumnType.tagOf(type.getType())) {
+                    case ColumnType.STRING:
+                    case ColumnType.SYMBOL:
+                    case ColumnType.TIMESTAMP:
+                    case ColumnType.DATE:
+                        type.write(w, i, dbcs, utf8Sink);
+                        break;
+                    default:
+                        type.write(w, i, dbcs);
+                }
             } catch (Exception ignore) {
                 logError(line, i, dbcs);
                 switch (atomicity) {
@@ -565,7 +573,7 @@ public class TextImportTask {
             return false;
         }
 
-        private void onFieldsPartitioned(final ObjList<TypeAdapter> types, int timestampIndex, TimestampAdapter timestampAdapter, long line, final ObjList<DirectByteCharSequence> values, int valuesLength) {
+        private void onFieldsPartitioned(long line, final ObjList<DirectByteCharSequence> values, int valuesLength, DirectCharSink utf8Sink) {
             assert tableWriterRef != null;
             DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
             try {
@@ -575,7 +583,7 @@ public class TextImportTask {
                     if (i == timestampIndex || dbcs.length() == 0) {
                         continue;
                     }
-                    if (onField(types, line, dbcs, w, i)) return;
+                    if (onField(line, dbcs, w, i, utf8Sink)) return;
                 }
                 w.append();
             } catch (Exception e) {

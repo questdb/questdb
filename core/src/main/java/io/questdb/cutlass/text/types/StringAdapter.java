@@ -51,8 +51,13 @@ public class StringAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        utf8Sink.clear();
-        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
-        row.putStr(column, utf8Sink);
+        write(row, column, value, utf8Sink);
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink sink) throws Exception {
+        sink.clear();
+        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), sink);
+        row.putStr(column, sink);
     }
 }
