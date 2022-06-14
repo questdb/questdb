@@ -72,20 +72,18 @@ questdb start // 啓動 questdb
 questdb stop  // 停止 questdb
 ```
 
-[QuestDB 下載頁面](https://questdb.io/get-questdb/) 提供二進制文件的直接下載，並提供其他安裝和部署方法的詳細信息。
+[QuestDB 下載頁面](https://questdb.io/get-questdb/) 提供二進制文件的直接下載，並提供其他安裝和部署方法的詳細資訊。
 
 ### 連接到 QuestDB
 
 你可以使用以下接口與 QuestDB 進行交互。
 
-- [Web 控制台](https://questdb.io/docs/develop/web-console/) 監聽在端口 `9000`
-- [REST API](https://questdb.io/docs/reference/api/rest/) 監聽在端口 `9000`
-- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) 監聽在端口
-  `8812`， 支持 wire 協議，
-- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/) 監聽在端口 `9009`,
-  支持 line 協議的高吞吐量數據獲取
+- [Web 控制台](https://questdb.io/docs/develop/web-console/)     在端口 `9000`
+- [REST API](https://questdb.io/docs/reference/api/rest/)       在端口 `9000`
+- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) 在端口 `8812` (支持 wire 協議)
+- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/)   在端口 `9009` (支持 line 協議的高吞吐量數據獲取)
 
-## QuestDB 與其他開源 TSDB 的對比情況
+## QuestDB 與其他開源 TSDB 的比較
 
 下面是 [時間序列基準測試套件](https://github.com/timescale/tsbs) 運行 `cpu-only`
 用例的測試結果，基於 6 個 worker 的 AMD Ryzen 3970X 上測試對比得到：
@@ -99,8 +97,7 @@ questdb stop  // 停止 questdb
   </a>
 </div>
 
-下表顯示了在 `c5.metal` 實例上使用 96 個線程中的 16 個線程運行 10 億條記錄的查詢
-執行時間。
+下表顯示了在 `c5.metal` 實例上使用 96 個線程中的 16 個線程運行 10 億條記錄的查詢執行時間。
 
 | 查詢                                                       | 運行時間    |
 | --------------------------------------------------------- | ---------- |
@@ -123,8 +120,7 @@ questdb stop  // 停止 questdb
 
 - [Community Slack:](https://slack.questdb.io) 是一個進行技術討論和認識其他用戶
   的好地方。👋
-- [GitHub issues:](https://github.com/questdb/questdb/issues) 報告 QuestDB 缺陷
-  或是反饋問題。
+- [GitHub issues:](https://github.com/questdb/questdb/issues) 回報問題或建議。
 - [GitHub discussions:](https://github.com/questdb/questdb/discussions) 提案新的
   特性以及查看已經構建的功能。
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) 尋找常見
@@ -140,16 +136,13 @@ questdb stop  // 停止 questdb
 
 ## 貢獻
 
-我們總是樂於接受對項目的貢獻，無論是源代碼、文檔、錯誤報告、功能請求還是反饋。如
-果要開始貢獻：
+我們總是樂於收到原始碼、文檔、錯誤報告、功能請求等個項目的貢獻和建議。如果要開始貢獻：
 
 - 請看一下 GitHub 上標有
   "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
   的問題。
-- 閱
-  讀[貢獻指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
-- 有關構建 QuestDB 的詳細信息，請參
-  見[構建說明](https://github.com/questdb/questdb/blob/master/core/README.md)。
+- 閱讀[貢獻指南](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)。
+- 有關構建 QuestDB 的詳細信息，請參見[構建說明](https://github.com/questdb/questdb/blob/master/core/README.md)。
 - [創建 QuestDB 的一個分叉](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)，
   並提交一個 pull request，說明你的修改建議。
 
