@@ -24,8 +24,16 @@
 
 const buildVersionRegex = /Build Information: (QuestDB [0-9A-Za-z.]*),/
 
+const commitHashRegex = /Commit Hash ([0-9A-Za-z]*)/
+
 export const formatVersion = (value: string | number | boolean) => {
   const matches = buildVersionRegex.exec(value.toString())
+
+  return matches ? matches[1].replace("QuestDB ", "") : ""
+}
+
+export const formatCommitHash = (value: string | number | boolean) => {
+  const matches = commitHashRegex.exec(value.toString())
 
   return matches ? matches[1] : ""
 }
