@@ -67,6 +67,8 @@ public class WalWriter implements Closeable {
     private int columnCount;
     private long rowCount = -1;
     private long segmentCount = -1;
+    private WalWriterRollStrategy rollStrategy = new WalWriterRollStrategy() {
+    };
 
     public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, TableReader reader) {
         this(configuration, tableName, walName, reader, configuration.getRoot());
@@ -105,6 +107,10 @@ public class WalWriter implements Closeable {
             doClose(false);
             throw e;
         }
+    }
+
+    public void setRollStrategy(WalWriterRollStrategy rollStrategy) {
+        this.rollStrategy = rollStrategy;
     }
 
     private static int getPrimaryColumnIndex(int index) {
@@ -582,13 +588,42 @@ public class WalWriter implements Closeable {
         rowCount++;
     }
 
-    public void rollToNextSegment() {
+    public long rollSegment() {
         try {
             closeCurrentSegment();
+            final long rolledRowCount = rowCount;
             openNewSegment(metadataCache);
+            return rolledRowCount;
         } catch (Throwable e) {
             throw new CairoError(e);
         }
+    }
+
+    public long rollSegmentIfLimitReached() {
+        long segmentSize = 0;
+        if (rollStrategy.isMaxSegmentSizeSet()) {
+            for (int i = 0; i < columnCount; i++) {
+                segmentSize = updateSegmentSize(segmentSize, i);
+            }
+        }
+
+        if (rollStrategy.shouldRoll(segmentSize, rowCount)) {
+            return rollSegment();
+        }
+        return 0L;
+    }
+
+    private long updateSegmentSize(long segmentSize, int columnIndex) {
+        final MemoryA primaryColumn = getPrimaryColumn(columnIndex);
+        if (primaryColumn != null && primaryColumn != NullMemory.INSTANCE) {
+            segmentSize += primaryColumn.getAppendOffset();
+
+            final MemoryA secondaryColumn = getSecondaryColumn(columnIndex);
+            if (secondaryColumn != null && secondaryColumn != NullMemory.INSTANCE) {
+                segmentSize += secondaryColumn.getAppendOffset();
+            }
+        }
+        return segmentSize;
     }
 
     private void setRowValueNotNull(int columnIndex) {
@@ -663,7 +698,7 @@ public class WalWriter implements Closeable {
 
         @Override
         public void cancel() {
-            rollToNextSegment();
+            rollSegment();
         }
 
         @Override
