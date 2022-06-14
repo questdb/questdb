@@ -39,6 +39,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     private K[] keys;
     private int[] values;
     private int free;
+    private final int initialCapacity;
     private int capacity;
     private int mask;
 
@@ -53,9 +54,10 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     public ObjIntHashMap(int initialCapacity, double loadFactor, int noKeyValue) {
         assert loadFactor > 0 && loadFactor < 1.0;
         this.capacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
+        this.initialCapacity = capacity;
         this.loadFactor = loadFactor;
         this.noKeyValue = noKeyValue;
-        keys = getKeys();
+        keys = createKeys();
         values = new int[keys.length];
         mask = keys.length - 1;
         clear();
@@ -63,16 +65,18 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
 
     @Override
     public final void clear() {
-        free = capacity;
-        Arrays.fill(keys, noEntryValue);
+        if (free != capacity) {
+            free = capacity;
+            Arrays.fill(keys, noEntryValue);
+        }
     }
 
-    public void clear(int newCapacity) {
-        if (newCapacity <= capacity) {
+    public void reset() {
+        if (capacity == initialCapacity) {
             clear();
         } else {
-            free = capacity = Numbers.ceilPow2(newCapacity);
-            keys = getKeys();
+            free = capacity = initialCapacity;
+            keys = createKeys();
             values = new int[keys.length];
             mask = keys.length - 1;
             Arrays.fill(keys, noEntryValue);
@@ -80,7 +84,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
     }
 
     @SuppressWarnings("unchecked")
-    private K[] getKeys() {
+    private K[] createKeys() {
         return (K[]) new Object[Numbers.ceilPow2((int) (this.capacity / this.loadFactor))];
     }
 
@@ -135,6 +139,10 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         return capacity - free;
     }
 
+    public int capacity() {
+        return capacity;
+    }
+
     public int valueAt(int index) {
         int index1 = -index - 1;
         return index < 0 ? values[index1] : noKeyValue;
@@ -163,7 +171,6 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
 
     @SuppressWarnings({"unchecked"})
     private void rehash() {
-
         free = capacity = this.capacity * 2;
         int[] oldValues = values;
         K[] oldKeys = keys;

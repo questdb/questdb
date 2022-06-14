@@ -57,8 +57,9 @@ class SymbolCache implements Closeable, SymbolLookup {
 
     @Override
     public void close() {
+        txReader = null;
         symbolMapReader.close();
-        symbolValueToKeyMap.clear();
+        symbolValueToKeyMap.reset();
     }
 
     @Override
@@ -92,6 +93,10 @@ class SymbolCache implements Closeable, SymbolLookup {
         return symbolValueToKeyMap.size();
     }
 
+    int getCacheCapacity() {
+        return symbolValueToKeyMap.capacity();
+    }
+
     void of(CairoConfiguration configuration,
             Path path,
             CharSequence columnName,
@@ -105,7 +110,7 @@ class SymbolCache implements Closeable, SymbolLookup {
         int symCount = safeReadUncommittedSymbolCount(symbolIndexInTxFile, false);
         path.trimTo(plen);
         symbolMapReader.of(configuration, path, columnName, columnNameTxn, symCount);
-        symbolValueToKeyMap.clear(symCount);
+        symbolValueToKeyMap.clear();
     }
 
     private int safeReadUncommittedSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
