@@ -110,6 +110,7 @@ class SymbolCache implements Closeable, SymbolLookup {
         int symCount = safeReadUncommittedSymbolCount(symbolIndexInTxFile, false);
         path.trimTo(plen);
         symbolMapReader.of(configuration, path, columnName, columnNameTxn, symCount);
+        symbolValueToKeyMap.clear();
     }
 
     private int safeReadUncommittedSymbolCount(int symbolIndexInTxFile, boolean initialStateOk) {
