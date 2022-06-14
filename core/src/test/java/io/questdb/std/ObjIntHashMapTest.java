@@ -54,11 +54,12 @@ public class ObjIntHashMapTest {
     }
 
     @Test
-    public void testSizeAndCapacity() {
+    public void testReset() {
         ObjIntHashMap<Integer> map = new ObjIntHashMap<>();
 
+        final int initialCapacity = map.capacity();
         Assert.assertEquals(0, map.size());
-        Assert.assertTrue(map.capacity() > 0);
+        Assert.assertTrue(initialCapacity > 0);
 
         int n = 1000;
         for (int i = 0; i < n; i++) {
@@ -67,6 +68,11 @@ public class ObjIntHashMapTest {
 
         Assert.assertEquals(n, map.size());
         Assert.assertTrue(map.capacity() >= n);
+
+        map.reset();
+
+        Assert.assertEquals(0, map.size());
+        Assert.assertEquals(initialCapacity, map.capacity());
     }
 
     @Test

@@ -59,7 +59,7 @@ class SymbolCache implements Closeable, SymbolLookup {
     public void close() {
         txReader = null;
         symbolMapReader.close();
-        symbolValueToKeyMap.resetCapacity();
+        symbolValueToKeyMap.reset();
     }
 
     @Override

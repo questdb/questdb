@@ -69,7 +69,7 @@ public class ObjIntHashMap<K> implements Iterable<ObjIntHashMap.Entry<K>>, Mutab
         Arrays.fill(keys, noEntryValue);
     }
 
-    public void resetCapacity() {
+    public void reset() {
         if (capacity == initialCapacity) {
             clear();
         } else {
