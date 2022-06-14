@@ -474,10 +474,21 @@ public class FileIndexer implements Closeable, Mutable {
 
             for (int j = lo; j < hi; j++) {
                 final CharSequence partitionName = partitionNames.get(j);
-                srcPath.trimTo(srcPlen).concat(partitionName).$();
-                dstPath.trimTo(dstPlen).concat(partitionName).$();
+                srcPath.trimTo(srcPlen).concat(partitionName).slash$();
+                dstPath.trimTo(dstPlen).concat(partitionName).slash$();
                 if (!ff.rename(srcPath, dstPath)) {
-                    LOG.error().$("Can't move ").$(srcPath).$(" to ").$(dstPath).$(" errno=").$(ff.errno()).$();
+                    if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
+                        throw CairoException.instance(ff.errno()).put("Cannot create partition directory: ").put(dstPath);
+                    }
+                    ff.iterateDir(srcPath, (long name, int type) -> {
+                        if (type == Files.DT_FILE) {
+                            srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
+                            dstPath.trimTo(dstPlen).concat(partitionName).concat(name).$();
+                            if (ff.copy(srcPath, dstPath) < 0) {
+                                throw CairoException.instance(ff.errno()).put("cannot copy file [to=").put(dstPath).put(']');
+                            }
+                        }
+                    });
                 }
             }
         }
