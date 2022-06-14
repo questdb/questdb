@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
@@ -1478,21 +1479,140 @@ public class FileSplitterTest extends AbstractGriffinTest {
         Assert.fail("implement");
     }
 
+    @Test//all rows in the file fail on timestamp parsing so indexing phase will return empty result
+    public void testImportCsvWithTimestampNotMatchingInputFormatFails() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss", true);
+                indexer.process();
+                Assert.fail();
+            } catch (TextException e) {
+                Assert.assertEquals("No partitions to merge and load found", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testImportCsvFailsOnStructureParsingIO() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                return -1L;
+            }
+        };
+
+        executeWithPool(4, 8, ff, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(1);
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+                Assert.fail();
+            } catch (TextException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Can't read from file"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportFailsOnBoundaryScanningIO() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (offset > 30000) {
+                    return -1L;
+                } else {
+                    return super.read(fd, buf, len, offset);
+                }
+            }
+        };
+
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(1);
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Import failed in BOUNDARY_CHECK phase. Could not read import file"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportFailsOnSourceFileIndexingIO() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (offset == 0 && len == 16797) {
+                    return -1;
+                }
+
+                return super.read(fd, buf, len, offset);
+            }
+        };
+
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(1);
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Import failed in INDEXING phase."));
+            }
+        });
+    }
+
+    @Test
+    public void testImportFailsOnDataImportIO() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (offset == 31 && len == 69) {
+                    return -1;
+                }
+
+                return super.read(fd, buf, len, offset);
+            }
+        };
+
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(1);
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Import failed in PARTITION_IMPORT phase."));
+            }
+        });
+    }
+
     @Ignore
     @Test
-    public void testImportCsvWithNoValidRows() {
-        Assert.fail("implement");
+    public void testImportFailsOnPartitionRename() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                return false;
+            }
+        };
+
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab ( line symbol, ts timestamp, d double, description symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(1);
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+            }
+        });
     }
+
 
     @Ignore
     @Test
     public void testImportCsvWithRowLimit() {
-        Assert.fail("implement");
-    }
-
-    @Ignore
-    @Test
-    public void testImportCsvWithTsThatDontMatchGivenFormat() {
         Assert.fail("implement");
     }
 
@@ -1557,7 +1677,8 @@ public class FileSplitterTest extends AbstractGriffinTest {
         });
     }
 
-    private void assertIndexChunksFor(SqlExecutionContext sqlExecutionContext, String format, int partitionBy, int bufferLen, String fileName, int expectedLineLength, IndexChunk... expectedChunks)
+    private void assertIndexChunksFor(SqlExecutionContext sqlExecutionContext, String format, int partitionBy, int bufferLen,
+                                      String fileName, int expectedLineLength, IndexChunk... expectedChunks)
             throws Exception {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
@@ -2053,7 +2174,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
         assertMemoryLeak(code);
     }
 
-    private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) {
+    private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws TextException {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
 
@@ -2078,6 +2199,15 @@ public class FileSplitterTest extends AbstractGriffinTest {
     protected void executeWithPool(
             int workerCount,
             int queueCapacity,
+            TextImportRunnable runnable
+    ) throws Exception {
+        executeWithPool(workerCount, queueCapacity, FilesFacadeImpl.INSTANCE, runnable);
+    }
+
+    protected void executeWithPool(
+            int workerCount,
+            int queueCapacity,
+            FilesFacade ff,
             TextImportRunnable runnable
     ) throws Exception {
         executeVanilla(() -> {
@@ -2116,7 +2246,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
-                        return FilesFacadeImpl.INSTANCE;
+                        return ff;
                     }
 
                     @Override
@@ -2141,7 +2271,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
                 final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
-                        return FilesFacadeImpl.INSTANCE;
+                        return ff;
                     }
 
                     @Override
@@ -2160,9 +2290,8 @@ public class FileSplitterTest extends AbstractGriffinTest {
             CairoConfiguration configuration
     ) throws Exception {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount();
-        try (
-                final CairoEngine engine = new CairoEngine(configuration);
-                final SqlCompiler compiler = new SqlCompiler(engine)
+        try (final CairoEngine engine = new CairoEngine(configuration);
+             final SqlCompiler compiler = new SqlCompiler(engine)
         ) {
             try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
             ) {

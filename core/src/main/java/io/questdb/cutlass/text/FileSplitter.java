@@ -190,7 +190,6 @@ public class FileSplitter implements Closeable, Mutable {
         }
 
         long lineStartOffset = lastLineStart;
-        //long lineEndOffset = offset + lastLineStart;
 
         long partitionKey = partitionFloorMethod.floor(timestamp);
         long mapKey = partitionKey / Timestamps.HOUR_MICROS; //remove trailing zeros to avoid excessive collisions in hashmap 
@@ -584,7 +583,7 @@ public class FileSplitter implements Closeable, Mutable {
             } while (offset < chunkHi);
 
             if (read < 0 || offset < chunkHi) {
-                throw CairoException.instance(ff.errno()).put("could not read file");
+                throw CairoException.instance(ff.errno()).put("could not read file [path=").put(path).put(",offset=").put(offset).put("]");
             } else {
                 parseLast();
             }
@@ -594,7 +593,7 @@ public class FileSplitter implements Closeable, Mutable {
             closeOutputFiles();
         }
 
-        LOG.info().$("Finished indexing chunk [start=").$(chunkLo).$(",end=").$(chunkHi)
+        LOG.debug().$("Finished indexing chunk [start=").$(chunkLo).$(",end=").$(chunkHi)
                 .$(",lines=").$(lineCount - lineNumber).$(",errors=").$(errorCount).$(']').$();
     }
 
@@ -676,21 +675,11 @@ public class FileSplitter implements Closeable, Mutable {
     }
 
     public static void sort(FilesFacade ff, final long srcFd, long srcSize) {
-        //int plen = path.length();
-        //long srcFd = -1;
         long srcAddress = -1;
-
-        //long dstFd = -1;
         long bufferPtr = -1;
 
         try {
-            //srcFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
-            //final long srcSize = ff.length(srcFd);
             srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_DEFAULT);
-
-//            dstFd = TableUtils.openFileRWOrFail(ff, path.chop$().put(".s").$(), CairoConfiguration.O_NONE);
-//            final long dstAddress = TableUtils.mapRW(ff, dstFd, srcSize, MemoryTag.MMAP_DEFAULT);
-
             bufferPtr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
 
             Vect.radixSortLongIndexAscInPlace(srcAddress, srcSize / INDEX_ENTRY_SIZE, bufferPtr);
@@ -699,21 +688,9 @@ public class FileSplitter implements Closeable, Mutable {
                 ff.munmap(srcAddress, srcSize, MemoryTag.MMAP_DEFAULT);
             }
 
-            //srcFc belongs to outside object
-//            if (srcFd != -1) {
-//                ff.close(srcFd);
-//                //ff.remove(path);
-//                //path.trimTo(plen);
-//            }
-
             if (bufferPtr != -1) {
                 Unsafe.free(bufferPtr, srcSize, MemoryTag.MMAP_DEFAULT);
             }
-
-//            if (dstFd != -1) {
-//                ff.fsync(dstFd);
-//                ff.close(dstFd);
-//            }
         }
     }
 
