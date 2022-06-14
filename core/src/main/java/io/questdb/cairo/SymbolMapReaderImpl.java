@@ -35,6 +35,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -84,6 +85,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     @Override
     public boolean isCached() {
         return cached;
+    }
+
+    @TestOnly
+    int getCacheSize() {
+        return cache.size();
     }
 
     @Override
