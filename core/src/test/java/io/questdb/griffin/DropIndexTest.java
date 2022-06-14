@@ -62,7 +62,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "column 'колонка' is not indexed");
+                TestUtils.assertContains(e.getFlyweightMessage(), "Column is not indexed [name=колонка][errno=-100]");
             }
         });
     }

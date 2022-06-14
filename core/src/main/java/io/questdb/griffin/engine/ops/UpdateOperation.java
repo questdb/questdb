@@ -32,18 +32,16 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
-import io.questdb.std.QuietClosable;
 import io.questdb.tasks.TableWriterTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class UpdateOperation extends AbstractOperation implements QuietClosable {
+public class UpdateOperation extends AbstractOperation {
     public static final int WRITER_CLOSED_INCREMENT = 10;
     public static final int SENDER_CLOSED_INCREMENT = 7;
     public static final int FULLY_CLOSED_STATE = WRITER_CLOSED_INCREMENT + SENDER_CLOSED_INCREMENT;
     private final AtomicInteger closeState = new AtomicInteger();
     private RecordCursorFactory factory;
-    private SqlExecutionContext sqlExecutionContext;
     private volatile boolean requesterTimeout = false;
     private boolean executingAsync;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -122,8 +120,9 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
         task.setAsyncWriterCommand(this);
     }
 
+    @Override
     public void withContext(SqlExecutionContext sqlExecutionContext) {
-        this.sqlExecutionContext = sqlExecutionContext;
-        this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+        super.withContext(sqlExecutionContext);
+        this.circuitBreaker = this.sqlExecutionContext.getCircuitBreaker();
     }
 }

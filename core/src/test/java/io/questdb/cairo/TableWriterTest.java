@@ -1798,8 +1798,8 @@ public class TableWriterTest extends AbstractCairoTest {
             w.truncate();
 
             // add a couple of indexes
-            w.addColumnIndex("sym1", 1024);
-            w.addColumnIndex("sym2", 1024);
+            w.addIndex("sym1", 1024);
+            w.addIndex("sym2", 1024);
 
             Assert.assertTrue(w.getMetadata().isColumnIndexed(0));
             Assert.assertTrue(w.getMetadata().isColumnIndexed(1));
@@ -3486,7 +3486,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
-                writer.addColumnIndex("supplier", configuration.getIndexValueBlockSize());
+                writer.addIndex("supplier", configuration.getIndexValueBlockSize());
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -3507,7 +3507,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // another attempt to create index
             try (TableWriter writer = new TableWriter(configuration, PRODUCT, metrics)) {
-                writer.addColumnIndex("supplier", configuration.getIndexValueBlockSize());
+                writer.addIndex("supplier", configuration.getIndexValueBlockSize());
             }
         });
     }
@@ -4002,8 +4002,8 @@ public class TableWriterTest extends AbstractCairoTest {
             w.truncate();
 
             // add a couple of indexes
-            w.addColumnIndex("sym1", 1024);
-            w.addColumnIndex("sym2", 1024);
+            w.addIndex("sym1", 1024);
+            w.addIndex("sym2", 1024);
 
             Assert.assertTrue(w.getMetadata().isColumnIndexed(0));
             Assert.assertTrue(w.getMetadata().isColumnIndexed(1));

@@ -25,39 +25,21 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.mp.SCSequence;
-import io.questdb.std.WeakSelfReturningObjectPool;
-import org.jetbrains.annotations.Nullable;
 
-public class UpdateOperationDispatcher implements OperationDispatcher<UpdateOperation> {
-    private final DoneOperationFuture doneFuture = new DoneOperationFuture();
-    private final CairoEngine engine;
-    private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
-
+public class UpdateOperationDispatcher extends OperationDispatcher<UpdateOperation> {
     public UpdateOperationDispatcher(CairoEngine engine) {
-        this.engine = engine;
-        futurePool = new WeakSelfReturningObjectPool<>(pool -> new OperationFutureImpl(engine, pool), 2);
+        super(engine, "sync 'UPDATE' execution");
     }
 
-    public OperationFuture execute(UpdateOperation operation, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
-        // storing execution context for UPDATE execution
-        // writer thread will call `apply()` when thread is ready to do so
-        // `apply()` will use context stored in the operation
-        operation.withContext(sqlExecutionContext);
-        try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), operation.getTableName(), "sync 'UPDATE' execution")) {
-            return doneFuture.of(writer.getUpdateOperator().executeUpdate(sqlExecutionContext, operation));
-        } catch (EntryUnavailableException busyException) {
-            if (eventSubSeq == null) {
-                throw busyException;
-            }
-            OperationFutureImpl updateFuture = futurePool.pop();
-            updateFuture.of(operation, sqlExecutionContext, eventSubSeq, operation.getTableNamePosition());
-            return updateFuture;
-        }
+    @Override
+    public long doExecute(
+            SqlExecutionContext sqlExecutionContext,
+            TableWriter writer,
+            UpdateOperation operation
+    ) throws SqlException {
+        return writer.getUpdateOperator().executeUpdate(sqlExecutionContext, operation);
     }
 }

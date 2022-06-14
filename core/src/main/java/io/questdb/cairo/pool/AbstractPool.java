@@ -33,7 +33,7 @@ import java.io.Closeable;
 
 abstract class AbstractPool implements Closeable {
     public static final long CLOSED = Unsafe.getFieldOffset(AbstractPool.class, "closed");
-    protected static final long UNALLOCATED_OWNER = -1L;
+    protected static final long UNALLOCATED = -1L;
     private static final int TRUE = 1;
     private static final int FALSE = 0;
     protected final FilesFacade ff;

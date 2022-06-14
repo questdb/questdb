@@ -34,7 +34,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterOperation extends AbstractOperation implements Mutable, QuietClosable {
+public class AlterOperation extends AbstractOperation implements Mutable {
 
     public final static short DO_NOTHING = 0;
     public final static short ADD_COLUMN = 1;
@@ -99,6 +99,7 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
                     applyAddIndex(tableWriter);
                     break;
                 case DROP_INDEX:
+                    assert sqlExecutionContext != null;
                     applyDropIndex(tableWriter);
                     break;
                 case ADD_SYMBOL_CACHE:
@@ -241,7 +242,7 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
         CharSequence columnName = charSequenceList.getStrA(0);
         try {
             int indexValueBlockSize = (int) longList.get(0);
-            tableWriter.addColumnIndex(columnName, indexValueBlockSize);
+            tableWriter.addIndex(columnName, indexValueBlockSize);
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
                     .put("[errno=").put(e.getErrno()).put(']');
@@ -251,7 +252,7 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
     private void applyDropIndex(TableWriter tableWriter) throws SqlException {
         CharSequence columnName = charSequenceList.getStrA(0);
         try {
-            tableWriter.dropColumnIndex(columnName);
+            tableWriter.dropColumnIndex(sqlExecutionContext, columnName);
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition)
                     .put(e.getFlyweightMessage())
@@ -523,9 +524,5 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
             }
             return lo - initialAddress;
         }
-    }
-
-    @Override
-    public void close() {
     }
 }

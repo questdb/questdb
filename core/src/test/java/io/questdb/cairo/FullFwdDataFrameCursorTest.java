@@ -2236,7 +2236,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             try (TableWriter writer = new TableWriter(configuration, "x", metrics)) {
                 timestamp = populateTable(writer, symbols, rnd, timestamp, increment, M / 2);
 
-                writer.addColumnIndex("a", configuration.getIndexValueBlockSize());
+                writer.addIndex("a", configuration.getIndexValueBlockSize());
 
                 populateTable(writer, symbols, rnd, timestamp, increment, M / 2);
                 writer.commit();
@@ -2356,7 +2356,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                writer.addColumnIndex("a", configuration.getIndexValueBlockSize());
+                writer.addIndex("a", configuration.getIndexValueBlockSize());
 
             }
 

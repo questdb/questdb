@@ -25,9 +25,11 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.QuietClosable;
 import io.questdb.tasks.TableWriterTask;
 
-public abstract class AbstractOperation implements AsyncWriterCommand {
+public abstract class AbstractOperation implements AsyncWriterCommand, QuietClosable {
 
     static final long NO_CORRELATION_ID = -1L;
 
@@ -39,6 +41,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand {
 
     String tableName;
     int tableNamePosition;
+    SqlExecutionContext sqlExecutionContext;
 
     void init(
             int cmdType,
@@ -100,5 +103,14 @@ public abstract class AbstractOperation implements AsyncWriterCommand {
     public void serialize(TableWriterTask task) {
         task.of(cmdType, tableId, tableName);
         task.setInstance(correlationId);
+    }
+
+    public void withContext(SqlExecutionContext sqlExecutionContext) {
+        this.sqlExecutionContext = sqlExecutionContext;
+    }
+
+    @Override
+    public void close() {
+        // intentionally left empty
     }
 }

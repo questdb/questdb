@@ -27,16 +27,14 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
-import io.questdb.cairo.sql.AsyncWriterCommand;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.MemoryFMCRImpl;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.UpdateOperator;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.model.IntervalUtils;
@@ -248,7 +246,7 @@ public class TableWriter implements Closeable {
             }
             this.ddlMem = Vm.getMARInstance();
             this.metaMem = Vm.getMRInstance();
-            this.columnVersionWriter = openColumnVersionFile();
+            this.columnVersionWriter = openColumnVersionFile(ff, path, rootLen);
 
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(metaMem);
@@ -484,7 +482,7 @@ public class TableWriter implements Closeable {
         LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], name txn ").$(columnNameTxn).$(" to ").$(path).$();
     }
 
-    public void addColumnIndex(CharSequence columnName, int indexValueBlockSize) {
+    public void addIndex(CharSequence columnName, int indexValueBlockSize) {
         assert indexValueBlockSize == Numbers.ceilPow2(indexValueBlockSize) : "power of 2 expected";
 
         checkDistressed();
@@ -560,34 +558,38 @@ public class TableWriter implements Closeable {
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
     }
 
-    public void dropColumnIndex(CharSequence colName) {
+    public void dropColumnIndex(SqlExecutionContext executionContext, CharSequence columnName) {
 
         checkDistressed();
 
-        final int columnIndex = getColumnIndexQuiet(metaMem, colName, columnCount);
-
+        final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
         if (columnIndex == -1) {
-            throw CairoException.instance(0).put("column '").put(colName).put("' does not exist");
+            throw CairoException.metadataValidation("Column does not exist", columnName);
         }
-
         if (!isColumnIndexed(metaMem, columnIndex)) {
-            throw CairoException.instance(0).put("column '").put(colName).put("' is not indexed");
+            throw CairoException.metadataValidation("Column is not indexed", columnName);
         }
 
+        LOG.info().$("BEGIN DROP INDEX [txn=")
+                .$(txWriter.getTxn())
+                .$(", table=")
+                .$(tableName)
+                .$(", column=")
+                .$(columnName)
+                .I$();
 
-        // set index flag in metadata and  create new _meta.swp
-        final int idxValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
-        metaSwapIndex = copyMetadataAndSetIndexedFlag(columnIndex, META_FLAG_BIT_NOT_INDEXED, idxValueBlockSize);
-
-        swapMetaFile(colName);
-
-        // update column logic to drop index, hard link etc
-
-        commit();
+        // set index flag in metadata and create new _meta.swp
+        final int indexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
+        metaSwapIndex = copyMetadataAndSetIndexedFlag(columnIndex, META_FLAG_BIT_NOT_INDEXED, indexValueBlockSize);
+        swapMetaFile(columnName);
 
         TableColumnMetadata columnMeta = metadata.getColumnQuick(columnIndex);
         columnMeta.setIndexed(false);
-        columnMeta.setIndexValueBlockCapacity(idxValueBlockSize);
+        columnMeta.setIndexValueBlockCapacity(indexValueBlockSize);
+
+//            getUpdateOperator().executeUpdate(executionContext)
+//            dropIndexOperator.executeDropIndex(tableName, columnName, columnIndex);
+//        commit();
 
         // remove indexer
         ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
@@ -596,46 +598,13 @@ public class TableWriter implements Closeable {
             Misc.free(columnIndexer);
             populateDenseIndexerList();
         }
-
-        LOG.info().$("DROPPED index for '").utf8(colName).$(" to ").$(path).$();
-
-//        // remove index files
-//        final long txn = txWriter.getTxn();
-//        boolean canDeleteIndexFiles = false;
-//        try {
-//            if (txnScoreboard.acquireTxn(txn)) {
-//                txnScoreboard.releaseTxn(txn);
-//                canDeleteIndexFiles = txnScoreboard.getMin() == txn && txnScoreboard.getActiveReaderCount(txn) == 0;
-//            }
-//        } catch (CairoException ignore) {
-//            // max transactions in-flight, bad time to delete files
-//            System.out.printf("CairoException!!: %s%n", ignore.getFlyweightMessage());
-//        }
-//        if (canDeleteIndexFiles) {
-//            if (PartitionBy.isPartitioned(partitionBy)) {
-//                for (int i = txWriter.getPartitionCount() - 1; i > -1; i--) {
-//                    removeIndexFilesInPartition(
-//                            colName,
-//                            columnIndex,
-//                            txWriter.getPartitionTimestamp(i),
-//                            txWriter.getPartitionNameTxn(i)
-//                    );
-//                }
-//            } else {
-//                removeIndexFilesInPartition(
-//                        colName,
-//                        columnIndex,
-//                        txWriter.getLastPartitionTimestamp(),
-//                        -1L
-//                );
-//            }
-//        } else {
-//            LOG.error()
-//                    .$("column index is being read concurrently, index files ")
-//                    .$("cannot be deleted now. Manually issue a [VACUUM TABLE ")
-//                    .$(tableName)
-//                    .$(" ] command at a quieter time.");
-//        }
+        LOG.info().$("END DROP INDEX [txn=")
+                .$(txWriter.getTxn())
+                .$(", table=")
+                .$(tableName)
+                .$(", column=")
+                .$(columnName)
+                .I$();
     }
 
     public void addPhysicallyWrittenRows(long rows) {
@@ -1695,7 +1664,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private ColumnVersionWriter openColumnVersionFile() {
+    private static ColumnVersionWriter openColumnVersionFile(FilesFacade ff, Path path, int rootLen) {
         path.concat(COLUMN_VERSION_FILE_NAME).$();
         try {
             return new ColumnVersionWriter(ff, path, 0);

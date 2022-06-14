@@ -25,46 +25,22 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.mp.SCSequence;
-import io.questdb.std.WeakSelfReturningObjectPool;
-import org.jetbrains.annotations.Nullable;
 
-public class AlterOperationDispatcher implements OperationDispatcher<AlterOperation> {
-    private final CairoEngine engine;
-    private final DoneOperationFuture doneFuture = new DoneOperationFuture();
-    private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
+public class AlterOperationDispatcher extends OperationDispatcher<AlterOperation> {
 
     public AlterOperationDispatcher(CairoEngine engine) {
-        this.engine = engine;
-        futurePool = new WeakSelfReturningObjectPool<>(pool -> new OperationFutureImpl(engine, pool), 2);
+        super(engine, "Alter table execute");
     }
 
     @Override
-    public OperationFuture execute(
-            AlterOperation operation,
+    public long doExecute(
             SqlExecutionContext sqlExecutionContext,
-            @Nullable SCSequence eventSubSeq
+            TableWriter writer,
+            AlterOperation operation
     ) throws SqlException {
-        try (
-                TableWriter writer = engine.getWriter(
-                        sqlExecutionContext.getCairoSecurityContext(),
-                        operation.getTableName(),
-                        "Alter table execute"
-                )
-        ) {
-            return doneFuture.of(operation.apply(writer, true));
-        } catch (EntryUnavailableException busyException) {
-            if (eventSubSeq == null) {
-                throw busyException;
-            }
-            OperationFutureImpl alterFut = futurePool.pop();
-            alterFut.of(operation, sqlExecutionContext, eventSubSeq, operation.getTableNamePosition());
-            return alterFut;
-        }
+        return operation.apply(writer, true);
     }
 }

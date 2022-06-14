@@ -29,6 +29,7 @@ import io.questdb.std.Sinkable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
@@ -41,16 +42,20 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private boolean cacheable;
     private boolean interruption;
 
-    public static CairoException duplicateColumn(CharSequence colName) {
-        return duplicateColumn(colName, null);
+    public static CairoException duplicateColumn(CharSequence columnName) {
+        return duplicateColumn(columnName, null);
     }
 
-    public static CairoException duplicateColumn(CharSequence colName, CharSequence colAlias) {
-        CairoException exception = instance(METADATA_VALIDATION).put("Duplicate column [name=").put(colName);
-        if (colAlias != null) {
-            exception.put(", alias=").put(colAlias);
+    public static CairoException duplicateColumn(CharSequence columnName, CharSequence columnAlias) {
+        CairoException exception = metadataValidation("Duplicate column", columnName);
+        if (columnAlias != null) {
+            exception.put(", [alias=").put(columnAlias).put(']');
         }
-        return exception.put(']');
+        return exception;
+    }
+
+    public static CairoException metadataValidation(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
+        return instance(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
     }
 
     public static CairoException instance(int errno) {

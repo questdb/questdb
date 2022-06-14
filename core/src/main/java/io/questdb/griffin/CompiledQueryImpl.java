@@ -105,7 +105,7 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     @SuppressWarnings("unchecked")
     @Override
-    public <T extends QuietClosable> OperationDispatcher<T> getDispatcher() {
+    public <T extends AbstractOperation> OperationDispatcher<T> getDispatcher() {
         switch (type) {
             case ALTER:
                 return (OperationDispatcher<T>) alterOperationDispatcher;
@@ -118,7 +118,7 @@ public class CompiledQueryImpl implements CompiledQuery {
 
     @SuppressWarnings("unchecked")
     @Override
-    public <T extends QuietClosable> T getOperation() {
+    public <T extends AbstractOperation> T getOperation() {
         switch (type) {
             case INSERT:
                 return (T) insertOperation;

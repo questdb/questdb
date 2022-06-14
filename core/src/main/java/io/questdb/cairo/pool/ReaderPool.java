@@ -76,7 +76,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
         do {
             for (int i = 0; i < ENTRY_SIZE; i++) {
-                if (Unsafe.cas(e.allocations, i, UNALLOCATED_OWNER, thread)) {
+                if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                     // got lock, allocate if needed
                     R r = e.readers[i];
                     if (r == null) {
@@ -87,7 +87,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                                     .$(']').$();
                             r = new R(this, e, i, name, messageBus);
                         } catch (CairoException ex) {
-                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED_OWNER);
+                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
                         }
 
@@ -137,7 +137,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             Entry e = me.getValue();
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
-                    if (Unsafe.arrayGetVolatile(e.allocations, i) != UNALLOCATED_OWNER && e.readers[i] != null) {
+                    if (Unsafe.arrayGetVolatile(e.allocations, i) != UNALLOCATED && e.readers[i] != null) {
                         count++;
                     }
                 }
@@ -157,7 +157,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || Unsafe.cas(e, LOCK_OWNER, thread, thread)) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
-                    if (Unsafe.cas(e.allocations, i, UNALLOCATED_OWNER, thread)) {
+                    if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                         closeReader(thread, e, i, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
                     } else if (Unsafe.cas(e.allocations, i, thread, thread)) {
                         // same thread, don't need to order reads
@@ -238,13 +238,13 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     R r;
                     if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && (r = e.readers[i]) != null) {
-                        if (Unsafe.cas(e.allocations, i, UNALLOCATED_OWNER, thread)) {
+                        if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                             // check if deadline violation still holds
                             if (deadline > e.releaseTimes[i]) {
                                 removed = true;
                                 closeReader(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
                             }
-                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED_OWNER);
+                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                         } else {
                             casFailures++;
                             if (deadline == Long.MAX_VALUE) {
@@ -315,19 +315,19 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         }
 
         final long owner = Unsafe.arrayGetVolatile(e.allocations, index);
-        if (owner != UNALLOCATED_OWNER) {
+        if (owner != UNALLOCATED) {
 
             LOG.debug().$('\'').$(name).$("' is back [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
             notifyListener(thread, name, PoolListener.EV_RETURN, e.index, index);
 
             // release the entry for anyone to pick up
             e.releaseTimes[index] = clock.getTicks();
-            Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED_OWNER);
+            Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED);
             final boolean closed = isClosed();
 
             // When pool is closed we will race against release thread
             // to release our entry. No need to bother releasing map entry, pool is going down.
-            return !closed || !Unsafe.cas(e.allocations, index, UNALLOCATED_OWNER, owner);
+            return !closed || !Unsafe.cas(e.allocations, index, UNALLOCATED, owner);
         }
 
         throw CairoException.instance(0).put("double close [table=").put(name).put(", index=").put(index).put(']');
@@ -345,7 +345,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
         public Entry(int index, long currentMicros) {
             this.index = index;
-            Arrays.fill(allocations, UNALLOCATED_OWNER);
+            Arrays.fill(allocations, UNALLOCATED);
             Arrays.fill(releaseTimes, currentMicros);
         }
     }
