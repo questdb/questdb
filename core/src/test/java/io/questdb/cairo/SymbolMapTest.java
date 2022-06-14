@@ -242,6 +242,31 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReaderCache() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getRoot())) {
+                create(path, "x", 16, true);
+
+                int[] keys = new int[16];
+                try (SymbolMapWriter writer = new SymbolMapWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0, -1, NOOP_COLLECTOR)) {
+                    for (int i = 0; i < keys.length; i++) {
+                        keys[i] = writer.put("key" + i);
+                    }
+                }
+
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, keys.length)) {
+                    Assert.assertTrue(reader.isCached());
+                    Assert.assertEquals(0, reader.getCacheSize());
+                    for (int i = 0; i < keys.length; i++) {
+                        TestUtils.assertEquals("key" + i, reader.valueOf(keys[i]));
+                        Assert.assertEquals(i + 1, reader.getCacheSize());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRollback() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1024;
@@ -278,7 +303,6 @@ public class SymbolMapTest extends AbstractCairoTest {
                         Assert.assertEquals(key, writer.put(cs));
                         prev = key;
                     }
-
                 }
             }
         });
