@@ -30,6 +30,7 @@ import org.junit.Test;
 import java.util.HashMap;
 
 public class ObjIntHashMapTest {
+
     @Test
     public void testAddAndIterate() {
         Rnd rnd = new Rnd();
@@ -50,6 +51,22 @@ public class ObjIntHashMapTest {
             Assert.assertNotNull(val);
             Assert.assertEquals(e.value, val.intValue());
         }
+    }
+
+    @Test
+    public void testSizeAndCapacity() {
+        ObjIntHashMap<Integer> map = new ObjIntHashMap<>();
+
+        Assert.assertEquals(0, map.size());
+        Assert.assertTrue(map.capacity() > 0);
+
+        int n = 1000;
+        for (int i = 0; i < n; i++) {
+            map.put(i, i);
+        }
+
+        Assert.assertEquals(n, map.size());
+        Assert.assertTrue(map.capacity() >= n);
     }
 
     @Test
