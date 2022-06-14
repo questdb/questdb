@@ -31,6 +31,12 @@ import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -50,9 +56,11 @@ public final class Unsafe {
     //#endif
     private static final AnonymousClassDefiner anonymousClassDefiner;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
+    public static final ConcurrentMap<Long, StackTraceElement[]> ALLOCATION_MAPS;
 
     static {
         try {
+            ALLOCATION_MAPS = Unsafe.class.desiredAssertionStatus() ? new ConcurrentHashMap<>() : null;
             Field theUnsafe = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             theUnsafe.setAccessible(true);
             UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
@@ -169,6 +177,7 @@ public final class Unsafe {
     }
 
     public static void free(long ptr, long size, int memoryTag) {
+        assert recordDeallocatedStacktrace(ptr);
         getUnsafe().freeMemory(ptr);
         FREE_COUNT.incrementAndGet();
         recordMemAlloc(-size, memoryTag);
@@ -213,13 +222,30 @@ public final class Unsafe {
 
     public static long malloc(long size, int memoryTag) {
         long ptr = getUnsafe().allocateMemory(size);
+        assert recordAllocationStacktrace(ptr);
         recordMemAlloc(size, memoryTag);
         MALLOC_COUNT.incrementAndGet();
         return ptr;
     }
 
+    private static boolean recordAllocationStacktrace(long ptr) {
+        StackTraceElement[] alreadyAllocated = ALLOCATION_MAPS.put(ptr, Thread.currentThread().getStackTrace());
+        return alreadyAllocated == null;
+    }
+
+    private static boolean recordDeallocatedStacktrace(long ptr) {
+        StackTraceElement[] current = ALLOCATION_MAPS.remove(ptr);
+        return current != null;
+    }
+
+    public static List<StackTraceElement[]> getAllocationStacktraces() {
+        return new ArrayList<>(ALLOCATION_MAPS.values());
+    }
+
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
+        assert recordDeallocatedStacktrace(address);
         long ptr = getUnsafe().reallocateMemory(address, newSize);
+        assert recordAllocationStacktrace(ptr);
         recordMemAlloc(-oldSize + newSize, memoryTag);
         REALLOC_COUNT.incrementAndGet();
         return ptr;

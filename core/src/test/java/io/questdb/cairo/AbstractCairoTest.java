@@ -42,6 +42,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.NativeLeakDetector;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
@@ -108,6 +109,9 @@ public class AbstractCairoTest {
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
+
+    @ClassRule
+    public static final NativeLeakDetector LEAK_DETECTOR = new NativeLeakDetector();
 
     @BeforeClass
     public static void setUpStatic() {
