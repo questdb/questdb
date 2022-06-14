@@ -67,6 +67,7 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
 
     @Override
     public void close() {
+        processInQueue(); // Process incoming queue to close all contexts
         for (int i = 0, n = nextRerun.size(); i < n; i++) {
             Misc.free(nextRerun.poll());
         }
