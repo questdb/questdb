@@ -408,7 +408,7 @@ public class FileIndexer implements Closeable, Mutable {
         LOG.info().$("created import dir ").$(workDirPath).$();
     }
 
-    void parseStructure(long fd) throws TextException {
+    TableWriter parseStructure(long fd) throws TextException {
         final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
 
         final int textAnalysisMaxLines = configuration.getTextConfiguration().getTextAnalysisMaxLines();
@@ -437,7 +437,9 @@ public class FileIndexer implements Closeable, Mutable {
                 textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
                 forceHeader = textMetadataDetector.isHeader();
 
-                prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), inputFilePath, typeManager);
+                return prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), inputFilePath, typeManager);
+            } else {
+                throw TextException.$("Can't read from file path='").put(inputFilePath).put("'");
             }
         } finally {
             Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
@@ -459,7 +461,7 @@ public class FileIndexer implements Closeable, Mutable {
         return collectedCount;
     }
 
-    private void movePartitionsToDst(IntList taskDistribution, int taskCount) {
+    private void movePartitions(IntList taskDistribution, int taskCount) {
         for (int i = 0; i < taskCount; i++) {
             int index = taskDistribution.getQuick(i * 3);
             int lo = taskDistribution.getQuick(i * 3 + 1);
@@ -488,27 +490,21 @@ public class FileIndexer implements Closeable, Mutable {
         if (this.queue.getCycle() <= 0) {
             throw SqlException.$(0, "Unable to process, the processing queue is misconfigured");
         }
-
-        try {
-            if (ff.length(fd) < 1) {
-                throw TextException.$("Ignoring file because it's empty [path='").put(inputFilePath).put(']');
-            }
-
-            parseStructure(fd);
-        } catch (Throwable t) {
+        long length = ff.length(fd);
+        if (length < 1) {
             ff.close(fd);
-            throw t;
+            throw TextException.$("Ignoring file because it's empty [path='").put(inputFilePath).put(']');
         }
 
-        try (TableWriter writer = cairoEngine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, LOCK_REASON)) {
-            findChunkBoundaries(fd);
+        try (TableWriter writer = parseStructure(fd)) {
+            findChunkBoundaries(length);
             indexChunks();
             importPartitions();
             int taskCount = taskDistribution.size() / 3;
             mergeSymbolTables(taskCount, writer);
             updateSymbolKeys(taskCount, writer);
             buildColumnIndexes(taskCount, writer);
-            movePartitionsToDst(taskDistribution, taskCount);
+            movePartitions(taskDistribution, taskCount);
             attachPartitions(writer);
         } finally {
             removeWorkDir();
@@ -564,10 +560,8 @@ public class FileIndexer implements Closeable, Mutable {
     }
 
     //returns list with N chunk boundaries
-    LongList findChunkBoundaries(long fd) {
+    LongList findChunkBoundaries(long fileLength) {
         LOG.info().$("Started checking boundaries in file=").$(inputFilePath).$();
-
-        final long fileLength = ff.length(fd);
 
         assert (workerCount > 0 && minChunkSize > 0);
 
@@ -598,7 +592,7 @@ public class FileIndexer implements Closeable, Mutable {
                 if (seq > -1) {
                     final TextImportTask task = queue.get(seq);
                     task.setIndex(5 * i);
-                    task.ofCountQuotesStage(ff, fd, chunkLo, chunkHi, bufferLength);
+                    task.ofCountQuotesStage(ff, inputFilePath, chunkLo, chunkHi, bufferLength);
                     pubSeq.done(seq);
                     queuedCount++;
                     break;
@@ -882,7 +876,7 @@ public class FileIndexer implements Closeable, Mutable {
         return writer;
     }
 
-    void prepareTable(
+    TableWriter prepareTable(
             CairoSecurityContext cairoSecurityContext,
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> types,
@@ -910,6 +904,7 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         TableWriter writer = null;
+
         try {
             switch (cairoEngine.getStatus(cairoSecurityContext, path, tableName)) {
                 case TableUtils.TABLE_DOES_NOT_EXIST:
@@ -952,20 +947,25 @@ public class FileIndexer implements Closeable, Mutable {
                     throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
             }
 
+            inputFilePath.of(inputRoot).concat(inputFileName).$();//getStatus might override it 
             targetTableStructure.setIgnoreColumnIndexedFlag(true);
-        } finally {
+
+            if (timestampIndex == -1) {
+                throw CairoException.instance(-1).put("timestamp column not found");
+            }
+
+            if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
+                timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
+            }
+        } catch (Throwable t) {
             if (writer != null) {
                 writer.close();
             }
+
+            throw t;
         }
 
-        if (timestampIndex == -1) {
-            throw CairoException.instance(-1).put("timestamp column not found");
-        }
-
-        if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
-            timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
-        }
+        return writer;
     }
 
     void validate(ObjList<CharSequence> names,
