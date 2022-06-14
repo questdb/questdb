@@ -33,6 +33,8 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.junit.Test;
 
+import java.util.function.Consumer;
+
 import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractGriffinTest {
@@ -197,6 +199,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             row.putByte(0, (byte) 11);
             row.append();
             assertEquals(2, walWriter.size());
+
             walWriter.rollSegment();
             assertEquals(0, walWriter.size());
             row = walWriter.newRow();
@@ -831,206 +834,87 @@ public class WalWriterTest extends AbstractGriffinTest {
 
     @Test
     public void testRollSegmentByStorageSize() {
-        final String tableName = "testTableRollSegment";
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                .col("int", ColumnType.INT)
-                .col("byte", ColumnType.BYTE)
-                .col("long", ColumnType.LONG)
-                .col("long256", ColumnType.LONG256)
-                .col("double", ColumnType.DOUBLE)
-                .col("float", ColumnType.FLOAT)
-                .col("short", ColumnType.SHORT)
-                .col("timestamp", ColumnType.TIMESTAMP)
-                .col("char", ColumnType.CHAR)
-                .col("boolean", ColumnType.BOOLEAN)
-                .col("date", ColumnType.DATE)
-                .col("string", ColumnType.STRING)
-                .col("geoByte", ColumnType.GEOBYTE)
-                .col("geoInt", ColumnType.GEOINT)
-                .col("geoShort", ColumnType.GEOSHORT)
-                .col("geoLong", ColumnType.GEOLONG)
-                .col("bin", ColumnType.BINARY)
-                .col("symbol", ColumnType.SYMBOL)
-                .timestamp("ts")
-        ) {
-            createTable(model);
-        }
-
-        final long maxSegmentSize = 2048L;
         final int rowsToInsertTotal = 50;
-        final long pointer = Unsafe.getUnsafe().allocateMemory(rowsToInsertTotal);
-        try {
-            final long ts = Os.currentTimeMicros();
-            final Long256Impl long256 = new Long256Impl();
-            final StringSink stringSink = new StringSink();
-            final DirectBinarySequence binSeq = new DirectBinarySequence();
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl(2048L, Long.MAX_VALUE);
+        final LongList expectedRowCounts = new LongList();
+        expectedRowCounts.add(14L);
+        expectedRowCounts.add(13L);
+        expectedRowCounts.add(12L);
+        expectedRowCounts.add(11L);
 
-            final String walName;
-            final LongList rowCounts = new LongList();
-            final ObjList<IntList> walSymbolCounts = new ObjList<>();
-            final int timestampIndex;
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walWriter.setRollStrategy(new WalWriterRollStrategyImpl(maxSegmentSize, Long.MAX_VALUE));
-                assertEquals(tableName, walWriter.getTableName());
-                walName = walWriter.getWalName();
-                for (int i = 0; i < rowsToInsertTotal; i++) {
-                    stringSink.clear();
-                    WalWriter.Row row = walWriter.newRow(ts);
-                    row.putInt(0, i);
-                    row.putByte(1, (byte) i);
-                    row.putLong(2, i);
-                    row.putLong256(3, i, i + 1, i + 2, i + 3);
-                    row.putDouble(4, i + .5);
-                    row.putFloat(5, i + .5f);
-                    row.putShort(6, (short) i);
-                    row.putTimestamp(7, i);
-                    row.putChar(8, (char) i);
-                    row.putBool(9, i % 2 == 0);
-                    row.putDate(10, i);
-                    row.putStr(11, String.valueOf(i));
-                    row.putGeoHash(12, i); // geo byte
-                    row.putGeoHash(13, i); // geo int
-                    row.putGeoHash(14, i); // geo short
-                    row.putGeoHash(15, i); // geo long
-                    prepareBinPayload(pointer, i);
-                    row.putBin(16, binSeq.of(pointer, i));
-                    row.putSym(17, String.valueOf(i));
-                    row.append();
-
-                    final long rolledRowCount = walWriter.rollSegmentIfLimitReached();
-                    if (rolledRowCount != 0 || i == rowsToInsertTotal - 1) {
-                        rowCounts.add(rolledRowCount == 0 ? walWriter.size() : rolledRowCount);
-                        final IntList symbolCounts = new IntList();
-                        walSymbolCounts.add(symbolCounts);
-                        symbolCounts.add(walWriter.getSymbolMapWriter(17).getSymbolCount());
-                    }
-                }
-
-                timestampIndex = walWriter.getTimestampIndex();
-                assertEquals("WalWriter{name=" + tableName + "}", walWriter.toString());
-            }
-
-            assertEquals(4, rowCounts.size());
-            assertEquals(14, rowCounts.get(0));
-            assertEquals(13, rowCounts.get(1));
-            assertEquals(12, rowCounts.get(2));
-            assertEquals(11, rowCounts.get(3));
-
-            int i = 0;
-            for (int segmentId = 0; segmentId < rowCounts.size(); segmentId++) {
-                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName,
-                        segmentId, walSymbolCounts.get(segmentId), rowCounts.get(segmentId), timestampIndex)) {
-                    assertEquals(19, reader.getColumnCount());
-                    assertEquals(walName, reader.getWalName());
-                    assertEquals(tableName, reader.getTableName());
-                    assertEquals(rowCounts.get(segmentId), reader.size());
-
-                    final RecordCursor cursor = reader.getCursor();
-                    final Record record = cursor.getRecord();
-                    final StringSink testSink = new StringSink();
-                    while (cursor.hasNext()) {
-                        assertEquals(i, record.getInt(0));
-                        assertEquals(i, record.getByte(1));
-                        assertEquals(i, record.getLong(2));
-                        long256.setAll(i, i + 1, i + 2, i + 3);
-                        assertEquals(long256, record.getLong256A(3));
-                        assertEquals(long256, record.getLong256B(3));
-                        assertEquals(i + 0.5, record.getDouble(4), 0.1);
-                        assertEquals(i + 0.5, record.getFloat(5), 0.1);
-                        assertEquals(i, record.getShort(6));
-                        assertEquals(i, record.getTimestamp(7));
-                        assertEquals(i, record.getChar(8));
-                        assertEquals(i % 2 == 0, record.getBool(9));
-                        assertEquals(i, record.getDate(10));
-                        assertEquals(String.valueOf(i), record.getStr(11).toString());
-                        assertEquals(record.getStr(11).toString(), record.getStrB(11).toString());
-                        assertEquals(String.valueOf(i).length(), record.getStrLen(11));
-                        assertEquals(i, record.getGeoByte(12));
-                        assertEquals(i, record.getGeoInt(13));
-                        assertEquals(i, record.getGeoShort(14));
-                        assertEquals(i, record.getGeoLong(15));
-                        prepareBinPayload(pointer, i);
-                        assertBinSeqEquals(binSeq.of(pointer, i), record.getBin(16));
-                        assertEquals(String.valueOf(i), record.getSym(17));
-                        assertEquals(ts, record.getTimestamp(18));
-
-                        long rowId = i;
-                        for (int x = 0; x < segmentId; x++) {
-                            rowId -= rowCounts.getQuick(x);
-                        }
-                        assertEquals(rowId, record.getRowId());
-                        testSink.clear();
-                        ((Sinkable) record).toSink(testSink);
-                        assertEquals("WalReaderRecord [recordIndex=" + rowId + "]", testSink.toString());
-                        try {
-                            cursor.getRecordB();
-                            fail("UnsupportedOperationException expected");
-                        } catch(UnsupportedOperationException e) {
-                            // ignore, this is expected
-                        }
-                        try {
-                            record.getUpdateRowId();
-                            fail("UnsupportedOperationException expected");
-                        } catch(UnsupportedOperationException e) {
-                            // ignore, this is expected
-                        }
-                        i++;
-                    }
-                    assertEquals(rowCounts.get(segmentId), cursor.size());
-                    assertEquals(rowCounts.get(segmentId), reader.size());
-                }
-            }
-        } finally {
-            Unsafe.getUnsafe().freeMemory(pointer);
-        }
+        testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts);
     }
 
     @Test
-    public void testRollSegmentByNumOfRows() {
-        final String tableName = "testTableRollSegment";
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
-                .col("int", ColumnType.INT)
-                .col("byte", ColumnType.BYTE)
-                .col("long", ColumnType.LONG)
-                .col("long256", ColumnType.LONG256)
-                .col("double", ColumnType.DOUBLE)
-                .col("float", ColumnType.FLOAT)
-                .col("short", ColumnType.SHORT)
-                .col("timestamp", ColumnType.TIMESTAMP)
-                .col("char", ColumnType.CHAR)
-                .col("boolean", ColumnType.BOOLEAN)
-                .col("date", ColumnType.DATE)
-                .col("string", ColumnType.STRING)
-                .col("geoByte", ColumnType.GEOBYTE)
-                .col("geoInt", ColumnType.GEOINT)
-                .col("geoShort", ColumnType.GEOSHORT)
-                .col("geoLong", ColumnType.GEOLONG)
-                .col("bin", ColumnType.BINARY)
-                .col("symbol", ColumnType.SYMBOL)
-                .timestamp("ts")
-        ) {
-            createTable(model);
-        }
+    public void testRollSegmentByRowCount() {
+        final int rowsToInsertTotal = 55;
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl(Long.MAX_VALUE, 15L);
+        final LongList expectedRowCounts = new LongList();
+        expectedRowCounts.add(15L);
+        expectedRowCounts.add(15L);
+        expectedRowCounts.add(15L);
+        expectedRowCounts.add(10L);
 
-        final long maxNumOfRows = 15L;
+        testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts);
+    }
+
+    @Test
+    public void testRollSegmentByStorageSizeThenByRowCount() {
         final int rowsToInsertTotal = 50;
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl(2048L, Long.MAX_VALUE);
+        final LongList expectedRowCounts = new LongList();
+        expectedRowCounts.add(14L);
+        expectedRowCounts.add(13L);
+        expectedRowCounts.add(10L);
+        expectedRowCounts.add(10L);
+        expectedRowCounts.add(3L);
+
+        final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
+        rollStrategyUpdates.put(30, strategy -> strategy.setMaxRowCount(10L));
+        testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
+    }
+
+    @Test
+    public void testRollSegmentByRowCountThenByStorageSize() {
+        final int rowsToInsertTotal = 70;
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl(Long.MAX_VALUE, 8L);
+        final LongList expectedRowCounts = new LongList();
+        expectedRowCounts.add(8L);
+        expectedRowCounts.add(8L);
+        expectedRowCounts.add(8L);
+        expectedRowCounts.add(8L);
+        expectedRowCounts.add(22L);
+        expectedRowCounts.add(16L);
+
+        final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
+        rollStrategyUpdates.put(23, strategy -> strategy.setMaxSegmentSize(4096L));
+        rollStrategyUpdates.put(33, strategy -> strategy.setMaxRowCount(100L));
+        testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
+    }
+
+    private void testRollSegment(int rowsToInsertTotal, WalWriterRollStrategy rollStrategy, LongList expectedRowCounts) {
+        final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
+        testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
+    }
+
+    private void testRollSegment(int rowsToInsertTotal, WalWriterRollStrategy rollStrategy, LongList expectedRowCounts,
+                                 IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates) {
+        final String tableName = "testTableRollSegment";
+        createRollSegmentTestTable(tableName);
+
         final long pointer = Unsafe.getUnsafe().allocateMemory(rowsToInsertTotal);
         try {
-            final long ts = Os.currentTimeMicros();
-            final Long256Impl long256 = new Long256Impl();
-            final StringSink stringSink = new StringSink();
-            final DirectBinarySequence binSeq = new DirectBinarySequence();
-
             final String walName;
+            final long ts = Os.currentTimeMicros();
+            final DirectBinarySequence binSeq = new DirectBinarySequence();
             final LongList rowCounts = new LongList();
             final ObjList<IntList> walSymbolCounts = new ObjList<>();
-            final int timestampIndex;
+
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                walWriter.setRollStrategy(new WalWriterRollStrategyImpl(Long.MAX_VALUE, maxNumOfRows));
+                walWriter.setRollStrategy(rollStrategy);
                 assertEquals(tableName, walWriter.getTableName());
                 walName = walWriter.getWalName();
                 for (int i = 0; i < rowsToInsertTotal; i++) {
-                    stringSink.clear();
                     WalWriter.Row row = walWriter.newRow(ts);
                     row.putInt(0, i);
                     row.putByte(1, (byte) i);
@@ -1053,6 +937,11 @@ public class WalWriterTest extends AbstractGriffinTest {
                     row.putSym(17, String.valueOf(i));
                     row.append();
 
+                    final Consumer<WalWriterRollStrategy> rollStrategyUpdate = rollStrategyUpdates.get(i);
+                    if (rollStrategyUpdate != null) {
+                        rollStrategyUpdate.accept(rollStrategy);
+                    }
+
                     final long rolledRowCount = walWriter.rollSegmentIfLimitReached();
                     if (rolledRowCount != 0 || i == rowsToInsertTotal - 1) {
                         rowCounts.add(rolledRowCount == 0 ? walWriter.size() : rolledRowCount);
@@ -1062,20 +951,15 @@ public class WalWriterTest extends AbstractGriffinTest {
                     }
                 }
 
-                timestampIndex = walWriter.getTimestampIndex();
                 assertEquals("WalWriter{name=" + tableName + "}", walWriter.toString());
             }
 
-            assertEquals(4, rowCounts.size());
-            assertEquals(15, rowCounts.get(0));
-            assertEquals(15, rowCounts.get(1));
-            assertEquals(15, rowCounts.get(2));
-            assertEquals(5, rowCounts.get(3));
+            assertEquals(expectedRowCounts, rowCounts);
 
             int i = 0;
             for (int segmentId = 0; segmentId < rowCounts.size(); segmentId++) {
                 try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName,
-                        segmentId, walSymbolCounts.get(segmentId), rowCounts.get(segmentId), timestampIndex)) {
+                        segmentId, walSymbolCounts.get(segmentId), rowCounts.get(segmentId), 18)) {
                     assertEquals(19, reader.getColumnCount());
                     assertEquals(walName, reader.getWalName());
                     assertEquals(tableName, reader.getTableName());
@@ -1083,7 +967,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final RecordCursor cursor = reader.getCursor();
                     final Record record = cursor.getRecord();
-                    final StringSink testSink = new StringSink();
+                    final Long256Impl long256 = new Long256Impl();
                     while (cursor.hasNext()) {
                         assertEquals(i, record.getInt(0));
                         assertEquals(i, record.getByte(1));
@@ -1115,21 +999,9 @@ public class WalWriterTest extends AbstractGriffinTest {
                             rowId -= rowCounts.getQuick(x);
                         }
                         assertEquals(rowId, record.getRowId());
-                        testSink.clear();
-                        ((Sinkable) record).toSink(testSink);
-                        assertEquals("WalReaderRecord [recordIndex=" + rowId + "]", testSink.toString());
-                        try {
-                            cursor.getRecordB();
-                            fail("UnsupportedOperationException expected");
-                        } catch(UnsupportedOperationException e) {
-                            // ignore, this is expected
-                        }
-                        try {
-                            record.getUpdateRowId();
-                            fail("UnsupportedOperationException expected");
-                        } catch(UnsupportedOperationException e) {
-                            // ignore, this is expected
-                        }
+                        sink.clear();
+                        ((Sinkable) record).toSink(sink);
+                        assertEquals("WalReaderRecord [recordIndex=" + rowId + "]", sink.toString());
                         i++;
                     }
                     assertEquals(rowCounts.get(segmentId), cursor.size());
@@ -1174,6 +1046,32 @@ public class WalWriterTest extends AbstractGriffinTest {
                 : new TableModel(configuration, tableName, PartitionBy.NONE)
                         .col("a", ColumnType.BYTE)
                         .col("b", ColumnType.STRING);
+    }
+
+    private void createRollSegmentTestTable(String tableName) {
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                .col("int", ColumnType.INT)
+                .col("byte", ColumnType.BYTE)
+                .col("long", ColumnType.LONG)
+                .col("long256", ColumnType.LONG256)
+                .col("double", ColumnType.DOUBLE)
+                .col("float", ColumnType.FLOAT)
+                .col("short", ColumnType.SHORT)
+                .col("timestamp", ColumnType.TIMESTAMP)
+                .col("char", ColumnType.CHAR)
+                .col("boolean", ColumnType.BOOLEAN)
+                .col("date", ColumnType.DATE)
+                .col("string", ColumnType.STRING)
+                .col("geoByte", ColumnType.GEOBYTE)
+                .col("geoInt", ColumnType.GEOINT)
+                .col("geoShort", ColumnType.GEOSHORT)
+                .col("geoLong", ColumnType.GEOLONG)
+                .col("bin", ColumnType.BINARY)
+                .col("symbol", ColumnType.SYMBOL)
+                .timestamp("ts")
+        ) {
+            createTable(model);
+        }
     }
 
     private static void prepareBinPayload(long pointer, int limit) {

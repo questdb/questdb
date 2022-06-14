@@ -25,16 +25,17 @@
 package io.questdb.cairo;
 
 public class WalWriterRollStrategyImpl implements WalWriterRollStrategy {
-    private long maxNumOfRows = Long.MAX_VALUE;
+    private long maxRowCount = Long.MAX_VALUE;
     private long maxSegmentSize = Long.MAX_VALUE;
 
     // create a builder instead of this constructor
     // when time period based strategy is added
-    public WalWriterRollStrategyImpl(long maxSegmentSize, long maxNumOfRows) {
+    public WalWriterRollStrategyImpl(long maxSegmentSize, long maxRowCount) {
         setMaxSegmentSize(maxSegmentSize);
-        setMaxNumOfRows(maxNumOfRows);
+        setMaxRowCount(maxRowCount);
     }
 
+    @Override
     public void setMaxSegmentSize(long maxSegmentSize) {
         if (maxSegmentSize < 1) {
             throw CairoException.instance(CairoException.METADATA_VALIDATION)
@@ -43,17 +44,18 @@ public class WalWriterRollStrategyImpl implements WalWriterRollStrategy {
         this.maxSegmentSize = maxSegmentSize;
     }
 
-    public void setMaxNumOfRows(long maxNumOfRows) {
-        if (maxNumOfRows < 1) {
+    @Override
+    public void setMaxRowCount(long maxRowCount) {
+        if (maxRowCount < 1) {
             throw CairoException.instance(CairoException.METADATA_VALIDATION)
-                    .put("Max number of rows cannot be less than 1, maxNumOfRows=").put(maxNumOfRows);
+                    .put("Max number of rows cannot be less than 1, maxRowCount=").put(maxRowCount);
         }
-        this.maxNumOfRows = maxNumOfRows;
+        this.maxRowCount = maxRowCount;
     }
 
     @Override
     public boolean shouldRoll(long segmentSize, long rowCount) {
-        return segmentSize >= maxSegmentSize || rowCount >= maxNumOfRows;
+        return segmentSize >= maxSegmentSize || rowCount >= maxRowCount;
     }
 
     @Override
@@ -62,7 +64,7 @@ public class WalWriterRollStrategyImpl implements WalWriterRollStrategy {
     }
 
     @Override
-    public boolean isMaxNumOfRowsSet() {
-        return maxNumOfRows != Long.MAX_VALUE;
+    public boolean isMaxRowCountSet() {
+        return maxRowCount != Long.MAX_VALUE;
     }
 }
