@@ -104,86 +104,12 @@ public class FileSplitterTest extends AbstractGriffinTest {
         );
     }
 
-    @Test
-    public void testIndexMerge() {
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        try (Path path = new Path().of(inputRoot).slash().concat("chunks")) {
-            int plen = path.length();
-            path.concat("part").slash$();
-
-            if (!ff.exists(path)) {
-                int result = ff.mkdirs(path, engine.getConfiguration().getMkDirMode());
-                if (result != 0) {
-                    LOG.info().$("Couldn't create partition dir=").$(path).$();//TODO: maybe we can ignore it
-                }
-            }
-            int chunks = 10;
-            createAndSortChunkFiles(path, chunks, 10_000, 1_000_000);
-
-            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
-                path.trimTo(plen);
-//                indexer.mergePartitionIndexes(path.$(), chunks);
-                //todo: test!!
-            }
-            path.trimTo(plen);
-            ff.rmdir(path.$()); // clean all
-        }
-    }
-
     private LongList list(long... values) {
         LongList result = new LongList();
         for (long l : values) {
             result.add(l);
         }
         return result;
-    }
-
-    @Test
-    public void testIndexSort() {
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        try (Path path = new Path().of(inputRoot).slash().concat("chunk").$();
-             FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
-
-            MemoryPMARImpl chunk = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-            try {
-                long lo = 0;
-                long hi = Long.MAX_VALUE;
-                long range = hi - lo + 1;
-                for (int i = 0; i < 10; i++) {
-                    final long z = lo + rnd.nextPositiveLong() % range;
-//                    final long z = 10 - i;
-                    chunk.putLong(z);
-                    chunk.putLong(i);
-                }
-            } finally {
-                chunk.close(true, Vm.TRUNCATE_TO_POINTER);
-            }
-
-            //indexer.sort(path)//TODO: TEST !
-            long len = ff.length(path.$());
-            try (MemoryCMRImpl sorted = new MemoryCMRImpl(ff, path.$(), len, MemoryTag.MMAP_DEFAULT)) {
-                long offset = 0;
-                while (offset < len) {
-                    long ts = sorted.getLong(offset);
-                    long id = sorted.getLong(offset + 8);
-                    System.err.println(ts);
-                    System.err.println(id);
-                    offset += 16;
-                }
-            }
-            ff.remove(path);
-//            System.err.println("---------------");
-//            try(MemoryCMRImpl sorted = new MemoryCMRImpl(ff, path.chop$().put(".s").$(), len, MemoryTag.MMAP_DEFAULT)) {
-//                long offset = 0;
-//                while (offset < len) {
-//                    long ts = sorted.getLong(offset);
-//                    long id = sorted.getLong(offset + 8);
-//                    System.err.println(ts);
-//                    System.err.println(id);
-//                    offset += 16;
-//                }
-//            }
-        }
     }
 
     @Test
@@ -1590,7 +1516,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
-                if (from.toString().endsWith("1972-09\\")) {
+                if (from.toString().endsWith("1972-09" + File.separator)) {
                     return false;
                 }
                 return super.rename(from, to);
@@ -1609,7 +1535,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("cannot copy partition file"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("Cannot copy partition file"));
             }
 
             try {
@@ -1625,7 +1551,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                if (path.toString().endsWith("1972-09\\ts.d")) {
+                if (path.toString().endsWith("1972-09" + File.separator + "ts.d")) {
                     return false;
                 }
                 return super.exists(path);
@@ -1655,7 +1581,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
-                if (from.toString().endsWith("1972-09\\")) {
+                if (from.toString().endsWith("1972-09" + File.separator)) {
                     return false;
                 }
                 return super.rename(from, to);
@@ -1676,7 +1602,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("cannot copy partition file"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("Cannot copy partition file"));
             }
 
             assertQuery("cnt\n0\n", "select count(*) cnt from tab", null, false, false, true);
@@ -1688,7 +1614,7 @@ public class FileSplitterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                if (path.toString().endsWith("1972-09\\ts.d")) {
+                if (path.toString().endsWith("1972-09" + File.separator + "ts.d")) {
                     return false;
                 }
                 return super.exists(path);
@@ -2470,35 +2396,6 @@ public class FileSplitterTest extends AbstractGriffinTest {
                 }
             }
         }
-    }
-
-    private void createAndSortChunkFiles(Path path, int nChunks, int chunkSizeMin, int chunkSizeMax) {
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        int plen = path.length();
-        for (int i = 0; i < nChunks; i++) {
-            path.trimTo(plen);
-            path.slash().concat("chunk").put(i).$();
-            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
-                long rng = chunkSizeMax - chunkSizeMin + 1;
-                final long count = chunkSizeMin + rnd.nextPositiveLong() % rng;
-
-                MemoryPMARImpl chunk = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-                try {
-                    long lo = 0;
-                    long hi = Long.MAX_VALUE;
-                    long range = hi - lo + 1;
-                    for (int v = 0; v < count; v++) {
-                        final long z = lo + rnd.nextPositiveLong() % range;
-                        chunk.putLong(z);
-                        chunk.putLong(v);
-                    }
-                } finally {
-                    chunk.close(true, Vm.TRUNCATE_TO_POINTER);
-                }
-                //indexer.sort(path);//TODO: fix
-            }
-        }
-        path.trimTo(plen);
     }
 
     @FunctionalInterface

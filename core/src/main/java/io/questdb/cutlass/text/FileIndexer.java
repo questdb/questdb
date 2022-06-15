@@ -499,19 +499,20 @@ public class FileIndexer implements Closeable, Mutable {
                         LOG.info().$(srcPath).$(" and ").$(dstPath).$(" are not on the same mounted filesystem. Partitions will be copied.").$();
 
                         if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
-                            throw CairoException.instance(ff.errno()).put("Cannot create partition directory: ").put(dstPath);
+                            throw CairoException.instance(ff.errno()).put("Cannot create partition directory [path=").put(dstPath).put(']');
                         }
+
                         ff.iterateDir(srcPath, (long name, int type) -> {
                             if (type == Files.DT_FILE) {
                                 srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
                                 dstPath.trimTo(dstPlen).concat(partitionName).concat(name).$();
                                 if (ff.copy(srcPath, dstPath) < 0) {
-                                    throw CairoException.instance(ff.errno()).put("cannot copy file [to=").put(dstPath).put(']');
+                                    throw CairoException.instance(ff.errno()).put("Cannot copy partition file [to=").put(dstPath).put(']');
                                 }
                             }
                         });
                     } else {
-                        LOG.error().$("Can't move ").$(srcPath).$(" to ").$(dstPath).$(" errno=").$(ff.errno()).$();
+                        throw CairoException.instance(ff.errno()).put("Cannot copy partition file [to=").put(dstPath).put(']');
                     }
                 }
             }
