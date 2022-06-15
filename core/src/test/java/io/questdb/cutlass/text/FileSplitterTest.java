@@ -2138,6 +2138,11 @@ public class FileSplitterTest extends AbstractGriffinTest {
             public boolean rename(LPSZ from, LPSZ to) {
                 return false;
             }
+
+            @Override
+            public int errno() {
+                return Os.Errno.EXDEV;
+            }
         };
         executeWithPool(4, 8, brokenRename, this::importAllIntoNew);
     }
@@ -2189,6 +2194,10 @@ public class FileSplitterTest extends AbstractGriffinTest {
             @Override
             public boolean rename(LPSZ from, LPSZ to) {
                 return false;
+            }
+            @Override
+            public int errno() {
+                return Os.Errno.EXDEV;
             }
         };
         executeWithPool(4, 8, brokenRename, this::importAllIntoExisting);
