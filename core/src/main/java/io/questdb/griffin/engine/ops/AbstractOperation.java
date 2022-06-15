@@ -28,6 +28,8 @@ import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.QuietClosable;
 import io.questdb.tasks.TableWriterTask;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractOperation implements AsyncWriterCommand, QuietClosable {
 
@@ -41,7 +43,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
 
     String tableName;
     int tableNamePosition;
-    SqlExecutionContext sqlExecutionContext;
+    @Nullable SqlExecutionContext sqlExecutionContext;
 
     void init(
             int cmdType,
@@ -105,12 +107,8 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         task.setInstance(correlationId);
     }
 
-    public void withContext(SqlExecutionContext sqlExecutionContext) {
+    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
+        assert sqlExecutionContext != null;
         this.sqlExecutionContext = sqlExecutionContext;
-    }
-
-    @Override
-    public void close() {
-        // intentionally left empty
     }
 }

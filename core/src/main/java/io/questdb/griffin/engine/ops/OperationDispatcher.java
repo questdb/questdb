@@ -34,12 +34,11 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.WeakSelfReturningObjectPool;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class OperationDispatcher<T extends AbstractOperation> {
+public class OperationDispatcher<T extends AbstractOperation> {
 
-    protected final CairoEngine engine;
-    protected final DoneOperationFuture doneFuture = new DoneOperationFuture();
-    protected final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
-
+    private final CairoEngine engine;
+    private final DoneOperationFuture doneFuture = new DoneOperationFuture();
+    private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
     private final CharSequence lockReason;
 
     public OperationDispatcher(CairoEngine engine, CharSequence lockReason) {
@@ -48,7 +47,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         this.lockReason = lockReason;
     }
 
-    public final OperationFuture execute(
+    public OperationFuture execute(
             T operation,
             SqlExecutionContext sqlExecutionContext,
             @Nullable SCSequence eventSubSeq
@@ -64,7 +63,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
                         lockReason
                 )
         ) {
-            return doneFuture.of(doExecute(sqlExecutionContext, writer, operation));
+            return doneFuture.of(operation.apply(writer, true));
         } catch (EntryUnavailableException busyException) {
             if (eventSubSeq == null) {
                 throw busyException;
@@ -74,10 +73,4 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
             return future;
         }
     }
-
-    protected abstract long doExecute(
-            SqlExecutionContext sqlExecutionContext,
-            TableWriter writer,
-            T operation
-    ) throws SqlException;
 }

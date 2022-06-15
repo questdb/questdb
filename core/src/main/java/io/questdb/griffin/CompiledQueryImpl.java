@@ -49,8 +49,8 @@ public class CompiledQueryImpl implements CompiledQuery {
     private long affectedRowsCount;
 
     public CompiledQueryImpl(CairoEngine engine) {
-        updateOperationDispatcher = new UpdateOperationDispatcher(engine);
-        alterOperationDispatcher = new AlterOperationDispatcher(engine);
+        updateOperationDispatcher = new OperationDispatcher<>(engine, "sync 'UPDATE' execution");
+        alterOperationDispatcher = new OperationDispatcher<>(engine, "Alter table execute");
     }
 
     @Override

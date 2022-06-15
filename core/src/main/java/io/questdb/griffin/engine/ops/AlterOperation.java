@@ -99,7 +99,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     applyAddIndex(tableWriter);
                     break;
                 case DROP_INDEX:
-                    assert sqlExecutionContext != null;
                     applyDropIndex(tableWriter);
                     break;
                 case ADD_SYMBOL_CACHE:
@@ -252,7 +251,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private void applyDropIndex(TableWriter tableWriter) throws SqlException {
         CharSequence columnName = charSequenceList.getStrA(0);
         try {
-            tableWriter.dropColumnIndex(sqlExecutionContext, columnName);
+            tableWriter.dropIndex(columnName);
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition)
                     .put(e.getFlyweightMessage())

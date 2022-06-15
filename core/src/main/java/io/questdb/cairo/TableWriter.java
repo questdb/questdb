@@ -34,7 +34,6 @@ import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.UpdateOperator;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.model.IntervalUtils;
@@ -544,7 +543,7 @@ public class TableWriter implements Closeable {
         }
 
         // set index flag in metadata and  create new _meta.swp
-        metaSwapIndex = copyMetadataAndSetIndexedFlag(columnIndex, META_FLAG_BIT_INDEXED, indexValueBlockSize);
+        metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, META_FLAG_BIT_INDEXED, indexValueBlockSize);
 
         swapMetaFile(columnName);
 
@@ -558,7 +557,7 @@ public class TableWriter implements Closeable {
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
     }
 
-    public void dropColumnIndex(SqlExecutionContext executionContext, CharSequence columnName) {
+    public void dropIndex(CharSequence columnName) {
 
         checkDistressed();
 
@@ -567,6 +566,7 @@ public class TableWriter implements Closeable {
             throw CairoException.metadataValidation("Column does not exist", columnName);
         }
         if (!isColumnIndexed(metaMem, columnIndex)) {
+            // if a column is indexed, it is al so of type SYMBOL
             throw CairoException.metadataValidation("Column is not indexed", columnName);
         }
 
@@ -577,34 +577,42 @@ public class TableWriter implements Closeable {
                 .$(", column=")
                 .$(columnName)
                 .I$();
+        try {
+            // drop index
+            getUpdateOperator().executeDropIndex(tableName, columnName, columnIndex);
 
-        // set index flag in metadata and create new _meta.swp
-        final int indexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
-        metaSwapIndex = copyMetadataAndSetIndexedFlag(columnIndex, META_FLAG_BIT_NOT_INDEXED, indexValueBlockSize);
-        swapMetaFile(columnName);
+            // swap metadata
+            final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
+            metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, META_FLAG_BIT_NOT_INDEXED, defaultIndexValueBlockSize);
+            swapMetaFile(columnName);
+            TableColumnMetadata columnMeta = metadata.getColumnQuick(columnIndex);
+            columnMeta.setIndexed(false);
+            columnMeta.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
 
-        TableColumnMetadata columnMeta = metadata.getColumnQuick(columnIndex);
-        columnMeta.setIndexed(false);
-        columnMeta.setIndexValueBlockCapacity(indexValueBlockSize);
-
-//            getUpdateOperator().executeUpdate(executionContext)
-//            dropIndexOperator.executeDropIndex(tableName, columnName, columnIndex);
-//        commit();
-
-        // remove indexer
-        ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
-        if (columnIndexer != null) {
-            indexers.remove(columnIndex);
-            Misc.free(columnIndexer);
-            populateDenseIndexerList();
+            // remove indexer
+            ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
+            if (columnIndexer != null) {
+                indexers.remove(columnIndex);
+                Misc.free(columnIndexer);
+                populateDenseIndexerList();
+            }
+            LOG.info().$("END DROP INDEX [txn=")
+                    .$(txWriter.getTxn())
+                    .$(", table=")
+                    .$(tableName)
+                    .$(", column=")
+                    .$(columnName)
+                    .I$();
+        } catch (Throwable e) {
+            throw CairoException.instance(0)
+                    .put("Cannot drop index for [txn='")
+                    .put(txWriter.getTxn())
+                    .put(", table=")
+                    .put(tableName)
+                    .put(", column=")
+                    .put(columnName)
+                    .put(']');
         }
-        LOG.info().$("END DROP INDEX [txn=")
-                .$(txWriter.getTxn())
-                .$(", table=")
-                .$(tableName)
-                .$(", column=")
-                .$(columnName)
-                .I$();
     }
 
     public void addPhysicallyWrittenRows(long rows) {
@@ -2167,7 +2175,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int copyMetadataAndSetIndexedFlag(int columnIndex, int indexedFlag, int indexValueBlockSize) {
+    private int copyMetadataAndSetIndexAttrs(int columnIndex, int indexedFlag, int indexValueBlockSize) {
         try {
             int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
             int columnCount = metaMem.getInt(META_OFFSET_COUNT);

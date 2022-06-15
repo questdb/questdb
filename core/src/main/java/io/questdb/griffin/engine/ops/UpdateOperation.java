@@ -33,6 +33,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.tasks.TableWriterTask;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -44,7 +46,7 @@ public class UpdateOperation extends AbstractOperation {
     private RecordCursorFactory factory;
     private volatile boolean requesterTimeout = false;
     private boolean executingAsync;
-    private SqlExecutionCircuitBreaker circuitBreaker;
+    private @Nullable SqlExecutionCircuitBreaker circuitBreaker;
 
     public UpdateOperation(
             String tableName,
@@ -97,7 +99,7 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     public void forceTestTimeout() {
-        if (requesterTimeout || circuitBreaker.checkIfTripped()) {
+        if (requesterTimeout || (circuitBreaker != null && circuitBreaker.checkIfTripped())) {
             throw CairoException.instance(0).put("timeout, query aborted [fd=").put(circuitBreaker != null ? circuitBreaker.getFd() : -1L).put(']').setInterruption(true);
         }
     }
@@ -107,7 +109,9 @@ public class UpdateOperation extends AbstractOperation {
             throw CairoException.instance(0).put("timeout, query aborted [fd=").put(circuitBreaker != null ? circuitBreaker.getFd() : -1L).put(']').setInterruption(true);
         }
 
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        if (circuitBreaker != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+        }
     }
 
     public RecordCursorFactory getFactory() {
@@ -121,7 +125,7 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     @Override
-    public void withContext(SqlExecutionContext sqlExecutionContext) {
+    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
         super.withContext(sqlExecutionContext);
         this.circuitBreaker = this.sqlExecutionContext.getCircuitBreaker();
     }
