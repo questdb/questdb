@@ -52,7 +52,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_translateSysErrno
       switch (errno) {
         case ERROR_NOACCESS:                    return EACCES;
         case WSAEACCES:                         return EACCES;
-        case ERROR_ELEVATION_REQUIRED:          return EACCES;
         case ERROR_CANT_ACCESS_FILE:            return EACCES;
         case ERROR_ADDRESS_ALREADY_ASSOCIATED:  return EADDRINUSE;
         case WSAEADDRINUSE:                     return EADDRINUSE;
@@ -147,7 +146,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_translateSysErrno
         case ERROR_NOT_SAME_DEVICE:             return EXDEV;
         case ERROR_INVALID_FUNCTION:            return EISDIR;
         case ERROR_META_EXPANSION_TOO_LONG:     return E2BIG;
-        case WSAESOCKTNOSUPPORT:                return ESOCKTNOSUPPORT;
         default:                                return errno;
 }
 

@@ -42,7 +42,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
  * Signature: (I)I
  */
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_translateSysErrno
-        (JNIEnv *, jclass, int errno);
+        (JNIEnv *, jclass, jint);
 
 /*
  * Class:     com_questdb_std_Os
