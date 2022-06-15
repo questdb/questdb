@@ -147,6 +147,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_translateSysErrno
         case ERROR_INVALID_FUNCTION:            return EISDIR;
         case ERROR_META_EXPANSION_TOO_LONG:     return E2BIG;
         default:                                return errno;
+     }
 }
 
 typedef struct {
