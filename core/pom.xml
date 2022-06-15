@@ -35,6 +35,7 @@
         <javac.target>11</javac.target>
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
+        <web.console.version>0.0.1</web.console.version>
     </properties>
 
     <version>6.4.2-SNAPSHOT</version>
@@ -288,6 +289,29 @@
             <id>build-web-console</id>
             <build>
                 <plugins>
+                    <!-- download Web Console artefact -->
+                    <plugin>
+                        <groupId>com.googlecode.maven-download-plugin</groupId>
+                        <artifactId>download-maven-plugin</artifactId>
+                        <version>1.6.8</version>
+                        <executions>
+                            <execution>
+                                <!-- the wget goal actually binds itself to this phase by default -->
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>wget</goal>
+                                </goals>
+                                <configuration>
+                                    <url>https://registry.npmjs.org/@questdb/web-console/-/web-console-${web.console.version}.tgz</url>
+                                    <outputFileName>web-console.tgz</outputFileName>
+                                    <outputDirectory>${project.build.outputDirectory}/site/</outputDirectory>
+                                    <unpack>true</unpack>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+
+                    <!-- Repackage Web Console as public.zip -->
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-assembly-plugin</artifactId>
@@ -295,7 +319,7 @@
                         <executions>
                             <execution>
                                 <id>package-web-console</id>
-                                <phase>generate-resources</phase>
+                                <phase>initialize</phase>
                                 <goals>
                                     <goal>single</goal>
                                 </goals>

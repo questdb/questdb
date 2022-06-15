@@ -30,7 +30,7 @@
     <includeBaseDirectory>false</includeBaseDirectory>
     <fileSets>
         <fileSet>
-            <directory>../ui/dist</directory>
+            <directory>${project.build.outputDirectory}/site/package/dist/</directory>
             <includes>
                 <include>**/*</include>
             </includes>
