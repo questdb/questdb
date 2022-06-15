@@ -144,10 +144,10 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     }
 
     @Override
-    protected void startThread(int threadId, SOCountDownLatch threadPushFinished) {
-        super.startThread(threadId, threadPushFinished);
-        while (this.numOfUpdateThreads-- > 0) {
-            startUpdateThread(this.numOfUpdateThreads, updatesDone);
+    protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished) {
+        super.startThread(threadId, socket, threadPushFinished);
+        while (numOfUpdateThreads-- > 0) {
+            startUpdateThread(numOfUpdateThreads, updatesDone);
         }
     }
 

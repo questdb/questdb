@@ -309,11 +309,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser, FloatingDirectCharSink floatingDirectCharSink) {
+            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
-                return super.scheduleEvent(netIoJob, parser, floatingDirectCharSink);
+                return super.scheduleEvent(netIoJob, parser);
             }
         };
         if (authDb == null) {
