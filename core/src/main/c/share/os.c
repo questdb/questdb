@@ -57,8 +57,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_translateSysErrno
-        (JNIEnv *e, jclass cl, jint errno) {
-    return errno;
+        (JNIEnv *e, jclass cl, jint err) {
+    return err;
 }
 
 typedef struct {

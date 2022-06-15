@@ -48,8 +48,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_translateSysErrno
-        (JNIEnv *e, jclass cl, jint errno) {
-      switch (errno) {
+        (JNIEnv *e, jclass cl, jint err) {
+      switch (err) {
         case ERROR_NOACCESS:                    return EACCES;
         case WSAEACCES:                         return EACCES;
         case ERROR_CANT_ACCESS_FILE:            return EACCES;
