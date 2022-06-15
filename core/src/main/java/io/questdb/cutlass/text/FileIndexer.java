@@ -487,18 +487,24 @@ public class FileIndexer implements Closeable, Mutable {
                 srcPath.trimTo(srcPlen).concat(partitionName).slash$();
                 dstPath.trimTo(dstPlen).concat(partitionName).slash$();
                 if (!ff.rename(srcPath, dstPath)) {
-                    if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
-                        throw CairoException.instance(ff.errno()).put("Cannot create partition directory: ").put(dstPath);
-                    }
-                    ff.iterateDir(srcPath, (long name, int type) -> {
-                        if (type == Files.DT_FILE) {
-                            srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
-                            dstPath.trimTo(dstPlen).concat(partitionName).concat(name).$();
-                            if (ff.copy(srcPath, dstPath) < 0) {
-                                throw CairoException.instance(ff.errno()).put("cannot copy file [to=").put(dstPath).put(']');
-                            }
+                    if (Os.translateSysErrno(ff.errno()) == Os.Errno.EXDEV) {
+                        LOG.info().$(srcPath).$(" and ").$(dstPath).$(" are not on the same mounted filesystem. Partitions will be copied.").$();
+
+                        if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
+                            throw CairoException.instance(ff.errno()).put("Cannot create partition directory: ").put(dstPath);
                         }
-                    });
+                        ff.iterateDir(srcPath, (long name, int type) -> {
+                            if (type == Files.DT_FILE) {
+                                srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
+                                dstPath.trimTo(dstPlen).concat(partitionName).concat(name).$();
+                                if (ff.copy(srcPath, dstPath) < 0) {
+                                    throw CairoException.instance(ff.errno()).put("cannot copy file [to=").put(dstPath).put(']');
+                                }
+                            }
+                        });
+                    } else {
+                        LOG.error().$("Can't move ").$(srcPath).$(" to ").$(dstPath).$(" errno=").$(ff.errno()).$();
+                    }
                 }
             }
         }
@@ -519,15 +525,20 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         try (TableWriter writer = parseStructure(fd)) {
-            findChunkBoundaries(length);
-            indexChunks();
-            importPartitions();
-            int taskCount = taskDistribution.size() / 3;
-            mergeSymbolTables(taskCount, writer);
-            updateSymbolKeys(taskCount, writer);
-            buildColumnIndexes(taskCount, writer);
-            movePartitions(taskDistribution, taskCount);
-            attachPartitions(writer);
+            try {
+                findChunkBoundaries(length);
+                indexChunks();
+                importPartitions();
+                int taskCount = taskDistribution.size() / 3;
+                mergeSymbolTables(taskCount, writer);
+                updateSymbolKeys(taskCount, writer);
+                buildColumnIndexes(taskCount, writer);
+                movePartitions(taskDistribution, taskCount);
+                attachPartitions(writer);
+            } catch (Throwable t) {
+                writer.truncate();
+                throw t;
+            }
         } finally {
             removeWorkDir();
             ff.close(fd);
