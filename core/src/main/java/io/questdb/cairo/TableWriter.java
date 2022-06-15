@@ -116,7 +116,9 @@ public class TableWriter implements Closeable {
     private final int defaultCommitMode;
     private final int o3ColumnMemorySize;
     private final ObjList<Runnable> nullSetters;
-    private final ObjList<Runnable> o3NullSetters;
+    private ObjList<Runnable> o3ActiveNullSetters;
+    private final ObjList<Runnable> o3NullSetters1;
+    private final ObjList<Runnable> o3NullSetters2;
     private ObjList<MemoryCARW> o3Columns;
     private ObjList<MemoryCARW> o3Columns2;
     private ReadOnlyObjList<? extends MemoryCR> o3ColumnSources;
@@ -301,7 +303,8 @@ public class TableWriter implements Closeable {
             this.indexers = new ObjList<>(columnCount);
             this.denseSymbolMapWriters = new ObjList<>(metadata.getSymbolMapCount());
             this.nullSetters = new ObjList<>(columnCount);
-            this.o3NullSetters = new ObjList<>(columnCount);
+            this.o3ActiveNullSetters = this.o3NullSetters1 = new ObjList<>(columnCount);
+            this.o3NullSetters2 = new ObjList<>(columnCount);
             this.activeNullSetters = nullSetters;
             this.columnTops = new LongList(columnCount);
             this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
@@ -1005,8 +1008,6 @@ public class TableWriter implements Closeable {
 
         commit();
 
-        final CharSequence timestampColumnName = timestampIndex != -1 ? metadata.getColumnName(timestampIndex) : null;
-
         this.metaSwapIndex = removeColumnFromMeta(index);
 
         // close _meta so we can rename it
@@ -1053,10 +1054,6 @@ public class TableWriter implements Closeable {
         metadata.removeColumn(index);
         if (timestamp) {
             metadata.setTimestampIndex(-1);
-        } else if (timestampColumnName != null) {
-            int timestampIndex2 = metadata.getColumnIndex(timestampColumnName);
-            metadata.setTimestampIndex(timestampIndex2);
-            o3TimestampMem = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex2));
         }
 
         LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
@@ -2086,7 +2083,8 @@ public class TableWriter implements Closeable {
         o3Columns2.extendAndSet(baseIndex, oooPrimary2);
         o3Columns2.extendAndSet(baseIndex + 1, oooSecondary2);
         configureNullSetters(nullSetters, type, primary, secondary);
-        configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
+        configureNullSetters(o3NullSetters1, type, oooPrimary, oooSecondary);
+        configureNullSetters(o3NullSetters2, type, oooPrimary2, oooSecondary2);
 
         if (indexFlag) {
             indexers.extendAndSet((columns.size() - 1) / 2, new SymbolColumnIndexer());
@@ -2135,7 +2133,8 @@ public class TableWriter implements Closeable {
             };
         } else {
             nullSetters.setQuick(index, NOOP);
-            o3NullSetters.setQuick(index, NOOP);
+            o3NullSetters1.setQuick(index, NOOP);
+            o3NullSetters2.setQuick(index, NOOP);
             timestampSetter = getPrimaryColumn(index)::putLong;
         }
     }
@@ -2698,6 +2697,7 @@ public class TableWriter implements Closeable {
         );
         o3ColumnSources = o3Columns;
         activeColumns = o3Columns;
+        o3ActiveNullSetters = (o3ActiveNullSetters == o3NullSetters1) ? o3NullSetters2 : o3NullSetters1;
     }
 
     private boolean finishO3Commit(long partitionTimestampHiLimit) {
@@ -3596,7 +3596,7 @@ public class TableWriter implements Closeable {
             }
         }
         activeColumns = o3Columns;
-        activeNullSetters = o3NullSetters;
+        activeNullSetters = o3ActiveNullSetters;
         LOG.debug().$("switched partition to memory").$();
     }
 
@@ -4429,7 +4429,8 @@ public class TableWriter implements Closeable {
         final int pi = getPrimaryColumnIndex(columnIndex);
         final int si = getSecondaryColumnIndex(columnIndex);
         freeNullSetter(nullSetters, columnIndex);
-        freeNullSetter(o3NullSetters, columnIndex);
+        freeNullSetter(o3NullSetters1, columnIndex);
+        freeNullSetter(o3NullSetters2, columnIndex);
         freeAndRemoveColumnPair(columns, pi, si);
         freeAndRemoveO3ColumnPair(o3Columns, pi, si);
         freeAndRemoveO3ColumnPair(o3Columns2, pi, si);
