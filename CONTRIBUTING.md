@@ -38,7 +38,7 @@ it.
 - QuestDB Windows service wrapper:
   [`win64svc/`](https://github.com/questdb/questdb/tree/master/win64svc/)
 - QuestDB web console (frontend):
-  [`ui/`](https://github.com/questdb/questdb/tree/master/ui/)
+  [`github.com/questdb/ui`](https://github.com/questdb/ui/tree/main/packages/web-console)
 - Micro benchmarks:
   [`benchmarks/`](https://github.com/questdb/questdb/tree/master/benchmarks/)
 
@@ -130,36 +130,15 @@ core/src/main/c -> core/src/main/resources/io/questdb/bin
 
 ## Local setup for frontend development
 
-### Development server
+The frontend code (i.e. web console) is located in a [separate repository](https://github.com/questdb/ui/tree/main/packages/web-console).
+To set it up you should follow instructions provided in that repository.
 
-This is useful when you want to work on the web console without having to
-rebuild the artifacts and restart QuestDB. Instead, we use `webpack-dev-server`:
+The development environment for frontend can run on it's own, but will require QuestDB instance running in the background. You can achieve this in multiple ways:
 
-0. Make sure QuestDB is running
-1. `cd ui/`
-2. Install the dependencies with `npm install`
-3. Start the development web server with `npm start`
-
-The web console should now be accessible at
-[localhost:9999](http://localhost:9999)
-
-Development server running on port 9999 will monitor for web console file
-changes and will rebuild/deploy on the fly. The web console front end will be
-connecting to QuestDB REST API on port 9000. Keep QuestDB server running.
-
-### Building web console bundle into questdb.jar
-
-Run the command:
-
-```bash
-mvn clean package -DskipTests -P build-web-console
-```
-
-The build will copy artifacts as follows:
-
-```
-ui -> core/src/main/resources/io/questdb/site/public.zip
-```
+1. Run development version of QuestDB from this repository. Consult
+   [environment setup](#environment-setup) section of this document
+2. Run published QuestDB version, for example, with docker. More details
+   can be found in the [readme of this repository](./README.md)
 
 # Before you submit
 
@@ -202,21 +181,6 @@ simply run:
 ```bash
 mvn clean package -DskipTests -P build-web-console
 ```
-
-### How can I easily manage the `Node.js` installation?
-
-You can use [`nvm`](https://github.com/nvm-sh/nvm) for OS X/Linux/Windows WSL,
-and [`nvm-windows`](https://github.com/coreybutler/nvm-windows) for Windows. To
-have multiple active versions.
-
-Otherwise, you can use the dedicated Maven profile to build the code:
-
-```bash
-mvn clean package -DskipTests -P build-web-console,build-binaries
-```
-
-That way, Maven will install Node on the fly in `ui/node` so you don't have to
-install it locally.
 
 ### Why do some tests fail on Windows?
 
