@@ -111,4 +111,9 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         assert sqlExecutionContext != null;
         this.sqlExecutionContext = sqlExecutionContext;
     }
+
+    @Override
+    public void close() {
+        // intentionally left empty
+    }
 }

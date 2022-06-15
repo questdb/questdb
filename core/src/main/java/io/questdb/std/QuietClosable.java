@@ -29,7 +29,5 @@ import java.io.Closeable;
 public interface QuietClosable extends Closeable {
 
     @Override
-    default void close() {
-        // intentionally left empty
-    }
+    void close();
 }
