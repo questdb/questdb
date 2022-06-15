@@ -129,6 +129,8 @@ public class FileIndexer implements Closeable, Mutable {
     private final CairoEngine cairoEngine;
     private final CairoConfiguration configuration;
 
+    private boolean targetTableCreated;
+    private int targetTableStatus;
     private final TableStructureAdapter targetTableStructure;
     private final SCSequence collectSeq = new SCSequence();
     private int bufferLength;
@@ -167,6 +169,8 @@ public class FileIndexer implements Closeable, Mutable {
 
         this.targetTableStructure = new TableStructureAdapter(configuration);
         this.bufferLength = configuration.getSqlCopyBufferSize();
+        this.targetTableStatus = -1;
+        this.targetTableCreated = false;
     }
 
     private static void checkTableName(CharSequence tableName, CairoConfiguration configuration) {
@@ -363,6 +367,8 @@ public class FileIndexer implements Closeable, Mutable {
         this.timestampIndex = -1;
         this.isSuccess = true;
         this.phase = 0;
+        this.targetTableStatus = -1;
+        this.targetTableCreated = false;
 
         inputFilePath.of(inputRoot).concat(inputFileName).$();
     }
@@ -392,6 +398,8 @@ public class FileIndexer implements Closeable, Mutable {
         isSuccess = true;
         phase = 0;
         errorMessage = null;
+        targetTableStatus = -1;
+        targetTableCreated = false;
     }
 
     private void removeWorkDir() {
@@ -525,23 +533,40 @@ public class FileIndexer implements Closeable, Mutable {
         }
 
         try (TableWriter writer = parseStructure(fd)) {
+            findChunkBoundaries(length);
+            indexChunks();
+            importPartitions();
+            int taskCount = taskDistribution.size() / 3;
+            mergeSymbolTables(taskCount, writer);
+            updateSymbolKeys(taskCount, writer);
+            buildColumnIndexes(taskCount, writer);
+
             try {
-                findChunkBoundaries(length);
-                indexChunks();
-                importPartitions();
-                int taskCount = taskDistribution.size() / 3;
-                mergeSymbolTables(taskCount, writer);
-                updateSymbolKeys(taskCount, writer);
-                buildColumnIndexes(taskCount, writer);
                 movePartitions(taskDistribution, taskCount);
                 attachPartitions(writer);
             } catch (Throwable t) {
-                writer.truncate();
+                cleanUp(writer);
                 throw t;
             }
+
+        } catch (Throwable t) {
+            cleanUp();
+            throw t;
         } finally {
             removeWorkDir();
             ff.close(fd);
+        }
+    }
+
+    private void cleanUp(TableWriter writer) {
+        if (targetTableStatus == TableUtils.TABLE_EXISTS && writer != null) {
+            writer.truncate();
+        }
+    }
+
+    private void cleanUp() {
+        if (targetTableStatus == TableUtils.TABLE_DOES_NOT_EXIST && targetTableCreated) {
+            cairoEngine.remove(securityContext, tmpPath, tableName);
         }
     }
 
@@ -554,11 +579,11 @@ public class FileIndexer implements Closeable, Mutable {
 
         for (int i = 0, sz = partitionNames.size(); i < sz; i++) {
             final CharSequence partitionDirName = partitionNames.get(i);
+            final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
             try {
-                final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
                 writer.attachPartition(timestamp, true); //TODO: change to false to speed up attaching
             } catch (CairoException e) {
-                LOG.error().$("Cannot attach partition ").$(partitionDirName).$((Throwable) e).$();
+                throw TextException.$("Can't attach partition ").put(partitionDirName).put(". ").put(e.getMessage());
             }
         }
 
@@ -950,7 +975,8 @@ public class FileIndexer implements Closeable, Mutable {
         TableWriter writer = null;
 
         try {
-            switch (cairoEngine.getStatus(cairoSecurityContext, path, tableName)) {
+            targetTableStatus = cairoEngine.getStatus(cairoSecurityContext, path, tableName);
+            switch (targetTableStatus) {
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     if (partitionBy == PartitionBy.NONE) {
                         throw TextException.$("partition by unit must be set when importing to new table");
@@ -965,6 +991,7 @@ public class FileIndexer implements Closeable, Mutable {
                     validate(names, types, null, NO_INDEX);
                     targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
                     createTable(ff, dirMode, configuration.getRoot(), tableName, targetTableStructure, (int) cairoEngine.getNextTableId(), configuration);
+                    targetTableCreated = true;
                     writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
                     partitionBy = writer.getPartitionBy();
                     break;
