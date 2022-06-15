@@ -1585,6 +1585,132 @@ public class FileSplitterTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testWhenImportFailsWhenMovingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (from.toString().endsWith("1972-09\\")) {
+                    return false;
+                }
+                return super.rename(from, to);
+            }
+
+            @Override
+            public int copy(LPSZ from, LPSZ to) {
+                return -1;
+            }
+        };
+
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(1);
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("cannot copy partition file"));
+            }
+
+            try {
+                compiler.compile("select count(*) from tab;", sqlExecutionContext);
+            } catch (SqlException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("table does not exist"));
+            }
+        });
+    }
+
+    @Test
+    public void testWhenImportFailsWhenAttachingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (path.toString().endsWith("1972-09\\ts.d")) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+        };
+
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(1);
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Can't attach partition 1972-09"));
+            }
+
+            try {
+                compiler.compile("select count(*) from tab;", sqlExecutionContext);
+            } catch (SqlException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("table does not exist"));
+            }
+        });
+    }
+
+    @Test
+    public void testWhenImportFailsWhenMovingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public boolean rename(LPSZ from, LPSZ to) {
+                if (from.toString().endsWith("1972-09\\")) {
+                    return false;
+                }
+                return super.rename(from, to);
+            }
+
+            @Override
+            public int copy(LPSZ from, LPSZ to) {
+                return -1;
+            }
+        };
+
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(1);
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("cannot copy partition file"));
+            }
+
+            assertQuery("cnt\n0\n", "select count(*) cnt from tab", null, false, false, true);
+        });
+    }
+
+    @Test
+    public void testWhenImportFailsWhenAttachingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (path.toString().endsWith("1972-09\\ts.d")) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+        };
+
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            try (FileIndexer indexer = new FileIndexer(sqlExecutionContext)) {
+                indexer.setMinChunkSize(1);
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Can't attach partition 1972-09"));
+            }
+
+            assertQuery("cnt\n0\n", "select count(*) cnt from tab", null, false, false, true);
+        });
+    }
+
     @Ignore
     @Test
     public void testImportFailsOnPartitionRename() throws Exception {
