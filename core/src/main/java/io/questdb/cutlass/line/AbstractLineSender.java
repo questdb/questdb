@@ -33,11 +33,11 @@ import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.datetime.microtime.Timestamp;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
+import java.time.Instant;
 
 public abstract class AbstractLineSender extends AbstractCharSink implements Closeable {
     protected final int capacity;
@@ -137,8 +137,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return this;
     }
 
-    public AbstractLineSender field(CharSequence name, Timestamp value) {
-        field(name).put(value.getMicros()).put('t');
+    public AbstractLineSender field(CharSequence name, Instant value) {
+        field(name).put(value.toEpochMilli()).put('t');
         return this;
     }
 
