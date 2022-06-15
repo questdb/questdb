@@ -38,6 +38,7 @@ import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 public abstract class AbstractLineSender extends AbstractCharSink implements Closeable {
     protected final int capacity;
@@ -138,7 +139,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender field(CharSequence name, Instant value) {
-        field(name).put(value.toEpochMilli()).put('t');
+        field(name).put(ChronoUnit.MICROS.between(Instant.EPOCH, value)).put('t');
         return this;
     }
 
