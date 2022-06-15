@@ -64,10 +64,6 @@ you wish to understand how our maintainers work together, you can refer to
 - Maven 3 (from your package manager on Linux / OSX
   ([Homebrew](https://github.com/Homebrew/brew)) or
   [from the jar](https://maven.apache.org/install.html) for any OS)
-- Node.js 16 / npm 8 (to manage your Node.js versions we recommend
-  [`nvm`](https://github.com/nvm-sh/nvm) for OSX/Linux/Windows WSL, and
-  [`nvm-windows`](https://github.com/coreybutler/nvm-windows) for Windows) -
-  _OPTIONAL_
 - C-compiler, CMake - to contribute to C libraries - _OPTIONAL_
 
 ## Local environment
