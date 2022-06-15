@@ -97,6 +97,8 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "0x1");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "0x123a4");
 
+        assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, "123456789t");
+
         // in this edge case, type is guessed as best as possible, later the parser would fail, its a feature
         assertType(LineTcpParser.ENTITY_TYPE_LONG256, "0x123a4i");
     }
@@ -143,6 +145,9 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
                         case LineTcpParser.ENTITY_TYPE_INTEGER:
                         case LineTcpParser.ENTITY_TYPE_LONG256:
                             Assert.assertEquals(expectedValue, entity.getValue().toString() + "i");
+                            break;
+                        case LineTcpParser.ENTITY_TYPE_TIMESTAMP:
+                            Assert.assertEquals(expectedValue, entity.getValue().toString() + "t");
                             break;
                         default:
                             Assert.assertEquals(expectedValue, entity.getValue().toString());

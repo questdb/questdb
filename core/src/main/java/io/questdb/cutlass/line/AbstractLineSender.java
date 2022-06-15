@@ -33,6 +33,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.microtime.Timestamp;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
 
@@ -133,6 +134,11 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     public AbstractLineSender field(CharSequence name, boolean value) {
         field(name).put(value ? 't' : 'f');
+        return this;
+    }
+
+    public AbstractLineSender field(CharSequence name, Timestamp value) {
+        field(name).put(value.getMicros()).put('t');
         return this;
     }
 
