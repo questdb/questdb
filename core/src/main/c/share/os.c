@@ -56,6 +56,11 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
     return errno;
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_translateSysErrno
+        (JNIEnv *e, jclass cl, jint errno) {
+    return errno;
+}
+
 typedef struct {
     int fdRead;
     int fdWrite;

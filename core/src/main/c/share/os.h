@@ -38,6 +38,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
 
 /*
  * Class:     com_questdb_std_Os
+ * Method:    translateSysErrno
+ * Signature: (I)I
+ */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Os_translateSysErrno
+        (JNIEnv *, jclass, int errno);
+
+/*
+ * Class:     com_questdb_std_Os
  * Method:    getPid
  * Signature: ()I
  */
