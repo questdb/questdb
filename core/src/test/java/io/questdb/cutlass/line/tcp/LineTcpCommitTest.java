@@ -144,8 +144,8 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
     }
 
     void assertTable(TableData table) {
-        // timeout is 60 seconds, we try it every second
-        for (int i = 0; i < 60; i++) {
+        // timeout is 2 minutes, we try it every second
+        for (int i = 0; i < 120; i++) {
             if (checkTable(table)) {
                 return;
             }

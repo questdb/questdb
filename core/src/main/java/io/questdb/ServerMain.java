@@ -416,7 +416,7 @@ public class ServerMain {
 
     //made package level for testing only
     static void extractSite(BuildInformation buildInformation, String dir, Log log) throws IOException {
-        final String publicZip = "/io/questdb/site/public.zip";
+        final String publicZip = PUBLIC_ZIP;
         final String publicDir = dir + "/public";
         final byte[] buffer = new byte[1024 * 1024];
         URL resource = ServerMain.class.getResource(publicZip);

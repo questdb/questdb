@@ -699,20 +699,21 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
         try {
             dstFixSize = dstLen << shl;
+            dstFixOffset = (srcDataMax - srcDataTop) << shl;
             if (dstFixMem == null || dstFixMem.getAppendAddressSize() < dstFixSize) {
-                dstFixOffset = (srcDataMax - srcDataTop) << shl;
+                // Area we want to write is not mapped
                 dstFixAddr = mapRW(ff, Math.abs(dstFixFd), dstFixSize, MemoryTag.MMAP_O3);
-                dstIndexOffset = dstFixOffset;
-                dstIndexAdjust = 0;
-                dstFixFileOffset = dstFixOffset;
             } else {
-                dstFixAddr = dstFixMem.getAppendAddress();
-                dstFixOffset = 0;
+                // Area we want to write is mapped.
+                // Set dstFixAddr to Append Address with adjustment that dstFixOffset offset points to offset 0.
+                dstFixAddr = dstFixMem.getAppendAddress() - dstFixOffset;
+                // Set size negative meaning it will not be freed
                 dstFixSize = -dstFixSize;
-                dstIndexOffset = 0;
-                dstIndexAdjust = srcDataMax - srcDataTop;
-                dstFixFileOffset = dstFixMem.getAppendOffset();
             }
+            dstIndexOffset = dstFixOffset;
+            dstIndexAdjust = srcDataTop;
+            dstFixFileOffset = dstFixOffset;
+
             if (indexBlockCapacity > -1 && !indexWriter.isOpen()) {
                 BitmapIndexUtils.keyFileName(pathToPartition.trimTo(plen), columnName, columnNameTxn);
                 dstKFd = openRW(ff, pathToPartition, LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
@@ -756,7 +757,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 0,
                 srcOooLo,
                 srcOooHi,
-                srcDataTop,
+                srcDataTop << shl,
                 srcDataMax,
                 srcOooFixAddr,
                 srcOooVarAddr,
@@ -2616,7 +2617,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2670,7 +2671,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2727,7 +2728,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2781,7 +2782,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2835,7 +2836,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2894,7 +2895,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,
@@ -2948,7 +2949,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         dstKFd,
                         dstVFd,
                         0,
-                        0,
+                        srcDataTopOffset >> 2,
                         indexBlockCapacity,
                         srcTimestampFd,
                         srcTimestampAddr,

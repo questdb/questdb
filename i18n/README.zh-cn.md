@@ -28,8 +28,7 @@
   </a>
 </p>
 
-简体中文 | [English](https://github.com/questdb/questdb) |
-[العربية](README.ar-dz.md)
+[English](https://github.com/questdb/questdb) | 简体中文 | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md)
 
 # QuestDB
 
