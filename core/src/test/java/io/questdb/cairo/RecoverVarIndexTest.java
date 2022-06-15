@@ -70,6 +70,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     public static void tearDownStatic() {
         compiler.close();
         LogFactory.configureAsync();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @After

@@ -99,7 +99,7 @@ public final class NativeLeakDetector implements TestRule {
                 frame(Unsafe.class, "malloc"),
                 frame(Path.class, "<init>"),
                 frame(Path.class, "<init>"),
-                frame(CairoEngineTest.class, "clinit")
+                frame(CairoEngineTest.class, "<clinit>")
         ).isMatching(stacktrace)) {
             return true;
         }

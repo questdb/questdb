@@ -116,38 +116,42 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         final Rnd rnd = new Rnd();
         final int bufferSize = 1024;
         long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, partitionBy)) {
-            model.timestamp();
-            CairoTestUtils.create(model);
-        }
-
-        long timestamp = 0;
-        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
-
-            try (TableReader reader = new TableReader(configuration, "all")) {
-                Assert.assertFalse(reader.reload());
+        try {
+            try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, partitionBy)) {
+                model.timestamp();
+                CairoTestUtils.create(model);
             }
 
-            populateTable(rnd, buffer, timestamp, increment, writer);
-            rnd.reset();
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
 
-            try (TableReader reader = new TableReader(configuration, "all")) {
-                RecordCursor cursor = reader.getCursor();
-                final Record record = cursor.getRecord();
-                assertTable(rnd, buffer, cursor, record);
-                writer.truncate();
-                Assert.assertTrue(reader.reload());
-                cursor = reader.getCursor();
-                Assert.assertFalse(cursor.hasNext());
+                try (TableReader reader = new TableReader(configuration, "all")) {
+                    Assert.assertFalse(reader.reload());
+                }
 
-                rnd.reset();
                 populateTable(rnd, buffer, timestamp, increment, writer);
-                Assert.assertTrue(reader.reload());
-
                 rnd.reset();
-                cursor = reader.getCursor();
-                assertTable(rnd, buffer, cursor, record);
+
+                try (TableReader reader = new TableReader(configuration, "all")) {
+                    RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
+                    assertTable(rnd, buffer, cursor, record);
+                    writer.truncate();
+                    Assert.assertTrue(reader.reload());
+                    cursor = reader.getCursor();
+                    Assert.assertFalse(cursor.hasNext());
+
+                    rnd.reset();
+                    populateTable(rnd, buffer, timestamp, increment, writer);
+                    Assert.assertTrue(reader.reload());
+
+                    rnd.reset();
+                    cursor = reader.getCursor();
+                    assertTable(rnd, buffer, cursor, record);
+                }
             }
+        } finally {
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -159,38 +163,42 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         final Rnd rnd = new Rnd();
         final int bufferSize = 1024;
         long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, partitionBy)) {
-            model.timestamp();
-            CairoTestUtils.create(model);
-        }
-
-        long timestamp = 0;
-        try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
-
-            try (TableReader reader = new TableReader(configuration, "all")) {
-                Assert.assertFalse(reader.reload());
+        try {
+            try (TableModel model = CairoTestUtils.getAllTypesModel(configuration, partitionBy)) {
+                model.timestamp();
+                CairoTestUtils.create(model);
             }
 
-            populateTable(rnd, buffer, timestamp, increment, writer);
-            rnd.reset();
+            long timestamp = 0;
+            try (TableWriter writer = new TableWriter(configuration, "all", metrics)) {
 
-            try (TableReader reader = new TableReader(configuration, "all")) {
-                RecordCursor cursor = reader.getCursor();
-                final Record record = cursor.getRecord();
-                assertTable(rnd, buffer, cursor, record);
+                try (TableReader reader = new TableReader(configuration, "all")) {
+                    Assert.assertFalse(reader.reload());
+                }
 
-                writer.truncate();
+                populateTable(rnd, buffer, timestamp, increment, writer);
+                rnd.reset();
 
-                // Write different data
-                rnd.reset(123, 123);
-                populateTable(rnd, buffer, timestamp, increment / 2, writer);
-                Assert.assertTrue(reader.reload());
+                try (TableReader reader = new TableReader(configuration, "all")) {
+                    RecordCursor cursor = reader.getCursor();
+                    final Record record = cursor.getRecord();
+                    assertTable(rnd, buffer, cursor, record);
 
-                // Assert the data is what was written the second time
-                rnd.reset(123, 123);
-                cursor = reader.getCursor();
-                assertTable(rnd, buffer, cursor, record);
+                    writer.truncate();
+
+                    // Write different data
+                    rnd.reset(123, 123);
+                    populateTable(rnd, buffer, timestamp, increment / 2, writer);
+                    Assert.assertTrue(reader.reload());
+
+                    // Assert the data is what was written the second time
+                    rnd.reset(123, 123);
+                    cursor = reader.getCursor();
+                    assertTable(rnd, buffer, cursor, record);
+                }
             }
+        } finally {
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 }

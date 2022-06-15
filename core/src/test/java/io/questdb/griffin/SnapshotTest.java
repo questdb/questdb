@@ -44,6 +44,12 @@ public class SnapshotTest extends AbstractGriffinTest {
         AbstractGriffinTest.setUpStatic();
     }
 
+    @AfterClass
+    public static void tearDownStatic() {
+        ff = testFilesFacade;
+        AbstractGriffinTest.tearDownStatic();
+    }
+
     @Before
     public void setUp() {
         // sync() system call is not available on Windows, so we skip the whole test suite there.
@@ -60,6 +66,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         super.tearDown();
         path.trimTo(rootLen);
         configuration.getFilesFacade().rmdir(path.slash$());
+        Misc.free(path);
     }
 
     @Test

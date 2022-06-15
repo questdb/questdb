@@ -67,6 +67,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
     @AfterClass
     public static void tearDownStatic() {
         compiler.close();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @After

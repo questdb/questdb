@@ -58,9 +58,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
 
     @After
     public void closeCompilers() {
-        for (int i = 0; i < compilers.length; i++) {
-            Misc.free(compilers[i]);
-        }
+        Misc.free(compilers);
     }
 
     @BeforeClass
