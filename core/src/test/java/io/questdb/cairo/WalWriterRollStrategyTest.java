@@ -38,34 +38,33 @@ public class WalWriterRollStrategyTest {
 
         assertFalse(rollStrategy.isMaxRowCountSet());
         assertFalse(rollStrategy.isMaxSegmentSizeSet());
+        assertFalse(rollStrategy.isRollIntervalSet());
 
-        rollStrategy.setMaxSegmentSize(1);
-        rollStrategy.setMaxRowCount(Long.MAX_VALUE);
-        assertFalse(rollStrategy.shouldRoll(100, 1));
-        assertFalse(rollStrategy.shouldRoll(100, 100));
-
-        rollStrategy.setMaxSegmentSize(Long.MAX_VALUE);
-        rollStrategy.setMaxRowCount(1);
-        assertFalse(rollStrategy.shouldRoll(1, 100));
-        assertFalse(rollStrategy.shouldRoll(100, 100));
+        rollStrategy.setMaxSegmentSize(1L);
+        rollStrategy.setMaxRowCount(1L);
+        rollStrategy.setRollInterval(1L);
+        assertFalse(rollStrategy.shouldRoll(0L, 0L, 0L));
+        assertFalse(rollStrategy.shouldRoll(1L, 1L, 1L));
+        assertFalse(rollStrategy.shouldRoll(100L, 1L, 1L));
+        assertFalse(rollStrategy.shouldRoll(1L, 100L, 1L));
+        assertFalse(rollStrategy.shouldRoll(1L, 1L, 100L));
+        assertFalse(rollStrategy.shouldRoll(100L, 100L, 100L));
     }
 
     @Test
     public void testSetMaxSegmentSize() {
-        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl(1, 1);
-
-        rollStrategy.setMaxSegmentSize(100);
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
+        rollStrategy.setMaxSegmentSize(100L);
         rollStrategy.setMaxRowCount(Long.MAX_VALUE);
+        rollStrategy.setRollInterval(Long.MAX_VALUE);
 
         assertTrue(rollStrategy.isMaxSegmentSizeSet());
         assertFalse(rollStrategy.isMaxRowCountSet());
+        assertFalse(rollStrategy.isRollIntervalSet());
 
-        assertFalse(rollStrategy.shouldRoll(99, 1));
-        assertFalse(rollStrategy.shouldRoll(99, 100));
-        assertTrue(rollStrategy.shouldRoll(100, 1));
-        assertTrue(rollStrategy.shouldRoll(100, 100));
-        assertTrue(rollStrategy.shouldRoll(101, 1));
-        assertTrue(rollStrategy.shouldRoll(101, 100));
+        assertFalse(rollStrategy.shouldRoll(99L, 0L, 0L));
+        assertTrue(rollStrategy.shouldRoll(100L, 0L, 0L));
+        assertTrue(rollStrategy.shouldRoll(101L, 0L, 0L));
 
         try {
             rollStrategy.setMaxSegmentSize(0);
@@ -84,20 +83,18 @@ public class WalWriterRollStrategyTest {
 
     @Test
     public void testSetMaxRowCount() {
-        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl(1, 1);
-
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
         rollStrategy.setMaxSegmentSize(Long.MAX_VALUE);
-        rollStrategy.setMaxRowCount(100);
+        rollStrategy.setMaxRowCount(100L);
+        rollStrategy.setRollInterval(Long.MAX_VALUE);
 
         assertFalse(rollStrategy.isMaxSegmentSizeSet());
         assertTrue(rollStrategy.isMaxRowCountSet());
+        assertFalse(rollStrategy.isRollIntervalSet());
 
-        assertFalse(rollStrategy.shouldRoll(1, 99));
-        assertFalse(rollStrategy.shouldRoll(100, 99));
-        assertTrue(rollStrategy.shouldRoll(1, 100));
-        assertTrue(rollStrategy.shouldRoll(100, 100));
-        assertTrue(rollStrategy.shouldRoll(1, 101));
-        assertTrue(rollStrategy.shouldRoll(100, 101));
+        assertFalse(rollStrategy.shouldRoll(0L, 99L, 0L));
+        assertTrue(rollStrategy.shouldRoll(0L, 100L, 0L));
+        assertTrue(rollStrategy.shouldRoll(0L, 101L, 0L));
 
         try {
             rollStrategy.setMaxRowCount(0);
@@ -111,6 +108,36 @@ public class WalWriterRollStrategyTest {
             Assert.fail("Exception expected");
         } catch(CairoException e) {
             assertEquals("[-100] Max number of rows cannot be less than 1, maxRowCount=-1", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testSetRollInterval() {
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
+        rollStrategy.setMaxSegmentSize(Long.MAX_VALUE);
+        rollStrategy.setMaxRowCount(Long.MAX_VALUE);
+        rollStrategy.setRollInterval(100L);
+
+        assertFalse(rollStrategy.isMaxSegmentSizeSet());
+        assertFalse(rollStrategy.isMaxRowCountSet());
+        assertTrue(rollStrategy.isRollIntervalSet());
+
+        assertFalse(rollStrategy.shouldRoll(0L, 0L, 99L));
+        assertTrue(rollStrategy.shouldRoll(0L, 0L, 100L));
+        assertTrue(rollStrategy.shouldRoll(0L, 0L, 101L));
+
+        try {
+            rollStrategy.setRollInterval(0);
+            Assert.fail("Exception expected");
+        } catch(CairoException e) {
+            assertEquals("[-100] Roll interval cannot be less than 1 millisecond, rollInterval=0", e.getMessage());
+        }
+
+        try {
+            rollStrategy.setRollInterval(-1);
+            Assert.fail("Exception expected");
+        } catch(CairoException e) {
+            assertEquals("[-100] Roll interval cannot be less than 1 millisecond, rollInterval=-1", e.getMessage());
         }
     }
 }

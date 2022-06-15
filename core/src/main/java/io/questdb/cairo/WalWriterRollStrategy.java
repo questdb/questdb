@@ -31,7 +31,10 @@ public interface WalWriterRollStrategy {
     default void setMaxRowCount(long maxRowCount) {
     }
 
-    default boolean shouldRoll(long segmentSize, long rowCount) {
+    default void setRollInterval(long rollInterval) {
+    }
+
+    default boolean shouldRoll(long segmentSize, long rowCount, long segmentAge) {
         return false;
     }
 
@@ -40,6 +43,10 @@ public interface WalWriterRollStrategy {
     }
 
     default boolean isMaxRowCountSet() {
+        return false;
+    }
+
+    default boolean isRollIntervalSet() {
         return false;
     }
 }

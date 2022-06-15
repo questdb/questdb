@@ -25,15 +25,9 @@
 package io.questdb.cairo;
 
 public class WalWriterRollStrategyImpl implements WalWriterRollStrategy {
-    private long maxRowCount = Long.MAX_VALUE;
-    private long maxSegmentSize = Long.MAX_VALUE;
-
-    // create a builder instead of this constructor
-    // when time period based strategy is added
-    public WalWriterRollStrategyImpl(long maxSegmentSize, long maxRowCount) {
-        setMaxSegmentSize(maxSegmentSize);
-        setMaxRowCount(maxRowCount);
-    }
+    private long maxRowCount = Long.MAX_VALUE;      // number of rows
+    private long maxSegmentSize = Long.MAX_VALUE;   // storage size in bytes
+    private long rollInterval = Long.MAX_VALUE;     // roll interval in millis
 
     @Override
     public void setMaxSegmentSize(long maxSegmentSize) {
@@ -54,8 +48,20 @@ public class WalWriterRollStrategyImpl implements WalWriterRollStrategy {
     }
 
     @Override
-    public boolean shouldRoll(long segmentSize, long rowCount) {
-        return segmentSize >= maxSegmentSize || rowCount >= maxRowCount;
+    public void setRollInterval(long rollInterval) {
+        if (rollInterval < 1) {
+            throw CairoException.instance(CairoException.METADATA_VALIDATION)
+                    .put("Roll interval cannot be less than 1 millisecond, rollInterval=").put(rollInterval);
+        }
+        this.rollInterval = rollInterval;
+    }
+
+    // segmentSize in bytes, segmentAge in millis
+    @Override
+    public boolean shouldRoll(long segmentSize, long rowCount, long segmentAge) {
+        return segmentSize >= maxSegmentSize
+                || rowCount >= maxRowCount
+                || segmentAge >= rollInterval;
     }
 
     @Override
@@ -66,5 +72,10 @@ public class WalWriterRollStrategyImpl implements WalWriterRollStrategy {
     @Override
     public boolean isMaxRowCountSet() {
         return maxRowCount != Long.MAX_VALUE;
+    }
+
+    @Override
+    public boolean isRollIntervalSet() {
+        return rollInterval != Long.MAX_VALUE;
     }
 }

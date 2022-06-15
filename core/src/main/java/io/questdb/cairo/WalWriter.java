@@ -32,6 +32,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
@@ -50,6 +51,7 @@ public class WalWriter implements Closeable {
     private final ObjList<MapWriter> symbolMapWriters;
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final IntList initSymbolCounts = new IntList();
+    private final MillisecondClock millisecondClock;
     private final Path path;
     private final LongList rowValueIsNotNull = new LongList();
     private final int rootLen;
@@ -67,6 +69,7 @@ public class WalWriter implements Closeable {
     private int columnCount;
     private long rowCount = -1;
     private long segmentCount = -1;
+    private long segmentStartMillis;
     private WalWriterRollStrategy rollStrategy = new WalWriterRollStrategy() {
     };
 
@@ -83,6 +86,7 @@ public class WalWriter implements Closeable {
     ) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.configuration = configuration;
+        this.millisecondClock = configuration.getMillisecondClock();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
@@ -493,6 +497,7 @@ public class WalWriter implements Closeable {
             }
 
             writeMetadata(metadata, segmentPathLen, liveColumnCount);
+            segmentStartMillis = millisecondClock.getTicks();
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
             path.trimTo(rootLen);
@@ -607,7 +612,12 @@ public class WalWriter implements Closeable {
             }
         }
 
-        if (rollStrategy.shouldRoll(segmentSize, rowCount)) {
+        long segmentAge = 0;
+        if (rollStrategy.isRollIntervalSet()) {
+            segmentAge = millisecondClock.getTicks() - segmentStartMillis;
+        }
+
+        if (rollStrategy.shouldRoll(segmentSize, rowCount, segmentAge)) {
             return rollSegment();
         }
         return 0L;

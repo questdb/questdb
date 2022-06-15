@@ -31,6 +31,8 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.function.Consumer;
@@ -38,6 +40,18 @@ import java.util.function.Consumer;
 import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractGriffinTest {
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        currentMillis = 0L;
+    }
+
+    @After
+    public void tearDown() {
+        super.tearDown();
+        currentMillis = -1L;
+    }
 
     @Test
     public void testSymbolWal() {
@@ -835,7 +849,8 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void testRollSegmentByStorageSize() {
         final int rowsToInsertTotal = 50;
-        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl(2048L, Long.MAX_VALUE);
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
+        rollStrategy.setMaxSegmentSize(2048L);
         final LongList expectedRowCounts = new LongList();
         expectedRowCounts.add(14L);
         expectedRowCounts.add(13L);
@@ -848,7 +863,8 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void testRollSegmentByRowCount() {
         final int rowsToInsertTotal = 55;
-        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl(Long.MAX_VALUE, 15L);
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
+        rollStrategy.setMaxRowCount(15L);
         final LongList expectedRowCounts = new LongList();
         expectedRowCounts.add(15L);
         expectedRowCounts.add(15L);
@@ -861,7 +877,8 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void testRollSegmentByStorageSizeThenByRowCount() {
         final int rowsToInsertTotal = 50;
-        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl(2048L, Long.MAX_VALUE);
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
+        rollStrategy.setMaxSegmentSize(2048L);
         final LongList expectedRowCounts = new LongList();
         expectedRowCounts.add(14L);
         expectedRowCounts.add(13L);
@@ -877,7 +894,8 @@ public class WalWriterTest extends AbstractGriffinTest {
     @Test
     public void testRollSegmentByRowCountThenByStorageSize() {
         final int rowsToInsertTotal = 70;
-        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl(Long.MAX_VALUE, 8L);
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
+        rollStrategy.setMaxRowCount(8L);
         final LongList expectedRowCounts = new LongList();
         expectedRowCounts.add(8L);
         expectedRowCounts.add(8L);
@@ -889,6 +907,43 @@ public class WalWriterTest extends AbstractGriffinTest {
         final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
         rollStrategyUpdates.put(23, strategy -> strategy.setMaxSegmentSize(4096L));
         rollStrategyUpdates.put(33, strategy -> strategy.setMaxRowCount(100L));
+        testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
+    }
+
+    @Test
+    public void testRollSegmentByInterval() {
+        final int rowsToInsertTotal = 57;
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
+        rollStrategy.setRollInterval(20000L);
+        final LongList expectedRowCounts = new LongList();
+        expectedRowCounts.add(18L);
+        expectedRowCounts.add(15L);
+        expectedRowCounts.add(20L);
+        expectedRowCounts.add(4L);
+
+        final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
+        rollStrategyUpdates.put(10, strategy -> currentMillis += 2000L);
+        rollStrategyUpdates.put(22, strategy -> currentMillis += 5000L);
+        testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
+    }
+
+    @Test
+    public void testRollSegmentByRowCountThenByStorageSizeThenByInterval() {
+        final int rowsToInsertTotal = 70;
+        final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
+        rollStrategy.setMaxRowCount(8L);
+        rollStrategy.setRollInterval(30000L);
+        final LongList expectedRowCounts = new LongList();
+        expectedRowCounts.add(8L);
+        expectedRowCounts.add(8L);
+        expectedRowCounts.add(24L);
+        expectedRowCounts.add(11L);
+        expectedRowCounts.add(19L);
+
+        final IntObjHashMap<Consumer<WalWriterRollStrategy>> rollStrategyUpdates = new IntObjHashMap<>();
+        rollStrategyUpdates.put(7, strategy -> strategy.setMaxSegmentSize(4096L));
+        rollStrategyUpdates.put(17, strategy -> strategy.setMaxRowCount(100L));
+        rollStrategyUpdates.put(50, strategy -> currentMillis += 20000L);
         testRollSegment(rowsToInsertTotal, rollStrategy, expectedRowCounts, rollStrategyUpdates);
     }
 
@@ -937,6 +992,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     row.putSym(17, String.valueOf(i));
                     row.append();
 
+                    currentMillis += 1000L;
                     final Consumer<WalWriterRollStrategy> rollStrategyUpdate = rollStrategyUpdates.get(i);
                     if (rollStrategyUpdate != null) {
                         rollStrategyUpdate.accept(rollStrategy);
