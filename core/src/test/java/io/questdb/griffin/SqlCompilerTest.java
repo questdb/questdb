@@ -36,6 +36,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -50,6 +51,13 @@ import static io.questdb.griffin.CompiledQuery.SET;
 public class SqlCompilerTest extends AbstractGriffinTest {
     private final static Path path = new Path();
     private static final Log LOG = LogFactory.getLog(SqlCompilerTest.class);
+
+
+    @AfterClass
+    public static void tearDownStatic() {
+        AbstractGriffinTest.tearDownStatic();
+        Misc.free(path);
+    }
 
     @Test
     public void assertCastString() throws SqlException {

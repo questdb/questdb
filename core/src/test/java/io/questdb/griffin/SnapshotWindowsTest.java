@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import org.junit.*;
@@ -51,6 +52,7 @@ public class SnapshotWindowsTest extends AbstractGriffinTest {
         super.tearDown();
         path.trimTo(rootLen);
         configuration.getFilesFacade().rmdir(path.slash$());
+        Misc.free(path);
     }
 
     @Test
