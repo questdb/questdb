@@ -32,7 +32,7 @@ public interface VectorAggregateFunction extends Function, Mutable {
 
     void aggregate(long address, long addressSize, int columnSizeHint, int workerId);
 
-    void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId);
+    boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId);
 
     int getColumnIndex();
 

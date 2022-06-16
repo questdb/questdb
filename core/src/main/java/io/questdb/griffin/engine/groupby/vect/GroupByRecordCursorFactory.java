@@ -43,6 +43,8 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -59,6 +61,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int keyColumnIndex;
     private final RostiRecordCursor cursor;
     private final RostiAllocFacade raf;
+    private final AtomicInteger oomCounter = new AtomicInteger();
 
     public GroupByRecordCursorFactory(
             CairoConfiguration configuration,
@@ -174,6 +177,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             Rosti.clear(pRosti[i]);
         }
 
+        oomCounter.set(0);
+
         final MessageBus bus = executionContext.getMessageBus();
 
         final PageFrameCursor cursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
@@ -233,16 +238,18 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         if (keyAddress == 0) {
                             vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, workerId);
                         } else {
-                            vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, columnSizeShr, workerId);
+                            if (!vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, columnSizeShr, workerId)) {
+                                oomCounter.incrementAndGet();
+                            }
                         }
                         ownCount++;
                     } else {
                         if (keyAddress != 0 || valueAddress != 0) {
                             final VectorAggregateEntry entry = entryPool.next();
                             if (keyAddress == 0) {
-                                entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch);
+                                entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter);
                             } else {
-                                entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch);
+                                entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter);
                             }
                             activeEntries.add(entry);
                             queue.get(seq).entry = entry;
@@ -266,6 +273,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             // start at the back to reduce chance of clashing
             reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG);
+        }
+
+        if (oomCounter.get() > 0) {
+            Misc.free(cursor);
+            throw new OutOfMemoryError();
         }
 
         // merge maps only when cursor was fetched successfully

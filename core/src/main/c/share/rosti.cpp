@@ -73,8 +73,13 @@ rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, co
     map->capacity_ = map_capacity;
     map->size_ = 0;
     map->value_offsets_ = value_offsets;
-    initialize_slots(map);
-    return map;
+
+    if (initialize_slots(&map)) {
+        return map;
+    }
+
+    free(map);
+    return nullptr;
 }
 
 extern "C" {
