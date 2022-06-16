@@ -196,7 +196,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             workerId = 0;
         }
 
-        boolean cursorComplete = false;
         try {
             PageFrame frame;
             while ((frame = cursor.next()) != null) {
@@ -244,7 +243,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     total++;
                 }
             }
-            cursorComplete = true;
         } catch (Throwable e) {
             Misc.free(cursor);
             throw e;
@@ -259,32 +257,28 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             // start at the back to reduce chance of clashing
             reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG);
+        }
 
-            // merge maps only when cursor was fetched successfully
-            // otherwise assume error and save CPU cycles
-            if (cursorComplete) {
-                long pRosti0 = pRosti[0];
+        // merge maps only when cursor was fetched successfully
+        // otherwise assume error and save CPU cycles
+        long pRosti0 = pRosti[0];
 
-                if (pRosti.length > 1) {
-                    LOG.debug().$("merging").$();
+        if (pRosti.length > 1) {
+            LOG.debug().$("merging").$();
 
-                    for (int j = 0; j < vafCount; j++) {
-                        final VectorAggregateFunction vaf = vafList.getQuick(j);
-                        for (int i = 1, n = pRosti.length; i < n; i++) {
-                            vaf.merge(pRosti0, pRosti[i]);
-                        }
-                        vaf.wrapUp(pRosti0);
-                    }
-                } else {
-                    for (int j = 0; j < vafCount; j++) {
-                        vafList.getQuick(j).wrapUp(pRosti0);
-                    }
+            for (int j = 0; j < vafCount; j++) {
+                final VectorAggregateFunction vaf = vafList.getQuick(j);
+                for (int i = 1, n = pRosti.length; i < n; i++) {
+                    vaf.merge(pRosti0, pRosti[i]);
                 }
-                LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
-            } else {
-                LOG.info().$("errored out [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
+                vaf.wrapUp(pRosti0);
+            }
+        } else {
+            for (int j = 0; j < vafCount; j++) {
+                vafList.getQuick(j).wrapUp(pRosti0);
             }
         }
+        LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
         return this.cursor.of(cursor);
     }
 
