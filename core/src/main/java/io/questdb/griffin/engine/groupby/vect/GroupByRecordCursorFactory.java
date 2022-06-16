@@ -58,6 +58,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final long[] pRosti;
     private final int keyColumnIndex;
     private final RostiRecordCursor cursor;
+    private final RostiAllocFacade raf;
 
     public GroupByRecordCursorFactory(
             CairoConfiguration configuration,
@@ -85,8 +86,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         this.pRosti = new long[workerCount];
         final int vafCount = vafList.size();
         this.vafList = new ObjList<>(vafCount);
+        this.raf = configuration.getRostiAllocFacade();
         for (int i = 0; i < workerCount; i++) {
-            pRosti[i] = Rosti.alloc(columnTypes, configuration.getGroupByMapCapacity());
+            long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
+            if (ptr == 0) {
+                for (int k = i -1; k > -1; k--) {
+                    raf.free(pRosti[k]);
+                }
+                throw new OutOfMemoryError();
+            }
+            pRosti[i] = ptr;
 
             // remember, single key for now
             switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {
@@ -153,7 +162,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     protected void _close() {
         Misc.freeObjList(vafList);
         for (int i = 0, n = pRosti.length; i < n; i++) {
-            Rosti.free(pRosti[i]);
+            raf.free(pRosti[i]);
         }
     }
 

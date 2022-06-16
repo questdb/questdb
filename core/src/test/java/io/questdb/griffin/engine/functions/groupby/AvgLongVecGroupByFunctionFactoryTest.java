@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.griffin.AbstractGriffinTest;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class AvgLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
@@ -97,6 +98,7 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
     }
 
     @Test
+    @Ignore
     public void testAvgLongOverflow() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table test as(select 21474836475L * x as x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1000000));", sqlExecutionContext);
