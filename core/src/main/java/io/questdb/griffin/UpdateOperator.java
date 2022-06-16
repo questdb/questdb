@@ -49,19 +49,19 @@ import static io.questdb.cairo.TableUtils.iFile;
 public class UpdateOperator implements Closeable {
     private static final Log LOG = LogFactory.getLog(UpdateOperator.class);
     private final FilesFacade ff;
-    final int rootLen;
-    final IntList updateColumnIndexes = new IntList();
+    private final int rootLen;
+    private final IntList updateColumnIndexes = new IntList();
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
     private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
     private final long dataAppendPageSize;
     private final long fileOpenOpts;
-    final LongList cleanupColumnVersions = new LongList();
+    private final LongList cleanupColumnVersions = new LongList();
     private final LongList cleanupColumnVersionsAsync = new LongList();
     private final MessageBus messageBus;
     private final CairoConfiguration configuration;
-    final TableWriter tableWriter;
-    IndexBuilder indexBuilder;
-    Path path;
+    private final TableWriter tableWriter;
+    private IndexBuilder indexBuilder;
+    private Path path;
 
     public UpdateOperator(CairoConfiguration configuration, MessageBus messageBus, TableWriter tableWriter) {
         this.messageBus = messageBus;
@@ -231,7 +231,7 @@ public class UpdateOperator implements Closeable {
                 op.forceTestTimeout();
                 tableWriter.commit();
                 tableWriter.openLastPartition();
-                purgeOldColumnVersions();
+                purgeOldColumnVersions(tableWriter, updateColumnIndexes, ff);
             }
 
             LOG.info().$("update finished [table=").$(tableName)
@@ -471,7 +471,9 @@ public class UpdateOperator implements Closeable {
                     columnType,
                     shl
             );
-        } else if (oldColumnTop > 0) {
+        }
+
+        if (oldColumnTop > 0) {
             if (prevRow >= oldColumnTop) {
                 copyValues(
                         prevRow - oldColumnTop,
@@ -696,7 +698,7 @@ public class UpdateOperator implements Closeable {
         }
     }
 
-    public void purgeOldColumnVersions() {
+    private void purgeOldColumnVersions(TableWriter tableWriter, IntList updateColumnIndexes, FilesFacade ff) {
         boolean anyReadersBeforeCommittedTxn = tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn();
         TableWriterMetadata writerMetadata = tableWriter.getMetadata();
 

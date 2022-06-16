@@ -602,7 +602,7 @@ public class TableWriter implements Closeable {
                 populateDenseIndexerList();
             }
 
-            dropIndexOperator.purgeOldColumnVersions();
+            dropIndexOperator.purgeOldColumnIndexVersions();
             LOG.info().$("END DROP INDEX [txn=")
                     .$(txWriter.getTxn())
                     .$(", table=")

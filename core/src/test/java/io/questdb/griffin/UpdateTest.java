@@ -1063,12 +1063,12 @@ public class UpdateTest extends AbstractGriffinTest {
                     "ALPHA\t1970-01-01T00:00:36.000000Z\n" +
                     "OMEGA\t1970-01-01T00:01:12.000000Z\n");
 
-//            executeUpdate("UPDATE sensors SET sensor_id = sensor_id");
-//
-//            assertSql("sensors", "sensor_id\tts\n" +
-//                    "ALPHA\t1970-01-01T00:00:00.000000Z\n" +
-//                    "ALPHA\t1970-01-01T00:00:36.000000Z\n" +
-//                    "OMEGA\t1970-01-01T00:01:12.000000Z\n");
+            executeUpdate("UPDATE sensors SET sensor_id = sensor_id");
+
+            assertSql("sensors", "sensor_id\tts\n" +
+                    "ALPHA\t1970-01-01T00:00:00.000000Z\n" +
+                    "ALPHA\t1970-01-01T00:00:36.000000Z\n" +
+                    "OMEGA\t1970-01-01T00:01:12.000000Z\n");
 
             executeDropIndex("ALTER TABLE sensors ALTER COLUMN sensor_id DROP INDEX");
 
