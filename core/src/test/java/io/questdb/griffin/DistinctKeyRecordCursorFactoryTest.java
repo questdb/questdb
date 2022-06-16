@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
@@ -175,6 +176,43 @@ public class DistinctKeyRecordCursorFactoryTest extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testDistinctOnBrokenTable() throws Exception {
+
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
+                            "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
+                            " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
+                    sqlExecutionContext
+            );
+
+            // remove partition
+            System.out.println("ok");
+
+        });
+
+//        assertQuery(
+//                "sym\n" +
+//                        "2020-01-01\n" +
+//                        "2020-01-02\n" +
+//                        "2020-01-03\n",
+//                "select DISTINCT sym from tab order by 1 LIMIT 3",
+//                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, cast(" +
+//                        "to_str(timestamp_sequence('2020-01-01', 10 * 60 * 1000000L), 'yyyy-MM-dd')" +
+//                        " as symbol) sym from long_sequence(10000)) timestamp(ts) PARTITION BY MONTH",
+//                null,
+//                "alter table tab drop partition list '2020-01'",
+//                "sym\n" +
+//                        "2020-02-01\n" +
+//                        "2020-02-02\n" +
+//                        "2020-02-03\n",
+//                true,
+//                true,
+//                true
+//        );
     }
 
     @Test
