@@ -34,8 +34,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
-import java.io.IOException;
-
 import static io.questdb.cairo.TableUtils.dFile;
 
 public class DropIndexOperator extends UpdateOperator {
@@ -151,6 +149,5 @@ public class DropIndexOperator extends UpdateOperator {
         TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
         TableUtils.txnPartitionConditionally(path, partitionNameTxn);
         return dFile(path, columnName, columnNameTxn);
-
     }
 }
