@@ -68,9 +68,12 @@ public class OperationDispatcher<T extends AbstractOperation> {
             if (eventSubSeq == null) {
                 throw busyException;
             }
-            OperationFutureImpl future = futurePool.pop();
-            future.of(operation, sqlExecutionContext, eventSubSeq, operation.getTableNamePosition());
-            return future;
+            return futurePool.pop().of(
+                    operation,
+                    sqlExecutionContext,
+                    eventSubSeq,
+                    operation.getTableNamePosition()
+            );
         }
     }
 }

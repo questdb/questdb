@@ -33,6 +33,7 @@ import io.questdb.cairo.vm.MemoryFMCRImpl;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
+import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.UpdateOperator;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -191,6 +192,7 @@ public class TableWriter implements Closeable {
     private long commitIntervalDefault;
     private long commitInterval;
     private UpdateOperator updateOperator;
+    private DropIndexOperator dropIndexOperator;
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -579,15 +581,18 @@ public class TableWriter implements Closeable {
                 .I$();
         try {
             // drop index
-            getUpdateOperator().executeDropIndex(tableName, columnName, columnIndex);
+            if (dropIndexOperator == null) {
+                dropIndexOperator = new DropIndexOperator(configuration, messageBus, this);
+            }
+            dropIndexOperator.executeDropIndex(tableName, columnName, columnIndex); // upserts column version in partitions
 
-            // swap metadata
+            // swap meta
             final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
             metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, META_FLAG_BIT_NOT_INDEXED, defaultIndexValueBlockSize);
             swapMetaFile(columnName);
-            TableColumnMetadata columnMeta = metadata.getColumnQuick(columnIndex);
-            columnMeta.setIndexed(false);
-            columnMeta.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
+            TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
+            columnMetadata.setIndexed(true);
+            columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
 
             // remove indexer
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
@@ -596,6 +601,8 @@ public class TableWriter implements Closeable {
                 Misc.free(columnIndexer);
                 populateDenseIndexerList();
             }
+
+            dropIndexOperator.purgeOldColumnVersions();
             LOG.info().$("END DROP INDEX [txn=")
                     .$(txWriter.getTxn())
                     .$(", table=")
@@ -2323,6 +2330,7 @@ public class TableWriter implements Closeable {
         Misc.free(o3ColumnTopSink);
         Misc.free(commandQueue);
         updateOperator = Misc.free(updateOperator);
+        dropIndexOperator = Misc.free(dropIndexOperator);
         freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);

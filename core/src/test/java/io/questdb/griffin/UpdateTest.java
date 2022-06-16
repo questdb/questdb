@@ -31,6 +31,9 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.ops.AbstractOperation;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
@@ -46,6 +49,8 @@ import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 public class UpdateTest extends AbstractGriffinTest {
     private final SCSequence eventSubSequence = new SCSequence();
@@ -1041,6 +1046,40 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testUpdateSelf() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table sensors as (" +
+                            "    select" +
+                            "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') sensor_id," +
+                            "        timestamp_sequence(0, 36000000) ts" +
+                            "    from long_sequence(3)" +
+                            "), index(sensor_id capacity 4) timestamp(ts) partition by DAY;",
+                    sqlExecutionContext
+            );
+
+            assertSql("sensors", "sensor_id\tts\n" +
+                    "ALPHA\t1970-01-01T00:00:00.000000Z\n" +
+                    "ALPHA\t1970-01-01T00:00:36.000000Z\n" +
+                    "OMEGA\t1970-01-01T00:01:12.000000Z\n");
+
+//            executeUpdate("UPDATE sensors SET sensor_id = sensor_id");
+//
+//            assertSql("sensors", "sensor_id\tts\n" +
+//                    "ALPHA\t1970-01-01T00:00:00.000000Z\n" +
+//                    "ALPHA\t1970-01-01T00:00:36.000000Z\n" +
+//                    "OMEGA\t1970-01-01T00:01:12.000000Z\n");
+
+            executeDropIndex("ALTER TABLE sensors ALTER COLUMN sensor_id DROP INDEX");
+
+            assertSql("sensors", "sensor_id\tts\n" +
+                    "ALPHA\t1970-01-01T00:00:00.000000Z\n" +
+                    "ALPHA\t1970-01-01T00:00:36.000000Z\n" +
+                    "OMEGA\t1970-01-01T00:01:12.000000Z\n");
+        });
+    }
+
+    @Test
     public void testUpdateReadonlyFails() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table up as" +
@@ -1945,11 +1984,24 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     private void executeUpdate(String query) throws SqlException {
+        executeOperation(query, CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation);
+    }
+
+    private void executeDropIndex(String query) throws SqlException {
+        executeOperation(query, CompiledQuery.ALTER, CompiledQuery::getAlterOperation);
+    }
+
+    private <T extends AbstractOperation> void executeOperation(
+            String query,
+            int opType,
+            Function<CompiledQuery, T> op
+    ) throws SqlException {
         CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
-        Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
+        Assert.assertEquals(opType, cq.getType());
+        OperationDispatcher<T> dispatcher = cq.getDispatcher();
         try (
-                UpdateOperation op = cq.getUpdateOperation();
-                OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
+                T operation = op.apply(cq);
+                OperationFuture fut = dispatcher.execute(operation, sqlExecutionContext, eventSubSequence)
         ) {
             fut.await();
         }

@@ -127,6 +127,7 @@ public class UpdateOperation extends AbstractOperation {
     @Override
     public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
         super.withContext(sqlExecutionContext);
-        this.circuitBreaker = this.sqlExecutionContext.getCircuitBreaker();
+        // TODO: restore
+        //this.circuitBreaker = this.sqlExecutionContext.getCircuitBreaker();
     }
 }

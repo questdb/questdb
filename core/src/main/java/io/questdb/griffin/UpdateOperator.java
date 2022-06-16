@@ -37,7 +37,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
 
@@ -50,19 +49,19 @@ import static io.questdb.cairo.TableUtils.iFile;
 public class UpdateOperator implements Closeable {
     private static final Log LOG = LogFactory.getLog(UpdateOperator.class);
     private final FilesFacade ff;
-    private final int rootLen;
-    private final IntList updateColumnIndexes = new IntList();
+    final int rootLen;
+    final IntList updateColumnIndexes = new IntList();
     private final ObjList<MemoryCMR> srcColumns = new ObjList<>();
     private final ObjList<MemoryCMARW> dstColumns = new ObjList<>();
     private final long dataAppendPageSize;
     private final long fileOpenOpts;
-    private final LongList cleanupColumnVersions = new LongList();
+    final LongList cleanupColumnVersions = new LongList();
     private final LongList cleanupColumnVersionsAsync = new LongList();
     private final MessageBus messageBus;
     private final CairoConfiguration configuration;
-    private final TableWriter tableWriter;
-    private IndexBuilder indexBuilder;
-    private Path path;
+    final TableWriter tableWriter;
+    IndexBuilder indexBuilder;
+    Path path;
 
     public UpdateOperator(CairoConfiguration configuration, MessageBus messageBus, TableWriter tableWriter) {
         this.messageBus = messageBus;
@@ -232,7 +231,7 @@ public class UpdateOperator implements Closeable {
                 op.forceTestTimeout();
                 tableWriter.commit();
                 tableWriter.openLastPartition();
-                purgeOldColumnVersions(tableWriter, updateColumnIndexes, ff);
+                purgeOldColumnVersions();
             }
 
             LOG.info().$("update finished [table=").$(tableName)
@@ -252,70 +251,6 @@ public class UpdateOperator implements Closeable {
         } finally {
             op.closeWriter();
         }
-    }
-
-    public void executeDropIndex(CharSequence tableName, CharSequence columnName, int columnIndex) {
-        updateColumnIndexes.clear();
-        updateColumnIndexes.add(columnIndex);
-        cleanupColumnVersions.clear();
-        try {
-            if (tableWriter.inTransaction()) {
-                LOG.info()
-                        .$("committing current transaction before DROP INDEX execution [table=")
-                        .$(tableName)
-                        .$(", column=")
-                        .$(columnName)
-                        .I$();
-                tableWriter.commit();
-            }
-
-            for (int partitionIndex = 0, limit = tableWriter.getPartitionCount(); partitionIndex < limit; partitionIndex++) {
-
-                final long partitionTxn = tableWriter.getPartitionNameTxn(partitionIndex);
-                final long partitionTs = tableWriter.getPartitionTimestamp(partitionIndex);
-                final long columnTxn = tableWriter.getColumnNameTxn(partitionTs, columnIndex);
-                final long columnTop = tableWriter.getColumnTop(partitionTs, columnIndex, -1L);
-
-                try {
-                    setPathForPartition(partitionTs, partitionTxn);
-
-                    // check that the column file exists
-                    LPSZ srcFile = dFile(path, columnName, columnTxn);
-                    if (!Files.exists(srcFile)) {
-                        throw CairoException.instance(0)
-                                .put("Impossible! this file should exist: ")
-                                .put(path.toString());
-                    }
-
-                    // add to cleanup tasks
-                    cleanupColumnVersions.add(columnIndex, columnTxn, partitionTs, partitionTxn);
-
-                    tableWriter.upsertColumnVersion(partitionTs, columnIndex, columnTop);
-                    final long columnUpdateTxn = tableWriter.getColumnNameTxn(partitionTs, columnIndex);
-
-                    // create hard link to column data
-                    setPathForPartition(partitionTs, partitionTxn);
-                    LPSZ linkThisFile = dFile(path, columnName, columnUpdateTxn);
-
-                } finally {
-                    path.trimTo(rootLen);
-                }
-            }
-            tableWriter.commit();
-            tableWriter.openLastPartition();
-            purgeOldColumnVersions(tableWriter, updateColumnIndexes, ff);
-        } catch (Throwable th) {
-            LOG.error().$("could not update").$(th).$();
-            tableWriter.rollbackUpdate();
-            throw th;
-        }
-    }
-
-    private void setPathForPartition(long partitionTs, long partitionTxn) {
-        path.trimTo(rootLen);
-        path.concat(tableWriter.getTableName());
-        TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTs, false);
-        TableUtils.txnPartitionConditionally(path, partitionTxn);
     }
 
     private static void updateEffectiveColumnTops(
@@ -761,7 +696,7 @@ public class UpdateOperator implements Closeable {
         }
     }
 
-    private void purgeOldColumnVersions(TableWriter tableWriter, IntList updateColumnIndexes, FilesFacade ff) {
+    public void purgeOldColumnVersions() {
         boolean anyReadersBeforeCommittedTxn = tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn();
         TableWriterMetadata writerMetadata = tableWriter.getMetadata();
 
