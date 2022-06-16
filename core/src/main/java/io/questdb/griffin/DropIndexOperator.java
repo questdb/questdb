@@ -41,7 +41,8 @@ import static io.questdb.cairo.TableUtils.dFile;
 public class DropIndexOperator implements Closeable {
     private static final Log LOG = LogFactory.getLog(DropIndexOperator.class);
     private final FilesFacade ff;
-    final LongList cleanupColumnVersions = new LongList();
+    private final LongList cleanupColumnIndexVersions = new LongList();
+    private LongList cleanupColumnIndexVersionsAsync = new LongList();
     private final MessageBus messageBus;
     private final TableWriter tableWriter;
     private Path path;
@@ -52,9 +53,9 @@ public class DropIndexOperator implements Closeable {
     public DropIndexOperator(CairoConfiguration configuration, MessageBus messageBus, TableWriter tableWriter) {
         this.messageBus = messageBus;
         this.tableWriter = tableWriter;
-        this.ff = configuration.getFilesFacade();
-        this.path = new Path().of(configuration.getRoot());
-        this.rootLen = path.length();
+        ff = configuration.getFilesFacade();
+        path = new Path().of(configuration.getRoot());
+        rootLen = path.length();
         auxPath = new Path().of(configuration.getRoot());
         auxRootLen = auxPath.length();
     }
@@ -66,10 +67,6 @@ public class DropIndexOperator implements Closeable {
     }
 
     public void executeDropIndex(CharSequence tableName, CharSequence columnName, int columnIndex) {
-        if (Os.type == Os.WINDOWS) {
-            throw CairoException.instance(0).put("DROP INDEX is not supported on Windows");
-        }
-        cleanupColumnVersions.clear();
         try {
             if (tableWriter.inTransaction()) {
                 LOG.info()
@@ -83,8 +80,11 @@ public class DropIndexOperator implements Closeable {
                 tableWriter.commit();
             }
 
+            cleanupColumnIndexVersions.clear();
             final int partitionBy = tableWriter.getPartitionBy();
+
             for (int partitionIndex = 0, limit = tableWriter.getPartitionCount(); partitionIndex < limit; partitionIndex++) {
+
                 final long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
                 final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
                 final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
@@ -101,13 +101,13 @@ public class DropIndexOperator implements Closeable {
                             columnName,
                             columnNameTxn
                     );
-                    if (!Files.exists(srcDFile)) {
+                    if (!ff.exists(srcDFile)) {
                         throw CairoException.instance(0)
                                 .put("Impossible! this file should exist: ")
                                 .put(path.toString());
                     }
                     // add to cleanup tasks, the index will be removed in due time
-                    cleanupColumnVersions.add(columnIndex, columnNameTxn, partitionTimestamp, partitionNameTxn);
+                    cleanupColumnIndexVersions.add(columnIndex, columnNameTxn, partitionTimestamp, partitionNameTxn);
 
                     // bump up column version, metadata will be updated later
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
@@ -124,7 +124,13 @@ public class DropIndexOperator implements Closeable {
                             columnName,
                             columnDropIndexTxn
                     );
-                    Files.hardLink(srcDFile, hardLinkDFile);
+                    if (ff.hardLink(srcDFile, hardLinkDFile) < 0) {
+                        throw CairoException.instance(0)
+                                .put("Cannot hard link ")
+                                .put(srcDFile)
+                                .put(" as ")
+                                .put(hardLinkDFile);
+                    }
                 } finally {
                     path.trimTo(rootLen);
                     auxPath.trimTo(auxRootLen);
@@ -139,7 +145,7 @@ public class DropIndexOperator implements Closeable {
 
     public void purgeOldColumnIndexVersions() {
         try {
-            if (cleanupColumnVersions.size() < 4) {
+            if (cleanupColumnIndexVersions.size() < 4) {
                 return;
             }
 
@@ -148,10 +154,10 @@ public class DropIndexOperator implements Closeable {
                 return;
             }
 
-            final int columnIndex = (int) cleanupColumnVersions.getQuick(0);
-            final long columnNameTxn = cleanupColumnVersions.getQuick(1);
-            final long partitionTimestamp = cleanupColumnVersions.getQuick(2);
-            final long partitionNameTxn = cleanupColumnVersions.getQuick(3);
+            final int columnIndex = (int) cleanupColumnIndexVersions.getQuick(0);
+            final long columnNameTxn = cleanupColumnIndexVersions.getQuick(1);
+            final long partitionTimestamp = cleanupColumnIndexVersions.getQuick(2);
+            final long partitionNameTxn = cleanupColumnIndexVersions.getQuick(3);
 
             final TableWriterMetadata writerMetadata = tableWriter.getMetadata();
             final String tableName = tableWriter.getTableName();
@@ -185,43 +191,44 @@ public class DropIndexOperator implements Closeable {
 
             if (!columnIndexPurged) {
                 // submit async
-//                final int tableId = writerMetadata.getId();
-//                final int truncateVersion = (int) tableWriter.getTruncateVersion();
-//                final int columnType = writerMetadata.getColumnType(columnIndex);
-//                final long dropIndexTxn = tableWriter.getTxn();
-//
-//                LongList cleanupColumnVersionsAsync = new LongList();
-//                cleanupColumnVersionsAsync.add(columnNameTxn, partitionTimestamp, partitionNameTxn, 0L);
-//                final Sequence pubSeq = messageBus.getColumnPurgePubSeq();
-//                while (true) {
-//                    long cursor = pubSeq.next();
-//                    if (cursor > -1L) {
-//                        ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
-//                        task.of(
-//                                tableName,
-//                                columnName,
-//                                tableId,
-//                                truncateVersion,
-//                                columnType,
-//                                partitionBy,
-//                                dropIndexTxn,
-//                                cleanupColumnVersionsAsync
-//                        );
-//                        pubSeq.done(cursor);
-//                        return;
-//                    } else if (cursor == -1L) {
-//                        // Queue overflow
-//                        LOG.error().$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"").$(tableName)
-//                                .$("\"' [columnName=").$(columnName)
-//                                .$(", updateTxn=").$(dropIndexTxn)
-//                                .I$();
-//                        return;
-//                    }
-//                }
+                final long dropIndexTxn = tableWriter.getTxn();
+                cleanupColumnIndexVersionsAsync.clear();
+                cleanupColumnIndexVersionsAsync.add(columnNameTxn, partitionTimestamp, partitionNameTxn, 0L);
+                final Sequence pubSeq = messageBus.getColumnPurgePubSeq();
+
+                while (true) {
+                    long cursor = pubSeq.next();
+                    if (cursor > -1L) {
+                        ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
+                        task.of(
+                                tableName,
+                                columnName,
+                                writerMetadata.getId(),
+                                (int) tableWriter.getTruncateVersion(),
+                                writerMetadata.getColumnType(columnIndex),
+                                partitionBy,
+                                dropIndexTxn,
+                                cleanupColumnIndexVersionsAsync
+                        );
+                        pubSeq.done(cursor);
+                        return;
+                    } else if (cursor == -1L) {
+                        // Queue overflow
+                        LOG.error()
+                                .$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"")
+                                .$(tableName)
+                                .$("\"' [columnName=")
+                                .$(columnName)
+                                .$(", updateTxn=")
+                                .$(dropIndexTxn)
+                                .I$();
+                        return;
+                    }
+                }
             }
         } finally {
             path.trimTo(rootLen);
-            cleanupColumnVersions.clear();
+            cleanupColumnIndexVersions.clear();
         }
     }
 

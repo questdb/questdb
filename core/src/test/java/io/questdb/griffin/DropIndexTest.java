@@ -117,7 +117,7 @@ public class DropIndexTest extends AbstractGriffinTest {
         );
     }
 
-    // TODO fix this test
+    // TODO fix this test: compiler is not multi threaded
     @Test
     @Ignore
     public void testParallelDropIndexPreservesIndexFilesWhenThereIsATransactionReadingIt() throws Exception {
@@ -168,7 +168,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                     "alter table sensors alter column sensor_id drop index",
                     sqlExecutionContext
             );
-//            verifyColumnIsIndexed("sensors", "sensor_id", false, configuration.getIndexValueBlockSize());
+            verifyColumnIsIndexed("sensors", "sensor_id", false, configuration.getIndexValueBlockSize());
 
             endLatch.await();
             Throwable excpt = failureReason.get();
@@ -176,7 +176,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                 Assert.fail(excpt.getMessage());
             }
 
-//            Assert.assertTrue(findIndexFiles(configuration, "sensors", "sensor_id").isEmpty());
+            Assert.assertTrue(findIndexFiles(configuration, "sensors", "sensor_id").isEmpty());
         });
     }
 
@@ -194,8 +194,6 @@ public class DropIndexTest extends AbstractGriffinTest {
                     sqlExecutionContext
             );
             verifyColumnIsIndexed(tableName, columnName, false, configuration.getIndexValueBlockSize());
-            // TODO
-//            Assert.assertTrue(findIndexFiles(configuration, tableName, columnName).isEmpty());
         });
     }
 
@@ -211,15 +209,14 @@ public class DropIndexTest extends AbstractGriffinTest {
                 final TableColumnMetadata colMetadata = metadata.getColumnQuick(colIdx);
                 Assert.assertEquals(isIndexed, colMetadata.isIndexed());
                 Assert.assertEquals(indexValueBlockSize, colMetadata.getIndexValueBlockCapacity());
-                // TODO
-//                if (isIndexed) {
-//                    final Set<Path> indexFiles = findIndexFiles(configuration, tableName, columnName);
-//                    if (PartitionBy.isPartitioned(metadata.getPartitionBy())) {
-//                        Assert.assertTrue(indexFiles.size() > 2);
-//                    } else {
-//                        Assert.assertEquals(2, indexFiles.size());
-//                    }
-//                }
+                if (isIndexed) {
+                    final Set<Path> indexFiles = findIndexFiles(configuration, tableName, columnName);
+                    if (PartitionBy.isPartitioned(metadata.getPartitionBy())) {
+                        Assert.assertTrue(indexFiles.size() > 2);
+                    } else {
+                        Assert.assertEquals(2, indexFiles.size());
+                    }
+                }
             }
         }
     }
