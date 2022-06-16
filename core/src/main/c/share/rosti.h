@@ -284,19 +284,19 @@ inline probe_seq<sizeof(Group)> probe(const rosti_t *map, uint64_t hash) {
 
 // Reset all ctrl bytes back to kEmpty, except the sentinel.
 inline void reset_ctrl(rosti_t *map) {
-    uint64_t l = (map->capacity_ + 1) * sizeof(Group);
-    memset(map->ctrl_, kEmpty, l);
+    const uint64_t ctrl_capacity = 2 * sizeof(Group) * (map->capacity_ + 1);//todo: why 2x?
+    memset(map->ctrl_, kEmpty, ctrl_capacity);
     map->ctrl_[map->capacity_] = kSentinel;
 }
 
 void initialize_slots(rosti_t *map) {
-    const uint64_t ctrl_capacity = 2 * sizeof(Group) * (map->capacity_ + 1);
+    const uint64_t ctrl_capacity = 2 * sizeof(Group) * (map->capacity_ + 1);//todo: why 2x?
     auto *mem = reinterpret_cast<unsigned char *>(malloc(
             map->slot_size_ +
             ctrl_capacity +
             map->slot_size_ * (map->capacity_ + 1)));
-    map->ctrl_ = reinterpret_cast<ctrl_t *>(mem) + map->slot_size_;
-    map->slots_ = mem + ctrl_capacity;
+    map->ctrl_ = reinterpret_cast<ctrl_t *>(mem + map->slot_size_);
+    map->slots_ = mem + map->slot_size_ + ctrl_capacity;
     map->slot_initial_values_ = mem;
     reset_ctrl(map);
     reset_growth_left(map);
@@ -372,7 +372,7 @@ void resize(rosti_t *map, uint64_t new_capacity, HASH_M hash_m, CPY cpy) {
 //            *(reinterpret_cast<int32_t *>(map->slots_ + (new_i << map->slot_size_shift_))) = *p;
         }
     }
-    if (old_capacity) {
+    if (old_init) { //todo: memory leak?
         free(old_init);
     }
 }

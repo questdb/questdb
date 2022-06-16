@@ -637,7 +637,7 @@ static void kIntAvgLongWrapUp(jlong pRosti, jint valueOffset, jdouble valueAtNul
             auto pValue = src + value_offset;
             auto sum = *reinterpret_cast<T *>(pValue);
             auto res = static_cast<jdouble>(sum) / count;
-            *reinterpret_cast<jdouble *>(pValue) = res;
+            *reinterpret_cast<jdouble *>(pValue) = res;//todo: segfault??
         }
     }
 }
