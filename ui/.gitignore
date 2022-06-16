@@ -1,8 +1,0 @@
-node_modules
-node
-
-dist
-.tmp
-.sass-cache
-
-.env
