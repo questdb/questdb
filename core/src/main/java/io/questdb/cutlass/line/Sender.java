@@ -25,9 +25,13 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.cutlass.line.tcp.AuthDb;
+import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
+import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
+import io.questdb.network.NetworkFacadeImpl;
 
 import javax.security.auth.DestroyFailedException;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -41,10 +45,10 @@ import java.security.PrivateKey;
  * How to use the Sender:
  * <ol>
  *     <li>Obtain an instance via {@link #builder()}</li>
- *     <li>Use {@link #table(String)} to select a table</li>
- *     <li>Use {@link #symbol(String, String)} to add all symbols. You must add symbols before adding other columns.</li>
- *     <li>Use {@link #column(String, String)}, {@link #column(String, long)}, {@link #column(String, double)},
- *     {@link #column(String, boolean)} to add remaining columns columns</li>
+ *     <li>Use {@link #table(CharSequence)} to select a table</li>
+ *     <li>Use {@link #symbol(CharSequence, CharSequence)} to add all symbols. You must add symbols before adding other columns.</li>
+ *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)}, {@link #doubleColumn(CharSequence, double)},
+ *     {@link #boolColumn(CharSequence, boolean)} to add remaining columns columns</li>
  *     <li>Use {@link #at(long)} to finish a row with an explicit timestamp.Alternatively, you can use use
  *     {@link #atNow()} which will add a timestamp on a server.</li>
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
@@ -69,7 +73,7 @@ public interface Sender extends Closeable {
      * @param table name of the table
      * @return this instance for method chaining
      */
-    Sender table(String table);
+    Sender table(CharSequence table);
 
     /**
      * Add a column with an integer value.
@@ -78,7 +82,7 @@ public interface Sender extends Closeable {
      * @param value value to add
      * @return this instance for method chaining
      */
-    Sender column(String name, long value);
+    Sender longColumn(CharSequence name, long value);
 
     /**
      * Add a column with a string value
@@ -86,7 +90,7 @@ public interface Sender extends Closeable {
      * @param value value to add
      * @return this instance for method chaining
      */
-    Sender column(String name, String value);
+    Sender stringColumn(CharSequence name, CharSequence value);
 
     /**
      * Add a column with a floating point value
@@ -94,7 +98,7 @@ public interface Sender extends Closeable {
      * @param value value to add
      * @return this instance for method chaining
      */
-    Sender column(String name, double value);
+    Sender doubleColumn(CharSequence name, double value);
 
     /**
      * Add a column with a boolean value
@@ -102,7 +106,7 @@ public interface Sender extends Closeable {
      * @param value value to add
      * @return this instance for method chaining
      */
-    Sender column(String name, boolean value);
+    Sender boolColumn(CharSequence name, boolean value);
 
     /**
      * Add a column with a symbol value. You must call add symbols before adding any other column types
@@ -111,20 +115,20 @@ public interface Sender extends Closeable {
      * @param value value to add
      * @return this instance for method chaining
      */
-    Sender symbol(String name, String value);
+    Sender symbol(CharSequence name, CharSequence value);
 
     /**
      * Finalize the current row and let QuestDB server to assign a timestamp. If you need to set timestamp
      * explicitly then see {@link #at(long)}
      * <br>
-     * After calling this method you can start a new row by calling {@link #table(String)} again.
+     * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
      *
      */
     void atNow();
 
     /**
      *  Finalize the current row and assign an explicit timestamp in Epoch nanoseconds.
-     *  After calling this method you can start a new row by calling {@link #table(String)} again.
+     *  After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
      *
      * @param timestamp timestamp in Epoch nanoseconds.
      */
@@ -165,17 +169,22 @@ public interface Sender extends Closeable {
     final class LineSenderBuilder {
         // indicates buffer capacity was not set explicitly
         private static final byte BUFFER_CAPACITY_DEFAULT = 0;
+        // indicate port was not set explicitly
+        private static final byte PORT_DEFAULT = 0;
 
-        private static final int  DEFAULT_BUFFER_CAPACITY = 64 * 1024;
+        private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
+        private static final int DEFAULT_PORT = 9001;
 
-        private int port;
+        private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
+
+        private int port = PORT_DEFAULT;
         private int host;
         private PrivateKey privateKey;
         private boolean shouldDestroyPrivKey;
         private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
         private boolean tlsEnabled;
         private String trustStorePath;
-        private String user;
+        private String keyId;
         private char[] trustStorePassword;
 
         private LineSenderBuilder() {
@@ -223,6 +232,9 @@ public interface Sender extends Closeable {
             if (host != 0) {
                 throw new LineSenderException("host address is already configured");
             }
+            if (address.isEmpty()) {
+                throw new LineSenderException("address cannot be empty");
+            }
             int portIndex = address.indexOf(':');
             if (portIndex + 1 == address.length()) {
                 throw new LineSenderException("cannot parse address " + address + ". address cannot ends with :");
@@ -230,7 +242,7 @@ public interface Sender extends Closeable {
             String hostname;
             if (portIndex != -1) {
                 if (port != 0) {
-                    throw new LineSenderException("address " + address + " contains a port, but a port was already set to " + port);
+                    throw new LineSenderException("address " + address + " contains a port, but a port was already configured to " + port);
                 }
                 hostname = address.substring(0, portIndex);
                 port = Integer.parseInt(address.substring(portIndex + 1));
@@ -262,14 +274,14 @@ public interface Sender extends Closeable {
         /**
          * Configure authentication. This is needed when QuestDB server required clients to authenticate.
          *
-         * @param user keyId the client will send to a server.
+         * @param keyId keyId the client will send to a server.
          * @return an instance of {@link AuthBuilder}. As to finish authentication configuration.
          */
-        public LineSenderBuilder.AuthBuilder enableAuth(String user) {
-            if (this.user != null) {
-                throw new LineSenderException("authentication keyId was already set");
+        public LineSenderBuilder.AuthBuilder enableAuth(String keyId) {
+            if (this.keyId != null) {
+                throw new LineSenderException("authentication keyId was already configured");
             }
-            this.user = user;
+            this.keyId = keyId;
             return new LineSenderBuilder.AuthBuilder();
         }
 
@@ -279,6 +291,9 @@ public interface Sender extends Closeable {
          * @return this instance for method chaining.
          */
         public LineSenderBuilder enableTls() {
+            if (tlsEnabled) {
+                throw new LineSenderException("tls was already configured");
+            }
             tlsEnabled = true;
             return this;
         }
@@ -291,7 +306,7 @@ public interface Sender extends Closeable {
          */
         public LineSenderBuilder bufferCapacity(int bufferCapacity) {
             if (this.bufferCapacity != BUFFER_CAPACITY_DEFAULT) {
-                throw new LineSenderException("buffer capacity was already set to " + this.bufferCapacity);
+                throw new LineSenderException("buffer capacity was already configured to " + this.bufferCapacity);
             }
             this.bufferCapacity = bufferCapacity;
             return this;
@@ -311,7 +326,7 @@ public interface Sender extends Closeable {
          */
         public LineSenderBuilder customTrustStore(String trustStorePath, char[] trustStorePassword) {
             if (this.trustStorePath != null) {
-                throw new LineSenderException("custom trust store was already set to " + this.trustStorePath);
+                throw new LineSenderException("custom trust store was already configured to " + this.trustStorePath);
             }
             this.trustStorePath = trustStorePath;
             this.trustStorePassword = trustStorePassword;
@@ -324,40 +339,81 @@ public interface Sender extends Closeable {
          * @return returns a configured instance of Sender.
          */
         public Sender build() {
-            if (host == 0) {
-                throw new LineSenderException("questdb server host not set");
+            configureDefaults();
+            validateParameters();
+
+            LineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, host, port, bufferCapacity * 2);
+            LineTcpSender sender;
+            if (tlsEnabled) {
+                assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
+                DelegatingTlsChannel tlsChannel;
+                try {
+                    tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword);
+                } catch (Throwable t) {
+                    closeSilently(channel);
+                    throw rethrow(t);
+                }
+                channel = tlsChannel;
             }
-            if (port == 0) {
-                throw new LineSenderException("questdb server port not set");
+            try {
+                sender = new LineTcpSender(channel, bufferCapacity);
+            } catch (Throwable t) {
+                closeSilently(channel);
+                throw rethrow(t);
             }
+            if (privateKey != null) {
+                try {
+                    sender.authenticate(keyId, privateKey);
+                } catch (Throwable t) {
+                    closeSilently(sender);
+                    throw rethrow(t);
+                } finally {
+                    if (shouldDestroyPrivKey) {
+                        try {
+                            privateKey.destroy();
+                        } catch (DestroyFailedException e) {
+                            // not much we can do
+                        }
+                    }
+                }
+            }
+            return sender;
+        }
+
+        private void configureDefaults() {
             if (bufferCapacity == BUFFER_CAPACITY_DEFAULT) {
                 bufferCapacity = DEFAULT_BUFFER_CAPACITY;
             }
-
-            if (privateKey == null) {
-                // unauthenticated path
-                if (tlsEnabled) {
-                    return LineTcpSender.tlsSender(host, port, bufferCapacity * 2, trustStorePath, trustStorePassword);
-                }
-                return new LineTcpSender(host, port, bufferCapacity);
-            } else {
-                // authenticated path
-                LineTcpSender sender;
-                if (tlsEnabled) {
-                    assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
-                    sender = LineTcpSender.authenticatedTlsSender(host, port, bufferCapacity, user, privateKey, trustStorePath, trustStorePassword);
-                } else {
-                    sender = LineTcpSender.authenticatedPlainTextSender(host, port, bufferCapacity, user, privateKey);
-                }
-                if (shouldDestroyPrivKey) {
-                    try {
-                        privateKey.destroy();
-                    } catch (DestroyFailedException e) {
-                        // not much we can do
-                    }
-                }
-                return sender;
+            if (port == PORT_DEFAULT) {
+                port = DEFAULT_PORT;
             }
+        }
+
+        private void validateParameters() {
+            if (host == 0) {
+                throw new LineSenderException("questdb server host not set");
+            }
+            if (!tlsEnabled && trustStorePath != null) {
+                throw new LineSenderException("custom trust store configured to " + trustStorePath + ", but TLS was not enabled");
+            }
+            if (keyId != null && bufferCapacity < MIN_BUFFER_SIZE_FOR_AUTH) {
+                throw new LineSenderException("Minimal buffer capacity is " + MIN_BUFFER_SIZE_FOR_AUTH + ". Requested buffer capacity: " + bufferCapacity);
+            }
+        }
+
+        private static void closeSilently(Closeable resource) {
+            try {
+                resource.close();
+            } catch (IOException e) {
+                // not much we can do
+            }
+        }
+
+        private static RuntimeException rethrow(Throwable t) {
+            if (t instanceof LineSenderException) {
+                throw (LineSenderException)t;
+            }
+            throw new LineSenderException(t);
         }
 
         /**
@@ -375,9 +431,6 @@ public interface Sender extends Closeable {
              * @return an instance of LineSenderBuilder for further configuration
              */
             public LineSenderBuilder privateKey(PrivateKey privateKey) {
-                if (LineSenderBuilder.this.privateKey != null) {
-                    throw new LineSenderException("private key was already set");
-                }
                 LineSenderBuilder.this.privateKey = privateKey;
                 return LineSenderBuilder.this;
             }
@@ -389,9 +442,6 @@ public interface Sender extends Closeable {
              * @return an instance of LineSenderBuilder for further configuration
              */
             public LineSenderBuilder token(String token) {
-                if (LineSenderBuilder.this.privateKey != null) {
-                    throw new LineSenderException("token was already set");
-                }
                 try {
                     LineSenderBuilder.this.privateKey = AuthDb.importPrivateKey(token);
                 } catch (IllegalArgumentException e) {

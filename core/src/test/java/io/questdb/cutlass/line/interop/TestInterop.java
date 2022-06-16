@@ -56,16 +56,16 @@ public class TestInterop {
                         String name = column.getName();
                         switch (column.getType()) {
                             case STRING:
-                                sender.column(name, column.valueAsString());
+                                sender.stringColumn(name, column.valueAsString());
                                 break;
                             case LONG:
-                                sender.column(name, column.valueAsLong());
+                                sender.longColumn(name, column.valueAsLong());
                                 break;
                             case BOOLEAN:
-                                sender.column(name, column.valueAsBoolean());
+                                sender.boolColumn(name, column.valueAsBoolean());
                                 break;
                             case DOUBLE:
-                                sender.column(name, column.valueAsDouble());
+                                sender.doubleColumn(name, column.valueAsDouble());
                                 break;
                             default:
                                 throw new UnsupportedOperationException("unknown type " + column.getType());

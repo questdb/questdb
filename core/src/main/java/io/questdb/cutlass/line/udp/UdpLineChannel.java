@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.udp;
 
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.tcp.PlanTcpLineChannel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
@@ -35,7 +34,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
 public final class UdpLineChannel implements LineChannel {
-    private static final Log LOG = LogFactory.getLog(PlanTcpLineChannel.class);
+    private static final Log LOG = LogFactory.getLog(UdpLineChannel.class);
 
     private final NetworkFacade nf;
     private final long fd;

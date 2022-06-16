@@ -26,7 +26,6 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.network.NetworkError;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -45,12 +44,8 @@ import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
-import java.security.KeyManagementException;
 import java.security.KeyStore;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
-import java.security.cert.CertificateException;
 
 public final class DelegatingTlsChannel implements LineChannel {
     private static final int INITIAL_BUFFER_CAPACITY = 64 * 1024;
@@ -88,7 +83,7 @@ public final class DelegatingTlsChannel implements LineChannel {
             limitField = Buffer.class.getDeclaredField("limit");
             capacityField = Buffer.class.getDeclaredField("capacity");
         } catch (NoSuchFieldException e) {
-            // todo: consider a fallback strategy - we could keep copying buffers
+            // possible improvement: implement a fallback strategy when reflection is unavailable for any reason.
             throw new LineSenderException("unexpected buffer");
         }
         ADDRESS_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(addressField);
@@ -113,6 +108,12 @@ public final class DelegatingTlsChannel implements LineChannel {
         this.unwrapInputBufferPtr = Unsafe.getUnsafe().getLong(unwrapInputBuffer, ADDRESS_FIELD_OFFSET);
         this.unwrapOutputBufferPtr = Unsafe.getUnsafe().getLong(unwrapOutputBuffer, ADDRESS_FIELD_OFFSET);
         this.dummyBuffer = ByteBuffer.allocate(0);
+
+        try {
+            handshakeLoop();
+        } catch (SSLException e) {
+            throw new LineSenderException("error during TLS handshake", e);
+        }
     }
 
     private static SSLEngine createSslEngine(String trustStorePath, char[] trustStorePassword) {
@@ -151,16 +152,17 @@ public final class DelegatingTlsChannel implements LineChannel {
             SSLEngine sslEngine = sslContext.createSSLEngine();
             sslEngine.setUseClientMode(true);
             return sslEngine;
-        } catch (NoSuchAlgorithmException | KeyManagementException | CertificateException | KeyStoreException |
-                 IOException e) {
-            throw new LineSenderException("error while creating openssl engine", e);
+        } catch (Throwable t) {
+            if (t instanceof LineSenderException) {
+                throw (LineSenderException)t;
+            }
+            throw new LineSenderException("error while creating openssl engine", t);
         }
     }
 
     @Override
     public void send(long ptr, int len) {
         try {
-            handshakeLoop();
             resetBufferToPointer(wrapInputBuffer, ptr, len);
             wrapLoop(wrapInputBuffer);
             assert !wrapInputBuffer.hasRemaining();
@@ -292,7 +294,6 @@ public final class DelegatingTlsChannel implements LineChannel {
     @Override
     public int receive(long ptr, int len) {
         try {
-            handshakeLoop();
             unwrapLoop();
             unwrapOutputBuffer.flip();
             int i = unwrapOutputBufferToPtr(ptr, len);
@@ -353,13 +354,16 @@ public final class DelegatingTlsChannel implements LineChannel {
 
     @Override
     public void close() throws IOException {
+        int prevState = state;
         state = CLOSING;
-        sslEngine.closeOutbound();
-        wrapLoop(dummyBuffer);
-        try {
-            writeToUpstreamAndClear();
-        } catch (LineSenderException e) {
-            // best effort TLS close
+        if (prevState == AFTER_HANDSHAKE) {
+            sslEngine.closeOutbound();
+            wrapLoop(dummyBuffer);
+            try {
+                writeToUpstreamAndClear();
+            } catch (LineSenderException e) {
+                // best effort TLS close signal
+            }
         }
         Misc.free(delegate);
         state = CLOSED;

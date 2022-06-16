@@ -112,7 +112,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return this;
     }
 
-    public final AbstractLineSender column(String name, long value) {
+    @Override
+    public final AbstractLineSender longColumn(CharSequence name, long value) {
         return field(name, value);
     }
 
@@ -127,7 +128,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
-    public final AbstractLineSender column(String name, String value) {
+    public final AbstractLineSender stringColumn(CharSequence name, CharSequence value) {
         return field(name, value);
     }
 
@@ -138,7 +139,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
-    public final AbstractLineSender column(String name, double value) {
+    public final AbstractLineSender doubleColumn(CharSequence name, double value) {
         return field(name, value);
     }
 
@@ -149,7 +150,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
-    public final AbstractLineSender column(String name, boolean value) {
+    public final AbstractLineSender boolColumn(CharSequence name, boolean value) {
         return field(name, value);
     }
 
@@ -337,8 +338,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
-    public final AbstractLineSender table(String metric) {
-        return metric(metric);
+    public final AbstractLineSender table(CharSequence table) {
+        return metric(table);
     }
 
     public AbstractLineSender tag(CharSequence tag, CharSequence value) {
@@ -352,7 +353,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
-    public final AbstractLineSender symbol(String name, String value) {
+    public final AbstractLineSender symbol(CharSequence name, CharSequence value) {
         return tag(name, value);
     }
 
@@ -422,8 +423,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         }
     }
 
-    protected final void authenticate(String authKey, PrivateKey privateKey) {
-        encodeUtf8(authKey).put('\n');
+    public final void authenticate(String keyId, PrivateKey privateKey) {
+        encodeUtf8(keyId).put('\n');
         sendAll();
 
         byte[] challengeBytes = receiveChallengeBytes();
@@ -453,7 +454,6 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return -1;
     }
 
-    @NotNull
     private byte[] receiveChallengeBytes() {
         int n = 0;
         for (;;) {

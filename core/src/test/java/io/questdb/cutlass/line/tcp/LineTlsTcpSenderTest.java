@@ -58,7 +58,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .enableAuth(AUTH_KEY_ID1).token(TOKEN)
                     .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
-                sender.table(tableName).column("value", 42).atNow();
+                sender.table(tableName).longColumn("value", 42).atNow();
                 sender.flush();
                 assertTableExistsEventually(engine, tableName);
             }
@@ -83,7 +83,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
                 for (long l = 0; l < rows; l++) {
-                    sender.table(tableName).column("value", 42).atNow();
+                    sender.table(tableName).longColumn("value", 42).atNow();
                 }
                 sender.flush();
                 assertTableSizeEventually(tableName, rows);
@@ -104,7 +104,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .enableAuth(AUTH_KEY_ID1).token(TOKEN)
                     .customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                     .build()) {
-                sender.table(tableName).column("value", 42).atNow();
+                sender.table(tableName).longColumn("value", 42).atNow();
                 sender.flush();
                 assertTableExistsEventually(engine, tableName);
             }
@@ -127,7 +127,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .build()) {
 
                     for (int i = 0; i < rows; i++) {
-                        sender.table(tableName).column("value", 42).atNow();
+                        sender.table(tableName).longColumn("value", 42).atNow();
                         sender.flush();
                     }
                     assertTableSizeEventually(tableName, rows);

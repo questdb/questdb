@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.cutlass.line.tcp.PlanTcpLineChannel;
+import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
@@ -58,7 +58,7 @@ public class LineTCPSenderMainVarLenStrings {
                 path.put(args[0]).$();
                 logFd = ff.openRW(path, CairoConfiguration.O_NONE);
             }
-            PlanTcpLineChannel tcpLineChannel = new PlanTcpLineChannel(NetworkFacadeImpl.INSTANCE, Net.parseIPv4(hostIPv4), port, bufferCapacity * 2);
+            PlainTcpLineChannel tcpLineChannel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, Net.parseIPv4(hostIPv4), port, bufferCapacity * 2);
             try (LineTcpSender sender = new LineTcpSender(new LoggingLineChannel(tcpLineChannel, logFd, ff), bufferCapacity)) {
                 for (int i = 0; i < count; i++) {
                     sender.metric("md_msgs");

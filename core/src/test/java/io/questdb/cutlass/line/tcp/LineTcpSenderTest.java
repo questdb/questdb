@@ -28,7 +28,6 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.cutlass.line.Sender;
 import io.questdb.network.Net;
-import io.questdb.network.NetworkError;
 import io.questdb.std.Os;
 import org.junit.Test;
 
@@ -48,15 +47,17 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     private final static int HOST = Net.parseIPv4("127.0.0.1");
 
     @Test
-    public void testMinBufferSizeWhenAuth() {
+    public void testMinBufferSizeWhenAuth() throws Exception {
         authKeyId = AUTH_KEY_ID1;
         int tinyCapacity = 42;
-        try {
-            LineTcpSender.authenticatedPlainTextSender(HOST, bindPort, tinyCapacity, AUTH_KEY_ID1, AUTH_PRIVATE_KEY1);
-            fail();
-        } catch (LineSenderException e) {
-            assertContains(e.getMessage(), "buffer capacity");
-        }
+        runInContext(r -> {
+            try (LineTcpSender sender = new LineTcpSender(HOST, bindPort, tinyCapacity)) {
+                sender.authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1);
+                fail();
+            } catch (LineSenderException e) {
+                assertContains(e.getMessage(), "challenge did not fit into buffer");
+            }
+        });
     }
 
     @Test
@@ -65,7 +66,8 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             int bufferCapacity = 256 * 1024;
 
-            try (LineTcpSender sender = LineTcpSender.authenticatedPlainTextSender(HOST, bindPort, bufferCapacity, AUTH_KEY_ID1, AUTH_PRIVATE_KEY1)) {
+            try (LineTcpSender sender = new LineTcpSender(HOST, bindPort, bufferCapacity)) {
+                sender.authenticate(authKeyId, AUTH_PRIVATE_KEY1);
                 sender.metric("mytable").field("my int field", 42).$();
                 sender.flush();
             }
@@ -80,7 +82,8 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             int bufferCapacity = 2048;
 
-            try (LineTcpSender sender = LineTcpSender.authenticatedPlainTextSender(HOST, bindPort, bufferCapacity, AUTH_KEY_ID2_INVALID, AUTH_PRIVATE_KEY1)) {
+            try (LineTcpSender sender = new LineTcpSender(HOST, bindPort, bufferCapacity)) {
+                sender.authenticate(AUTH_KEY_ID2_INVALID, AUTH_PRIVATE_KEY1);
                 //30 seconds should be enough even on a slow CI server
                 long deadline = Os.currentTimeNanos() + SECONDS.toNanos(30);
                 try {
@@ -105,7 +108,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .address(address)
                     .enableAuth(AUTH_KEY_ID1).token(TOKEN)
                     .build()) {
-                sender.table("mytable").column("my int field", 42).atNow();
+                sender.table("mytable").longColumn("my int field", 42).atNow();
                 sender.flush();
             }
             assertTableExistsEventually(engine, "mytable");
@@ -119,7 +122,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder()
                     .address(address)
                     .build()) {
-                sender.table("mytable").column("my int field", 42).atNow();
+                sender.table("mytable").longColumn("my int field", 42).atNow();
                 sender.flush();
             }
             assertTableExistsEventually(engine, "mytable");
@@ -133,7 +136,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder()
                     .address(address)
                     .build()) {
-                sender.table("mytable").column("my int field", 42).atNow();
+                sender.table("mytable").longColumn("my int field", 42).atNow();
                 sender.flush();
             }
             assertTableExistsEventually(engine, "mytable");
@@ -147,7 +150,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
-                sender.table("mytable").column("my int field", 42).atNow();
+                sender.table("mytable").longColumn("my int field", 42).atNow();
                 sender.flush();
             }
             assertTableExistsEventually(engine, "mytable");
@@ -161,7 +164,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .host(Inet4Address.getByName("localhost"))
                     .port(bindPort)
                     .build()) {
-                sender.table("mytable").column("my int field", 42).atNow();
+                sender.table("mytable").longColumn("my int field", 42).atNow();
                 sender.flush();
             }
             assertTableExistsEventually(engine, "mytable");

@@ -30,6 +30,10 @@ public class LineSenderException extends RuntimeException {
         super(message);
     }
 
+    public LineSenderException(Throwable t) {
+        super(t);
+    }
+
     public LineSenderException(String message, Throwable cause) {
         super(message, cause);
     }

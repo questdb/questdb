@@ -29,6 +29,5 @@ import java.io.Closeable;
 public interface LineChannel extends Closeable {
     void send(long ptr, int len);
     int receive(long ptr, int len);
-
     int errno();
 }

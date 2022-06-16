@@ -28,22 +28,27 @@ import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
-public final class PlanTcpLineChannel implements LineChannel {
-    private static final Log LOG = LogFactory.getLog(PlanTcpLineChannel.class);
+public final class PlainTcpLineChannel implements LineChannel {
+    private static final Log LOG = LogFactory.getLog(PlainTcpLineChannel.class);
 
     private final NetworkFacade nf;
     private final long fd;
     private final long sockaddr;
 
-    public PlanTcpLineChannel(NetworkFacade nf, int address, int port, int sndBufferSize) {
+    public PlainTcpLineChannel(NetworkFacade nf, int address, int port, int sndBufferSize) {
         this.nf = nf;
         this.sockaddr = nf.sockaddr(address, port);
-
         this.fd = nf.socketTcp(true);
         if (nf.connect(fd, sockaddr) != 0) {
-            throw new LineSenderException("could not connect to " + address + ", [errno=" + nf.errno() + "]");
+            CharSink stringSink = new StringSink().put("could not connect to ");
+            Net.appendIP4(stringSink, address);
+            stringSink.put(", [errno=").put(nf.errno()).put("]");
+            throw new LineSenderException(stringSink.toString());
         }
         int orgSndBufSz = nf.getSndBuf(fd);
         nf.setSndBuf(fd, sndBufferSize);
