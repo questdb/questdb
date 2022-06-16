@@ -30,8 +30,8 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 
-public class WalReaderRecordCursor implements RecordCursor {
-    private final WalReaderRecord recordA = new WalReaderRecord();
+public class WalDataCursor implements RecordCursor {
+    private final WalDataRecord recordA = new WalDataRecord();
     private WalReader reader;
     private long maxRecordIndex = -1;
 
@@ -76,7 +76,7 @@ public class WalReaderRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long rowId) {
-        ((WalReaderRecord) record).jumpTo(Rows.toLocalRowID(rowId));
+        ((WalDataRecord) record).jumpTo(Rows.toLocalRowID(rowId));
     }
 
     @Override

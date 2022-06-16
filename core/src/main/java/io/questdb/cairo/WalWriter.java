@@ -58,18 +58,23 @@ public class WalWriter implements Closeable {
     private final FilesFacade ff;
     private final MemoryMAR symbolMapMem = Vm.getMARInstance();
     private final MemoryMAR metaMem = Vm.getMARInstance();
+    private final MemoryMAR eventMem = Vm.getMARInstance();
     private final int mkDirMode;
     private final String tableName;
     private final String walName;
     private final WalWriterMetadataCache metadataCache;
     private final CairoConfiguration configuration;
     private final ObjList<Runnable> nullSetters;
-    private final Row row = new RowImpl();
+    private final RowImpl row = new RowImpl();
+    private final Events events = new Events();
     private long lockFd = -1;
     private int columnCount;
     private long rowCount = -1;
     private long segmentCount = -1;
     private long segmentStartMillis;
+    private boolean isOutOfOrder;
+    private long segmentMinTimestamp;
+    private long segmentMaxTimestamp;
     private WalWriterRollStrategy rollStrategy = new WalWriterRollStrategy() {
     };
 
@@ -146,6 +151,7 @@ public class WalWriter implements Closeable {
             configureColumn(index, type);
             columnCount++;
 
+            events.addColumn(segmentCount, index, name, type);
             openNewSegment(metadataCache);
             configureSymbolMapWriter(index, name, type, null);
             LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
@@ -188,6 +194,7 @@ public class WalWriter implements Closeable {
                 final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
                 primaryColumn.putLong128(timestamp, rowCount);
                 setRowValueNotNull(timestampIndex);
+                row.timestamp = timestamp;
             }
             return row;
         } catch (Throwable e) {
@@ -209,6 +216,7 @@ public class WalWriter implements Closeable {
             metadataCache.removeColumn(index);
             removeColumn(index);
 
+            events.removeColumn(segmentCount, index);
             openNewSegment(metadataCache);
             LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
         } catch (Throwable e) {
@@ -283,7 +291,15 @@ public class WalWriter implements Closeable {
     }
 
     private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem) {
-        path.concat(META_FILE_NAME).$();
+        openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME);
+    }
+
+    private static void openEventFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem) {
+        openSmallFile(ff, path, rootLen, metaMem, EVENT_FILE_NAME);
+    }
+
+    private static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName) {
+        path.concat(fileName).$();
         try {
             metaMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WAL_WRITER);
         } finally {
@@ -363,6 +379,7 @@ public class WalWriter implements Closeable {
 
     private void doClose(boolean truncate) {
         Misc.free(metaMem);
+        Misc.free(eventMem);
         freeSymbolMapWriters();
         Misc.free(symbolMapMem);
         freeColumns(truncate);
@@ -465,6 +482,8 @@ public class WalWriter implements Closeable {
 
     private void closeCurrentSegment() {
         writeSymbolMapDiffs();
+        events.data(segmentCount, 0, rowCount, segmentMinTimestamp, segmentMaxTimestamp, isOutOfOrder);
+        events.close();
     }
 
     private void openNewSegment(BaseRecordMetadata metadata) {
@@ -496,8 +515,12 @@ public class WalWriter implements Closeable {
                 }
             }
 
-            writeMetadata(metadata, segmentPathLen, liveColumnCount);
+            initMetadata(metadata, segmentPathLen, liveColumnCount);
+            initEventFile(segmentPathLen);
             segmentStartMillis = millisecondClock.getTicks();
+            segmentMinTimestamp = Long.MAX_VALUE;
+            segmentMaxTimestamp = -1;
+            isOutOfOrder = false;
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
             path.trimTo(rootLen);
@@ -514,7 +537,7 @@ public class WalWriter implements Closeable {
         return segmentPathLen;
     }
 
-    private void writeMetadata(BaseRecordMetadata metadata, int pathLen, int liveColumnCount) {
+    private void initMetadata(BaseRecordMetadata metadata, int pathLen, int liveColumnCount) {
         openMetaFile(ff, path, pathLen, metaMem);
         metaMem.putInt(WAL_FORMAT_VERSION);
         metaMem.putInt(liveColumnCount);
@@ -525,6 +548,11 @@ public class WalWriter implements Closeable {
                 metaMem.putStr(metadata.getColumnName(i));
             }
         }
+    }
+
+    private void initEventFile(int pathLen) {
+        openEventFile(ff, path, pathLen, eventMem);
+        events.init();
     }
 
     private void writeSymbolMapDiffs() {
@@ -584,12 +612,22 @@ public class WalWriter implements Closeable {
         initSymbolCounts.setQuick(index, -1);
     }
 
-    private void rowAppend(ObjList<Runnable> activeNullSetters) {
+    private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
         for (int i = 0; i < columnCount; i++) {
             if (rowValueIsNotNull.getQuick(i) < rowCount) {
                 activeNullSetters.getQuick(i).run();
             }
         }
+
+        if (rowTimestamp > segmentMaxTimestamp) {
+            segmentMaxTimestamp = rowTimestamp;
+        } else {
+            isOutOfOrder = segmentMaxTimestamp != rowTimestamp;
+        }
+        if (rowTimestamp < segmentMinTimestamp) {
+            segmentMinTimestamp = rowTimestamp;
+        }
+
         rowCount++;
     }
 
@@ -701,9 +739,11 @@ public class WalWriter implements Closeable {
     }
 
     private class RowImpl implements Row {
+        private long timestamp;
+
         @Override
         public void append() {
-            rowAppend(nullSetters);
+            rowAppend(nullSetters, timestamp);
         }
 
         @Override
@@ -918,6 +958,40 @@ public class WalWriter implements Closeable {
                     break;
             }
             setRowValueNotNull(index);
+        }
+    }
+
+    private class Events {
+        private void data(long txn, long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean isOutOfOrder) {
+            eventMem.putLong(txn);
+            eventMem.putByte(WalTxnType.DATA);
+            eventMem.putLong(startRowID);
+            eventMem.putLong(endRowID);
+            eventMem.putLong(minTimestamp);
+            eventMem.putLong(maxTimestamp);
+            eventMem.putBool(isOutOfOrder);
+        }
+
+        private void addColumn(long txn, int columnIndex, CharSequence columnName, int columnType) {
+            eventMem.putLong(txn);
+            eventMem.putByte(WalTxnType.ADD_COLUMN);
+            eventMem.putInt(columnIndex);
+            eventMem.putStr(columnName);
+            eventMem.putInt(columnType);
+        }
+
+        private void removeColumn(long txn, int columnIndex) {
+            eventMem.putLong(txn);
+            eventMem.putByte(WalTxnType.REMOVE_COLUMN);
+            eventMem.putInt(columnIndex);
+        }
+
+        private void init() {
+            eventMem.putInt(WAL_FORMAT_VERSION);
+        }
+
+        private void close() {
+            eventMem.putLong(WalEventCursor.END_OF_EVENTS);
         }
     }
 }

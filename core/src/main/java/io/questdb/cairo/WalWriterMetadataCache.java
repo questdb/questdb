@@ -56,15 +56,15 @@ public class WalWriterMetadataCache extends BaseRecordMetadata {
         timestampIndex = -1;
     }
 
-    void addColumn(int columnIndex, CharSequence columnName, int type) {
+    void addColumn(int columnIndex, CharSequence columnName, int columnType) {
         final String name = columnName.toString();
         columnNameIndexMap.put(name, columnNameIndexMap.size());
-        if (ColumnType.isSymbol(type)) {
-            columnMetadata.add(new TableColumnMetadata(name, -1L, type,
+        if (ColumnType.isSymbol(columnType)) {
+            columnMetadata.add(new TableColumnMetadata(name, -1L, columnType,
                     configuration.getDefaultSymbolCacheFlag(), configuration.getDefaultSymbolCapacity(),
                     true, null, columnIndex));
         } else {
-            columnMetadata.add(new TableColumnMetadata(name, -1L, type, false, 0, false, null, columnIndex));
+            columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnIndex));
         }
         columnCount++;
     }

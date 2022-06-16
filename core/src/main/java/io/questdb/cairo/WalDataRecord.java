@@ -33,7 +33,7 @@ import io.questdb.std.str.CharSink;
 
 import static io.questdb.cairo.WalReader.getPrimaryColumnIndex;
 
-public class WalReaderRecord implements Record, Sinkable {
+public class WalDataRecord implements Record, Sinkable {
     private long recordIndex = 0;
     private WalReader reader;
 

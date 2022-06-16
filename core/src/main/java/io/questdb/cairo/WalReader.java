@@ -46,7 +46,9 @@ public class WalReader implements Closeable, SymbolTableSource {
     private final Path path;
     private final int rootLen;
     private final WalReaderMetadata metadata;
-    private final WalReaderRecordCursor recordCursor = new WalReaderRecordCursor();
+    private final WalDataCursor dataCursor = new WalDataCursor();
+    private final WalReaderEvents events;
+    private final WalEventCursor eventCursor;
     private final String tableName;
     private final String walName;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
@@ -68,7 +70,10 @@ public class WalReader implements Closeable, SymbolTableSource {
         path.of(configuration.getRoot()).concat(this.tableName).concat(this.walName);
         rootLen = path.length();
         try {
-            metadata = openMetaFile(timestampIndex);
+            events = new WalReaderEvents(ff);
+            eventCursor = events.of(path, segmentId, WalWriter.WAL_FORMAT_VERSION);
+            metadata = new WalReaderMetadata(ff);
+            metadata.of(path, segmentId, WalWriter.WAL_FORMAT_VERSION, timestampIndex);
             columnCount = metadata.getColumnCount();
             LOG.debug().$("open [table=").$(this.tableName).I$();
             openSymbolMaps(walSymbolCounts);
@@ -78,7 +83,7 @@ public class WalReader implements Closeable, SymbolTableSource {
             columns.setPos(capacity + 2);
             columns.setQuick(0, NullMemoryMR.INSTANCE);
             columns.setQuick(1, NullMemoryMR.INSTANCE);
-            recordCursor.of(this);
+            dataCursor.of(this);
         } catch (Throwable e) {
             close();
             throw e;
@@ -92,6 +97,7 @@ public class WalReader implements Closeable, SymbolTableSource {
     @Override
     public void close() {
         freeSymbolMapReaders();
+        Misc.free(events);
         Misc.free(metadata);
         Misc.freeObjList(columns);
         Misc.free(path);
@@ -114,9 +120,13 @@ public class WalReader implements Closeable, SymbolTableSource {
         return metadata.getTimestampIndex();
     }
 
-    public WalReaderRecordCursor getCursor() {
-        recordCursor.toTop();
-        return recordCursor;
+    public WalDataCursor getDataCursor() {
+        dataCursor.toTop();
+        return dataCursor;
+    }
+
+    public WalEventCursor getEventCursor() {
+        return eventCursor;
     }
 
     public long openSegment() {
@@ -209,22 +219,6 @@ public class WalReader implements Closeable, SymbolTableSource {
 
     int getColumnCount() {
         return columnCount;
-    }
-
-    private WalReaderMetadata openMetaFile(int timestampIndex) {
-        final long deadline = this.configuration.getMicrosecondClock().getTicks() + this.configuration.getSpinLockTimeoutUs();
-        final WalReaderMetadata metadata = new WalReaderMetadata(ff, segmentId);
-        try {
-            while (true) {
-                try {
-                    return metadata.of(path, WalWriter.WAL_FORMAT_VERSION, timestampIndex);
-                } catch (CairoException ex) {
-                    TableUtils.handleMetadataLoadException(configuration, tableName, deadline, ex);
-                }
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
     }
 
     @NotNull

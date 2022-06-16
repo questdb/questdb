@@ -53,6 +53,7 @@ public final class TableUtils {
     public static final int TABLE_DOES_NOT_EXIST = 1;
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
+    public static final String EVENT_FILE_NAME = "_event";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
@@ -1013,15 +1014,15 @@ public final class TableUtils {
         }
     }
 
-    private static long checkMemSize(MemoryMR metaMem, long minSize) {
+    static long checkMemSize(MemoryMR metaMem, long minSize) {
         final long memSize = metaMem.size();
         if (memSize < minSize) {
-            throw CairoException.instance(0).put(". File is too small ").put(memSize);
+            throw CairoException.instance(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
         }
         return memSize;
     }
 
-    private static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
+    static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
         if (expectedVersion != metaVersion) {
             throw validationException(metaMem)
@@ -1068,9 +1069,13 @@ public final class TableUtils {
     }
 
     private static CharSequence getCharSequence(MemoryMR metaMem, long memSize, long offset, int strLength) {
-        if (strLength < 1 || strLength > 255 || offset + Vm.getStorageLength(strLength) > memSize) {
+        if (strLength < 1 || strLength > 255) {
             // EXT4 and many others do not allow file name length > 255 bytes
             throw validationException(metaMem).put("String length of ").put(strLength).put(" is invalid at offset ").put(offset);
+        }
+        final long storageLength = Vm.getStorageLength(strLength);
+        if (offset + storageLength > memSize) {
+            throw CairoException.instance(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
         }
         return metaMem.getStr(offset);
     }
