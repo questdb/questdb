@@ -31,12 +31,11 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <outputPath>target</outputPath>
-        <nodejs.npm.cmd>npm</nodejs.npm.cmd>
-        <nodejs.version>v16.13.1</nodejs.version>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>11</javac.target>
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
+        <web.console.version>0.0.1</web.console.version>
     </properties>
 
     <version>6.4.2-SNAPSHOT</version>
@@ -227,52 +226,6 @@
                     </sourceFileExcludes>
                 </configuration>
             </plugin>
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>1.6.0</version>
-                <configuration>
-                    <longModulepath>false</longModulepath>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>npm-install</id>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <configuration>
-                            <executable>${nodejs.npm.cmd}</executable>
-                            <arguments>
-                                <argument>install</argument>
-                                <argument>--no-fund</argument>
-                                <argument>--scripts-prepend-node-path=auto</argument>
-                            </arguments>
-                            <environmentVariables>
-                                <PATH>${project.basedir}/node/:${env.PATH}</PATH>
-                            </environmentVariables>
-                            <workingDirectory>../ui</workingDirectory>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>npm-run-build</id>
-                        <goals>
-                            <goal>exec</goal>
-                        </goals>
-                        <configuration>
-                            <executable>${nodejs.npm.cmd}</executable>
-                            <arguments>
-                                <argument>run</argument>
-                                <argument>build</argument>
-                                <argument>--scripts-prepend-node-path=auto</argument>
-                            </arguments>
-                            <environmentVariables>
-                                <PATH>${project.basedir}/node/:${env.PATH}</PATH>
-                            </environmentVariables>
-                            <workingDirectory>../ui</workingDirectory>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
 
@@ -336,37 +289,29 @@
             <id>build-web-console</id>
             <build>
                 <plugins>
+                    <!-- download Web Console artefact -->
                     <plugin>
-                        <groupId>com.github.eirslett</groupId>
-                        <artifactId>frontend-maven-plugin</artifactId>
-                        <version>1.9.1</version>
+                        <groupId>com.googlecode.maven-download-plugin</groupId>
+                        <artifactId>download-maven-plugin</artifactId>
+                        <version>1.6.8</version>
                         <executions>
                             <execution>
-                                <id>install node and npm</id>
-                                <goals>
-                                    <goal>install-node-and-npm</goal>
-                                </goals>
+                                <!-- the wget goal actually binds itself to this phase by default -->
                                 <phase>initialize</phase>
-                            </execution>
-                        </executions>
-                        <configuration>
-                            <nodeVersion>${nodejs.version}</nodeVersion>
-                        </configuration>
-                    </plugin>
-                    <plugin>
-                        <groupId>org.codehaus.mojo</groupId>
-                        <artifactId>exec-maven-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>npm-install</id>
-                                <phase>generate-sources</phase>
-                            </execution>
-                            <execution>
-                                <id>npm-run-build</id>
-                                <phase>generate-sources</phase>
+                                <goals>
+                                    <goal>wget</goal>
+                                </goals>
+                                <configuration>
+                                    <url>https://registry.npmjs.org/@questdb/web-console/-/web-console-${web.console.version}.tgz</url>
+                                    <outputFileName>web-console.tgz</outputFileName>
+                                    <outputDirectory>${project.build.outputDirectory}/site/</outputDirectory>
+                                    <unpack>true</unpack>
+                                </configuration>
                             </execution>
                         </executions>
                     </plugin>
+
+                    <!-- Repackage Web Console as public.zip -->
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-assembly-plugin</artifactId>
@@ -374,7 +319,7 @@
                         <executions>
                             <execution>
                                 <id>package-web-console</id>
-                                <phase>generate-resources</phase>
+                                <phase>initialize</phase>
                                 <goals>
                                     <goal>single</goal>
                                 </goals>
@@ -487,7 +432,6 @@
                 <archive.name>${project.version}-rt-windows-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-windows-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/windows-runtime.xml</runtime.assembly>
-                <nodejs.npm.cmd>${project.basedir}/node/npm.cmd</nodejs.npm.cmd>
             </properties>
         </profile>
         <profile>
@@ -502,7 +446,6 @@
                 <archive.name>${project.version}-rt-linux-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
-                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
         </profile>
         <profile>
@@ -517,7 +460,6 @@
                 <archive.name>${project.version}-rt-freebsd-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-freebsd-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
-                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
         </profile>
         <profile>
@@ -532,7 +474,6 @@
                 <archive.name>${project.version}-rt-linux-aarch64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-aarch64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
-                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
         </profile>
         <profile>
@@ -546,7 +487,6 @@
                 <archive.name>${project.version}-rt-osx-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-osx-amd64</runtime.name>
                 <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
-                <nodejs.npm.cmd>${project.basedir}/node/npm</nodejs.npm.cmd>
             </properties>
         </profile>
 		<profile>
