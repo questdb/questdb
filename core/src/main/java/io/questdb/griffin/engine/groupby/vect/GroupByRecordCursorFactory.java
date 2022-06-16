@@ -243,6 +243,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     total++;
                 }
             }
+        } catch (Throwable e) {
+            Misc.free(cursor);
+            throw e;
         } finally {
             // all done? great start consuming the queue we just published
             // how do we get to the end? If we consume our own queue there is chance we will be consuming
