@@ -25,7 +25,7 @@
 
 #include "rosti.h"
 #include <functional>
-#include <malloc.h>
+#include <cstdlib>
 
 #define HOUR_MICROS  3600000000L
 #define DAY_HOURS  24
