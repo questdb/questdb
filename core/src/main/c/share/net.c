@@ -346,8 +346,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getAddrInfo
     struct addrinfo *addr = NULL;
 
     char _port[32];
-    sprintf(_port, "%d", port);
-    errno_t gai_err_code = getaddrinfo((const char *) host, (const char *) &_port, &hints, &addr);
+    sprintf(_port, "%ld", port);
+    int gai_err_code = getaddrinfo((const char *) host, (const char *) &_port, &hints, &addr);
 
     if (gai_err_code == 0) {
         return (jlong) addr;
