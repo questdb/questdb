@@ -57,7 +57,7 @@ rosti_t *alloc_rosti(const int32_t *column_types, const int32_t column_count, co
                 slot_key_size += 8;
                 break;
             case 13: // LONG256
-                slot_key_size += 64;
+                slot_key_size += 32;
                 break;
         }
         value_offsets[i + 1] = slot_key_size;
