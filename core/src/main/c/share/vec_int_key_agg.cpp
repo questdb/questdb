@@ -25,16 +25,110 @@
 
 #include "rosti.h"
 #include <functional>
+#include <cstdlib>
 
 #define HOUR_MICROS  3600000000L
 #define DAY_HOURS  24
 
-//__SIZEOF_INT128__ is defined by Clang and GCC when __int128 is supported
-#if defined(__SIZEOF_INT128__)
-typedef __int128 accumulator_t;
-#else
-typedef jlong accumulator_t;
-#endif
+struct long128_t {
+    // little-endian layout
+    uint64_t lo;
+    int64_t hi;
+
+    long128_t() = default;
+
+    constexpr long128_t(int64_t high, uint64_t low) : lo(low), hi(high) {}
+    constexpr long128_t(int64_t v) : lo{static_cast<uint64_t>(v)}, hi{v < 0 ? ~int64_t{0} : 0} {}
+
+    long128_t& operator=(int64_t v);
+    constexpr long128_t operator-(long128_t v) const;
+
+    explicit operator double() const;
+
+    long128_t& operator+=(long128_t other);
+};
+
+inline long128_t& long128_t::operator=(int64_t v) { return *this = long128_t(v); }
+
+constexpr long128_t operator+(long128_t lhs, long128_t rhs);
+
+inline long128_t& long128_t::operator+=(long128_t other) {
+    *this = *this + other;
+    return *this;
+}
+
+constexpr long128_t signed_add_carry(const long128_t& result, const long128_t& lhs) {
+    return (result.lo < lhs.lo) ? long128_t(result.hi + 1, result.lo) : result;
+}
+
+constexpr long128_t operator+(long128_t lhs, long128_t rhs) {
+    return signed_add_carry(long128_t(lhs.hi + rhs.hi, lhs.lo + rhs.lo), lhs);
+}
+
+inline constexpr double cast_positive(long128_t v) {
+    return  static_cast<double>(v.lo) + ldexp(static_cast<double>(v.hi), 64);
+}
+
+long128_t::operator double() const {
+    // if negative and not minimal - cast absolute value
+    if (hi < 0 && hi != std::numeric_limits<int64_t>::min() && lo != 0) {
+        long128_t abs = operator-(*this);
+        return -cast_positive(abs);
+    } else {
+        return cast_positive(*this);
+    }
+}
+
+constexpr long128_t long128_t::operator-(long128_t v) const {
+    return {~v.hi + (v.lo == 0), ~v.lo + 1};
+}
+struct long256_t {
+    uint64_t l0;
+    uint64_t l1;
+    uint64_t l2;
+    uint64_t l3;
+
+    long256_t(uint64_t v0, uint64_t v1, uint64_t v2, uint64_t v3)
+            : l0(v0), l1(v1), l2(v2), l3(v3)
+    {
+    }
+
+    bool is_null() const {
+        return l0 == L_MIN && l1 == L_MIN && l2 == L_MIN && l3 == L_MIN;
+    }
+
+    void operator+=(const long256_t& rhs) {
+        if (rhs.is_null()) {
+            this->l0 = L_MIN;
+            this->l1 = L_MIN;
+            this->l2 = L_MIN;
+            this->l3 = L_MIN;
+        } else {
+            // The sum will overflow if both top bits are set (x & y) or if one of them
+            // is (x | y), and a carry from the lower place happened. If such a carry
+            // happens, the top bit will be 1 + 0 + 1 = 0 (& ~sum).
+            uint64_t carry = 0;
+            uint64_t l0_ = this->l0 + rhs.l0 + carry;
+            carry = ((this->l0 & rhs.l0) | ((this->l0 | rhs.l0) & ~l0_)) >> 63;
+
+            uint64_t l1_ = this->l1 + rhs.l1 + carry;
+            carry = ((this->l1 & rhs.l1) | ((this->l1 | rhs.l1) & ~l1_)) >> 63;
+
+            uint64_t l2_ = this->l2 + rhs.l2 + carry;
+            carry = ((this->l2 & rhs.l2) | ((this->l2 | rhs.l2) & ~l2_)) >> 63;
+
+            uint64_t l3_ = this->l3 + rhs.l3 + carry;
+            //carry = ((this->l3 & rhs.l3) | ((this->l3 | rhs.l3) & ~l3_)) >> 63;
+
+            this->l0 = l0_;
+            this->l1 = l1_;
+            this->l2 = l2_;
+            this->l3 = l3_;
+        }
+    }
+};
+
+typedef long128_t accumulator_t;
 
 typedef int32_t (*to_int_fn)(jlong, int);
 
@@ -228,15 +322,7 @@ static jboolean kIntSumLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong p
             }
             *reinterpret_cast<int32_t *>(dest) = key;
             if (PREDICT_FALSE(val == L_MIN)) {
-                // here is a very dirty workaround for segfault
-                // clang generates optimized code and aligned (movdqa) instruction for __int128 v = 0
-                // but the rosti storage is dense and the value offset may be unaligned properly
-                if (std::is_same_v<T, __int128>) {
-                    *reinterpret_cast<int64_t *>(dest + value_offset) = 0;
-                    *reinterpret_cast<int64_t *>(dest + value_offset + sizeof(int64_t)) = 0;
-                } else {
-                    *reinterpret_cast<T *>(dest + value_offset) = 0;
-                }
+                *reinterpret_cast<T *>(dest + value_offset) = 0;
                 *reinterpret_cast<jlong *>(dest + count_offset) = 0;
             } else {
                 *reinterpret_cast<T *>(dest + value_offset) = val;
@@ -251,52 +337,6 @@ static jboolean kIntSumLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong p
     }
     return JNI_TRUE;
 }
-
-struct long256_t {
-    uint64_t l0;
-    uint64_t l1;
-    uint64_t l2;
-    uint64_t l3;
-
-    long256_t(uint64_t v0, uint64_t v1, uint64_t v2, uint64_t v3)
-        : l0(v0), l1(v1), l2(v2), l3(v3)
-    {
-    }
-
-    bool is_null() const {
-        return l0 == L_MIN && l1 == L_MIN && l2 == L_MIN && l3 == L_MIN;
-    }
-
-    void operator+=(const long256_t& rhs) {
-        if (rhs.is_null()) {
-            this->l0 = L_MIN;
-            this->l1 = L_MIN;
-            this->l2 = L_MIN;
-            this->l3 = L_MIN;
-        } else {
-            // The sum will overflow if both top bits are set (x & y) or if one of them
-            // is (x | y), and a carry from the lower place happened. If such a carry
-            // happens, the top bit will be 1 + 0 + 1 = 0 (& ~sum).
-            uint64_t carry = 0;
-            uint64_t l0_ = this->l0 + rhs.l0 + carry;
-            carry = ((this->l0 & rhs.l0) | ((this->l0 | rhs.l0) & ~l0_)) >> 63;
-
-            uint64_t l1_ = this->l1 + rhs.l1 + carry;
-            carry = ((this->l1 & rhs.l1) | ((this->l1 | rhs.l1) & ~l1_)) >> 63;
-
-            uint64_t l2_ = this->l2 + rhs.l2 + carry;
-            carry = ((this->l2 & rhs.l2) | ((this->l2 | rhs.l2) & ~l2_)) >> 63;
-
-            uint64_t l3_ = this->l3 + rhs.l3 + carry;
-            //carry = ((this->l3 & rhs.l3) | ((this->l3 | rhs.l3) & ~l3_)) >> 63;
-
-            this->l0 = l0_;
-            this->l1 = l1_;
-            this->l2 = l2_;
-            this->l3 = l3_;
-        }
-    }
-};
 
 static jboolean kIntSumLong256(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong count, jint valueOffset) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
