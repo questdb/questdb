@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Chars;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class GroupByFunctionTest extends AbstractGriffinTest {
@@ -226,7 +225,6 @@ public class GroupByFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
     public void testKeyedAvgLongSomeNaN() throws Exception {
         assertQuery("s\tavg\n" +
                         "aa\t4952.725\n" +
