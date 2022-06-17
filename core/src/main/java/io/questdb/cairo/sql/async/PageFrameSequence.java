@@ -463,7 +463,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             final SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration = executionContextCircuitBreaker.getConfiguration();
             this.record = new PageAddressCacheRecord();
             if (sqlExecutionCircuitBreakerConfiguration != null) {
-                this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration);
+                this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_CB2);
             } else {
                 this.circuitBreaker = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
             }

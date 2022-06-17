@@ -69,7 +69,7 @@ public class HashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         joinKeyMap.close();
         slaveChain.close();
         ((JoinRecordMetadata) getMetadata()).close();

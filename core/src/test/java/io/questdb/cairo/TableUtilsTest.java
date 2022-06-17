@@ -64,18 +64,54 @@ public class TableUtilsTest {
         testIsValidColumnName('*', false);
         testIsValidColumnName('%', false);
         testIsValidColumnName('~', false);
+        Assert.assertFalse(TableUtils.isValidColumnName("..", 127));
+        Assert.assertFalse(TableUtils.isValidColumnName(".", 127));
+        Assert.assertFalse(TableUtils.isValidColumnName("t\u007Ftcsv", 127));
 
         testIsValidColumnName('!', true);
         testIsValidColumnName('a', true);
         testIsValidColumnName('b', true);
         testIsValidColumnName('^', true);
         testIsValidColumnName('[', true);
+        testIsValidColumnName('$', true);
+        Assert.assertFalse(TableUtils.isValidColumnName("", 2));
+        Assert.assertFalse(TableUtils.isValidColumnName("abc", 2));
+    }
+
+    @Test
+    public void testIsValidTableName() {
+        Assert.assertFalse(TableUtils.isValidTableName("?abcd", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("", 127));
+        Assert.assertFalse(TableUtils.isValidTableName(" ", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("./", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("/asdf", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("\\asdf", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("asdf\rasdf", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("t..t.csv", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("\"", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("t\u007Ft.csv", 127));
+        Assert.assertFalse(TableUtils.isValidTableName(".", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("..", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("...", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("..\\", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("\\..", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("/..", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("../", 127));
+
+        Assert.assertTrue(TableUtils.isValidTableName("table name", 127));
+        Assert.assertTrue(TableUtils.isValidTableName("table name.csv", 127));
+        Assert.assertTrue(TableUtils.isValidTableName("table-name", 127));
+        Assert.assertTrue(TableUtils.isValidTableName("table_name", 127));
+        Assert.assertTrue(TableUtils.isValidTableName("table$name", 127));
+        Assert.assertTrue(TableUtils.isValidTableName("asdf\nasdf", 127));
+
+        Assert.assertFalse(TableUtils.isValidTableName("abc", 2));
     }
 
     private void testIsValidColumnName(char c, boolean expected) {
-        Assert.assertEquals(expected, TableUtils.isValidColumnName(Character.toString(c)));
-        Assert.assertEquals(expected, TableUtils.isValidColumnName(c + "abc"));
-        Assert.assertEquals(expected, TableUtils.isValidColumnName("abc" + c));
-        Assert.assertEquals(expected, TableUtils.isValidColumnName("ab" + c + "c"));
+        Assert.assertEquals(expected, TableUtils.isValidColumnName(Character.toString(c), 127));
+        Assert.assertEquals(expected, TableUtils.isValidColumnName(c + "abc", 127));
+        Assert.assertEquals(expected, TableUtils.isValidColumnName("abc" + c, 127));
+        Assert.assertEquals(expected, TableUtils.isValidColumnName("ab" + c + "c", 127));
     }
 }

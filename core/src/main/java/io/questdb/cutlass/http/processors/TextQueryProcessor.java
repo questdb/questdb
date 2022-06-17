@@ -40,10 +40,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -92,7 +89,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
         this.doubleScale = configuration.getDoubleScale();
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration());
+        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
     }
 
@@ -102,11 +99,25 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         Misc.free(circuitBreaker);
     }
 
+    private static boolean isExpUrl(CharSequence tok) {
+        if (tok.length() != 4) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == '/'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'x'
+                && (tok.charAt(i)) == 'p';
+    }
+
     public void execute(
             HttpConnectionContext context,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         try {
+            boolean isExpRequest = isExpUrl(context.getRequestHeader().getUrl());
+
             state.recordCursorFactory = QueryCache.getInstance().poll(state.query);
             state.setQueryCacheable(true);
             sqlExecutionContext.with(
@@ -120,6 +131,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
                 if (cc.getType() == CompiledQuery.SELECT) {
                     state.recordCursorFactory = cc.getRecordCursorFactory();
+                } else if (isExpRequest) {
+                    throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                 }
                 info(state).$("execute-new [q=`").utf8(state.query).
                         $("`, skip: ").$(state.skip).
@@ -145,6 +158,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             info(state).$(e.getFlyweightMessage()).$();
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
+                            if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
+                                throw SqlException.$(0, "/exp endpoint only accepts SELECT");
+                            }
+
                             state.recordCursorFactory = cc.getRecordCursorFactory();
                         }
                     } while (runQuery);

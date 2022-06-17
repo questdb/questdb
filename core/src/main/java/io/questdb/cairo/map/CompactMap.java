@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Storage structure to support queries such as "select distinct ...",
@@ -116,7 +117,7 @@ public class CompactMap implements Map {
                     5209859150892887590L
             };
 
-    private static final HashFunction DEFAULT_HASH = MemoryR::hash0;
+    private static final HashFunctionFactory DEFAULT_HASH_FACTORY = CompactMap::defaultHashFunction;
     private final MemoryARW entries;
     private final MemoryARW entrySlots;
     private final Key key = new Key();
@@ -138,10 +139,11 @@ public class CompactMap implements Map {
     private long size;
 
     public CompactMap(int pageSize, @Transient ColumnTypes keyTypes, @Transient ColumnTypes valueTypes, long keyCapacity, double loadFactor, int maxResizes, int maxPages) {
-        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes, maxPages);
+        this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH_FACTORY, maxResizes, maxPages);
     }
 
-    CompactMap(int pageSize, @Transient ColumnTypes keyTypes, @Transient ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunction hashFunction, int maxResizes, int maxPages) {
+    @TestOnly
+    CompactMap(int pageSize, @Transient ColumnTypes keyTypes, @Transient ColumnTypes valueTypes, long keyCapacity, double loadFactor, HashFunctionFactory hashFunctionFactory, int maxResizes, int maxPages) {
         this.entries = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_COMPACT_MAP);
         this.entrySlots = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_COMPACT_MAP);
         try {
@@ -151,7 +153,7 @@ public class CompactMap implements Map {
             this.entryFixedSize = calcColumnOffsets(keyTypes, calcColumnOffsets(valueTypes, ENTRY_HEADER_SIZE, 0), this.valueColumnCount);
             this.entryKeyOffset = columnOffsets[valueColumnCount];
             this.keyCapacity = Math.max(keyCapacity, 16);
-            this.hashFunction = hashFunction;
+            this.hashFunction = hashFunctionFactory.create(entries);
             configureCapacity();
             this.value = new CompactMapValue(entries, columnOffsets);
             this.record = new CompactMapRecord(entries, columnOffsets, value);
@@ -294,7 +296,32 @@ public class CompactMap implements Map {
 
     @FunctionalInterface
     public interface HashFunction {
-        long hash(MemoryR mem, long offset, long size);
+        long hash(long offset, long size);
+    }
+
+    @FunctionalInterface
+    public interface HashFunctionFactory {
+        HashFunction create(MemoryR memory);
+    }
+
+    private static HashFunction defaultHashFunction(MemoryR memory) {
+        final Hash.MemoryAccessor memoryAccessor = new Hash.MemoryAccessor() {
+            @Override
+            public long getLong(long offset) {
+                return memory.getLong(offset);
+            }
+
+            @Override
+            public int getInt(long offset) {
+                return memory.getInt(offset);
+            }
+
+            @Override
+            public byte getByte(long offset) {
+                return memory.getByte(offset);
+            }
+        };
+        return (offset, size) -> Hash.xxHash64(offset, size, 0, memoryAccessor);
     }
 
     public class Key implements MapKey {
@@ -536,7 +563,7 @@ public class CompactMap implements Map {
         }
 
         private long calculateEntrySlot(long offset, long size) {
-            return hashFunction.hash(entries, offset + entryKeyOffset, size - entryKeyOffset) & mask;
+            return hashFunction.hash(offset + entryKeyOffset, size - entryKeyOffset) & mask;
         }
 
         private boolean cmp(long offset) {

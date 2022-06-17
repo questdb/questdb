@@ -41,6 +41,18 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private boolean cacheable;
     private boolean interruption;
 
+    public static CairoException duplicateColumn(CharSequence colName) {
+        return duplicateColumn(colName, null);
+    }
+
+    public static CairoException duplicateColumn(CharSequence colName, CharSequence colAlias) {
+        CairoException exception = instance(METADATA_VALIDATION).put("Duplicate column [name=").put(colName);
+        if (colAlias != null) {
+            exception.put(", alias=").put(colAlias);
+        }
+        return exception.put(']');
+    }
+
     public static CairoException instance(int errno) {
         CairoException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
@@ -76,6 +88,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isCacheable() {
         return cacheable;
+    }
+
+    public CairoException putAsPrintable(CharSequence nonPrintable) {
+        message.putAsPrintable(nonPrintable);
+        return this;
     }
 
     public CairoException setCacheable(boolean cacheable) {

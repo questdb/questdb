@@ -1942,9 +1942,10 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
-        boolean negative = sequence.charAt(p) == '-';
+        final char sign = sequence.charAt(p);
+        final boolean negative = sign == '-';
         int i = p;
-        if (negative) {
+        if (negative || sign == '+') {
             i++;
         }
 

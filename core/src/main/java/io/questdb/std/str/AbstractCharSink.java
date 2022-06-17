@@ -29,6 +29,8 @@ import io.questdb.std.ObjHashSet;
 
 import java.util.Set;
 
+import static io.questdb.std.Numbers.hexDigits;
+
 public abstract class AbstractCharSink implements CharSink {
 
     private static final ThreadLocal<ObjHashSet<Throwable>> tlSet = ThreadLocal.withInitial(ObjHashSet::new);
@@ -64,6 +66,24 @@ public abstract class AbstractCharSink implements CharSink {
         }
 
         return this;
+    }
+
+    public void putAsPrintable(CharSequence nonPrintable) {
+        for (int i = 0, n = nonPrintable.length(); i < n; i++) {
+            char c = nonPrintable.charAt(i);
+            if (c > 0x1F && c != 0x7F) {
+                put(c);
+            } else {
+                put('\\');
+                put('u');
+
+                final int s = (int) c & 0xFF;
+                put('0');
+                put('0');
+                put(hexDigits[s / 0x10]);
+                put(hexDigits[s % 0x10]);
+            }
+        }
     }
 
     private void put(StackTraceElement e) {

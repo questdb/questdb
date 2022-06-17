@@ -37,6 +37,7 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
+import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
@@ -46,17 +47,17 @@ public class QMapWriteBenchmark {
 
     private static final double loadFactor = 0.5;
     private static final int M = 25;
-    private static CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024, Integer.MAX_VALUE);
-    private static FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
-
+    private static final CompactMap qmap = new CompactMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024, Integer.MAX_VALUE);
+    private static final FastMap map = new FastMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, 1024);
+    private static final HashMap<String, Long> hmap = new HashMap<>(64, (float) loadFactor);
 
     private final Rnd rnd = new Rnd();
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(QMapWriteBenchmark.class.getSimpleName())
-                .warmupIterations(5)
-                .measurementIterations(5)
+                .warmupIterations(3)
+                .measurementIterations(3)
                 .forks(1)
                 .build();
 
@@ -90,5 +91,10 @@ public class QMapWriteBenchmark {
         key.putStr(rnd.nextChars(M));
         MapValue value = key.createValue();
         value.putLong(0, 20);
+    }
+
+    @Benchmark
+    public void testHashMap() {
+        hmap.put(rnd.nextChars(M).toString(), 20L);
     }
 }

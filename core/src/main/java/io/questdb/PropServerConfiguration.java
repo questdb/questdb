@@ -394,6 +394,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
     private final int columnPurgeTaskPoolCapacity;
+    private final int maxFileNameLength;
+    private final boolean ilpAutoCreateNewColumns;
+    private final boolean ilpAutoCreateNewTables;
 
     public PropServerConfiguration(
             String root,
@@ -409,6 +412,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         validateProperties(properties, configValidationStrict);
 
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
+        this.maxFileNameLength = getInt(properties, env, PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 127);
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         if (new File(this.dbDirectory).isAbsolute()) {
@@ -922,6 +926,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
             }
+            this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
+            this.ilpAutoCreateNewTables = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_TABLES, true);
 
             this.sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(1, cpuAvailable / 2 - 1 - cpuUsed));
             this.sharedWorkerAffinity = getAffinity(properties, env, PropertyKey.SHARED_WORKER_AFFINITY, sharedWorkerCount);
@@ -1879,6 +1885,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMaxFileNameLength() {
+            return maxFileNameLength;
+        }
+
+        @Override
         public CharSequence getSnapshotRoot() {
             return snapshotRoot;
         }
@@ -2485,6 +2496,16 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     private class PropLineUdpReceiverConfiguration implements LineUdpReceiverConfiguration {
         @Override
+        public boolean getAutoCreateNewColumns() {
+            return ilpAutoCreateNewColumns;
+        }
+
+        @Override
+        public boolean getAutoCreateNewTables() {
+            return ilpAutoCreateNewTables;
+        }
+
+        @Override
         public int getCommitMode() {
             return lineUdpCommitMode;
         }
@@ -2502,6 +2523,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getGroupIPv4Address() {
             return lineUdpGroupIPv4Address;
+        }
+
+        @Override
+        public int getMaxFileNameLength() {
+            return maxFileNameLength;
         }
 
         @Override
@@ -2729,6 +2755,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean getAutoCreateNewColumns() {
+            return ilpAutoCreateNewColumns;
+        }
+
+        @Override
+        public boolean getAutoCreateNewTables() {
+            return ilpAutoCreateNewTables;
+        }
+
+        @Override
         public CairoSecurityContext getCairoSecurityContext() {
             return AllowAllCairoSecurityContext.INSTANCE;
         }
@@ -2761,6 +2797,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getCommitIntervalDefault() {
             return lineTcpCommitIntervalDefault;
+        }
+
+        @Override
+        public int getMaxFileNameLength() {
+            return maxFileNameLength;
         }
 
         @Override

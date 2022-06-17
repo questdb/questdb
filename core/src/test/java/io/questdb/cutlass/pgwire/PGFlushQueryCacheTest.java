@@ -52,6 +52,7 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                         "TIMESTAMP(ts)\n" +
                         "PARTITION BY DAY");
 
+                engine.releaseInactive();
                 long memInitial = Unsafe.getMemUsed();
 
                 String sql = "SELECT *\n" +
@@ -60,6 +61,7 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                         "LIMIT 1";
                 statement.execute(sql);
 
+                engine.releaseInactive();
                 long memAfterJoin = Unsafe.getMemUsed();
                 Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
 
@@ -87,6 +89,7 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                         "TIMESTAMP(ts)\n" +
                         "PARTITION BY DAY");
 
+                engine.releaseInactive();
                 long memInitial = Unsafe.getMemUsed();
 
                 String sql = "UPDATE test t1 set id = ? \n" +
@@ -98,6 +101,7 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                     updateSt.execute();
                 }
 
+                engine.releaseInactive();
                 long memAfterJoin = Unsafe.getMemUsed();
                 Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
 

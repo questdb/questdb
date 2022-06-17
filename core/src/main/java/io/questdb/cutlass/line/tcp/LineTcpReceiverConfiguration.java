@@ -36,6 +36,10 @@ public interface LineTcpReceiverConfiguration {
 
     String getAuthDbPath();
 
+    boolean getAutoCreateNewColumns();
+
+    boolean getAutoCreateNewTables();
+
     CairoSecurityContext getCairoSecurityContext();
 
     int getConnectionPoolInitialCapacity();
@@ -55,6 +59,8 @@ public interface LineTcpReceiverConfiguration {
     double getCommitIntervalFraction();
 
     long getCommitIntervalDefault();
+
+    int getMaxFileNameLength();
 
     int getMaxMeasurementSize();
 

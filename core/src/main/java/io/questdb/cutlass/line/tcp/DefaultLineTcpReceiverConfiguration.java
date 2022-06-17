@@ -129,8 +129,23 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
+    public int getMaxFileNameLength() {
+        return 127;
+    }
+
+    @Override
     public String getAuthDbPath() {
         return null;
+    }
+
+    @Override
+    public boolean getAutoCreateNewColumns() {
+        return true;
+    }
+
+    @Override
+    public boolean getAutoCreateNewTables() {
+        return true;
     }
 
     @Override

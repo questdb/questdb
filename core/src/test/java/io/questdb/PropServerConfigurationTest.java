@@ -329,6 +329,14 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
+        Assert.assertEquals(127, configuration.getCairoConfiguration().getMaxFileNameLength());
+        Assert.assertEquals(127, configuration.getLineTcpReceiverConfiguration().getMaxFileNameLength());
+        Assert.assertEquals(127, configuration.getLineUdpReceiverConfiguration().getMaxFileNameLength());
+
+        Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewColumns());
+        Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewColumns());
+        Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
+        Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
     }
 
     @Test
@@ -839,6 +847,15 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getPGWireConfiguration().isUpdateCacheEnabled());
             Assert.assertEquals(128, configuration.getPGWireConfiguration().getUpdateCacheBlockCount());
             Assert.assertEquals(256, configuration.getPGWireConfiguration().getUpdateCacheRowCount());
+
+            Assert.assertEquals(255, configuration.getCairoConfiguration().getMaxFileNameLength());
+            Assert.assertEquals(255, configuration.getLineTcpReceiverConfiguration().getMaxFileNameLength());
+            Assert.assertEquals(255, configuration.getLineUdpReceiverConfiguration().getMaxFileNameLength());
+
+            Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewColumns());
+            Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewColumns());
+            Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
+            Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
         }
     }
 

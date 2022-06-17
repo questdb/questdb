@@ -49,13 +49,13 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
         if (func.isConstant()) {
             return new StrConstant(Chars.toString(func.getSymbol(null)));
         }
-        return new Func(args.getQuick(0));
+        return new CastSymbolToStrFunction(args.getQuick(0));
     }
 
-    private static class Func extends StrFunction implements UnaryFunction {
+    public static class CastSymbolToStrFunction extends StrFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
+        public CastSymbolToStrFunction(Function arg) {
             this.arg = arg;
         }
 
@@ -66,12 +66,12 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
-            return arg.getStr(rec);
+            return arg.getSymbol(rec);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return arg.getStrB(rec);
+            return arg.getSymbolB(rec);
         }
 
         @Override

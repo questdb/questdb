@@ -64,6 +64,8 @@ class LineTcpMeasurementScheduler implements Closeable {
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final LineTcpReceiverConfiguration configuration;
     private final MPSequence[] pubSeq;
+    private final boolean autoCreateNewTables;
+    private final boolean autoCreateNewColumns;
     private LineTcpReceiver.SchedulerListener listener;
 
     LineTcpMeasurementScheduler(
@@ -95,6 +97,8 @@ class LineTcpMeasurementScheduler implements Closeable {
         tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
         loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
+        autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();
+        autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
         int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
         int queueSize = lineConfiguration.getWriterQueueCapacity();
         long commitIntervalDefault = configuration.getCommitIntervalDefault();
@@ -114,7 +118,10 @@ class LineTcpMeasurementScheduler implements Closeable {
                             lineConfiguration.getTimestampAdapter(),
                             defaultColumnTypes,
                             lineConfiguration.isStringToCharCastAllowed(),
-                            lineConfiguration.isSymbolAsFieldSupported()),
+                            lineConfiguration.isSymbolAsFieldSupported(),
+                            lineConfiguration.getMaxFileNameLength(),
+                            lineConfiguration.getAutoCreateNewColumns()
+                    ),
                     getEventSlotSize(maxMeasurementSize),
                     queueSize,
                     MemoryTag.NATIVE_DEFAULT
@@ -263,6 +270,16 @@ class LineTcpMeasurementScheduler implements Closeable {
             } else {
                 int status = engine.getStatus(securityContext, path, tableNameUtf16, 0, tableNameUtf16.length());
                 if (status != TableUtils.TABLE_EXISTS) {
+                    if (!autoCreateNewTables) {
+                        throw CairoException.instance(0)
+                                .put("table does not exist, creating new tables is disabled [table=").put(tableNameUtf16)
+                                .put(']');
+                    }
+                    if (!autoCreateNewColumns) {
+                        throw CairoException.instance(0)
+                                .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(tableNameUtf16)
+                                .put(']');
+                    }
                     // validate that parser entities do not contain NULLs
                     TableStructureAdapter tsa = tableStructureAdapter.of(tableNameUtf16, parser);
                     for (int i = 0, n = tsa.getColumnCount(); i < n; i++) {
@@ -311,7 +328,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         return null != pubSeq;
     }
 
-    boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser, FloatingDirectCharSink floatingDirectCharSink) {
+    boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
         TableUpdateDetails tab;
         try {
             tab = netIoJob.getLocalTableDetails(parser.getMeasurementName());
@@ -324,12 +341,11 @@ class LineTcpMeasurementScheduler implements Closeable {
             return true;
         } catch (CairoException ex) {
             // Table could not be created
-            LOG.info()
-                    .$("could not create table [tableName=").$(parser.getMeasurementName())
-                    .$(", ex=`").$(ex.getFlyweightMessage())
-                    .$("`, errno=").$(ex.getErrno())
+            LOG.error().$("could not create table [tableName=").$(parser.getMeasurementName())
+                    .$(", errno=").$(ex.getErrno())
                     .I$();
-            return false;
+            // More details will be logged by catching thread
+            throw ex;
         }
 
         final int writerThreadId = tab.getWriterThreadId();

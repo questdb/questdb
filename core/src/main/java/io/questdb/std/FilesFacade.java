@@ -42,7 +42,7 @@ public interface FilesFacade {
 
     boolean exists(long fd);
 
-    void findClose(long findPtr);
+    long findClose(long findPtr);
 
     long findFirst(LPSZ path);
 

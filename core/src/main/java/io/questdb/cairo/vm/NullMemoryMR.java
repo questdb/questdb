@@ -153,11 +153,6 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
-    public long getGrownLength() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public FilesFacade getFilesFacade() {
         throw new UnsupportedOperationException();
     }

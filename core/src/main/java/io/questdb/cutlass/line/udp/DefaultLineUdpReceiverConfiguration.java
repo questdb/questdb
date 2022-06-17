@@ -53,6 +53,11 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     }
 
     @Override
+    public int getMaxFileNameLength() {
+        return 127;
+    }
+
+    @Override
     public int getMsgBufferSize() {
         return 2048;
     }
@@ -110,6 +115,16 @@ public class DefaultLineUdpReceiverConfiguration implements LineUdpReceiverConfi
     @Override
     public int ownThreadAffinity() {
         return -1;
+    }
+
+    @Override
+    public boolean getAutoCreateNewColumns() {
+        return true;
+    }
+
+    @Override
+    public boolean getAutoCreateNewTables() {
+        return true;
     }
 
     @Override

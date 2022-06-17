@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 public class FastMap implements Map {
 
@@ -82,6 +83,7 @@ public class FastMap implements Map {
         this(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, DEFAULT_HASH, maxResizes);
     }
 
+    @TestOnly
     FastMap(
             int pageSize,
             @Transient ColumnTypes keyTypes,
@@ -275,7 +277,7 @@ public class FastMap implements Map {
         return true;
     }
 
-    private FastMapValue asNew(Key keyWriter, int index, FastMapValue value) {
+    private FastMapValue asNew(Key keyWriter, long index, FastMapValue value) {
         kPos = keyWriter.appendAddress;
         offsets.set(index, keyWriter.startAddress - kStart);
         if (--free == 0) {
@@ -320,11 +322,11 @@ public class FastMap implements Map {
         return valueColumnCount;
     }
 
-    private int keyIndex() {
+    private long keyIndex() {
         return hashFunction.hash(key.startAddress + keyDataOffset, key.len - keyDataOffset) & mask;
     }
 
-    private FastMapValue probe0(Key keyWriter, int index, FastMapValue value) {
+    private FastMapValue probe0(Key keyWriter, long index, FastMapValue value) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
@@ -334,7 +336,7 @@ public class FastMap implements Map {
         return asNew(keyWriter, index, value);
     }
 
-    private FastMapValue probeReadOnly(Key keyWriter, int index, FastMapValue value) {
+    private FastMapValue probeReadOnly(Key keyWriter, long index, FastMapValue value) {
         long offset;
         while ((offset = offsets.get(index = (++index & mask))) != -1) {
             if (eq(keyWriter, offset)) {
@@ -356,7 +358,7 @@ public class FastMap implements Map {
             if (offset == -1) {
                 continue;
             }
-            int index = hashFunction.hash(kStart + offset + keyDataOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyDataOffset) & mask;
+            long index = hashFunction.hash(kStart + offset + keyDataOffset, Unsafe.getUnsafe().getInt(kStart + offset) - keyDataOffset) & mask;
             while (pointers.get(index) != -1) {
                 index = (index + 1) & mask;
             }
@@ -404,7 +406,7 @@ public class FastMap implements Map {
 
     @FunctionalInterface
     public interface HashFunction {
-        int hash(long address, int len);
+        long hash(long address, long len);
     }
 
     public class Key implements MapKey {
@@ -648,7 +650,7 @@ public class FastMap implements Map {
             commit();
             // calculate hash remembering "key" structure
             // [ len | value block | key offset block | key data block ]
-            int index = keyIndex();
+            long index = keyIndex();
             long offset = offsets.get(index);
 
             if (offset == -1) {
@@ -662,7 +664,7 @@ public class FastMap implements Map {
 
         private MapValue findValue(FastMapValue value) {
             commit();
-            int index = keyIndex();
+            long index = keyIndex();
             long offset = offsets.get(index);
 
             if (offset == -1) {

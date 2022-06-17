@@ -43,9 +43,9 @@ import static org.junit.Assert.assertEquals;
 
 public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     private final static String AUTH_KEY_ID1 = "testUser1";
-    private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("5UjEMuA0Pj5pjK8a-fa24dyIf-Es5mYny3oE_Wmus48");
+    private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey("UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=");
     private final static String AUTH_KEY_ID2 = "testUser2";
-    private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("lwJi3TSb4G6UcHxFJmPhOTWa4BLwJOOiK76wT6Uk7pI");
+    private final static PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey("AIZc78-On-91DLplVNtyLOmKddY0AL9mnT5onl19Vv_g");
     private final Random rand = new Random(0);
     private byte[] sentBytes;
     private int maxSendBytes = 1024;
@@ -161,6 +161,28 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
             handleContextIO();
             Assert.assertFalse(disconnected);
             waitForIOCompletion();
+            closeContext();
+            String expected = "location\ttemperature\ttimestamp\n" +
+                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
+            assertTable(expected, "weather");
+        });
+    }
+
+    @Test
+    public void testGoodAuthenticationWithExtraData() throws Exception {
+        runInAuthContext(() -> {
+            try {
+                boolean authSequenceCompleted = authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1,
+                        "weather,location=us-midwest temperature=82 1465839830100400200\n");
+                Assert.assertTrue(authSequenceCompleted);
+            } catch (RuntimeException ex) {
+                // Expected that Java 8 does not have SHA256withECDSAinP1363
+                if (ex.getCause() instanceof NoSuchAlgorithmException && TestUtils.getJavaVersion() <= 8) {
+                    return;
+                }
+                throw ex;
+            }
+            Assert.assertFalse(disconnected);
             closeContext();
             String expected = "location\ttemperature\ttimestamp\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\n";
@@ -389,6 +411,10 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     private boolean authenticate(String authKeyId, PrivateKey authPrivateKey) {
+        return authenticate(authKeyId, authPrivateKey, "");
+    }
+
+    private boolean authenticate(String authKeyId, PrivateKey authPrivateKey, String extraData) {
         return authenticate(
                 authKeyId,
                 authPrivateKey,
@@ -396,7 +422,8 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
                 false,
                 false,
                 false,
-                null);
+                null,
+                extraData);
     }
 
     private boolean authenticate(String authKeyId,
@@ -406,6 +433,17 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
                                  boolean fragmentSignature,
                                  boolean useP1363Encoding,
                                  byte[] junkSignature) {
+        return authenticate(authKeyId, authPrivateKey, fragmentKeyId, fragmentChallenge, fragmentSignature, useP1363Encoding, junkSignature, "");
+    }
+
+    private boolean authenticate(String authKeyId,
+                                 PrivateKey authPrivateKey,
+                                 boolean fragmentKeyId,
+                                 boolean fragmentChallenge,
+                                 boolean fragmentSignature,
+                                 boolean useP1363Encoding,
+                                 byte[] junkSignature,
+                                 String extraData) {
         send(authKeyId + "\n", fragmentKeyId);
         byte[] challengeBytes = readChallenge(fragmentChallenge);
         if (null == challengeBytes) {
@@ -423,7 +461,7 @@ public class LineTcpAuthConnectionContextTest extends BaseLineTcpContextTest {
                 rawSignature = junkSignature;
             }
             byte[] signature = Base64.getEncoder().encode(rawSignature);
-            send(new String(signature, Files.UTF_8) + "\n", fragmentSignature);
+            send(new String(signature, Files.UTF_8) + "\n" + extraData, fragmentSignature);
             handleContextIO();
         } catch (Exception ex) {
             throw new RuntimeException(ex);

@@ -73,12 +73,14 @@ public abstract class DateFunction implements ScalarFunction {
 
     @Override
     public final double getDouble(Record rec) {
-        return Numbers.longToDouble(getDate(rec));
+        final long val = getDate(rec);
+        return val != Numbers.LONG_NaN ? val : Double.NaN;
     }
 
     @Override
     public final float getFloat(Record rec) {
-        return Numbers.longToFloat(getDate(rec));
+        final long val = getDate(rec);
+        return val != Numbers.LONG_NaN ? val : Float.NaN;
     }
 
     @Override

@@ -2010,7 +2010,7 @@ public class IODispatcherTest {
                         "|              0  |                                                f0  |                   STRING  |           0  |\r\n" +
                         "|              1  |                                                f1  |                   STRING  |           0  |\r\n" +
                         "|              2  |                                                f2  |                   STRING  |           0  |\r\n" +
-                        "|              3  |                                                f3  |                   STRING  |           0  |\r\n" +
+                        "|              3  |                                                f3  |                   DOUBLE  |           0  |\r\n" +
                         "|              4  |                                                f4  |                TIMESTAMP  |           0  |\r\n" +
                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
                         "\r\n" +
@@ -6127,7 +6127,7 @@ public class IODispatcherTest {
     public void testTextQueryCreateTable() throws Exception {
         testJsonQuery(
                 20,
-                "GET /exp?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                "GET /exec?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -6143,11 +6143,44 @@ public class IODispatcherTest {
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0c\r\n" +
-                        "DDL Success\n\r\n" +
+                        "0d\r\n" +
+                        "{\"ddl\":\"OK\"}\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n",
+                1
+        );
+    }
+
+    @Test
+    public void testDDLinExp() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /exp?query=create%20table%20balance%20(money%20float) HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Accept: */*\r\n" +
+                        "X-Requested-With: XMLHttpRequest\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                        "Sec-Fetch-Site: same-origin\r\n" +
+                        "Sec-Fetch-Mode: cors\r\n" +
+                        "Referer: http://localhost:9000/index.html\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 400 Bad request\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "68\r\n" +
+                        "{\"query\":\"create table balance (money float)\",\"error\":\"\\/exp endpoint only accepts SELECT\",\"position\":0}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 1
@@ -6250,8 +6283,8 @@ public class IODispatcherTest {
                                             "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
                                             "Keep-Alive: timeout=5, max=10000\r\n" +
                                             "\r\n" +
-                                            "5b\r\n" +
-                                            "{\"query\":\"insert into tab value (1)\",\"error\":\"'select' or 'values' expected\",\"position\":16}\r\n" +
+                                            "76\r\n" +
+                                            "{\"query\":\"insert into tab value (1)\",\"error\":\"found [tok='value', len=5] 'select' or 'values' expected\",\"position\":16}\r\n" +
                                             "00\r\n" +
                                             "\r\n",
                                     1,

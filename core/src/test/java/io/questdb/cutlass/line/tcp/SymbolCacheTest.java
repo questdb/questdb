@@ -297,6 +297,67 @@ public class SymbolCacheTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCloseResetsCapacity() throws Exception {
+        final int N = 1024;
+        final String tableName = "tb1";
+        final FilesFacade ff = new FilesFacadeImpl();
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path();
+                 TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                         .col("symCol", ColumnType.SYMBOL);
+                 SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
+                     @Override
+                     public long getSymbolCacheWaitUsBeforeReload() {
+                         return 0;
+                     }
+                 })
+            ) {
+                CairoTestUtils.create(model);
+                try (
+                        TableWriter writer = new TableWriter(configuration, tableName, metrics);
+                        TxReader txReader = new TxReader(ff).ofRO(path.of(configuration.getRoot()).concat(tableName), PartitionBy.DAY)
+                ) {
+                    int symColIndex = writer.getColumnIndex("symCol");
+
+                    cache.of(
+                            configuration,
+                            path.of(configuration.getRoot()).concat(tableName),
+                            "symCol",
+                            symColIndex,
+                            txReader,
+                            -1
+                    );
+
+                    final int initialCapacity = cache.getCacheCapacity();
+                    Assert.assertTrue(N > initialCapacity);
+
+                    for (int i = 0; i < N; i++) {
+                        TableWriter.Row r = writer.newRow();
+                        r.putSym(symColIndex, "sym" + i);
+                        r.append();
+                    }
+                    writer.commit();
+
+                    for (int i = 0; i < N; i++) {
+                        int rc = cache.keyOf("sym" + i);
+                        Assert.assertNotEquals(SymbolTable.VALUE_NOT_FOUND, rc);
+                    }
+
+                    Assert.assertEquals(N, cache.getCacheValueCount());
+                    Assert.assertTrue(cache.getCacheCapacity() >= N);
+
+                    cache.close();
+
+                    // Close should shrink cache back to initial capacity.
+                    Assert.assertEquals(0, cache.getCacheValueCount());
+                    Assert.assertEquals(initialCapacity, cache.getCacheCapacity());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAddSymbolColumnConcurrent() throws Throwable {
         ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
         assertMemoryLeak(() -> {
@@ -353,12 +414,11 @@ public class SymbolCacheTest extends AbstractGriffinTest {
                         rdr.reload();
                         for (int col = colAdded; col < newColsAdded; col++) {
                             SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
-                            int symbolIndexInTxFile = col;
                             symbolCache.of(
                                     engine.getConfiguration(),
                                     path,
                                     "col" + col,
-                                    symbolIndexInTxFile,
+                                    col,
                                     txReader,
                                     rdr.getColumnVersionReader().getDefaultColumnNameTxn(col + 1)
                             );

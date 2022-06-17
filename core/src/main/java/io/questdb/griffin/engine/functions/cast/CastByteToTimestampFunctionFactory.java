@@ -47,11 +47,11 @@ public class CastByteToTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0));
+        return new CastByteToTimestampFunction(args.getQuick(0));
     }
 
-    private static class Func extends AbstractUnaryTimestampFunction {
-        public Func(Function arg) {
+    public static class CastByteToTimestampFunction extends AbstractUnaryTimestampFunction {
+        public CastByteToTimestampFunction(Function arg) {
             super(arg);
         }
 

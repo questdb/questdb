@@ -117,7 +117,6 @@ public class SqlUtil {
             }
         }
 
-
         int len = characterStoreEntry.length();
         int sequence = 0;
         while (true) {

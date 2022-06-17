@@ -70,12 +70,14 @@ public abstract class TimestampFunction implements ScalarFunction {
 
     @Override
     public final double getDouble(Record rec) {
-        return Numbers.longToDouble(getTimestamp(rec));
+        final long val = getTimestamp(rec);
+        return val != Numbers.LONG_NaN ? val : Double.NaN;
     }
 
     @Override
     public final float getFloat(Record rec) {
-        return Numbers.longToFloat(getTimestamp(rec));
+        final long val = getTimestamp(rec);
+        return val != Numbers.LONG_NaN ? val : Float.NaN;
     }
 
     @Override
