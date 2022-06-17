@@ -321,3 +321,43 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getPeerPort
     }
     return -1;
 }
+
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_connectAddrInfo
+(JNIEnv *e, jclass cl, jlong fd, jlong lpAddrInfo) {
+    struct addrinfo *addr = (struct addrinfo *) lpAddrInfo;
+    jlong res = connect((SOCKET) fd,
+                        addr->ai_addr,
+                        (int) addr->ai_addrlen
+                        );
+    if (res < 0) {
+        SaveLastError();
+    }
+    return res;
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeAddrInfo
+(JNIEnv *e, jclass cl, jlong address) {
+    if (address != 0) {
+        freeaddrinfo((void *) address);
+    }
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getAddrInfo
+(JNIEnv *e, jclass cl, jlong host, jint port) {
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo *addr = NULL;
+
+    char _port[32];
+    itoa(port, _port, 10);
+    errno_t gai_err_code = getaddrinfo((const char *) host, (const char *) &_port, &hints, &addr);
+
+    if (gai_err_code == 0) {
+        return (jlong) addr;
+    }
+
+    SaveLastError();
+    return -1;
+}
