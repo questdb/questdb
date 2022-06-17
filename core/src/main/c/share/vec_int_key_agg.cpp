@@ -301,15 +301,7 @@ static void kIntSumLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong
         if (PREDICT_FALSE(res.second)) {
             *reinterpret_cast<int32_t *>(dest) = key;
             if (PREDICT_FALSE(val == L_MIN)) {
-                // here is a very dirty workaround for segfault
-                // clang generates optimized code and aligned (movdqa) instruction for __int128 v = 0
-                // but the rosti storage is dense and the value offset may be unaligned properly
-                if (std::is_same_v<T, __int128>) {
-                    *reinterpret_cast<int64_t *>(dest + value_offset) = 0;
-                    *reinterpret_cast<int64_t *>(dest + value_offset + sizeof(int64_t)) = 0;
-                } else {
-                    *reinterpret_cast<T *>(dest + value_offset) = 0;
-                }
+                *reinterpret_cast<T *>(dest + value_offset) = 0;
                 *reinterpret_cast<jlong *>(dest + count_offset) = 0;
             } else {
                 *reinterpret_cast<T *>(dest + value_offset) = val;
