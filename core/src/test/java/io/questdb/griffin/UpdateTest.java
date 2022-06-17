@@ -1046,8 +1046,14 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testUpdateSelf() throws Exception {
+    public void testDropIndex() throws Exception {
         assertMemoryLeak(() -> {
+
+            String expected = "sensor_id\tts\n" +
+                    "ALPHA\t1970-01-01T00:00:00.000000Z\n" +
+                    "ALPHA\t1970-01-01T00:00:36.000000Z\n" +
+                    "OMEGA\t1970-01-01T00:01:12.000000Z\n";
+
             compiler.compile(
                     "create table sensors as (" +
                             "    select" +
@@ -1057,25 +1063,15 @@ public class UpdateTest extends AbstractGriffinTest {
                             "), index(sensor_id capacity 4) timestamp(ts) partition by DAY;",
                     sqlExecutionContext
             );
+            assertSql("sensors", expected);
+            this.
 
-            assertSql("sensors", "sensor_id\tts\n" +
-                    "ALPHA\t1970-01-01T00:00:00.000000Z\n" +
-                    "ALPHA\t1970-01-01T00:00:36.000000Z\n" +
-                    "OMEGA\t1970-01-01T00:01:12.000000Z\n");
 
             executeUpdate("UPDATE sensors SET sensor_id = sensor_id");
-
-            assertSql("sensors", "sensor_id\tts\n" +
-                    "ALPHA\t1970-01-01T00:00:00.000000Z\n" +
-                    "ALPHA\t1970-01-01T00:00:36.000000Z\n" +
-                    "OMEGA\t1970-01-01T00:01:12.000000Z\n");
+            assertSql("sensors", expected);
 
             executeDropIndex("ALTER TABLE sensors ALTER COLUMN sensor_id DROP INDEX");
-
-            assertSql("sensors", "sensor_id\tts\n" +
-                    "ALPHA\t1970-01-01T00:00:00.000000Z\n" +
-                    "ALPHA\t1970-01-01T00:00:36.000000Z\n" +
-                    "OMEGA\t1970-01-01T00:01:12.000000Z\n");
+            assertSql("sensors", expected);
         });
     }
 

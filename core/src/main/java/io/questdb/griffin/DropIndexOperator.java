@@ -40,10 +40,10 @@ import static io.questdb.cairo.TableUtils.dFile;
 
 public class DropIndexOperator implements Closeable {
     private static final Log LOG = LogFactory.getLog(DropIndexOperator.class);
-    private final FilesFacade ff;
     private final LongList cleanupColumnIndexVersions = new LongList();
     private LongList cleanupColumnIndexVersionsAsync = new LongList();
     private final MessageBus messageBus;
+    private final FilesFacade ff;
     private final TableWriter tableWriter;
     private Path path;
     private final int rootLen;
@@ -87,7 +87,7 @@ public class DropIndexOperator implements Closeable {
 
                 final long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
                 final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
-                final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                final long columnVersion = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
                 final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1L);
                 try {
                     // check that the column file exists
@@ -99,7 +99,7 @@ public class DropIndexOperator implements Closeable {
                             partitionTimestamp,
                             partitionNameTxn,
                             columnName,
-                            columnNameTxn
+                            columnVersion
                     );
                     if (!ff.exists(srcDFile)) {
                         throw CairoException.instance(0)
@@ -107,7 +107,7 @@ public class DropIndexOperator implements Closeable {
                                 .put(path.toString());
                     }
                     // add to cleanup tasks, the index will be removed in due time
-                    cleanupColumnIndexVersions.add(columnIndex, columnNameTxn, partitionTimestamp, partitionNameTxn);
+                    cleanupColumnIndexVersions.add(columnVersion, partitionTimestamp, partitionNameTxn, columnIndex);
 
                     // bump up column version, metadata will be updated later
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
@@ -154,10 +154,10 @@ public class DropIndexOperator implements Closeable {
                 return;
             }
 
-            final int columnIndex = (int) cleanupColumnIndexVersions.getQuick(0);
-            final long columnNameTxn = cleanupColumnIndexVersions.getQuick(1);
-            final long partitionTimestamp = cleanupColumnIndexVersions.getQuick(2);
-            final long partitionNameTxn = cleanupColumnIndexVersions.getQuick(3);
+            final long columnNameTxn = cleanupColumnIndexVersions.getQuick(0);
+            final long partitionTimestamp = cleanupColumnIndexVersions.getQuick(1);
+            final long partitionNameTxn = cleanupColumnIndexVersions.getQuick(2);
+            final int columnIndex = (int) cleanupColumnIndexVersions.getQuick(3);
 
             final TableWriterMetadata writerMetadata = tableWriter.getMetadata();
             final String tableName = tableWriter.getTableName();
