@@ -338,7 +338,7 @@ static jboolean kIntSumLong(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong p
     return JNI_TRUE;
 }
 
-static void kIntSumLong256(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong count, jint valueOffset) {
+static jboolean kIntSumLong256(to_int_fn to_int, jlong pRosti, jlong pKeys, jlong pLong, jlong count, jint valueOffset) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
 
     const auto *pl = reinterpret_cast<long256_t *>(pLong);
