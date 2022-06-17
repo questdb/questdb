@@ -28,14 +28,13 @@ import io.questdb.BuildInformation;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+
+import java.lang.ThreadLocal;
 
 public interface CairoConfiguration {
 
@@ -65,17 +64,23 @@ public interface CairoConfiguration {
 
     BuildInformation getBuildInformation();
 
+    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
+
     int getColumnCastModelPoolCapacity();
 
     int getColumnIndexerQueueCapacity();
 
     int getColumnPurgeQueueCapacity();
 
-    int getColumnPurgeTaskPoolCapacity();
+    long getColumnPurgeRetryDelay();
+
+    long getColumnPurgeRetryDelayLimit();
+
+    double getColumnPurgeRetryDelayMultiplier();
 
     int getColumnPurgeRetryLimitDays();
 
-    double getColumnPurgeRetryDelayMultiplier();
+    int getColumnPurgeTaskPoolCapacity();
 
     /**
      * Default commit lag in microseconds for new tables. This value
@@ -88,32 +93,6 @@ public interface CairoConfiguration {
     int getCommitMode();
 
     CharSequence getConfRoot(); // same as root/../conf
-
-    long getColumnPurgeRetryDelayLimit();
-
-    long getColumnPurgeRetryDelay();
-
-    int getMaxFileNameLength();
-
-    CharSequence getSnapshotRoot(); // same as root/../snapshot
-
-    /**
-     * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
-     * on database start the id is compared with the id stored in a snapshot, if any. If the ids
-     * are different, snapshot recovery is being triggered.
-     *
-     * @return instance id.
-     */
-    CharSequence getSnapshotInstanceId();
-
-    CharSequence getSystemTableNamePrefix();
-
-    /**
-     * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.
-     *
-     * @return enable/disable snapshot recovery flag
-     */
-    boolean isSnapshotRecoveryEnabled();
 
     int getCopyPoolCapacity();
 
@@ -168,6 +147,8 @@ public interface CairoConfiguration {
 
     int getLatestByQueueCapacity();
 
+    int getMaxFileNameLength();
+
     int getMaxSwapFileCount();
 
     int getMaxSymbolNotEqualsCount();
@@ -200,21 +181,21 @@ public interface CairoConfiguration {
 
     int getO3PurgeDiscoveryQueueCapacity();
 
-    boolean isSqlParallelFilterEnabled();
+    int getPageFrameReduceColumnListCapacity();
 
     int getPageFrameReduceQueueCapacity();
 
-    int getPageFrameReduceShardCount();
-
     int getPageFrameReduceRowIdListCapacity();
 
-    int getPageFrameReduceColumnListCapacity();
+    int getPageFrameReduceShardCount();
 
     int getPageFrameReduceTaskPoolCapacity();
 
     int getParallelIndexThreshold();
 
     int getPartitionPurgeListCapacity();
+
+    int getQueryCacheEventQueueCapacity();
 
     default Rnd getRandom() {
         Rnd rnd = RANDOM.get();
@@ -231,13 +212,28 @@ public interface CairoConfiguration {
 
     int getRenameTableModelPoolCapacity();
 
-    CharSequence getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
-
-    int getSampleByIndexSearchPageSize();
+    int getRndFunctionMemoryMaxPages();
 
     int getRndFunctionMemoryPageSize();
 
-    int getRndFunctionMemoryMaxPages();
+    CharSequence getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
+
+    default RostiAllocFacade getRostiAllocFacade() {
+        return RostiAllocFacadeImpl.INSTANCE;
+    }
+
+    int getSampleByIndexSearchPageSize();
+
+    /**
+     * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
+     * on database start the id is compared with the id stored in a snapshot, if any. If the ids
+     * are different, snapshot recovery is being triggered.
+     *
+     * @return instance id.
+     */
+    CharSequence getSnapshotInstanceId();
+
+    CharSequence getSnapshotRoot(); // same as root/../snapshot
 
     long getSpinLockTimeoutUs();
 
@@ -316,13 +312,13 @@ public interface CairoConfiguration {
 
     int getSqlMapPageSize();
 
-    int getSqlModelPoolCapacity();
-
     int getSqlMaxNegativeLimit();
 
-    int getSqlPageFrameMinRows();
+    int getSqlModelPoolCapacity();
 
     int getSqlPageFrameMaxRows();
+
+    int getSqlPageFrameMinRows();
 
     int getSqlSortKeyMaxPages();
 
@@ -335,6 +331,8 @@ public interface CairoConfiguration {
     int getSqlSortValueMaxPages();
 
     int getSqlSortValuePageSize();
+
+    CharSequence getSystemTableNamePrefix();
 
     TelemetryConfiguration getTelemetryConfiguration();
 
@@ -364,9 +362,14 @@ public interface CairoConfiguration {
 
     boolean isParallelIndexingEnabled();
 
+    /**
+     * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.
+     *
+     * @return enable/disable snapshot recovery flag
+     */
+    boolean isSnapshotRecoveryEnabled();
+
     boolean isSqlJitDebugEnabled();
 
-    SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
-
-    int getQueryCacheEventQueueCapacity();
+    boolean isSqlParallelFilterEnabled();
 }
