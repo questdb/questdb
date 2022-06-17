@@ -1682,6 +1682,44 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testCreateTableDuplicateColumnName() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection conn = getConnection(false, true)
+            ) {
+                conn.prepareStatement("create table tab as (\n" +
+                        "            select\n" +
+                        "                rnd_byte() b,\n" +
+                        "                rnd_boolean() B\n" +
+                        "            from long_sequence(1)\n" +
+                        "        )").execute();
+            } catch (PSQLException e) {
+                assertContains(e.getMessage(), "Duplicate column [name=B]");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableDuplicateColumnNameNonAscii() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer ignored = createPGServer(2);
+                    final Connection conn = getConnection(false, true)
+            ) {
+                conn.prepareStatement("create table tab as (\n" +
+                        "            select\n" +
+                        "                rnd_byte() 侘寂,\n" +
+                        "                rnd_boolean() 侘寂\n" +
+                        "            from long_sequence(1)\n" +
+                        "        )").execute();
+            } catch (PSQLException e) {
+                assertContains(e.getMessage(), "Duplicate column [name=侘寂]");
+            }
+        });
+    }
+
+    @Test
     public void testCursorFetch() throws Exception {
         assertMemoryLeak(() -> {
             try (

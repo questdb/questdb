@@ -98,6 +98,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected boolean symbolAsFieldSupported;
     protected short floatDefaultColumnType;
     protected short integerDefaultColumnType;
+    protected boolean autoCreateNewColumns = true;
+    protected boolean autoCreateNewTables = true;
 
     @Before
     public void before() {
@@ -109,6 +111,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         disconnectOnError = false;
         floatDefaultColumnType = ColumnType.DOUBLE;
         integerDefaultColumnType = ColumnType.LONG;
+        autoCreateNewColumns = true;
+        autoCreateNewTables = true;
         lineTcpConfiguration = createNoAuthReceiverConfiguration(provideLineTcpNetworkFacade());
     }
 
@@ -161,6 +165,16 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     protected LineTcpReceiverConfiguration createReceiverConfiguration(final boolean withAuth, final NetworkFacade nf) {
         return new DefaultLineTcpReceiverConfiguration() {
+            @Override
+            public boolean getAutoCreateNewColumns() {
+                return autoCreateNewColumns;
+            }
+
+            @Override
+            public boolean getAutoCreateNewTables() {
+                return autoCreateNewTables;
+            }
+
             @Override
             public int getNetMsgBufferSize() {
                 return netMsgBufferSize.get();
@@ -295,11 +309,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser, FloatingDirectCharSink floatingDirectCharSink) {
+            boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
                 if (null != onCommitNewEvent) {
                     onCommitNewEvent.run();
                 }
-                return super.scheduleEvent(netIoJob, parser, floatingDirectCharSink);
+                return super.scheduleEvent(netIoJob, parser);
             }
         };
         if (authDb == null) {

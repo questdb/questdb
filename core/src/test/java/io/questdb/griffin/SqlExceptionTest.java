@@ -36,4 +36,30 @@ public class SqlExceptionTest extends AbstractCairoTest {
         sink.put((Sinkable) SqlException.$(123, "hello"));
         TestUtils.assertEquals("[123]: hello", sink);
     }
+
+    @Test
+    public void testDuplicateColumn() {
+        TestUtils.assertEquals(
+                "[17] Duplicate column [name=COL-0]",
+                SqlException.duplicateColumn(17, "COL-0").getMessage()
+        );
+
+        TestUtils.assertEquals(
+                "[2022] Duplicate column [name=我们是最棒的]",
+                SqlException.duplicateColumn(2022, "我们是最棒的").getMessage()
+        );
+    }
+
+    @Test
+    public void testParserErr() {
+        TestUtils.assertEquals(
+                "[17] found [tok=')', len=1] expected ',', or 'colName'",
+                SqlException.parserErr(17, ")", "expected ',', or 'colName'").getMessage()
+        );
+
+        TestUtils.assertEquals(
+                "[17] expected ',', or 'colName'",
+                SqlException.parserErr(17, null, "expected ',', or 'colName'").getMessage()
+        );
+    }
 }

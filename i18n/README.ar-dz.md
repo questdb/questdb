@@ -28,8 +28,7 @@
   </a>
 </p>
 
-[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) |
-العربية
+[English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | العربية
 
 # QuestDB
 
@@ -72,6 +71,9 @@ docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```bash
 brew install questdb
 brew services start questdb
+
+questdb start // To start questdb
+questdb stop  // To stop questdb
 ```
 
 <div dir="rtl">

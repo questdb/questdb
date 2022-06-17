@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
@@ -47,7 +48,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
-public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory {
+public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
 
@@ -74,6 +75,7 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
             @Nullable Function limitLoFunction,
             int limitLoPos
     ) {
+        super(base.getMetadata());
         assert !(base instanceof FilteredRecordCursorFactory);
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;
@@ -89,7 +91,7 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         Misc.free(base);
         Misc.free(filterAtom);
         Misc.free(frameSequence);
@@ -136,11 +138,6 @@ public class AsyncJitFilteredRecordCursorFactory implements RecordCursorFactory 
 
         cursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining);
         return cursor;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return base.getMetadata();
     }
 
     @Override

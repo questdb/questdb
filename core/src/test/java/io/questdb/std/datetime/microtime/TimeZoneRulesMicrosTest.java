@@ -24,9 +24,6 @@
 
 package io.questdb.std.datetime.microtime;
 
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.datetime.TimeZoneRules;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,28 +36,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
-import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
-
 public class TimeZoneRulesMicrosTest {
-
-    @Test
-    public void testBlah() throws NumericException {
-        String tz = "Europe/Kiev";
-        int timezoneIndex = Numbers.decodeLowInt(TimestampFormatUtils.enLocale.matchZone(tz, 0, tz.length()));
-        TimeZoneRules rules = TimestampFormatUtils.enLocale.getZoneRules(timezoneIndex, RESOLUTION_MICROS);
-
-        long ts1 = TimestampFormatUtils.parseTimestamp("2021-03-28T00:00:00.000000Z");
-        long offset1 = rules.getOffset(ts1);
-        long ts1tz = ts1 + offset1;
-
-        // ts2 = ts1 + 1hr
-        long ts2 = ts1 + Timestamps.MINUTE_MICROS * 60;
-        long offset2 = rules.getOffset(ts2);
-
-        long ts2tz = ts2 + offset1 + (offset2 - offset1);
-
-        System.out.println("ts1tz=" + Timestamps.toString(ts1tz) + ", ts2tz=" + Timestamps.toString(ts2tz));
-    }
 
     @Test
     public void testCompatibility() {

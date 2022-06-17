@@ -97,7 +97,7 @@ public class AbstractO3Test {
             String table,
             CairoEngine engine
     ) throws SqlException {
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'", LOG);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, table + " where sym = 'googl' order by ts", "x where sym = 'googl'", LOG, true);
         TestUtils.assertIndexBlockCapacity(sqlExecutionContext, engine, "x", "sym");
     }
 
@@ -165,16 +165,17 @@ public class AbstractO3Test {
             compiler.compile(referenceTableDDL, sqlExecutionContext);
         }
         compiler.compile(o3InsertSQL, sqlExecutionContext);
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG, true);
         engine.releaseAllReaders();
-        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG);
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, referenceSQL, assertSQL, LOG, true);
 
         TestUtils.assertSqlCursors(
                 compiler,
                 sqlExecutionContext,
                 "select count() from " + countReferenceSQL,
                 "select count() from " + countAssertSQL,
-                LOG
+                LOG,
+                false
         );
     }
 

@@ -42,13 +42,13 @@ public class CastCharToDateFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastCharToDateFunction(args.getQuick(0));
     }
 
-    private static class Func extends DateFunction implements UnaryFunction {
+    public static class CastCharToDateFunction extends DateFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
+        public CastCharToDateFunction(Function arg) {
             this.arg = arg;
         }
 
