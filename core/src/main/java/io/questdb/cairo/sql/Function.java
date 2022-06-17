@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -99,6 +100,12 @@ public interface Function extends Closeable, StatefulAtom {
     Long256 getLong256A(Record rec);
 
     Long256 getLong256B(Record rec);
+
+    void getLong128(Record rec, CharSink sink);
+
+    Long128 getLong128A(Record rec);
+
+    Long128 getLong128B(Record rec);
 
     default RecordMetadata getMetadata() {
         return null;

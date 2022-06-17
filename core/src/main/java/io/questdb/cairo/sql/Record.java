@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
@@ -170,6 +171,27 @@ public interface Record {
      * @return unsigned 256-bit integer
      */
     default Long256 getLong256B(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of a Long128 column by index
+     * getLong128A used for A/B comparison with getLong128B to compare references
+     *
+     * @param col numeric index of the column
+     * @return unsigned 256-bit integer
+     */
+    default Long128 getLong128A(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of a Long128 column by index
+     * getLong128B used for A/B comparison with getLong128A to compare references
+     * @param col numeric index of the column
+     * @return unsigned 256-bit integer
+     */
+    default Long128 getLong128B(int col) {
         throw new UnsupportedOperationException();
     }
 

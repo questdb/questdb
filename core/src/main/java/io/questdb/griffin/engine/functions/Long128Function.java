@@ -29,11 +29,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-public abstract class BooleanFunction implements ScalarFunction {
+public abstract class Long128Function implements ScalarFunction {
 
     @Override
     public final BinarySequence getBin(Record rec) {
@@ -46,38 +45,43 @@ public abstract class BooleanFunction implements ScalarFunction {
     }
 
     @Override
+    public final boolean getBool(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final byte getByte(Record rec) {
-        return (byte) (getBool(rec) ? 0 : 1);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final char getChar(Record rec) {
-        return getBool(rec) ? 'T' : 'F';
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final long getDate(Record rec) {
-        return getBool(rec) ? 0 : 1;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final double getDouble(Record rec) {
-        return getBool(rec) ? 0 : 1;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final float getFloat(Record rec) {
-        return getBool(rec) ? 0 : 1;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final int getInt(Record rec) {
-        return getBool(rec) ? 0 : 1;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final long getLong(Record rec) {
-        return getBool(rec) ? 0 : 1;
+        return getLong256A(rec).getLong0();
     }
 
     @Override
@@ -96,63 +100,48 @@ public abstract class BooleanFunction implements ScalarFunction {
     }
 
     @Override
-    public void getLong128(Record rec, CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Long128 getLong128A(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Long128 getLong128B(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public final RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public final short getShort(Record rec) {
-        return (short) (getBool(rec) ? 0 : 1);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final CharSequence getStr(Record rec) {
-        return getStr0(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final void getStr(Record rec, CharSink sink) {
-        sink.put(getStr0(rec));
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final CharSequence getStrB(Record rec) {
-        return getStr0(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final int getStrLen(Record rec) {
-        return getBool(rec) ? "true".length() : "false".length();
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final CharSequence getSymbol(Record rec) {
-        return getStr0(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public final CharSequence getSymbolB(Record rec) {
-        return getStr0(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getTimestamp(Record rec) {
-        return getBool(rec) ? 0 : 1;
+    public final long getTimestamp(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -177,10 +166,11 @@ public abstract class BooleanFunction implements ScalarFunction {
 
     @Override
     public final int getType() {
-        return ColumnType.BOOLEAN;
+        return ColumnType.LONG128;
     }
 
-    private String getStr0(Record rec) {
-        return getBool(rec) ? "true" : "false";
+    @Override
+    public boolean isReadThreadSafe() {
+        return false;
     }
 }

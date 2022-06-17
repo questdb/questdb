@@ -24,10 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.IntObjHashMap;
-import io.questdb.std.Long256;
-import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
-import io.questdb.std.Numbers;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
@@ -71,7 +68,8 @@ public final class ColumnType {
     // We also build overload matrix, which logic relies on the fact GEOHASH value has to be
     // inside the MAX type value.
     public static final short GEOHASH = 23;
-    public static final short NULL = 24;
+    public static final short LONG128 = 24; // Limited support, few tests only
+    public static final short NULL = 25;
 
     // Overload matrix algo depends on the fact that MAX == NULL
     public static final short MAX = NULL;
@@ -371,6 +369,7 @@ public final class ColumnType {
         typeNameMap.put(PARAMETER, "PARAMETER");
         typeNameMap.put(TIMESTAMP, "TIMESTAMP");
         typeNameMap.put(LONG256, "LONG256");
+        typeNameMap.put(LONG128, "LONG128");
         typeNameMap.put(CURSOR, "CURSOR");
         typeNameMap.put(RECORD, "RECORD");
         typeNameMap.put(VAR_ARG, "VARARG");
@@ -392,6 +391,7 @@ public final class ColumnType {
         nameTypeMap.put("timestamp", TIMESTAMP);
         nameTypeMap.put("cursor", CURSOR);
         nameTypeMap.put("long256", LONG256);
+        nameTypeMap.put("long128", LONG128);
         nameTypeMap.put("geohash", GEOHASH);
         nameTypeMap.put("text", STRING);
         nameTypeMap.put("smallint", SHORT);
@@ -437,6 +437,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[VAR_ARG] = -1;
         TYPE_SIZE_POW2[RECORD] = -1;
         TYPE_SIZE_POW2[NULL] = -1;
+        TYPE_SIZE_POW2[LONG128] = 4;
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -462,6 +463,7 @@ public final class ColumnType {
         TYPE_SIZE[VAR_ARG] = -1;
         TYPE_SIZE[RECORD] = -1;
         TYPE_SIZE[NULL] = 0;
+        TYPE_SIZE[LONG128] = Long128.BYTES;
     }
 
     //geohash bits <-> backing primitive types bit boundaries

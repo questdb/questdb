@@ -860,6 +860,10 @@ public final class TableUtils {
                 // Long256 is null when all 4 longs are NaNs
                 Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
                 break;
+            case ColumnType.LONG128:
+                // Long128 is null when all 2 longs are NaNs
+                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 2);
+                break;
             default:
                 break;
         }
