@@ -27,22 +27,25 @@ package io.questdb.griffin;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.model.CopyModel;
-
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
-
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
+
+import static org.junit.Assert.*;
 
 public class CopyTest extends AbstractGriffinTest {
+
     @BeforeClass
     public static void setUpStatic() {
         inputRoot = new File(".").getAbsolutePath();
+        try {
+            inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
         AbstractGriffinTest.setUpStatic();
     }
 
@@ -72,7 +75,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testSetAllParallelCopyOptions() throws SqlException {
-        CopyModel model = (CopyModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true parallel limit 10 partition by HOUR timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' ;", sqlExecutionContext);
+        CopyModel model = (CopyModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true parallel partition by HOUR timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' ;", sqlExecutionContext);
 
         assertEquals("x", model.getTableName().token.toString());
         assertEquals("'somefile.csv'", model.getFileName().token.toString());
@@ -302,24 +305,42 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testCopyParallel() throws Exception {
+    public void testParallelCopyIntoExistingTable() throws Exception {
         assertMemoryLeak(() -> {
+            compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH; ", sqlExecutionContext);
 
-            compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header false ", sqlExecutionContext);
-
-            final String expected = "f0\tf1\tf2\tf3\tf4\n" +
-                    "type\tvalue\tactive\tdesc\t1\n" +
-                    "ABC\txy\ta\tbrown fox jumped over the fence\t10\n" +
-                    "CDE\tbb\tb\tsentence 1\n" +
-                    "sentence 2\t12\n";
-
-            assertQuery(
-                    expected,
-                    "x",
-                    null,
-                    true
-            );
+            assertQuotesTableContent();
         });
+    }
+
+    @Test
+    public void testParallelCopyIntoNewTable() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH; ", sqlExecutionContext);
+
+            assertQuotesTableContent();
+        });
+    }
+
+    private void assertQuotesTableContent() throws SqlException {
+        assertQuery("line\tts\td\tdescription\n" +
+                        "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
+                        "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
+                        "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
+                        "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
+                        "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
+                        "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
+                        "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
+                        "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
+                        "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
+                        "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                "select line,ts,d,description from x limit -10",
+                "ts",
+                true
+        );
+
+        assertQuery("cnt\n1000\n", "select count(*) cnt from x", null, false);
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {
