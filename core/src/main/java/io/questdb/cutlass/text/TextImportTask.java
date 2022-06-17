@@ -537,7 +537,7 @@ public class TextImportTask {
                             errors = 0;
                             final CharSequence name = partitionNames.get(i);
                             path.of(importRoot).concat(name);
-                            mergePartitionIndexAndImportData(ff, path, lexer, types, maxLineLength);
+                            mergePartitionIndexAndImportData(ff, path, lexer, maxLineLength);
 
                             long imported = atomicity == Atomicity.SKIP_ROW ? lexer.getLineCount() - errors : lexer.getLineCount();
                             importedRows.add(imported);
@@ -582,7 +582,7 @@ public class TextImportTask {
             LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(column).getType())).$(",line offset=").$(offset).$(",column=").$(column).$(" value='").$(dbcs).$("']").$();
         }
 
-        private void importPartitionData(final TextLexer lexer, final ObjList<TypeAdapter> types, long address, long size, int len) throws TextException {
+        private void importPartitionData(final TextLexer lexer, long address, long size, int len) throws TextException {
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
@@ -619,7 +619,6 @@ public class TextImportTask {
         private void mergePartitionIndexAndImportData(final FilesFacade ff,
                                                       final Path partitionPath,
                                                       final TextLexer lexer,
-                                                      final ObjList<TypeAdapter> types,
                                                       int maxLineLength) throws TextException {
             try (DirectLongList mergeIndexes = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT)) {
                 partitionPath.slash$();
@@ -640,7 +639,7 @@ public class TextImportTask {
                     fd = -1;
 
                     final long merged = Vect.mergeLongIndexesAscExt(mergeIndexes.getAddress(), indexesCount, address);
-                    importPartitionData(lexer, types, merged, mergedIndexSize, maxLineLength);
+                    importPartitionData(lexer, merged, mergedIndexSize, maxLineLength);
                 } finally {
                     if (fd > -1) {
                         ff.close(fd);

@@ -80,13 +80,18 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     //holds input for second phase - indexing: offset and start line number for each chunk
     private final LongList indexChunkStats = new LongList();
-    //stats calculated during indexing phase, maxLineLength for each worker 
-    private final LongList indexStats = new LongList();
+
+    //stores timestamp values of indexed partitions 
+    private final LongList partitionKeys = new LongList();
+    private final StringSink partitionNameSink = new StringSink();
+    //stores directory names of imported partitions
+    private final ObjList<CharSequence> partitionNames = new ObjList<>();
+    //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
+    private final IntList taskDistribution = new IntList();
 
     private final FilesFacade ff;
 
     private final Path inputFilePath = new Path();
-    private final int dirMode;
     private final Path tmpPath = new Path();
 
     private final RingQueue<TextImportTask> queue;
@@ -110,18 +115,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private TimestampAdapter timestampAdapter;
     private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
     private boolean forceHeader;
+    private int atomicity;
     //input params end
+
     //index of timestamp column in input file
     private int timestampIndex;
     private int maxLineLength;
     private final CairoSecurityContext securityContext;
 
-    private final LongList partitionKeys = new LongList();
-    private final StringSink partitionNameSink = new StringSink();
-    private final ObjList<CharSequence> partitionNames = new ObjList<>();
-    private final IntList taskDistribution = new IntList();
-
-    private final DateLocale defaultDateLocale;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
     private final TextDelimiterScanner textDelimiterScanner;
@@ -137,11 +138,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final SCSequence collectSeq = new SCSequence();
     private int bufferLength;
 
+    //import status variables 
     private boolean isSuccess;
     private byte phase;
     private CharSequence errorMessage;
-
-    private int atomicity;
 
     public ParallelCsvFileImporter(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
@@ -162,14 +162,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         this.inputRoot = cfg.getInputRoot();
         this.inputWorkRoot = cfg.getInputWorkRoot();
-        this.dirMode = cfg.getMkDirMode();
 
         TextConfiguration textConfiguration = configuration.getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
         this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
-        this.defaultDateLocale = textConfiguration.getDefaultDateLocale();
 
         this.targetTableStructure = new TableStructureAdapter(configuration);
         this.bufferLength = configuration.getSqlCopyBufferSize();
@@ -380,7 +378,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.columnDelimiter = columnDelimiter;
         if (tsFormat != null) {
             DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(tsFormat);
-            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat, defaultDateLocale);
+            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
+                    configuration.getTextConfiguration().getDefaultDateLocale());
         }
         this.forceHeader = forceHeader;
         this.timestampIndex = -1;
@@ -397,9 +396,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void clear() {
         chunkStats.clear();
         indexChunkStats.clear();
-        indexStats.clear();
+        partitionKeys.clear();
         partitionNames.clear();
         partitionNameSink.clear();
+        taskDistribution.clear();
         utf8Sink.clear();
         typeManager.clear();
         textMetadataDetector.clear();
@@ -440,7 +440,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         removeWorkDir();
 
         Path workDirPath = tmpPath.of(importRoot).slash$();
-        int errno = ff.mkdir(workDirPath, dirMode);
+        int errno = ff.mkdir(workDirPath, configuration.getMkDirMode());
         if (errno != 0) {
             throw CairoException.instance(errno).put("Can't create import work dir ").put(workDirPath).put(" errno=").put(errno);
         }
@@ -657,7 +657,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         for (int i = 0, n = rows.size(); i < n; i++) {
             if (rows.get(i) == 0) {
-                partitionNames.set(i + offset, null);
+                partitionNames.set(i + offset, null);//partition will be ignored in later stages 
             }
         }
     }
@@ -742,8 +742,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         LOG.info().$("Started indexing file=").$(inputFilePath).$();
         createWorkDir();
-        indexStats.setPos((indexChunkStats.size() - 2) / 2);
-        indexStats.zero(0);
 
         boolean forceHeader = this.forceHeader;
         for (int i = 0, n = indexChunkStats.size() - 2; i < n; i += 2) {
@@ -1038,7 +1036,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
                     validate(names, types, null, NO_INDEX);
                     targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
-                    createTable(ff, dirMode, configuration.getRoot(), tableName, targetTableStructure, (int) cairoEngine.getNextTableId(), configuration);
+                    createTable(ff, configuration.getMkDirMode(), configuration.getRoot(), tableName, targetTableStructure, (int) cairoEngine.getNextTableId(), configuration);
                     targetTableCreated = true;
                     writer = cairoEngine.getWriter(cairoSecurityContext, tableName, LOCK_REASON);
                     partitionBy = writer.getPartitionBy();
