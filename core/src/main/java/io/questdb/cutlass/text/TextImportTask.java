@@ -33,14 +33,13 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.griffin.engine.functions.columns.ColumnUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.log.LogRecord;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
-import static io.questdb.cutlass.text.FileIndexer.createTable;
+import static io.questdb.cutlass.text.ParallelCsvFileImporter.createTable;
 
 public class TextImportTask {
 
@@ -88,6 +87,10 @@ public class TextImportTask {
         return buildPartitionIndexStage;
     }
 
+    public ImportPartitionDataStage getImportPartitionDataStage() {
+        return importPartitionDataStage;
+    }
+
     public CountQuotesStage getCountQuotesStage() {
         return countQuotesStage;
     }
@@ -124,7 +127,8 @@ public class TextImportTask {
                                            int timestampIndex,
                                            TimestampAdapter adapter,
                                            boolean ignoreHeader,
-                                           int bufferLen) {
+                                           int bufferLen,
+                                           int atomicity) {
         this.phase = PHASE_INDEXING;
         this.buildPartitionIndexStage.of(chunkStart,
                 chunkEnd,
@@ -138,7 +142,8 @@ public class TextImportTask {
                 timestampIndex,
                 adapter,
                 ignoreHeader,
-                bufferLen);
+                bufferLen,
+                atomicity);
     }
 
     public void ofBuildSymbolColumnIndexStage(CairoEngine cairoEngine, TableStructure tableStructure, CharSequence root, int index, RecordMetadata metadata) {
@@ -223,6 +228,24 @@ public class TextImportTask {
         }
 
         return true;
+    }
+
+    public void clear() {
+        if (phase == PHASE_BOUNDARY_CHECK) {
+            countQuotesStage.clear();
+        } else if (phase == PHASE_INDEXING) {
+            buildPartitionIndexStage.clear();
+        } else if (phase == PHASE_PARTITION_IMPORT) {
+            importPartitionDataStage.clear();
+        } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
+            mergeSymbolTablesStage.clear();
+        } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
+            updateSymbolColumnKeysStage.clear();
+        } else if (phase == PHASE_BUILD_INDEX) {
+            buildSymbolColumnIndexStage.clear();
+        } else {
+            throw TextException.$("Unexpected phase ").put(phase);
+        }
     }
 
     public static class CountQuotesStage {
@@ -331,6 +354,14 @@ public class TextImportTask {
             this.newLineOffsetEven = nlFirst[0];
             this.newLineOffsetOdd = nlFirst[1];
         }
+
+        public void clear() {
+            this.ff = null;
+            this.path = null;
+            this.chunkStart = -1;
+            this.chunkEnd = -1;
+            this.bufferLength = -1;
+        }
     }
 
     public static class BuildPartitionIndexStage {
@@ -349,6 +380,7 @@ public class TextImportTask {
         private boolean ignoreHeader;
         private CairoConfiguration configuration;
         private int bufferLen;
+        private int atomicity;
 
         public long getMaxLineLength() {
             return maxLineLength;
@@ -370,7 +402,8 @@ public class TextImportTask {
                        int timestampIndex,
                        TimestampAdapter adapter,
                        boolean ignoreHeader,
-                       int bufferLen) {
+                       int bufferLen,
+                       int atomicity) {
             assert chunkStart >= 0 && chunkEnd > chunkStart;
             assert lineNumber >= 0;
 
@@ -388,15 +421,34 @@ public class TextImportTask {
             this.adapter = adapter;
             this.ignoreHeader = ignoreHeader;
             this.bufferLen = bufferLen;
+            this.atomicity = atomicity;
         }
 
-        public void run() {
-            try (FileSplitter splitter = new FileSplitter(configuration)) {
+        public void run() throws TextException {
+            try (CsvFileIndexer splitter = new CsvFileIndexer(configuration)) {
                 splitter.setBufferLength(bufferLen);
-                splitter.of(inputFileName, importRoot, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader);
+                splitter.of(inputFileName, importRoot, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader, atomicity);
                 splitter.index(chunkStart, chunkEnd, lineNumber, partitionKeys);
                 this.maxLineLength = splitter.getMaxLineLength();
             }
+        }
+
+        public void clear() {
+            this.chunkStart = -1;
+            this.chunkEnd = -1;
+            this.lineNumber = -1;
+
+            this.index = -1;
+            this.configuration = null;
+            this.inputFileName = null;
+            this.importRoot = null;
+            this.partitionBy = -1;
+            this.columnDelimiter = (byte) -1;
+            this.timestampIndex = -1;
+            this.adapter = null;
+            this.ignoreHeader = false;
+            this.bufferLen = -1;
+            this.atomicity = -1;
         }
     }
 
@@ -419,6 +471,9 @@ public class TextImportTask {
         private TableWriter tableWriterRef;
         private int timestampIndex;
         private TimestampAdapter timestampAdapter;
+
+        private int errors;
+        private final LongList importedRows = new LongList();
 
         public void of(CairoEngine cairoEngine,
                        TableStructure targetTableStructure,
@@ -447,6 +502,9 @@ public class TextImportTask {
             this.maxLineLength = maxLineLength;
             this.timestampIndex = targetTableStructure.getTimestampIndex();
             this.timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
+
+            this.errors = 0;
+            this.importedRows.clear();
         }
 
         public void run() throws TextException {
@@ -468,29 +526,60 @@ public class TextImportTask {
                 tableWriterRef = writer;
 
                 final TextConfiguration textConfiguration = configuration.getTextConfiguration();
-                try (TextLexer lexer = new TextLexer(textConfiguration)) {
+                try (TextLexer lexer = new TextLexer(textConfiguration);
+                     Path path = new Path()) {
                     lexer.setTableName(tableNameSink);
                     lexer.of(columnDelimiter);
                     lexer.setSkipLinesWithExtraValues(false);
                     try {
-                        lexer.restart(false);
                         for (int i = (int) lo; i < hi; i++) {
+                            lexer.restart(false);
+                            errors = 0;
                             final CharSequence name = partitionNames.get(i);
-                            try (Path path = new Path().of(importRoot).concat(name)) {
-                                mergePartitionIndexAndImportData(ff, path, lexer, types, maxLineLength);
-                            }
+                            path.of(importRoot).concat(name);
+                            mergePartitionIndexAndImportData(ff, path, lexer, types, maxLineLength);
+
+                            long imported = atomicity == Atomicity.SKIP_ROW ? lexer.getLineCount() - errors : lexer.getLineCount();
+                            importedRows.add(imported);
+                            LOG.info().$("Imported partition data [partition=").$(name).$(",lines=").$(lexer.getLineCount()).$(",errors=").$(errors).$("]").$();
                         }
                     } finally {
-                        lexer.parseLast();
                         writer.commit(CommitMode.SYNC);
                     }
                 }
             }
         }
 
-        private void logError(long line, int i, final DirectByteCharSequence dbcs) {
-            LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(i).getType())).$("]\t");
-            logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
+        public LongList getImportedRows() {
+            return importedRows;
+        }
+
+        public long getLo() {
+            return lo;
+        }
+
+        public void clear() {
+            this.cairoEngine = null;
+            this.targetTableStructure = null;
+            this.types = null;
+            this.atomicity = -1;
+            this.columnDelimiter = (byte) -1;
+            this.importRoot = null;
+            this.inputFileName = null;
+            this.index = -1;
+            this.lo = -1;
+            this.hi = -1;
+            this.partitionNames = null;
+            this.maxLineLength = -1;
+            this.timestampIndex = -1;
+            this.timestampAdapter = null;
+
+            this.errors = 0;
+            this.importedRows.clear();
+        }
+
+        private void logError(long offset, int column, final DirectByteCharSequence dbcs) {
+            LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(column).getType())).$(",line offset=").$(offset).$(",column=").$(column).$(" value='").$(dbcs).$("']").$();
         }
 
         private void importPartitionData(final TextLexer lexer, final ObjList<TypeAdapter> types, long address, long size, int len) throws TextException {
@@ -510,12 +599,14 @@ public class TextImportTask {
                     long n = ff.read(fd, buf, len, offset);
                     if (n > 0) {
                         lexer.parse(buf, buf + n, 0,
-                                (long line, ObjList<DirectByteCharSequence> fields, int hi) ->
-                                        this.onFieldsPartitioned(line, fields, hi, utf8Sink));
+                                (long line, ObjList<DirectByteCharSequence> fields, int fieldCount) ->
+                                        this.onFieldsPartitioned(offset, fields, fieldCount, utf8Sink));
                     } else {
-                        throw TextException.$("Can't read from file path='").put(path).put("', errno=").put(ff.errno());
+                        throw TextException.$("Can't read from file path='").put(path).put("', errno=").put(ff.errno()).put(",offset=").put(offset);
                     }
                 }
+
+                lexer.parseLast();
             } finally {
                 if (fd > -1) {
                     ff.close(fd);
@@ -541,7 +632,7 @@ public class TextImportTask {
                 try {
                     final int indexesCount = (int) mergeIndexes.size() / 2;
                     partitionPath.trimTo(partitionLen);
-                    partitionPath.concat(FileSplitter.INDEX_FILE_NAME).$();
+                    partitionPath.concat(CsvFileIndexer.INDEX_FILE_NAME).$();
 
                     fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
                     address = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
@@ -559,59 +650,71 @@ public class TextImportTask {
                     }
                     for (long i = 0, sz = mergeIndexes.size() / 2; i < sz; i++) {
                         final long addr = mergeIndexes.get(2 * i);
-                        final long size = mergeIndexes.get(2 * i + 1) * FileSplitter.INDEX_ENTRY_SIZE;
+                        final long size = mergeIndexes.get(2 * i + 1) * CsvFileIndexer.INDEX_ENTRY_SIZE;
                         ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
                     }
                 }
             }
         }
 
-        private boolean onField(long line, final DirectByteCharSequence dbcs, TableWriter.Row w, int i, DirectCharSink utf8Sink)
+        private boolean onField(long offset, final DirectByteCharSequence dbcs, TableWriter.Row w, int fieldIndex, DirectCharSink utf8Sink)
                 throws TextException {
-            TypeAdapter type = this.types.getQuick(i);
+            TypeAdapter type = this.types.getQuick(fieldIndex);
             try {
                 switch (ColumnType.tagOf(type.getType())) {
                     case ColumnType.STRING:
                     case ColumnType.SYMBOL:
                     case ColumnType.TIMESTAMP:
                     case ColumnType.DATE:
-                        type.write(w, i, dbcs, utf8Sink);
+                        type.write(w, fieldIndex, dbcs, utf8Sink);
                         break;
                     default:
-                        type.write(w, i, dbcs);
+                        type.write(w, fieldIndex, dbcs);
                 }
             } catch (Exception ignore) {
-                logError(line, i, dbcs);
+                errors++;
+                logError(offset, fieldIndex, dbcs);
                 switch (atomicity) {
                     case Atomicity.SKIP_ALL:
                         tableWriterRef.rollback();
-                        throw TextException.$("bad syntax [line=").put(line).put(", col=").put(i).put(']');
+                        throw TextException.$("bad syntax [line offset=").put(offset).put(",column=").put(fieldIndex).put(']');
                     case Atomicity.SKIP_ROW:
                         w.cancel();
                         return true;
-                    default:
-                        // SKIP column
+                    default: // SKIP column
                         break;
                 }
             }
             return false;
         }
 
-        private void onFieldsPartitioned(long line, final ObjList<DirectByteCharSequence> values, int valuesLength, DirectCharSink utf8Sink) {
+        private void onFieldsPartitioned(long offset, final ObjList<DirectByteCharSequence> values, int valuesLength, DirectCharSink utf8Sink) {
             assert tableWriterRef != null;
             DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
-            try {
-                final TableWriter.Row w = tableWriterRef.newRow(timestampAdapter.getTimestamp(dbcs));
-                for (int i = 0; i < valuesLength; i++) {
-                    dbcs = values.getQuick(i);
-                    if (i == timestampIndex || dbcs.length() == 0) {
-                        continue;
-                    }
-                    if (onField(line, dbcs, w, i, utf8Sink)) return;
+            final TableWriter.Row w = getRow(dbcs, offset);
+            if (w == null) {
+                return;
+            }
+            for (int i = 0; i < valuesLength; i++) {
+                dbcs = values.getQuick(i);
+                if (i == timestampIndex || dbcs.length() == 0) {
+                    continue;
                 }
-                w.append();
+                if (onField(offset, dbcs, w, i, utf8Sink)) return;
+            }
+            w.append();
+        }
+
+        private TableWriter.Row getRow(DirectByteCharSequence dbcs, long offset) {
+            try {
+                return tableWriterRef.newRow(timestampAdapter.getTimestamp(dbcs));
             } catch (Exception e) {
-                logError(line, timestampIndex, dbcs);
+                if (atomicity == Atomicity.SKIP_ALL) {
+                    throw TextException.$("Can't parse timestamp on line starting at offset=").put(offset).put(". ").put(e.getMessage());
+                } else {
+                    logError(offset, timestampIndex, dbcs);
+                    return null;
+                }
             }
         }
 
@@ -633,7 +736,7 @@ public class TextImportTask {
                             ff.close(fd);
 
                             mergeIndexes.add(address);
-                            mergeIndexes.add(size / FileSplitter.INDEX_ENTRY_SIZE);
+                            mergeIndexes.add(size / CsvFileIndexer.INDEX_ENTRY_SIZE);
                             mergedIndexSize += size;
                         }
                     } while (ff.findNext(chunk) > 0);
@@ -701,6 +804,18 @@ public class TextImportTask {
                     }
                 }
             }
+        }
+
+        public void clear() {
+            this.cfg = null;
+            this.importRoot = null;
+            this.writer = null;
+            this.table = null;
+            this.column = null;
+            this.columnIndex = -1;
+            this.symbolColumnIndex = -1;
+            this.tmpTableCount = -1;
+            this.partitionBy = -1;
         }
     }
 
@@ -778,6 +893,17 @@ public class TextImportTask {
                 }
             }
         }
+
+        public void clear() {
+            this.cairoEngine = null;
+            this.tableStructure = null;
+            this.index = -1;
+            this.partitionSize = -1;
+            this.partitionTimestamp = -1;
+            this.root = null;
+            this.columnName = null;
+            this.symbolCount = -1;
+        }
     }
 
     public static class BuildSymbolColumnIndexStage {
@@ -815,6 +941,14 @@ public class TextImportTask {
                     }
                 }
             }
+        }
+
+        public void clear() {
+            this.cairoEngine = null;
+            this.tableStructure = null;
+            this.root = null;
+            this.index = -1;
+            this.metadata = null;
         }
     }
 }

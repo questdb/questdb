@@ -451,10 +451,6 @@ public final class SqlParser {
                     } else if (isParallelKeyword(tok)) {
                         model.setParallel(true);
                         tok = optTok(lexer);
-                    } else if (isLimitKeyword(tok)) {
-                        int rowsLimit = expectInt(lexer);
-                        model.setRowsLimit(rowsLimit);
-                        tok = optTok(lexer);
                     } else if (isPartitionKeyword(tok)) {
                         expectTok(lexer, "by");
                         tok = tok(lexer, "year month day hour");

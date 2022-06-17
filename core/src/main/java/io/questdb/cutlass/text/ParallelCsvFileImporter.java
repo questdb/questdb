@@ -50,21 +50,23 @@ import java.util.function.Consumer;
 
 
 /**
- * Class is responsible for pre-processing of large unordered import files meant to go into partitioned tables.
+ * Class is responsible for importing of large unordered import files into partitioned tables.
  * It does the following (in parallel) :
  * - splits the file into N-chunks, scans in parallel and finds correct line start for each chunk
- * - scans each chunk and extract timestamps and line offsets to per-partition index files
+ * - scans each chunk and extracts timestamps and line offsets to per-partition index files
  * (index files are stored as $inputWorkDir/$inputFileName/$partitionName/$workerId_$chunkNumber)
  * then it sorts each file by timestamp value
- * - merges all partition index chunks into one index file per partition
+ * - merges all partition index chunks into one index file per partition (index.m)
  * - loads partitions into separate tables using merged indexes (one table per worker)
- * - move partitions from temp tables and attaches them to final table
+ * - scans all symbol columns to build per-column global symbol table
+ * - remaps all symbol values
+ * - moves and attaches partitions from temp tables to target table
  * - removes temp tables and index files
  * <p>
  */
-public class FileIndexer implements Closeable, Mutable {
+public class ParallelCsvFileImporter implements Closeable, Mutable {
 
-    private static final Log LOG = LogFactory.getLog(FileIndexer.class);
+    private static final Log LOG = LogFactory.getLog(ParallelCsvFileImporter.class);
 
     private static final String LOCK_REASON = "parallel import";
     private static final int NO_INDEX = -1;
@@ -139,7 +141,9 @@ public class FileIndexer implements Closeable, Mutable {
     private byte phase;
     private CharSequence errorMessage;
 
-    public FileIndexer(SqlExecutionContext sqlExecutionContext) {
+    private int atomicity;
+
+    public ParallelCsvFileImporter(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
         this.cairoEngine = sqlExecutionContext.getCairoEngine();
         this.securityContext = sqlExecutionContext.getCairoSecurityContext();
@@ -171,6 +175,8 @@ public class FileIndexer implements Closeable, Mutable {
         this.bufferLength = configuration.getSqlCopyBufferSize();
         this.targetTableStatus = -1;
         this.targetTableCreated = false;
+
+        this.atomicity = Atomicity.SKIP_COL;
     }
 
     private static void checkTableName(CharSequence tableName, CairoConfiguration configuration) {
@@ -222,7 +228,7 @@ public class FileIndexer implements Closeable, Mutable {
         this.textDelimiterScanner.close();
     }
 
-    public IntList importPartitions() throws TextException {
+    public void importPartitions() throws TextException {
         if (partitionNames.size() == 0) {
             throw TextException.$("No partitions to merge and load found");
         }
@@ -245,12 +251,12 @@ public class FileIndexer implements Closeable, Mutable {
                 if (seq > -1) {
                     final TextImportTask task = queue.get(seq);
                     task.setIndex(i);
-                    task.ofImportPartitionDataStage(cairoEngine, targetTableStructure, textMetadataDetector.getColumnTypes(), Atomicity.SKIP_ALL, columnDelimiter, importRoot, inputFileName, i, lo, hi, partitionNames, maxLineLength);
+                    task.ofImportPartitionDataStage(cairoEngine, targetTableStructure, textMetadataDetector.getColumnTypes(), atomicity, columnDelimiter, importRoot, inputFileName, i, lo, hi, partitionNames, maxLineLength);
                     pubSeq.done(seq);
                     queuedCount++;
                     break;
                 } else {
-                    collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+                    collectedCount += collect(queuedCount - collectedCount, this::collectDataImportStats);
                 }
             }
 
@@ -259,33 +265,37 @@ public class FileIndexer implements Closeable, Mutable {
             taskDistribution.add(hi);
         }
 
-        collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+        collectedCount += collect(queuedCount - collectedCount, this::collectDataImportStats);
         assert collectedCount == queuedCount;
+
         checkImportStatus();
 
         LOG.info().$("Finished index merge and partition load").$();
-        return taskDistribution;
     }
 
-    public void mergeSymbolTables(final int tmpTableCount, final TableWriter writer) throws TextException {
+    private int getTmpTablesCount() {
+        return taskDistribution.size() / 3;
+    }
+
+    public void mergeSymbolTables(final TableWriter writer) throws TextException {
         LOG.info().$("Started symbol table merge").$();
+        final int tmpTableCount = getTmpTablesCount();
 
         int queuedCount = 0;
         int collectedCount = 0;
         TableWriterMetadata metadata = writer.getMetadata();
-        int symbolColumnIndex = -1;
 
-        for (int c = 0, size = metadata.getColumnCount(); c < size; c++) {
-            if (ColumnType.isSymbol(metadata.getColumnType(c))) {
-                symbolColumnIndex++;
-                final CharSequence symbolColumnName = metadata.getColumnName(c);
+        for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+                final CharSequence symbolColumnName = metadata.getColumnName(columnIndex);
+                int tmpTableSymbolColumnIndex = targetTableStructure.getSymbolColumnIndex(symbolColumnName);
 
                 while (true) {
                     final long seq = pubSeq.next();
                     if (seq > -1) {
                         final TextImportTask task = queue.get(seq);
-                        task.setIndex(c);
-                        task.ofMergeSymbolTablesStage(configuration, importRoot, writer, tableName, symbolColumnName, c, symbolColumnIndex, tmpTableCount, partitionBy);
+                        task.setIndex(columnIndex);
+                        task.ofMergeSymbolTablesStage(configuration, importRoot, writer, tableName, symbolColumnName, columnIndex, tmpTableSymbolColumnIndex, tmpTableCount, partitionBy);
                         pubSeq.done(seq);
                         queuedCount++;
                         break;
@@ -302,9 +312,10 @@ public class FileIndexer implements Closeable, Mutable {
         LOG.info().$("Finished symbol table merge").$();
     }
 
-    public void updateSymbolKeys(int tmpTableCount, final TableWriter writer) throws TextException {
+    public void updateSymbolKeys(final TableWriter writer) throws TextException {
         LOG.info().$("Started symbol keys update").$();
 
+        final int tmpTableCount = getTmpTablesCount();
         int queuedCount = 0;
         int collectedCount = 0;
         for (int t = 0; t < tmpTableCount; ++t) {
@@ -319,6 +330,10 @@ public class FileIndexer implements Closeable, Mutable {
                     final long partitionTimestamp = txFile.getPartitionTimestamp(p);
                     TableWriterMetadata metadata = writer.getMetadata();
                     int symbolColumnIndex = 0;
+
+                    if (partitionSize == 0) {
+                        continue;
+                    }
 
                     for (int c = 0, size = metadata.getColumnCount(); c < size; c++) {
                         if (ColumnType.isSymbol(metadata.getColumnType(c))) {
@@ -351,6 +366,10 @@ public class FileIndexer implements Closeable, Mutable {
     }
 
     public void of(CharSequence tableName, CharSequence inputFileName, int partitionBy, byte columnDelimiter, CharSequence timestampColumn, CharSequence tsFormat, boolean forceHeader) {
+        of(tableName, inputFileName, partitionBy, columnDelimiter, timestampColumn, tsFormat, forceHeader, Atomicity.SKIP_COL);
+    }
+
+    public void of(CharSequence tableName, CharSequence inputFileName, int partitionBy, byte columnDelimiter, CharSequence timestampColumn, CharSequence tsFormat, boolean forceHeader, int atomicity) {
         clear();
 
         this.tableName = tableName;
@@ -369,6 +388,7 @@ public class FileIndexer implements Closeable, Mutable {
         this.phase = 0;
         this.targetTableStatus = -1;
         this.targetTableCreated = false;
+        this.atomicity = Atomicity.isValid(atomicity) ? atomicity : Atomicity.SKIP_COL;
 
         inputFilePath.of(inputRoot).concat(inputFileName).$();
     }
@@ -400,6 +420,7 @@ public class FileIndexer implements Closeable, Mutable {
         errorMessage = null;
         targetTableStatus = -1;
         targetTableCreated = false;
+        atomicity = Atomicity.SKIP_COL;
     }
 
     private void removeWorkDir() {
@@ -470,7 +491,9 @@ public class FileIndexer implements Closeable, Mutable {
         while (collectedCount < queuedCount) {
             final long seq = collectSeq.next();
             if (seq > -1) {
-                consumer.accept(queue.get(seq));
+                TextImportTask task = queue.get(seq);
+                consumer.accept(task);
+                task.clear();
                 collectSeq.done(seq);
                 collectedCount += 1;
             } else {
@@ -480,7 +503,9 @@ public class FileIndexer implements Closeable, Mutable {
         return collectedCount;
     }
 
-    private void movePartitions(IntList taskDistribution, int taskCount) {
+    private void movePartitions() {
+        final int taskCount = getTmpTablesCount();
+
         for (int i = 0; i < taskCount; i++) {
             int index = taskDistribution.getQuick(i * 3);
             int lo = taskDistribution.getQuick(i * 3 + 1);
@@ -492,8 +517,13 @@ public class FileIndexer implements Closeable, Mutable {
 
             for (int j = lo; j < hi; j++) {
                 final CharSequence partitionName = partitionNames.get(j);
+                if (partitionName == null) {
+                    continue;
+                }
+
                 srcPath.trimTo(srcPlen).concat(partitionName).slash$();
                 dstPath.trimTo(dstPlen).concat(partitionName).slash$();
+
                 if (!ff.rename(srcPath, dstPath)) {
                     if (Os.translateSysErrno(ff.errno()) == Os.Errno.EXDEV) {
                         LOG.info().$(srcPath).$(" and ").$(dstPath).$(" are not on the same mounted filesystem. Partitions will be copied.").$();
@@ -537,13 +567,12 @@ public class FileIndexer implements Closeable, Mutable {
             findChunkBoundaries(length);
             indexChunks();
             importPartitions();
-            int taskCount = taskDistribution.size() / 3;
-            mergeSymbolTables(taskCount, writer);
-            updateSymbolKeys(taskCount, writer);
-            buildColumnIndexes(taskCount, writer);
+            mergeSymbolTables(writer);
+            updateSymbolKeys(writer);
+            buildColumnIndexes(writer);
 
             try {
-                movePartitions(taskDistribution, taskCount);
+                movePartitions();
                 attachPartitions(writer);
             } catch (Throwable t) {
                 cleanUp(writer);
@@ -580,6 +609,9 @@ public class FileIndexer implements Closeable, Mutable {
 
         for (int i = 0, sz = partitionNames.size(); i < sz; i++) {
             final CharSequence partitionDirName = partitionNames.get(i);
+            if (partitionDirName == null) {
+                continue;
+            }
             final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
             try {
                 writer.attachPartition(timestamp, true); //TODO: change to false to speed up attaching
@@ -614,6 +646,20 @@ public class FileIndexer implements Closeable, Mutable {
         this.maxLineLength = (int) Math.max(maxLineLength, lineLength);
         final LongList keys = buildPartitionIndexStage.getPartitionKeys();
         this.partitionKeys.add(keys);
+    }
+
+    private void collectDataImportStats(final TextImportTask task) {
+        checkStatus(task);
+
+        final TextImportTask.ImportPartitionDataStage stage = task.getImportPartitionDataStage();
+        LongList rows = stage.getImportedRows();
+        int offset = (int) stage.getLo();
+
+        for (int i = 0, n = rows.size(); i < n; i++) {
+            if (rows.get(i) == 0) {
+                partitionNames.set(i + offset, null);
+            }
+        }
     }
 
     private void collectStub(final TextImportTask task) {
@@ -712,7 +758,7 @@ public class FileIndexer implements Closeable, Mutable {
                 if (seq > -1) {
                     final TextImportTask task = queue.get(seq);
                     task.setIndex(colIdx);
-                    task.ofBuildPartitionIndexStage(chunkLo, chunkHi, lineNumber, colIdx, configuration, inputFileName, importRoot, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader, bufferLength);
+                    task.ofBuildPartitionIndexStage(chunkLo, chunkHi, lineNumber, colIdx, configuration, inputFileName, importRoot, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader, bufferLength, atomicity);
                     if (forceHeader) {
                         forceHeader = false;
                     }
@@ -734,9 +780,10 @@ public class FileIndexer implements Closeable, Mutable {
         LOG.info().$("Finished indexing file=").$(inputFilePath).$();
     }
 
-    private void buildColumnIndexes(int tmpTableCount, TableWriter writer) throws TextException {
+    private void buildColumnIndexes(TableWriter writer) throws TextException {
         final RecordMetadata metadata = writer.getMetadata();
         final int columnCount = metadata.getColumnCount();
+        final int tmpTableCount = getTmpTablesCount();
 
         boolean isAnyIndexed = false;
         for (int i = 0; i < columnCount; i++) {
@@ -1104,6 +1151,21 @@ public class FileIndexer implements Closeable, Mutable {
         @Override
         public int getIndexBlockCapacity(int columnIndex) {
             return configuration.getIndexValueBlockSize();
+        }
+
+        public int getSymbolColumnIndex(CharSequence symbolColumnName) {
+            int index = -1;
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                if (getColumnType(i) == ColumnType.SYMBOL) {
+                    index++;
+                }
+
+                if (symbolColumnName.equals(columnNames.get(i))) {
+                    return index;
+                }
+            }
+
+            return -1;
         }
 
         @Override

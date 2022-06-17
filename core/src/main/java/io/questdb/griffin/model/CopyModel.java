@@ -41,12 +41,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private int partitionBy;
     private byte delimiter;
 
-    //limits memory used by parallel import to this number of bytes 
-    private int memoryLimit;
-
-    //limits number of rows imported and makes it possible to try out configuration before running full import 
-    private int rowsLimit;
-
     public CopyModel() {
     }
 
@@ -60,9 +54,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         timestampColumnName = null;
         partitionBy = -1;
         delimiter = -1;
-
-        memoryLimit = -1;
-        rowsLimit = -1;
     }
 
     public byte getDelimiter() {
@@ -73,16 +64,8 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return fileName;
     }
 
-    public int getMemoryLimit() {
-        return memoryLimit;
-    }
-
     public int getPartitionBy() {
         return partitionBy;
-    }
-
-    public int getRowsLimit() {
-        return rowsLimit;
     }
 
     public CharSequence getTimestampColumnName() {
@@ -110,16 +93,8 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return tableName;
     }
 
-    public void setMemoryLimit(int memoryLimit) {
-        this.memoryLimit = memoryLimit;
-    }
-
     public void setPartitionBy(int partitionBy) {
         this.partitionBy = partitionBy;
-    }
-
-    public void setRowsLimit(int rowsLimit) {
-        this.rowsLimit = rowsLimit;
     }
 
     public void setTableName(ExpressionNode tableName) {
@@ -148,7 +123,6 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     @Override
     public void toSink(CharSink sink) {
-
     }
 
     public boolean isParalell() {

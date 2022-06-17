@@ -36,7 +36,7 @@ import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.text.FileSplitter;
+import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.log.Log;
@@ -784,7 +784,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inputRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
             this.inputWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.inputRoot);
             this.maxImportIndexChunkSize = getLong(properties, env, PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
-            this.maxImportIndexChunkSize -= (maxImportIndexChunkSize % FileSplitter.INDEX_ENTRY_SIZE);
+            this.maxImportIndexChunkSize -= (maxImportIndexChunkSize % CsvFileIndexer.INDEX_ENTRY_SIZE);
             this.parallelImportQueueCapacity = getInt(properties, env, PropertyKey.CAIRO_IMPORT_QUEUE_CAPACITY, 32);
 
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);

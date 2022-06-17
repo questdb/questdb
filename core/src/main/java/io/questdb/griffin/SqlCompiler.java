@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.FileIndexer;
+import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
@@ -1920,9 +1920,9 @@ public class SqlCompiler implements Closeable {
                         model.setDelimiter((byte) ',');
                     }
 
-                    try (FileIndexer indexer = new FileIndexer(executionContext)) {
-                        indexer.of(model.getTableName().token, name, model.getPartitionBy(), model.getDelimiter(), model.getTimestampColumnName(), model.getTimestampFormat(), model.isHeader());
-                        indexer.process();
+                    try (ParallelCsvFileImporter loader = new ParallelCsvFileImporter(executionContext)) {
+                        loader.of(model.getTableName().token, name, model.getPartitionBy(), model.getDelimiter(), model.getTimestampColumnName(), model.getTimestampFormat(), model.isHeader());
+                        loader.process();
                     }
 
                     return;

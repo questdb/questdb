@@ -245,6 +245,9 @@ public final class Os {
         public static final int EFAUT = 14;
         public static final int EBUSY = 16;
         public static final int EEXIST = 17;
+        /**
+         * Error returned for rename() when old and new paths are not on the same mounted filesystem.
+         */
         public static final int EXDEV = 18;
         public static final int ENODEV = 19;
         public static final int ENOTDIR = 20;
@@ -444,6 +447,7 @@ public final class Os {
         public static final int ETXTBSY = 139;
         public static final int EWOULDBLOCK = 140;
         public static final int EAGAIN = 11;
+        public static final int ERROR_NOT_SAME_DEVICE = 17;
         public static final int EINPROGRESS = 112;
         public static final int EALREADY = 103;
         public static final int ENOTSOCK = 128;

@@ -46,23 +46,20 @@ import java.io.Closeable;
 
 
 /**
- * Class is responsible for pre-processing of large unordered import files meant to go into partitioned tables.
- * It :
- * - scans whole file sequentially and extract timestamps and line offsets to per-partition index files
- * Index files are stored as $inputWorkDir/$inputFileName/$partitionName.idx .
- * - starts W workers and using them
- * - sorts chunks by timestamp
- * - loads partitions in parallel into separate tables using index files
- * - deattaches partitions from temp tables and attaches them to final table
- * <p>
+ * Class is responsible for scanning whole/chunk of input csv file and building per-partition index files .
+ * Example path : workDir/targetTable/2022-06/0_1
+ * These indexes are chunked to limit memory usage and are later merged into index.m .
+ * It's a simplified version of text lexer that only:
+ * - parses
+ * - (if needed) buffers using a small buffer
+ * the timestamp field .
  */
-public class FileSplitter implements Closeable, Mutable {
+public class CsvFileIndexer implements Closeable, Mutable {
     public static final CharSequence INDEX_FILE_NAME = "index.m";
-    public static final CharSequence INDEX_CHUNKS_DIR_NAME = "chunks";
 
     public static final long INDEX_ENTRY_SIZE = 2 * Long.BYTES;
 
-    private static final Log LOG = LogFactory.getLog(FileSplitter.class);
+    private static final Log LOG = LogFactory.getLog(CsvFileIndexer.class);
 
     //used for timestamp parsing 
     private final TypeManager typeManager;
@@ -142,7 +139,9 @@ public class FileSplitter implements Closeable, Mutable {
     private long fieldHi;
     private int index;
 
-    public FileSplitter(CairoConfiguration configuration) {
+    private boolean failOnTsError;
+
+    public CsvFileIndexer(CairoConfiguration configuration) {
         final TextConfiguration textConfiguration = configuration.getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
@@ -160,13 +159,14 @@ public class FileSplitter implements Closeable, Mutable {
         this.fieldRollBufCur = fieldRollBufPtr;
 
         this.timestampField = new DirectByteCharSequence();
+        this.failOnTsError = false;
     }
 
     public int getMaxLineLength() {
         return maxLineLength;
     }
 
-    public void of(CharSequence inputFileName, CharSequence importRoot, int index, int partitionBy, byte columnDelimiter, int timestampIndex, TimestampAdapter adapter, boolean ignoreHeader) {
+    public void of(CharSequence inputFileName, CharSequence importRoot, int index, int partitionBy, byte columnDelimiter, int timestampIndex, TimestampAdapter adapter, boolean ignoreHeader, int atomicity) {
         this.inputFileName = inputFileName;
         this.importRoot = importRoot;
         this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
@@ -177,16 +177,21 @@ public class FileSplitter implements Closeable, Mutable {
         this.timestampAdapter = adapter;
         this.header = ignoreHeader;
         this.index = index;
+        this.failOnTsError = (atomicity == Atomicity.SKIP_ALL);
     }
 
-    public void onTimestampField() {
+    public void onTimestampField() throws TextException {
         long timestamp;
         try {
             timestamp = timestampAdapter.getTimestamp(timestampField);
         } catch (Exception e) {
-            LOG.error().$("can't parse timestamp on line ").$(lineCount).$(" column ").$(timestampIndex).$();
-            errorCount++;
-            return;
+            if (failOnTsError) {
+                throw TextException.$("Can't parse timestamp on line ").put(lineCount).put(" column ").put(timestampIndex);
+            } else {
+                LOG.error().$("Can't parse timestamp on line ").$(lineCount).$(" column ").$(timestampIndex).$();
+                errorCount++;
+                return;
+            }
         }
 
         long lineStartOffset = lastLineStart;
@@ -326,6 +331,8 @@ public class FileSplitter implements Closeable, Mutable {
 
             fd = -1;
         }
+
+        this.failOnTsError = false;
     }
 
     private void closeOutputFiles() {
@@ -557,7 +564,7 @@ public class FileSplitter implements Closeable, Mutable {
         this.lastLineStart = this.offset + (this.fieldLo - lo);
     }
 
-    public void index(long chunkLo, long chunkHi, long lineNumber,  LongList partitionKeys) {
+    public void index(long chunkLo, long chunkHi, long lineNumber, LongList partitionKeys) {
         assert chunkHi > 0;
         assert chunkLo >= 0 && chunkLo < chunkHi;
 
