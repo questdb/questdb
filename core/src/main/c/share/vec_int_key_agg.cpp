@@ -127,13 +127,6 @@ struct long256_t {
     }
 };
 
-//__SIZEOF_INT128__ is defined by Clang and GCC when __int128 is supported
-//#if defined(__SIZEOF_INT128__)
-//typedef __int128 accumulator_t;
-//#else
-//typedef jlong accumulator_t;
-//#endif
-
 typedef long128_t accumulator_t;
 
 typedef int32_t (*to_int_fn)(jlong, int);
@@ -683,7 +676,7 @@ static void kIntAvgLongWrapUp(jlong pRosti, jint valueOffset, jdouble valueAtNul
             auto pValue = src + value_offset;
             auto sum = *reinterpret_cast<T *>(pValue);
             auto res = static_cast<jdouble>(sum) / count;
-            *reinterpret_cast<jdouble *>(pValue) = res;//todo: segfault??
+            *reinterpret_cast<jdouble *>(pValue) = res;
         }
     }
 }
