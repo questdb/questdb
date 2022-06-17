@@ -33,10 +33,7 @@ import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.LowerCaseCharSequenceObjHashMap;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -375,9 +372,12 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
             engine.setPoolListener(listener);
 
+            final ObjList<Socket> sockets = new ObjList<>(numOfThreads);
             try {
                 for (int i = 0; i < numOfThreads; i++) {
-                    startThread(i, threadPushFinished);
+                    final Socket socket = newSocket();
+                    sockets.add(socket);
+                    startThread(i, socket, threadPushFinished);
                 }
                 threadPushFinished.await();
                 waitDone();
@@ -388,6 +388,10 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                     assertTable(table);
                 }
             } finally {
+                for (int i = 0; i < numOfThreads; i++) {
+                    final Socket socket = sockets.get(i);
+                    socket.close();
+                }
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
                 });
             }
@@ -398,9 +402,9 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         }
     }
 
-    protected void startThread(int threadId, SOCountDownLatch threadPushFinished) {
+    protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished) {
         new Thread(() -> {
-            try (Socket socket = getSocket()) {
+            try {
                 for (int n = 0; n < numOfIterations; n++) {
                     for (int j = 0; j < numOfLines; j++) {
                         final LineData line = generateLine();

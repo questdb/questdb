@@ -54,7 +54,9 @@ class LineTcpNetworkIOJob implements NetworkIOJob, Job {
     LineTcpNetworkIOJob(
             LineTcpReceiverConfiguration configuration,
             LineTcpMeasurementScheduler scheduler,
-            IODispatcher<LineTcpConnectionContext> dispatcher, int workerId) {
+            IODispatcher<LineTcpConnectionContext> dispatcher,
+            int workerId
+    ) {
         this.millisecondClock = configuration.getMillisecondClock();
         this.maintenanceInterval = configuration.getMaintenanceInterval();
         this.scheduler = scheduler;

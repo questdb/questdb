@@ -328,7 +328,7 @@ class LineTcpMeasurementScheduler implements Closeable {
         return null != pubSeq;
     }
 
-    boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser, FloatingDirectCharSink floatingDirectCharSink) {
+    boolean scheduleEvent(NetworkIOJob netIoJob, LineTcpParser parser) {
         TableUpdateDetails tab;
         try {
             tab = netIoJob.getLocalTableDetails(parser.getMeasurementName());
