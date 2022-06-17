@@ -51,7 +51,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         int tinyCapacity = 42;
         runInContext(r -> {
-            try (LineTcpSender sender = new LineTcpSender(HOST, bindPort, tinyCapacity)) {
+            try (LineTcpSender sender = LineTcpSender.newSender(HOST, bindPort, tinyCapacity)) {
                 sender.authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1);
                 fail();
             } catch (LineSenderException e) {
@@ -66,7 +66,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             int bufferCapacity = 256 * 1024;
 
-            try (LineTcpSender sender = new LineTcpSender(HOST, bindPort, bufferCapacity)) {
+            try (LineTcpSender sender = LineTcpSender.newSender(HOST, bindPort, bufferCapacity)) {
                 sender.authenticate(authKeyId, AUTH_PRIVATE_KEY1);
                 sender.metric("mytable").field("my int field", 42).$();
                 sender.flush();
@@ -82,7 +82,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             int bufferCapacity = 2048;
 
-            try (LineTcpSender sender = new LineTcpSender(HOST, bindPort, bufferCapacity)) {
+            try (LineTcpSender sender = LineTcpSender.newSender(HOST, bindPort, bufferCapacity)) {
                 sender.authenticate(AUTH_KEY_ID2_INVALID, AUTH_PRIVATE_KEY1);
                 //30 seconds should be enough even on a slow CI server
                 long deadline = Os.currentTimeNanos() + SECONDS.toNanos(30);

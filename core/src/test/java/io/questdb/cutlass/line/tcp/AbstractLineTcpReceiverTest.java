@@ -49,11 +49,21 @@ import org.junit.Assert;
 import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.PrivateKey;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.assertEquals;
 
 public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
+    public static final String AUTH_KEY_ID1 = "testUser1";
+    public static final String AUTH_TOKEN_KEY1 = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
+    public static final PrivateKey AUTH_PRIVATE_KEY1 = AuthDb.importPrivateKey(AUTH_TOKEN_KEY1);
+    public static final String AUTH_KEY_ID2 = "testUser2";
+    public static final String AUTH_TOKEN_KEY2 = "AIZc78-On-91DLplVNtyLOmKddY0AL9mnT5onl19Vv_g";
+    public static final PrivateKey AUTH_PRIVATE_KEY2 = AuthDb.importPrivateKey(AUTH_TOKEN_KEY2);
+    public static final String TRUSTSTORE_PATH = "/keystore/server.keystore";
+    public static final char[] TRUSTSTORE_PASSWORD = "questdb".toCharArray();
+
     protected static final int WAIT_NO_WAIT = 0x0;
     protected static final int WAIT_ENGINE_TABLE_RELEASE = 0x1;
     protected static final int WAIT_ILP_TABLE_RELEASE = 0x2;

@@ -28,6 +28,9 @@ import io.questdb.cutlass.line.tcp.AuthDb;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 
 import javax.security.auth.DestroyFailedException;
 import java.io.Closeable;
@@ -194,7 +197,7 @@ public interface Sender extends Closeable {
         /**
          * Set address of an QuestDB server. InetAddress my represent IPv4 address.
          * After using this method you have to explicitly set a port by calling {@link LineSenderBuilder#port(int)}
-         * Alternatively, you can use {@link LineSenderBuilder#address(String)} to set both address and port in one call.
+         * Alternatively, you can use {@link LineSenderBuilder#address(CharSequence)} to set both address and port in one call.
          *
          * @param host host address to set
          * @return this instance for method chaining
@@ -228,29 +231,34 @@ public interface Sender extends Closeable {
          * @param address address of a QuestDB server
          * @return this instance for method chaining.
          */
-        public LineSenderBuilder address(String address) {
+        public LineSenderBuilder address(CharSequence address) {
             if (host != 0) {
                 throw new LineSenderException("host address is already configured");
             }
-            if (address.isEmpty()) {
+            if (address.length() == 0) {
                 throw new LineSenderException("address cannot be empty");
             }
-            int portIndex = address.indexOf(':');
+            int portIndex = Chars.indexOf(address, ':');
             if (portIndex + 1 == address.length()) {
                 throw new LineSenderException("cannot parse address " + address + ". address cannot ends with :");
             }
-            String hostname;
+            CharSequence hostname;
             if (portIndex != -1) {
                 if (port != 0) {
                     throw new LineSenderException("address " + address + " contains a port, but a port was already configured to " + port);
                 }
-                hostname = address.substring(0, portIndex);
-                port = Integer.parseInt(address.substring(portIndex + 1));
+                hostname = address.subSequence(0, portIndex);
+                try {
+                    port = Numbers.parseInt(address.subSequence(portIndex + 1, address.length()));
+                } catch (NumericException e) {
+                    throw new LineSenderException("cannot parse port", e);
+                }
             } else {
                 hostname = address;
             }
             try {
-                InetAddress inet4Address = Inet4Address.getByName(hostname);
+                // todo: implement a DNS resolution which does not require InetAddress instantiation
+                InetAddress inet4Address = Inet4Address.getByName(hostname.toString());
                 return host(inet4Address);
             } catch (UnknownHostException ex) {
                 throw new LineSenderException("bad address " + address, ex);

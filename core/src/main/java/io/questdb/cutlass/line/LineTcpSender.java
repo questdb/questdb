@@ -27,10 +27,40 @@ package io.questdb.cutlass.line;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacadeImpl;
 
+/**
+ * LineTcpSender is for testing purposes only. If you are looking for an ILP client use {@link Sender} instead.
+ *
+ */
 public class LineTcpSender extends AbstractLineSender {
 
+    /**
+     * @deprecated use {@link #newSender(int, int, int)} instead.
+     *
+     * @param sendToIPv4Address
+     * @param sendToPort
+     * @param bufferCapacity
+     */
     public LineTcpSender(int sendToIPv4Address, int sendToPort, int bufferCapacity) {
         super(new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, sendToIPv4Address, sendToPort, bufferCapacity * 2), bufferCapacity);
+    }
+
+    /**
+     * Create a new LineTcpSender. This is meant to be used for testing only, it's not something most users want to use.
+     * See {@link Sender} instead
+     *
+     * @param sendToIPv4Address
+     * @param sendToPort
+     * @param bufferCapacity
+     * @return LineTcpSender instance
+     */
+    public static LineTcpSender newSender(int sendToIPv4Address, int sendToPort, int bufferCapacity) {
+        PlainTcpLineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, sendToIPv4Address, sendToPort, bufferCapacity * 2);
+        try {
+            return new LineTcpSender(channel, bufferCapacity);
+        } catch (Throwable t) {
+            channel.close();
+            throw t;
+        }
     }
 
     public LineTcpSender(LineChannel channel, int bufferCapacity) {
