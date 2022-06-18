@@ -26,5 +26,5 @@ package io.questdb.griffin.engine.groupby.vect;
 
 @FunctionalInterface
 interface KeyValueFunc {
-    void run(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
+    boolean run(long pRosti, long pKeys, long pDouble, long count, int valueOffset);
 }

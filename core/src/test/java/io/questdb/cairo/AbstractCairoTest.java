@@ -37,6 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
+import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -91,6 +92,7 @@ public class AbstractCairoTest {
     protected static int pageFrameReduceShardCount = -1;
     protected static int pageFrameReduceQueueCapacity = -1;
     protected static int columnVersionTaskPoolCapacity = -1;
+    protected static RostiAllocFacade rostiAllocFacade = null;
 
     @Rule
     public TestName testName = new TestName();
@@ -310,6 +312,11 @@ public class AbstractCairoTest {
             public int getColumnPurgeTaskPoolCapacity() {
                 return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnPurgeTaskPoolCapacity();
             }
+
+            @Override
+            public RostiAllocFacade getRostiAllocFacade() {
+                return rostiAllocFacade != null? rostiAllocFacade : super.getRostiAllocFacade();
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -364,6 +371,7 @@ public class AbstractCairoTest {
         columnPurgeRetryDelayMultiplier = -1;
         columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
+        rostiAllocFacade = null;
     }
 
     protected static void configureForBackups() throws IOException {
