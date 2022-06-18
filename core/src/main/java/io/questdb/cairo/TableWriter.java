@@ -586,10 +586,10 @@ public class TableWriter implements Closeable {
             }
             dropIndexOperator.executeDropIndex(tableName, columnName, columnIndex); // upserts column version in partitions
 
-            // swap meta
+            // swap meta commit
             final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
             metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, META_FLAG_BIT_NOT_INDEXED, defaultIndexValueBlockSize);
-            swapMetaFile(columnName);
+            swapMetaFile(columnName); // bumps structure version
             TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
             columnMetadata.setIndexed(true);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
@@ -602,6 +602,7 @@ public class TableWriter implements Closeable {
                 populateDenseIndexerList();
             }
 
+            // remove old column versions and index files
             dropIndexOperator.purgeOldColumnIndexVersions();
             LOG.info().$("END DROP INDEX [txn=")
                     .$(txWriter.getTxn())
@@ -612,13 +613,14 @@ public class TableWriter implements Closeable {
                     .I$();
         } catch (Throwable e) {
             throw CairoException.instance(0)
-                    .put("Cannot drop index for [txn='")
+                    .put("Cannot DROP INDEX for [txn='")
                     .put(txWriter.getTxn())
                     .put(", table=")
                     .put(tableName)
                     .put(", column=")
                     .put(columnName)
-                    .put(']');
+                    .put("]: ")
+                    .put(e.getMessage());
         }
     }
 

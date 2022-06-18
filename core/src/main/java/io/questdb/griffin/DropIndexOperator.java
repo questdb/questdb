@@ -102,7 +102,7 @@ public class DropIndexOperator implements Closeable {
                             columnVersion
                     );
                     if (!ff.exists(srcDFile)) {
-                        throw CairoException.instance(0)
+                        throw CairoException.instance(ff.errno())
                                 .put("Impossible! this file should exist: ")
                                 .put(path.toString());
                     }
@@ -124,8 +124,23 @@ public class DropIndexOperator implements Closeable {
                             columnName,
                             columnDropIndexTxn
                     );
-                    if (ff.hardLink(srcDFile, hardLinkDFile) < 0) {
-                        throw CairoException.instance(0)
+                    final int errno = ff.hardLink(srcDFile, hardLinkDFile);
+                    LOG.info()
+                            .$("hard link call during DROP INDEX execution [txn=")
+                            .$(tableWriter.getTxn())
+                            .$(", table=")
+                            .$(tableName)
+                            .$(", column=")
+                            .$(columnName)
+                            .$(", errno=")
+                            .$(errno)
+                            .$(", srcFile=")
+                            .$(srcDFile)
+                            .$(", hardLinkFile=")
+                            .$(hardLinkDFile)
+                            .I$();
+                    if (errno < 0) {
+                        throw CairoException.instance(ff.errno())
                                 .put("Cannot hard link ")
                                 .put(srcDFile)
                                 .put(" as ")
@@ -184,10 +199,20 @@ public class DropIndexOperator implements Closeable {
                     columnName,
                     columnNameTxn
             );
+
             boolean columnIndexPurged = ff.remove(keysFile) &&
                     !ff.exists(keysFile) &&
                     ff.remove(valuesFile) &&
                     !ff.exists(valuesFile);
+
+            LOG.info()
+                    .$("attempting to delete  DROP INDEX execution [txn=")
+                    .$(tableWriter.getTxn())
+                    .$(", table=")
+                    .$(tableName)
+                    .$(", column=")
+                    .$(columnName)
+                    .I$();
 
             if (!columnIndexPurged) {
                 // submit async
@@ -195,7 +220,6 @@ public class DropIndexOperator implements Closeable {
                 cleanupColumnIndexVersionsAsync.clear();
                 cleanupColumnIndexVersionsAsync.add(columnNameTxn, partitionTimestamp, partitionNameTxn, 0L);
                 final Sequence pubSeq = messageBus.getColumnPurgePubSeq();
-
                 while (true) {
                     long cursor = pubSeq.next();
                     if (cursor > -1L) {

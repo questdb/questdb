@@ -25,9 +25,12 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Misc;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -35,7 +38,6 @@ import org.junit.Test;
 
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Set;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
@@ -117,6 +119,52 @@ public class DropIndexTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testDropIndex() throws Exception {
+        assertMemoryLeak(configuration.getFilesFacade(), () -> {
+
+            String expected = "sensor_id\tts\n" +
+                    "ALPHA\t1970-01-01T00:00:00.000000Z\n" +
+                    "ALPHA\t1970-01-01T00:00:36.000000Z\n" +
+                    "OMEGA\t1970-01-01T00:01:12.000000Z\n";
+
+            String tableName = "sensors";
+            String columnName = "sensor_id";
+
+            compile(
+                    "create table " + tableName + " as (" +
+                            "    select" +
+                            "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') " + columnName + "," +
+                            "        timestamp_sequence(0, 36000000) ts" +
+                            "    from long_sequence(3)" +
+                            "), index(" + columnName + " capacity 4) timestamp(ts) partition by DAY;",
+                    sqlExecutionContext
+            );
+            assertSql(tableName, expected);
+
+            Path path = new Path().put(configuration.getRoot()).concat(tableName);
+            try {
+                int pathLen = path.length();
+                checkMetadataAndTxn(path, tableName, columnName, 0, 1, 0, true);
+                assertSql(tableName, expected);
+                verifyColumnIsIndexed(tableName, columnName, true, 4);
+
+                executeOperation(
+                        "ALTER TABLE " + tableName + " ALTER COLUMN " + columnName + " DROP INDEX",
+                        CompiledQuery.ALTER,
+                        CompiledQuery::getAlterOperation
+                );
+
+                path.trimTo(pathLen);
+                checkMetadataAndTxn(path, tableName, columnName, 1, 2, 1, false);
+                assertSql(tableName, expected);
+                verifyColumnIsIndexed(tableName, columnName, false, 256);
+            } finally {
+                Misc.free(path);
+            }
+        });
+    }
+
     // TODO fix this test: compiler is not multi threaded
     @Test
     @Ignore
@@ -180,7 +228,8 @@ public class DropIndexTest extends AbstractGriffinTest {
         });
     }
 
-    private static void testVanillaDropIndexOfIndexedColumn(
+
+    private void testVanillaDropIndexOfIndexedColumn(
             String createStatement,
             String tableName,
             String columnName,
@@ -197,36 +246,59 @@ public class DropIndexTest extends AbstractGriffinTest {
         });
     }
 
-    private static void verifyColumnIsIndexed(
+    private void checkMetadataAndTxn(
+            io.questdb.std.str.Path path,
+            String tableName,
+            String columnName,
+            long expectedStructureVersion,
+            long expectedReaderVersion,
+            long expectedColumnVersion,
+            boolean isColumnIndexed
+    ) {
+        try (TxReader txReader = new TxReader(ff)) {
+            txReader.ofRO(path, PartitionBy.DAY);
+            txReader.unsafeLoadAll();
+            Assert.assertEquals(expectedStructureVersion, txReader.getStructureVersion());
+            Assert.assertEquals(expectedReaderVersion, txReader.getTxn());
+            Assert.assertEquals(expectedReaderVersion, txReader.getVersion());
+            Assert.assertEquals(expectedColumnVersion, txReader.getColumnVersion());
+            Assert.assertEquals(3, txReader.getTransientRowCount());
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                Assert.assertEquals(PartitionBy.DAY, metadata.getPartitionBy());
+                Assert.assertEquals(expectedStructureVersion, metadata.getStructureVersion());
+                Assert.assertEquals(2, metadata.getColumnCount());
+                int columnIndex = metadata.getColumnIndex(columnName);
+                Assert.assertEquals(0, columnIndex);
+                Assert.assertEquals(isColumnIndexed, metadata.isColumnIndexed(columnIndex));
+            }
+        }
+    }
+
+    private void verifyColumnIsIndexed(
             String tableName,
             String columnName,
             boolean isIndexed,
             int indexValueBlockSize
     ) throws Exception {
-        try (TableReader tableReader = new TableReader(configuration, tableName)) {
-            try (TableReaderMetadata metadata = tableReader.getMetadata()) {
-                final int colIdx = metadata.getColumnIndex(columnName);
-                final TableColumnMetadata colMetadata = metadata.getColumnQuick(colIdx);
-                Assert.assertEquals(isIndexed, colMetadata.isIndexed());
-                Assert.assertEquals(indexValueBlockSize, colMetadata.getIndexValueBlockCapacity());
-                if (isIndexed) {
-                    final Set<Path> indexFiles = findIndexFiles(configuration, tableName, columnName);
-                    if (PartitionBy.isPartitioned(metadata.getPartitionBy())) {
-                        Assert.assertTrue(indexFiles.size() > 2);
-                    } else {
-                        Assert.assertEquals(2, indexFiles.size());
-                    }
-                }
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            TableReaderMetadata metadata = reader.getMetadata();
+            final int columnIndex = metadata.getColumnIndex(columnName);
+            Assert.assertEquals(isIndexed, metadata.isColumnIndexed(columnIndex));
+            Assert.assertEquals(indexValueBlockSize, metadata.getIndexValueBlockCapacity(columnIndex));
+            if (isIndexed) {
+                final Set<?> indexFiles = findIndexFiles(configuration, tableName, columnName);
+                Assert.assertTrue(indexFiles.size() >= 2);
             }
         }
     }
 
-    private static Set<Path> findIndexFiles(
+    private static Set<java.nio.file.Path> findIndexFiles(
             CairoConfiguration config,
             String tableName,
             String columnName
     ) throws Exception {
-        final Path tablePath = FileSystems.getDefault().getPath((String) config.getRoot(), tableName);
+        final java.nio.file.Path tablePath = FileSystems.getDefault().getPath((String) config.getRoot(), tableName);
         return Files.find(
                 tablePath,
                 Integer.MAX_VALUE,
@@ -234,7 +306,7 @@ public class DropIndexTest extends AbstractGriffinTest {
         ).collect(Collectors.toSet());
     }
 
-    private static boolean isIndexRelatedFile(Path tablePath, String colName, Path filePath) {
+    private static boolean isIndexRelatedFile(java.nio.file.Path tablePath, String colName, java.nio.file.Path filePath) {
         final String fn = filePath.getFileName().toString();
         return (fn.equals(colName + ".k") || fn.equals(colName + ".v")) && !filePath.getParent().equals(tablePath);
     }
