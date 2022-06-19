@@ -17,7 +17,7 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       options:
-        "compile -DskipTests -P build-web-console  -Dhttp.keepAlive=false"
+        "compile -DskipTests -P build-web-console,build-binaries  -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
     condition:
       or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
