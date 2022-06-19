@@ -27,6 +27,7 @@ package io.questdb.network;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StdoutSink;
 
 public final class Net {
@@ -94,9 +95,9 @@ public final class Net {
 
     public static native int configureNonBlocking(long fd);
 
-    public native static long connect(long fd, long sockaddr);
+    public native static int connect(long fd, long sockaddr);
 
-    public native static long connectAddrInfo(long fd, long lpAddrInfo);
+    public native static int connectAddrInfo(long fd, long lpAddrInfo);
 
     public static void dump(long buffer, int len) {
         if (len > 0) {
@@ -108,17 +109,23 @@ public final class Net {
         }
     }
 
-    public static native long freeAddrInfo(long lpAddrInfo);
+    public static native long freeAddrInfo(long pAddrInfo);
 
     public static native void freeMsgHeaders(long msgHeaders);
 
     public native static void freeSockAddr(long sockaddr);
 
-    public static long getAddrInfo(LPSZ lpszName, int port) {
-        return getAddrInfo(lpszName.address(), port);
+    public static long getAddrInfo(LPSZ host, int port) {
+        return getAddrInfo(host.address(), port);
     }
 
-    public static native long getAddrInfo(long lpszName, int port);
+    public static long getAddrInfo(CharSequence host, int port) {
+        try (Path p = new Path().of(host).$()) {
+            return getAddrInfo(p, port);
+        }
+    }
+
+    public static native long getAddrInfo(long lpszHost, int port);
 
     public static long getMMsgBuf(long msgPtr) {
         return Unsafe.getUnsafe().getLong(Unsafe.getUnsafe().getLong(msgPtr + MMSGHDR_BUFFER_ADDRESS_OFFSET));

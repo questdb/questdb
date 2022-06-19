@@ -2837,12 +2837,13 @@ public class IODispatcherTest {
                             "Cookie: _ga=GA1.1.2124932001.1573824669; _hjid=f2db90b2-18cf-4956-8870-fcdcde56f3ca; _hjIncludedInSample=1; _gid=GA1.1.697400188.1591597903\r\n" +
                             "\r\n";
 
-                    long fd = NetworkFacadeImpl.INSTANCE.socketTcp(true);
+                    NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+                    long fd = nf.socketTcp(true);
                     try {
-                        long sockAddr = NetworkFacadeImpl.INSTANCE.sockaddr("127.0.0.1", 9001);
+                        long sockAddr = nf.sockaddr("127.0.0.1", 9001);
                         try {
                             TestUtils.assertConnect(fd, sockAddr);
-                            Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.setTcpNoDelay(fd, true));
+                            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
 
                             final int len = request.length() * 2;
                             long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
@@ -2858,10 +2859,10 @@ public class IODispatcherTest {
 
                                 Os.sleep(1);
 
-                                NetworkFacadeImpl.INSTANCE.configureNonBlocking(fd);
+                                nf.configureNonBlocking(fd);
                                 long t = System.currentTimeMillis();
                                 boolean disconnected = true;
-                                while (NetworkFacadeImpl.INSTANCE.recv(fd, ptr, 1) > -1) {
+                                while (nf.recv(fd, ptr, 1) > -1) {
                                     if (t + 20000 < System.currentTimeMillis()) {
                                         disconnected = false;
                                         break;
@@ -2872,10 +2873,10 @@ public class IODispatcherTest {
                                 Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
                             }
                         } finally {
-                            NetworkFacadeImpl.INSTANCE.freeSockAddr(sockAddr);
+                            nf.freeSockAddr(sockAddr);
                         }
                     } finally {
-                        NetworkFacadeImpl.INSTANCE.close(fd);
+                        nf.close(fd);
                     }
                 } finally {
                     workerPool.halt();

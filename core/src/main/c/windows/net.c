@@ -193,19 +193,19 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_network_Net_bindUdp
     return FALSE;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_connect
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connect
         (JNIEnv *e, jclass cl, jlong fd, jlong sockAddr) {
-    jlong res = connect((SOCKET) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
+    jint res = connect((SOCKET) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
     if (res < 0) {
         SaveLastError();
     }
     return res;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_connectAddrInfo
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connectAddrInfo
         (JNIEnv *e, jclass cl, jlong fd, jlong lpAddrInfo) {
     struct addrinfo *addr = (struct addrinfo *) lpAddrInfo;
-    jlong res = connect((SOCKET) fd,
+    jint res = connect((SOCKET) fd,
                         addr->ai_addr,
                         (int) addr->ai_addrlen
     );

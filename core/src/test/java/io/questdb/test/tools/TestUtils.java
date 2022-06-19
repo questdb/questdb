@@ -85,8 +85,8 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnect(NetworkFacade nf, long fd, long ilpSockAddr) {
-        long rc = nf.connect(fd, ilpSockAddr);
+    public static void assertConnect(NetworkFacade nf, long fd, long pSockAddr) {
+        long rc = nf.connect(fd, pSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());
         }

@@ -210,7 +210,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureLinger
     return setsockopt((int) fd, SOL_SOCKET, SO_LINGER, &sl, sizeof(sl));
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_connect
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connect
         (JNIEnv *e, jclass cl, jlong fd, jlong sockAddr) {
     return connect((int) fd, (const struct sockaddr *) sockAddr, sizeof(struct sockaddr));
 }
@@ -324,7 +324,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getPeerPort
     return -1;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_connectAddrInfo
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connectAddrInfo
         (JNIEnv *e, jclass cl, jlong fd, jlong lpAddrInfo) {
     struct addrinfo *addr = (struct addrinfo *) lpAddrInfo;
     return connect((int) fd, addr->ai_addr, (int) addr->ai_addrlen);

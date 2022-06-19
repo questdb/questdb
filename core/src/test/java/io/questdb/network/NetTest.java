@@ -29,7 +29,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSequenceZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -76,18 +75,16 @@ public class NetTest {
 
     @Test
     public void testGetAddrInfoConnect() {
-        try (Path p = new Path()) {
-            p.of("questdb.io").$();
-            final long lpAddrInfo = Net.getAddrInfo(p, 443);
+        NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final long lpAddrInfo = nf.getAddrInfo("questdb.io", 443);
             Assert.assertNotEquals(-1, lpAddrInfo);
-            long fd = Net.socketTcp(true);
+            long fd = nf.socketTcp(true);
             try {
-                Assert.assertEquals(0, Net.connectAddrInfo(fd, lpAddrInfo));
+                Assert.assertEquals(0, nf.connectAddrInfo(fd, lpAddrInfo));
             } finally {
-                Net.close(fd);
-                Net.freeAddrInfo(lpAddrInfo);
+                nf.close(fd);
+                nf.freeAddrInfo(lpAddrInfo);
             }
-        }
     }
 
     @Test
