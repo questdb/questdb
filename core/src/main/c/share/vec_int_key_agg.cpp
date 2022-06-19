@@ -65,7 +65,7 @@ constexpr long128_t operator+(long128_t lhs, long128_t rhs) {
     return signed_add_carry(long128_t(lhs.hi + rhs.hi, lhs.lo + rhs.lo), lhs);
 }
 
-inline constexpr double cast_positive(long128_t v) {
+inline double cast_positive(long128_t v) {
     return  static_cast<double>(v.lo) + ldexp(static_cast<double>(v.hi), 64);
 }
 
