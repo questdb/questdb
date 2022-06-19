@@ -36,50 +36,52 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class IDGeneratorTest extends AbstractCairoTest {
 
     @Test
-    public void testNextTableId() {
-        try (
-                CairoEngine engineA = new CairoEngine(configuration);
-                CairoEngine engineB = new CairoEngine(configuration)
-        ) {
+    public void testNextTableId() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    CairoEngine engineA = new CairoEngine(configuration);
+                    CairoEngine engineB = new CairoEngine(configuration)
+            ) {
 
-            final LongList listA = new LongList();
-            final LongList listB = new LongList();
-            final CyclicBarrier startBarrier = new CyclicBarrier(2);
-            final AtomicInteger errors = new AtomicInteger();
+                final LongList listA = new LongList();
+                final LongList listB = new LongList();
+                final CyclicBarrier startBarrier = new CyclicBarrier(2);
+                final AtomicInteger errors = new AtomicInteger();
 
-            final Thread threadB = new Thread(() -> {
+                final Thread threadB = new Thread(() -> {
+                    try {
+                        startBarrier.await();
+                        for (int i = 0; i < 1000; i++) {
+                            listA.add(engineA.getTableIdGenerator().getNextId());
+                        }
+                    } catch (InterruptedException | BrokenBarrierException e) {
+                        e.printStackTrace();
+                        errors.incrementAndGet();
+                    }
+                });
+                threadB.start();
+
                 try {
                     startBarrier.await();
                     for (int i = 0; i < 1000; i++) {
-                        listA.add(engineA.getTableIdGenerator().getNextId());
+                        listB.add(engineB.getTableIdGenerator().getNextId());
                     }
+                    threadB.join();
                 } catch (InterruptedException | BrokenBarrierException e) {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 }
-            });
-            threadB.start();
 
-            try {
-                startBarrier.await();
-                for (int i = 0; i < 1000; i++) {
-                    listB.add(engineB.getTableIdGenerator().getNextId());
-                }
-                threadB.join();
-            } catch (InterruptedException | BrokenBarrierException e) {
-                e.printStackTrace();
-                errors.incrementAndGet();
-            }
-
-            try (LongTreeSet set = new LongTreeSet(4 * 2048, Integer.MAX_VALUE)) {
-                // add both arrays to the set and asset that there are no duplicates
-                for (int i = 0, n = listA.size(); i < n; i++) {
-                    Assert.assertTrue(set.put(listA.getQuick(i)));
-                }
-                for (int i = 0, n = listB.size(); i < n; i++) {
-                    Assert.assertTrue(set.put(listB.getQuick(i)));
+                try (LongTreeSet set = new LongTreeSet(4 * 2048, Integer.MAX_VALUE)) {
+                    // add both arrays to the set and asset that there are no duplicates
+                    for (int i = 0, n = listA.size(); i < n; i++) {
+                        Assert.assertTrue(set.put(listA.getQuick(i)));
+                    }
+                    for (int i = 0, n = listB.size(); i < n; i++) {
+                        Assert.assertTrue(set.put(listB.getQuick(i)));
+                    }
                 }
             }
-        }
+        });
     }
 }
