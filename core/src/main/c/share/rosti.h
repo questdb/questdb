@@ -391,7 +391,7 @@ ATTRIBUTE_NEVER_INLINE uint64_t prepare_insert(rosti_t *map, uint64_t hash, HASH
     auto target = find_first_non_full(map, hash);
     if (PREDICT_FALSE(map->growth_left_ == 0 && !IsDeleted(map->ctrl_[target.offset]))) {
         if (!resize(map, map->capacity_ * 2 + 1, hash_f, cpy_f)) {
-            return -1;
+            return UL_MAX;
         }
         target = find_first_non_full(map, hash);
     }
