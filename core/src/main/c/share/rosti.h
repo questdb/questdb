@@ -218,7 +218,7 @@ using Group = GroupSse2Impl;
 
 rosti_t *alloc_rosti(const int32_t *column_types, int32_t column_count, uint64_t map_capacity);
 
-static void initialize_slots(rosti_t *map);
+static bool initialize_slots(rosti_t **map);
 
 // We use 7/8th as maximum load factor.
 // For 16-wide groups, that gives an average of two empty slots per group.
@@ -284,22 +284,27 @@ inline probe_seq<sizeof(Group)> probe(const rosti_t *map, uint64_t hash) {
 
 // Reset all ctrl bytes back to kEmpty, except the sentinel.
 inline void reset_ctrl(rosti_t *map) {
-    uint64_t l = (map->capacity_ + 1) * sizeof(Group);
-    memset(map->ctrl_, kEmpty, l);
+    const uint64_t ctrl_capacity = 2 * sizeof(Group) * (map->capacity_ + 1);
+    memset(map->ctrl_, kEmpty, ctrl_capacity);
     map->ctrl_[map->capacity_] = kSentinel;
 }
 
-void initialize_slots(rosti_t *map) {
+bool initialize_slots(rosti_t **ppMap) {
+    rosti_t *map = *ppMap;
     const uint64_t ctrl_capacity = 2 * sizeof(Group) * (map->capacity_ + 1);
     auto *mem = reinterpret_cast<unsigned char *>(malloc(
             map->slot_size_ +
             ctrl_capacity +
             map->slot_size_ * (map->capacity_ + 1)));
-    map->ctrl_ = reinterpret_cast<ctrl_t *>(mem) + map->slot_size_;
-    map->slots_ = mem + ctrl_capacity;
+    if (mem == nullptr) {
+        return false;
+    }
+    map->ctrl_ = reinterpret_cast<ctrl_t *>(mem + map->slot_size_);
+    map->slots_ = mem + map->slot_size_ + ctrl_capacity;
     map->slot_initial_values_ = mem;
     reset_ctrl(map);
     reset_growth_left(map);
+    return true;
 }
 
 inline void clear(rosti_t *map) {
@@ -351,37 +356,43 @@ inline FindInfo find_first_non_full(rosti_t *map, uint64_t hash) {
 }
 
 template<typename HASH_M, typename CPY>
-void resize(rosti_t *map, uint64_t new_capacity, HASH_M hash_m, CPY cpy) {
+bool resize(rosti_t *map, uint64_t new_capacity, HASH_M hash_m, CPY cpy) {
     auto *old_init = map->slot_initial_values_;
     auto *old_ctrl = map->ctrl_;
     auto *old_slots = map->slots_;
     const uint64_t old_capacity = map->capacity_;
     map->capacity_ = new_capacity;
-    initialize_slots(map);
+    if (initialize_slots(&map)) {
 
-    uint64_t total_probe_length = 0;
-    for (uint64_t i = 0; i != old_capacity; ++i) {
-        if (IsFull(old_ctrl[i])) {
-            auto p = old_slots + (i << map->slot_size_shift_);
-            const uint64_t hash = hash_m(p);
-            auto target = find_first_non_full(map, hash);
-            uint64_t new_i = target.offset;
-            total_probe_length += target.probe_length;
-            set_ctrl(map, new_i, H2(hash));
-            cpy(map->slots_ + (new_i << map->slot_size_shift_), p, map->slot_size_);
-//            *(reinterpret_cast<int32_t *>(map->slots_ + (new_i << map->slot_size_shift_))) = *p;
+        uint64_t total_probe_length = 0;
+        for (uint64_t i = 0; i != old_capacity; ++i) {
+            if (IsFull(old_ctrl[i])) {
+                auto p = old_slots + (i << map->slot_size_shift_);
+                const uint64_t hash = hash_m(p);
+                auto target = find_first_non_full(map, hash);
+                uint64_t new_i = target.offset;
+                total_probe_length += target.probe_length;
+                set_ctrl(map, new_i, H2(hash));
+                cpy(map->slots_ + (new_i << map->slot_size_shift_), p, map->slot_size_);
+            }
         }
+        if (old_init) {
+            free(old_init);
+        }
+
+        return true;
     }
-    if (old_capacity) {
-        free(old_init);
-    }
+
+    return false;
 }
 
 template<typename HASH_M_T, typename CPY_T>
 ATTRIBUTE_NEVER_INLINE uint64_t prepare_insert(rosti_t *map, uint64_t hash, HASH_M_T hash_f, CPY_T cpy_f) {
     auto target = find_first_non_full(map, hash);
     if (PREDICT_FALSE(map->growth_left_ == 0 && !IsDeleted(map->ctrl_[target.offset]))) {
-        resize(map, map->capacity_ * 2 + 1, hash_f, cpy_f);
+        if (!resize(map, map->capacity_ * 2 + 1, hash_f, cpy_f)) {
+            return -1;
+        }
         target = find_first_non_full(map, hash);
     }
     ++map->size_;

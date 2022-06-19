@@ -22,30 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby.vect;
+package io.questdb.std;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.sql.Function;
-import io.questdb.std.Mutable;
+import io.questdb.cairo.ColumnTypes;
 
-public interface VectorAggregateFunction extends Function, Mutable {
+public interface RostiAllocFacade {
 
-    void aggregate(long address, long addressSize, int columnSizeHint, int workerId);
+    long alloc(ColumnTypes types, long capacity);
 
-    boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId);
-
-    int getColumnIndex();
-
-    // value offset in map
-    int getValueOffset();
-
-    void initRosti(long pRosti);
-
-    void merge(long pRostiA, long pRostiB);
-
-    void pushValueTypes(ArrayColumnTypes types);
-
-    // sets null as result of aggregation of all nulls
-    // this typically checks non-null count and replaces 0 with null if all values were null
-    void wrapUp(long pRosti);
+    void free(long pRosti);
 }

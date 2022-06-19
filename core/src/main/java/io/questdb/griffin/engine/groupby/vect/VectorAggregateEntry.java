@@ -27,6 +27,9 @@ package io.questdb.griffin.engine.groupby.vect;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.AbstractLockable;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class VectorAggregateEntry extends AbstractLockable implements Mutable {
     private long[] pRosti;
@@ -36,6 +39,7 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
     private int columnSizeShr;
     private VectorAggregateFunction func;
     private CountDownLatchSPI doneLatch;
+    private AtomicInteger oomCounter;
 
     @Override
     public void clear() {
@@ -47,7 +51,9 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
     public boolean run(int workerId) {
         if (tryLock()) {
             if (pRosti != null) {
-                func.aggregate(pRosti[workerId], keyAddress, valueAddress, valueCount, columnSizeShr, workerId);
+                if (!func.aggregate(pRosti[workerId], keyAddress, valueAddress, valueCount, columnSizeShr, workerId)) {
+                    oomCounter.incrementAndGet();
+                }
             } else {
                 func.aggregate(valueAddress, valueCount, columnSizeShr, workerId);
             }
@@ -65,7 +71,9 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
             long valuePageAddress,
             long valuePageCount,
             int columnSizeShr,
-            CountDownLatchSPI doneLatch
+            CountDownLatchSPI doneLatch,
+            // oom is not possible when aggregation is not keyed
+            @Nullable AtomicInteger oomCounter
     ) {
         of(sequence);
         this.pRosti = pRosti;
@@ -75,5 +83,6 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
         this.func = vaf;
         this.columnSizeShr = columnSizeShr;
         this.doneLatch = doneLatch;
+        this.oomCounter = oomCounter;
     }
 }

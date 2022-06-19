@@ -379,8 +379,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                                 n++;
                             }
 
-                            int sz = n;
-
                             // Send signature
                             byte[] rawSignature = new byte[64];
                             byte[] signature = Base64.getEncoder().encode(rawSignature);
