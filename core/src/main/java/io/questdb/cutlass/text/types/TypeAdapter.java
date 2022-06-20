@@ -42,9 +42,4 @@ public interface TypeAdapter {
     default void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink ignored) throws Exception {
         write(row, column, value);
     }
-
-    //used to copy internal state between adapters belonging to different type managers
-    default TypeAdapter of(TypeAdapter other) {
-        return this;
-    }
 }
