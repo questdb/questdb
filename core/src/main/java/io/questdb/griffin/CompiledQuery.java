@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.QuietClosable;
 
 public interface CompiledQuery {
     //these values should be covered in both JsonQueryProcessor and PGConnectionContext

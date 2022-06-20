@@ -111,13 +111,11 @@ public class WriterPool extends AbstractPool {
      * </p>
      * Exceptions thrown:
      * <ul>
-     *     <li>@{@link EntryUnavailableException}: When TableWriter from this pool is used by another thread .
-     *     In this case, application can retry getting writer from pool again at any time.
-     *     </li>
-     *     <li>@{@link CairoException}: When table is locked outside of pool, which includes same or different process.
-     *     In this case, application has to call {@link #releaseAll(long)} before retrying for TableWriter. </li>
-     * </ul
-     *
+     * <li>{@link EntryUnavailableException}: When TableWriter from this pool is used by another thread.
+     * In this case, application can retry getting writer from pool again at any time.</li>
+     * <li>{@link CairoException}: When table is locked outside of pool, which includes same or different process.
+     * In this case, application has to call {@link #releaseAll(long)} before retrying for TableWriter.</li>
+     * </ul>
      * @param tableName  name of the table
      * @param lockReason description of where or why lock is held
      * @return cached TableWriter instance.

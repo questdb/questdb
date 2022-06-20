@@ -102,7 +102,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
-                <version>3.0.1</version>
+                <version>3.2.2</version>
                 <executions>
                     <execution>
                         <goals>
@@ -125,7 +125,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
-                <version>3.0.0-M3</version>
+                <version>3.1.0</version>
                 <executions>
                     <execution>
                         <id>enforce-versions</id>
@@ -148,7 +148,7 @@
             <!-- remove web console package on "clean" -->
             <plugin>
                 <artifactId>maven-clean-plugin</artifactId>
-                <version>3.1.0</version>
+                <version>3.2.0</version>
                 <configuration>
                     <filesets>
                         <fileset>
@@ -174,7 +174,7 @@
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>buildnumber-maven-plugin</artifactId>
-                <version>1.4</version>
+                <version>3.0.0</version>
                 <executions>
                     <execution>
                         <phase>validate</phase>
@@ -345,6 +345,7 @@
                     <plugin>
                         <groupId>org.codehaus.mojo</groupId>
                         <artifactId>exec-maven-plugin</artifactId>
+                        <version>3.0.0</version>
                         <configuration>
                             <longModulepath>false</longModulepath>
                         </configuration>
