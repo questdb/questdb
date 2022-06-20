@@ -19,9 +19,6 @@ steps:
       options:
         "compile -DskipTests -P build-web-console,build-binaries  -Dhttp.keepAlive=false"
       jdkVersionOption: $(jdk)
-    condition:
-      or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
-      'none'))
   - task: Maven@3
     displayName: "Run tests"
     inputs:
@@ -36,10 +33,7 @@ steps:
       jdkVersionOption: $(jdk)
     timeoutInMinutes: 55
     condition: |
-      and(
-        eq(variables['testset'], 'all'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'true')
-      )
+      eq(variables['SOURCE_CODE_CHANGED'], 'true')
   - task: Maven@3
     displayName: "Run tests with Coverage"
     inputs:
