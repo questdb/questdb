@@ -73,7 +73,7 @@ public class IDGeneratorTest extends AbstractCairoTest {
                 }
 
                 try (LongTreeSet set = new LongTreeSet(4 * 2048, Integer.MAX_VALUE)) {
-                    // add both arrays to the set and asset that there are no duplicates
+                    // add both arrays to the set and assert that there are no duplicates
                     for (int i = 0, n = listA.size(); i < n; i++) {
                         Assert.assertTrue(set.put(listA.getQuick(i)));
                     }
