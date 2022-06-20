@@ -85,9 +85,9 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence columnPurgePubSeq;
 
     private final RingQueue<TextImportTask> textImportQueue;
-    private final MPSequence textImportPubSeq;
+    private final SPSequence textImportPubSeq;
     private final MCSequence textImportSubSeq;
-    private final FanOut textImportFanOut;
+    private final SCSequence textImportColSeq;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -177,10 +177,10 @@ public class MessageBusImpl implements MessageBus {
         }
 
         this.textImportQueue = new RingQueue<>(TextImportTask::new, configuration.getParallelImportQueueCapacity());
-        this.textImportPubSeq = new MPSequence(textImportQueue.getCycle());
+        this.textImportPubSeq = new SPSequence(textImportQueue.getCycle());
         this.textImportSubSeq = new MCSequence(textImportQueue.getCycle());
-        this.textImportFanOut = new FanOut();
-        textImportPubSeq.then(textImportSubSeq).then(textImportFanOut).then(textImportPubSeq);
+        this.textImportColSeq = new SCSequence();
+        textImportPubSeq.then(textImportSubSeq).then(textImportColSeq).then(textImportPubSeq);
     }
 
     @Override
@@ -381,13 +381,13 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getTextImportPubSeq() {
-        return textImportPubSeq;
+    public RingQueue<TextImportTask> getTextImportQueue() {
+        return textImportQueue;
     }
 
     @Override
-    public RingQueue<TextImportTask> getTextImportQueue() {
-        return textImportQueue;
+    public Sequence getTextImportPubSeq() {
+        return textImportPubSeq;
     }
 
     @Override
@@ -396,8 +396,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public FanOut getTextImportFanOut() {
-        return textImportFanOut;
+    public SCSequence getTextImportColSeq() {
+        return textImportColSeq;
     }
-
 }

@@ -526,8 +526,7 @@ public class TextImportTask {
                 tableWriterRef = writer;
 
                 final TextConfiguration textConfiguration = configuration.getTextConfiguration();
-                try (TextLexer lexer = new TextLexer(textConfiguration);
-                     Path path = new Path()) {
+                try (TextLexer lexer = new TextLexer(textConfiguration); Path path = new Path()) {
                     lexer.setTableName(tableNameSink);
                     lexer.of(columnDelimiter);
                     lexer.setSkipLinesWithExtraValues(false);
@@ -576,6 +575,7 @@ public class TextImportTask {
 
             this.errors = 0;
             this.importedRows.clear();
+            this.tableNameSink.clear();
         }
 
         private void logError(long offset, int column, final DirectByteCharSequence dbcs) {
@@ -849,46 +849,47 @@ public class TextImportTask {
 
         public void run() {
             final FilesFacade ff = cairoEngine.getConfiguration().getFilesFacade();
-            Path path = Path.getThreadLocal(root);
-            path.concat(tableStructure.getTableName()).put("_").put(index);
-            int plen = path.length();
-            PartitionBy.setSinkForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, false);
-            path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
+            try (Path path = new Path().of(root)) {
+                path.concat(tableStructure.getTableName()).put("_").put(index);
+                int plen = path.length();
+                PartitionBy.setSinkForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, false);
+                path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
 
-            long columnMemory = 0;
-            long columnMemorySize = 0;
-            long remapTableMemory = 0;
-            long remapTableMemorySize = 0;
-            long columnFd = -1;
-            long remapFd = -1;
-            try {
-                columnFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
-                columnMemorySize = ff.length(columnFd);
+                long columnMemory = 0;
+                long columnMemorySize = 0;
+                long remapTableMemory = 0;
+                long remapTableMemorySize = 0;
+                long columnFd = -1;
+                long remapFd = -1;
+                try {
+                    columnFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+                    columnMemorySize = ff.length(columnFd);
 
-                path.trimTo(plen);
-                path.concat(columnName).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX);
-                remapFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
-                remapTableMemorySize = ff.length(remapFd);
+                    path.trimTo(plen);
+                    path.concat(columnName).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX);
+                    remapFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+                    remapTableMemorySize = ff.length(remapFd);
 
-                if (columnMemorySize >= Integer.BYTES && remapTableMemorySize >= Integer.BYTES) {
-                    columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_DEFAULT);
-                    remapTableMemory = TableUtils.mapRW(ff, remapFd, remapTableMemorySize, MemoryTag.MMAP_DEFAULT);
-                    long columnMemSize = partitionSize * Integer.BYTES;
-                    long remapMemSize = (long) symbolCount * Integer.BYTES;
-                    ColumnUtils.symbolColumnUpdateKeys(columnMemory, columnMemSize, remapTableMemory, remapMemSize);
-                }
-            } finally {
-                if (columnFd != -1) {
-                    ff.close(columnFd);
-                }
-                if (remapFd != -1) {
-                    ff.close(remapFd);
-                }
-                if (columnMemory > 0) {
-                    ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_DEFAULT);
-                }
-                if (remapTableMemory > 0) {
-                    ff.munmap(remapTableMemory, remapTableMemorySize, MemoryTag.MMAP_DEFAULT);
+                    if (columnMemorySize >= Integer.BYTES && remapTableMemorySize >= Integer.BYTES) {
+                        columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_DEFAULT);
+                        remapTableMemory = TableUtils.mapRW(ff, remapFd, remapTableMemorySize, MemoryTag.MMAP_DEFAULT);
+                        long columnMemSize = partitionSize * Integer.BYTES;
+                        long remapMemSize = (long) symbolCount * Integer.BYTES;
+                        ColumnUtils.symbolColumnUpdateKeys(columnMemory, columnMemSize, remapTableMemory, remapMemSize);
+                    }
+                } finally {
+                    if (columnFd != -1) {
+                        ff.close(columnFd);
+                    }
+                    if (remapFd != -1) {
+                        ff.close(remapFd);
+                    }
+                    if (columnMemory > 0) {
+                        ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_DEFAULT);
+                    }
+                    if (remapTableMemory > 0) {
+                        ff.munmap(remapTableMemory, remapTableMemorySize, MemoryTag.MMAP_DEFAULT);
+                    }
                 }
             }
         }

@@ -110,11 +110,11 @@ public interface MessageBus extends Closeable {
 
     FanOut getQueryCacheEventFanOut();
 
-    Sequence getTextImportPubSeq();
-
     RingQueue<TextImportTask> getTextImportQueue();
+
+    Sequence getTextImportPubSeq();
 
     Sequence getTextImportSubSeq();
 
-    FanOut getTextImportFanOut();
+    SCSequence getTextImportColSeq();
 }

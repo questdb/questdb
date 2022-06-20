@@ -44,6 +44,7 @@ import org.junit.Test;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.equalTo;
@@ -1785,6 +1786,41 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                             "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
                     "select line, ts, d, description from " + tableName + " limit -10",
                     "ts", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportOnlyOneActiveImport() throws Exception {
+        executeWithPool(8, 2, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            final String tableName = "tableName";
+            compiler.compile("create table " + tableName + " ( ts timestamp, line symbol, d double, description symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            CountDownLatch latch = new CountDownLatch(1);
+            Thread importer = new Thread(() -> {
+                try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(sqlExecutionContext)) {
+                    indexer.setMinChunkSize(10);
+                    indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                    indexer.processTest(latch::countDown);
+                } catch (SqlException e) {
+                    e.printStackTrace();
+                }
+                Path.clearThreadLocals();
+            });
+
+            importer.start();
+            latch.await();
+
+            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(sqlExecutionContext)) {
+                indexer.setMinChunkSize(10);
+                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                try {
+                    indexer.process();
+                    Assert.fail();
+                } catch (SqlException e) {
+                    MatcherAssert.assertThat(e.getMessage(), containsString("Another parallel copy command in progress"));
+                }
+            }
+
+            importer.join();
         });
     }
 

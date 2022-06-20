@@ -696,7 +696,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             }
 
             if (bufferPtr != -1) {
-                Unsafe.free(bufferPtr, srcSize, MemoryTag.MMAP_DEFAULT);
+                Unsafe.free(bufferPtr, srcSize, MemoryTag.NATIVE_DEFAULT);
             }
         }
     }
