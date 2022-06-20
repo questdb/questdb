@@ -134,7 +134,6 @@ public class TextLexer implements Closeable, Mutable {
         this.inQuote = false;
         this.delayedOutQuote = false;
         this.lineCount = 0;
-        this.errorCount = 0;
         this.lineRollBufCur = lineRollBufPtr;
         this.useLineRollBuf = false;
         this.rollBufferUnusable = false;

@@ -533,7 +533,7 @@ public class TextImportTask {
                     lexer.setSkipLinesWithExtraValues(false);
                     try {
                         for (int i = (int) lo; i < hi; i++) {
-                            lexer.restart(false);
+                            lexer.clear();
                             errors = 0;
                             final CharSequence name = partitionNames.get(i);
                             path.of(importRoot).concat(name);
