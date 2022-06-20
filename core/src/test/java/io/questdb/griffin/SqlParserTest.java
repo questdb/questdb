@@ -86,6 +86,102 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testMoveOrderBySubQuery() throws Exception {
+        assertQuery(
+                "select-virtual transaction_id + 1 column from (select-choose [transaction_id] transaction_id from (select-virtual [cast(cast(transactionid,varchar),bigint) transaction_id, pg_catalog.age(transactionid1) age] cast(cast(transactionid,varchar),bigint) transaction_id, pg_catalog.age(transactionid1) age from (select-choose [transactionid, transactionid transactionid1] transactionid, transactionid transactionid1 from (select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L) L order by age desc limit 1))",
+                "select transaction_id + 1 from (select L.transactionid::varchar::bigint as transaction_id\n" +
+                        "from pg_catalog.pg_locks L\n" +
+                        "where L.transactionid is not null\n" +
+                        "order by pg_catalog.age(L.transactionid) desc\n" +
+                        "limit 1)"
+        );
+    }
+
+    @Test
+    public void testMoveOrderByFlatWildcard() throws Exception {
+        assertQuery(
+                // "age" column should not be included in the final selection list
+                "select-choose" +
+                        " locktype," +
+                        " database," +
+                        " relation," +
+                        " page," +
+                        " tuple," +
+                        " virtualxid," +
+                        " transactionid," +
+                        " classid," +
+                        " objid," +
+                        " objsubid," +
+                        " virtualtransaction," +
+                        " pid," +
+                        " mode," +
+                        " granted," +
+                        " fastpath," +
+                        " waitstart " +
+                        "from (" +
+                        "select-virtual" +
+                        " [locktype," +
+                        " database," +
+                        " relation," +
+                        " page," +
+                        " tuple," +
+                        " virtualxid," +
+                        " transactionid," +
+                        " classid," +
+                        " objid," +
+                        " objsubid," +
+                        " virtualtransaction," +
+                        " pid," +
+                        " mode," +
+                        " granted," +
+                        " fastpath," +
+                        " waitstart," +
+                        " pg_catalog.age(transactionid1) age]" +
+                        " locktype," +
+                        " database," +
+                        " relation," +
+                        " page," +
+                        " tuple," +
+                        " virtualxid," +
+                        " transactionid," +
+                        " classid," +
+                        " objid," +
+                        " objsubid," +
+                        " virtualtransaction," +
+                        " pid," +
+                        " mode," +
+                        " granted," +
+                        " fastpath," +
+                        " waitstart," +
+                        " pg_catalog.age(transactionid1) age " +
+                        "from (select-choose [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart, transactionid transactionid1] locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart, transactionid transactionid1 from (select [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart] from pg_catalog.pg_locks() L where transactionid != null) L) L" +
+                        " order by age desc limit 1" +
+                        ")",
+                "select *\n" +
+                        "from pg_catalog.pg_locks L\n" +
+                        "where L.transactionid is not null\n" +
+                        "order by pg_catalog.age(L.transactionid) desc\n" +
+                        "limit 1"
+        );
+    }
+
+    @Test
+    public void testMoveOrderByFlatInUnion() throws Exception {
+        assertQuery(
+                // "age" column should not be included in the final selection list
+                // we also expect limit to be moved to the outer query
+                "select-choose locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart from (select-virtual [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart, pg_catalog.age(transactionid) age] locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart, pg_catalog.age(transactionid) age from (select-choose [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart] locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart from (select [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart] from pg_catalog.pg_locks() l1) l1 union all select-choose [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart] locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart from (select [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart] from pg_catalog.pg_locks() L where transactionid != null) L) order by age desc limit 1)",
+                "select * from pg_catalog.pg_locks l1 " +
+                        "union all " +
+                        "select *\n" +
+                        "from pg_catalog.pg_locks L\n" +
+                        "where L.transactionid is not null\n" +
+                        "order by pg_catalog.age(transactionid) desc\n" +
+                        "limit 1"
+        );
+    }
+
+    @Test
     public void testLatestBySansSelect() throws Exception {
         assertQuery(
                 "select-choose ts, x from (select-choose [ts, x] ts, x from (select [ts, x] from t1 latest by x))",
@@ -6966,18 +7062,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionKeepOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union all select-choose [z] z from (select [z] from c order by z))",
+                "select-choose x from (select-choose [x, z] x, z from (select-choose [x, z] x, z from (select [x, z] from a) union select-choose [x, z] x, z from (select-choose [x, z] x, z from (select [x, z] from b) union all select-choose [x, z] x, z from (select [x, z] from c))) order by z)",
                 "select x from (select * from a union select * from b union all select * from c order by z)",
-                modelOf("a").col("x", ColumnType.INT),
-                modelOf("b").col("y", ColumnType.INT),
-                modelOf("c").col("z", ColumnType.INT)
+                modelOf("a").col("x", ColumnType.INT).col("z", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT).col("z", ColumnType.INT),
+                modelOf("c").col("x", ColumnType.INT).col("z", ColumnType.INT)
         );
     }
 
     @Test
     public void testUnionKeepOrderByIndex() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union all select-choose [z] z from (select [z] from c order by z))",
+                "select-choose x from (select-choose [x] x from (select-choose [x] x from (select [x] from a) union select-choose [y] y from (select-choose [y] y from (select [y] from b) union all select-choose [z] z from (select [z] from c))) order by x)",
                 "select x from (select * from a union select * from b union all select * from c order by 1)",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("y", ColumnType.INT),
@@ -7035,11 +7131,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionRemoveOrderBy() throws SqlException {
         assertQuery(
-                "select-choose x from (select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union all select-choose [z] z from (select [z] from c)) order by x",
+                "select-choose x from (select-choose [x] x, z from (select-choose [x, z] x, z from (select [x, z] from a) union select-choose [x, z] x, z from (select-choose [x, z] x, z from (select [x, z] from b) union all select-choose [x, z] x, z from (select [x, z] from c)))) order by x",
                 "select x from (select * from a union select * from b union all select * from c order by z) order by x",
-                modelOf("a").col("x", ColumnType.INT),
-                modelOf("b").col("y", ColumnType.INT),
-                modelOf("c").col("z", ColumnType.INT)
+                modelOf("a").col("x", ColumnType.INT).col("z", ColumnType.INT),
+                modelOf("b").col("x", ColumnType.INT).col("z", ColumnType.INT),
+                modelOf("c").col("x", ColumnType.INT).col("z", ColumnType.INT)
         );
     }
 

@@ -47,7 +47,7 @@ public class PrefixedPgLocksFunctionFactory extends AbstractEmptyCatalogueFuncti
         metadata.add(new TableColumnMetadata("database", 2, ColumnType.INT));
         metadata.add(new TableColumnMetadata("relation", 3, ColumnType.INT));
         metadata.add(new TableColumnMetadata("page", 4, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("tuple ", 5, ColumnType.SHORT));
+        metadata.add(new TableColumnMetadata("tuple", 5, ColumnType.SHORT));
         metadata.add(new TableColumnMetadata("virtualxid", 6, ColumnType.STRING));
         metadata.add(new TableColumnMetadata("transactionid", 7, ColumnType.LONG));
         metadata.add(new TableColumnMetadata("classid", 8, ColumnType.INT));

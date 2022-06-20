@@ -209,7 +209,7 @@ public class PgDatabaseFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("datname", 2, ColumnType.STRING));
         metadata.add(new TableColumnMetadata("datdba", 3, ColumnType.INT));
         metadata.add(new TableColumnMetadata("encoding", 4, ColumnType.INT));
-        metadata.add(new TableColumnMetadata("datcollate ", 5, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("datcollate", 5, ColumnType.STRING));
         metadata.add(new TableColumnMetadata("datctype", 6, ColumnType.STRING));
         metadata.add(new TableColumnMetadata("datistemplate", 7, ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("datallowconn", 8, ColumnType.BOOLEAN));

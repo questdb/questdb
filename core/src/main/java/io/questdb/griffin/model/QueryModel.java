@@ -381,8 +381,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void copyBottomToTopColumns() {
         topDownColumns.clear();
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-            QueryColumn qc = bottomUpColumns.getQuick(i);
-            topDownColumns.add(qc);
+            topDownColumns.add(bottomUpColumns.getQuick(i));
         }
     }
 
@@ -393,17 +392,24 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     ) {
         clearColumnMapStructs();
 
-
         // copy only literal columns and convert functions to literal while copying
         final ObjList<CharSequence> aliases = other.aliasToColumnMap.keys();
         for (int i = 0, n = aliases.size(); i < n; i++) {
             final CharSequence alias = aliases.getQuick(i);
             QueryColumn qc = other.aliasToColumnMap.get(alias);
-            if (qc.getAst().type == ExpressionNode.LITERAL) {
-                this.aliasToColumnMap.put(alias, qc);
-            } else {
-                this.aliasToColumnMap.put(alias, queryColumnPool.next().of(alias, expressionNodePool.next().of(ExpressionNode.LITERAL, alias, 0, qc.getAst().position)));
+            if (qc.getAst().type != ExpressionNode.LITERAL) {
+                qc = queryColumnPool.next().of(
+                        alias,
+                        expressionNodePool.next().of(
+                                ExpressionNode.LITERAL,
+                                alias,
+                                0,
+                                qc.getAst().position
+                        ),
+                        qc.isIncludeIntoWildcard()
+                );
             }
+            this.aliasToColumnMap.put(alias, qc);
         }
         ObjList<CharSequence> columnNames = other.bottomUpColumnNames;
         this.bottomUpColumnNames.addAll(columnNames);

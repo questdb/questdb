@@ -618,6 +618,68 @@ class SqlOptimiser {
         assert postFilterRemoved.size() == pc;
     }
 
+    // The model for the following SQL:
+    // select * from t1 union all select * from t2 order by x
+    // will have "order by" clause on the last model of the union linked list.
+    // Semantically, order by must be executed after union. To get there, we will
+    // create outer model(s) for the union block and move "order by" there.
+    private QueryModel bubbleUpOrderByAndLimitFromUnion(QueryModel model) throws SqlException {
+        QueryModel m = model.getUnionModel();
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            QueryModel _n = bubbleUpOrderByAndLimitFromUnion(nested);
+            if (_n != nested) {
+                model.setNestedModel(_n);
+            }
+        }
+
+        if (m != null) {
+            // find order by clauses
+            final QueryModel m1 = bubbleUpOrderByAndLimitFromUnion(m);
+            if (m1 != m) {
+                model.setUnionModel(m1);
+                m = m1;
+            }
+
+            do {
+                if (m.getUnionModel() == null) {
+                    // last model in the linked list
+                    QueryModel un = m.getNestedModel();
+                    int n = un.getOrderBy().size();
+                    // order by clause is on the nested model
+                    final ObjList<ExpressionNode> orderBy = un.getOrderBy();
+                    final IntList orderByDirection = un.getOrderByDirection();
+                    // limit is on the parent model
+                    final ExpressionNode limitLo = m.getLimitLo();
+                    final ExpressionNode limitHi = m.getLimitHi();
+
+                    if (n > 0 || limitHi != null || limitLo != null) {
+                        // we have some order by clauses to move
+                        QueryModel _nested = queryModelPool.next();
+                        for (int i = 0; i < n; i++) {
+                            _nested.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
+                        }
+                        orderBy.clear();
+                        orderByDirection.clear();
+
+                        m.setLimit(null, null);
+
+                        _nested.setNestedModel(model);
+                        QueryModel _model = queryModelPool.next();
+                        _model.setNestedModel(_nested);
+                        SqlUtil.addSelectStar(_model, queryColumnPool, expressionNodePool);
+                        _model.setLimit(limitLo, limitHi);
+                        return _model;
+                    }
+                    break;
+                }
+
+                m = m.getUnionModel();
+            } while (true);
+        }
+        return model;
+    }
+
     private boolean checkForAggregates(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -947,31 +1009,103 @@ class SqlOptimiser {
             QueryModel outerModel,
             QueryModel distinctModel
     ) throws SqlException {
+        createSelectColumnsForWildcardFromColumnNames(
+                srcModel,
+                hasJoins,
+                wildcardPosition,
+                translatingModel,
+                innerModel,
+                analyticModel,
+                groupByModel,
+                outerModel,
+                distinctModel
+        );
+    }
+
+    private void createSelectColumnsForWildcardFromColumnNames(
+            QueryModel srcModel,
+            boolean hasJoins,
+            int wildcardPosition,
+            QueryModel translatingModel,
+            QueryModel innerModel,
+            QueryModel analyticModel,
+            QueryModel groupByModel,
+            QueryModel outerModel,
+            QueryModel distinctModel
+    ) throws SqlException {
         final ObjList<CharSequence> columnNames = srcModel.getBottomUpColumnNames();
         for (int j = 0, z = columnNames.size(); j < z; j++) {
             CharSequence name = columnNames.getQuick(j);
-            CharSequence token;
-            if (hasJoins) {
-                CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-                characterStoreEntry.put(srcModel.getName());
-                characterStoreEntry.put('.');
-                characterStoreEntry.put(name);
-                token = characterStoreEntry.toImmutable();
-            } else {
-                token = name;
+            // this is a check to see if column has to be added to wildcard list
+            QueryColumn qc = srcModel.getAliasToColumnMap().get(name);
+            if (qc.isIncludeIntoWildcard()) {
+                CharSequence token;
+                if (hasJoins) {
+                    CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+                    characterStoreEntry.put(srcModel.getName());
+                    characterStoreEntry.put('.');
+                    characterStoreEntry.put(name);
+                    token = characterStoreEntry.toImmutable();
+                } else {
+                    token = name;
+                }
+                createSelectColumn(
+                        name,
+                        nextLiteral(token, wildcardPosition),
+                        true,
+                        null, // do not validate
+                        translatingModel,
+                        innerModel,
+                        analyticModel,
+                        groupByModel,
+                        outerModel,
+                        distinctModel
+                );
             }
-            createSelectColumn(
-                    name,
-                    nextLiteral(token, wildcardPosition),
-                    true,
-                    null, // do not validate
-                    translatingModel,
-                    innerModel,
-                    analyticModel,
-                    groupByModel,
-                    outerModel,
-                    distinctModel
-            );
+        }
+    }
+
+    private void createSelectColumnsForWildcardFromQueryColumns(
+            QueryModel srcModel,
+            boolean hasJoins,
+            int wildcardPosition,
+            QueryModel translatingModel,
+            QueryModel innerModel,
+            QueryModel analyticModel,
+            QueryModel groupByModel,
+            QueryModel outerModel,
+            QueryModel distinctModel
+    ) throws SqlException {
+        // this method works based on QueryColumn list provided by the srcModel. It is
+        // not always the case this list in non-empty. But this is preferred when
+        // query columns are available
+        final ObjList<QueryColumn> columns = srcModel.getBottomUpColumns();
+        for (int j = 0, z = columns.size(); j < z; j++) {
+            QueryColumn qc = columns.getQuick(j);
+            if (qc.isIncludeIntoWildcard()) {
+                CharSequence token;
+                if (hasJoins) {
+                    CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+                    characterStoreEntry.put(srcModel.getName());
+                    characterStoreEntry.put('.');
+                    characterStoreEntry.put(qc.getName());
+                    token = characterStoreEntry.toImmutable();
+                } else {
+                    token = qc.getName();
+                }
+                createSelectColumn(
+                        qc.getName(),
+                        nextLiteral(token, wildcardPosition),
+                        true,
+                        null, // do not validate
+                        translatingModel,
+                        innerModel,
+                        analyticModel,
+                        groupByModel,
+                        outerModel,
+                        distinctModel
+                );
+            }
         }
     }
 
@@ -1375,9 +1509,6 @@ class SqlOptimiser {
                 if (model.isUpdate()) {
                     model.copyUpdateTableMetadata(nested);
                 }
-                // copy columns of nested model onto parent one
-                // we must treat sub-query just like we do a table
-//                model.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
             }
         }
         for (int i = 1, n = jm.size(); i < n; i++) {
@@ -1696,25 +1827,27 @@ class SqlOptimiser {
         return result;
     }
 
-    private QueryModel moveOrderByFunctionsIntoSelect(QueryModel model) {
+    private QueryModel moveOrderByFunctionsIntoOuterSelect(QueryModel model) {
         // at this point order by should be on the nested model of this model :)
         QueryModel nested = model.getNestedModel();
         if (nested != null) {
             final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
             final int n = orderBy.size();
-            int columnCount = model.getBottomUpColumns().size();
-            final int originalColumnCount = columnCount;
+            final int columnCount = model.getBottomUpColumns().size();
             boolean moved = false;
             for (int i = 0; i < n; i++) {
                 ExpressionNode node = orderBy.getQuick(i);
                 if (node.type == FUNCTION || node.type == OPERATION) {
                     // add this function to bottom-up columns and replace this expression with index
-                    model.getBottomUpColumns().add(queryColumnPool.next().of(
-                                    createColumnAlias(node, model),
-                                    node
+                    CharSequence alias = createColumnAlias(node, model);
+                    model.getBottomUpColumns().add(
+                            queryColumnPool.next().of(
+                                    alias,
+                                    node,
+                                    false
                             )
                     );
-                    orderBy.setQuick(i, nextLiteral("" + (++columnCount)));
+                    orderBy.setQuick(i, nextLiteral(alias));
                     moved = true;
                 }
             }
@@ -1730,7 +1863,7 @@ class SqlOptimiser {
                 _nested.setNestedModel(model);
 
                 // then create columns on the outermost model
-                for (int i = 0; i < originalColumnCount; i++) {
+                for (int i = 0; i < columnCount; i++) {
                     QueryColumn qcFrom = model.getBottomUpColumns().getQuick(i);
                     QueryColumn qcTo = queryColumnPool.next().of(
                             qcFrom.getAlias(),
@@ -1743,7 +1876,16 @@ class SqlOptimiser {
             }
             QueryModel nestedNested = nested.getNestedModel();
             if (nestedNested != null) {
-                nested.setNestedModel(moveOrderByFunctionsIntoSelect(nestedNested));
+                nested.setNestedModel(moveOrderByFunctionsIntoOuterSelect(nestedNested));
+            }
+
+            QueryModel unionModel = model.getUnionModel();
+            QueryModel parent = model;
+            while (unionModel != null) {
+                parent.setUnionModel(moveOrderByFunctionsIntoOuterSelect(unionModel));
+
+                parent = unionModel;
+                unionModel = unionModel.getUnionModel();
             }
         }
         return model;
@@ -1976,21 +2118,21 @@ class SqlOptimiser {
     }
 
     QueryModel optimise(final QueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final QueryModel rewrittenModel;
-        final QueryModel modelWithOrderBy;
+        QueryModel rewrittenModel = model;
         try {
-            optimiseExpressionModels(model, sqlExecutionContext);
-            enumerateTableColumns(model, sqlExecutionContext);
-            rewriteTopLevelLiteralsToFunctions(model);
+            rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
+            optimiseExpressionModels(rewrittenModel, sqlExecutionContext);
+            enumerateTableColumns(rewrittenModel, sqlExecutionContext);
+            rewriteTopLevelLiteralsToFunctions(rewrittenModel);
 //            extractCorrelatedQueriesAsJoins(model);
-            modelWithOrderBy = moveOrderByFunctionsIntoSelect(model);
-            resolveJoinColumns(modelWithOrderBy);
-            optimiseBooleanNot(modelWithOrderBy);
+            rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
+            resolveJoinColumns(rewrittenModel);
+            optimiseBooleanNot(rewrittenModel);
             rewrittenModel = rewriteOrderBy(
                     rewriteOrderByPositionForUnionModels(
                             rewriteOrderByPosition(
                                     rewriteSelectClause(
-                                            modelWithOrderBy,
+                                            rewrittenModel,
                                             true,
                                             sqlExecutionContext
                                     )

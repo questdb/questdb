@@ -853,8 +853,11 @@ public final class SqlParser {
             }
         } else {
             lexer.unparseLast();
-            model.addBottomUpColumn(SqlUtil.nextColumn(queryColumnPool, expressionNodePool, "*", "*"));
-            model.setArtificialStar(true);
+            SqlUtil.addSelectStar(
+                    model,
+                    queryColumnPool,
+                    expressionNodePool
+            );
         }
 
         QueryModel nestedModel = queryModelPool.next();
@@ -1911,22 +1914,6 @@ public final class SqlParser {
                 node.token = "to_pg_date";
                 node.rhs = null;
                 node.paramCount = 1;
-            }
-        }
-    }
-
-    /**
-     * Rewrites 'abc'::blah - type qualifier
-     *
-     * @param node expression node, provided by tree walking algo
-     */
-    private void rewriteTypeQualifier0(ExpressionNode node) {
-        if (node.type == ExpressionNode.OPERATION && isColonColonKeyword(node.token)) {
-            if (node.paramCount == 2) {
-                ExpressionNode that = node.rhs;
-                if (that.type == ExpressionNode.LITERAL) {
-                    that.type = ExpressionNode.MEMBER_ACCESS;
-                }
             }
         }
     }

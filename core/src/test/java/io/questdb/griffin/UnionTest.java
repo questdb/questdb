@@ -514,20 +514,20 @@ public class UnionTest extends AbstractGriffinTest {
                     "STRING\tBICYCLE\n");
 
             assertSql("select typeof(t), t from (select t from x union all y order by t)", "typeof\tt\n" +
+                    "STRING\tBICYCLE\n" +
+                    "STRING\tBICYCLE\n" +
+                    "STRING\tBICYCLE\n" +
+                    "STRING\tBICYCLE\n" +
+                    "STRING\tBICYCLE\n" +
                     "STRING\tCAR\n" +
                     "STRING\tCAR\n" +
-                    "STRING\tVAN\n" +
                     "STRING\tPLANE\n" +
                     "STRING\tPLANE\n" +
                     "STRING\tPLANE\n" +
                     "STRING\tPLANE\n" +
-                    "STRING\tBICYCLE\n" +
-                    "STRING\tBICYCLE\n" +
-                    "STRING\tBICYCLE\n" +
-                    "STRING\tBICYCLE\n" +
-                    "STRING\tBICYCLE\n" +
                     "STRING\tPLANE\n" +
-                    "STRING\tSCOOTER\n");
+                    "STRING\tSCOOTER\n" +
+                    "STRING\tVAN\n");
 
             assertSql("select typeof(t), t from (select t from x union all y) order by t", "typeof\tt\n" +
                     "STRING\tBICYCLE\n" +
