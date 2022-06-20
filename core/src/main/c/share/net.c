@@ -341,7 +341,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getAddrInfo
         (JNIEnv *e, jclass cl, jlong host, jint port) {
     struct addrinfo hints;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     struct addrinfo *addr = NULL;
 
