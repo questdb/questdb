@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.line.tcp.AuthDb;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -32,7 +33,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
-import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.security.InvalidKeyException;
@@ -220,14 +220,9 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         if (!enableValidation) {
             return;
         }
-        if (name.length() == 0) {
-            throw new LineSenderException("column name cannot be empty");
-        }
-        for (int i = 0; i < name.length(); i++) {
-            if (isIllegalColumnNameChar(name.charAt(i))) {
-                throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
-                        ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: " + name);
-            }
+        if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
+            throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
+                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: " + name);
         }
     }
 
@@ -242,98 +237,9 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         if (!enableValidation) {
             return;
         }
-        if (name.length() == 0) {
-            throw new LineSenderException("table name cannot be empty");
-        }
-        if (name.charAt(0) == '.') {
-            throw new LineSenderException("table cannot start with a dot");
-        }
-        if (name.charAt(name.length() - 1) == '.') {
-            throw new LineSenderException("table cannot end with a dot");
-        }
-        for (int i = 0; i < name.length(); i++) {
-            if (isIllegalTableNameChar(name.charAt(i))) {
-                throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
-                        "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: " + name);
-            }
-        }
-    }
-
-    private static boolean isIllegalColumnNameChar(char c) {
-        switch (c) {
-            case '\n':
-            case '\r':
-            case '?':
-            case '.':
-            case ',':
-            case '\'':
-            case '"':
-            case '\\':
-            case '/':
-            case ':':
-            case ')':
-            case '(':
-            case '+':
-            case '-':
-            case '*':
-            case '%':
-            case '~':
-            case '\u0000':
-            case '\u0001':
-            case '\u0002':
-            case '\u0003':
-            case '\u0004':
-            case '\u0005':
-            case '\u0006':
-            case '\u0007':
-            case '\u0008':
-            case '\u0009':
-            case '\u000b':
-            case '\u000c':
-            case '\u000e':
-            case '\u000f':
-            case '\u007f':
-                return true;
-            default:
-                return false;
-        }
-    }
-
-    private static boolean isIllegalTableNameChar(char c) {
-        switch (c) {
-            case '\n':
-            case '\r':
-            case '?':
-            case ',':
-            case '\'':
-            case '"':
-            case '\\':
-            case '/':
-            case ':':
-            case ')':
-            case '(':
-            case '+':
-            case '*':
-            case '%':
-            case '~':
-            case '\u0000':
-            case '\u0001':
-            case '\u0002':
-            case '\u0003':
-            case '\u0004':
-            case '\u0005':
-            case '\u0006':
-            case '\u0007':
-            case '\u0008':
-            case '\u0009':
-            case '\u000b':
-            case '\u000c':
-            case '\u000e':
-            case '\u000f':
-            case '\u007f':
-                return true;
-            default:
-                return false;
+        if (!TableUtils.isValidTableName(name, Integer.MAX_VALUE)) {
+            throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
+                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: " + name);
         }
     }
 

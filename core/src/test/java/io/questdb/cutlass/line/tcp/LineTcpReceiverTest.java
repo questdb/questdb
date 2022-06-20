@@ -711,60 +711,6 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testTcpSenderWithNewLineCharsInFieldName() throws Exception {
-        if (engine.getConfiguration().getFilesFacade().isRestrictedFileSystem()) {
-            // Windows (NTFS) cannot crate files with new line in file name.
-            return;
-        }
-        runInContext((receiver) -> {
-            String tableName = "table";
-            send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    lineTcpSender.disableValidation();
-                    lineTcpSender
-                            .metric(tableName)
-                            .tag("tag\n1", "value 1")
-                            .field("tag\n2", "value 2")
-                            .$(0);
-                    lineTcpSender.flush();
-                }
-            });
-
-            String expected = "tag\n" +
-                    "1\ttag\n" +
-                    "2\ttimestamp\n" +
-                    "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
-            assertTable(expected, tableName);
-        });
-    }
-
-    @Test
-    public void testTcpSenderWithNewLineInTableName() throws Exception {
-        if (engine.getConfiguration().getFilesFacade().isRestrictedFileSystem()) {
-            // Windows (NTFS) cannot crate files with new line in file name.
-            return;
-        }
-        runInContext((receiver) -> {
-            String tableName = "ta\nble";
-            send(receiver, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (LineTcpSender lineTcpSender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
-                    lineTcpSender.disableValidation();
-                    lineTcpSender
-                            .metric(tableName)
-                            .tag("tag1", "value 1")
-                            .field("tag2", "value 2")
-                            .$(0);
-                    lineTcpSender.flush();
-                }
-            });
-
-            String expected = "tag1\ttag2\ttimestamp\n" +
-                    "value 1\tvalue 2\t1970-01-01T00:00:00.000000Z\n";
-            assertTable(expected, tableName);
-        });
-    }
-
-    @Test
     public void testTcpSenderWithSpaceInTableName() throws Exception {
         runInContext((receiver) -> {
             String tableName = "ta ble";
