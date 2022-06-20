@@ -82,12 +82,10 @@ questdb stop  // To stop questdb
 
 你可以使用以下接口与 QuestDB 进行交互。
 
-- [web 控制台](https://questdb.io/docs/develop/web-console/): 监听在端口 `9000`
-- [REST API](https://questdb.io/docs/reference/api/rest/) :监听在端口 `9000`
-- [PostgreSQL](https://questdb.io/docs/reference/api/postgres/): 监听在端口
-  `8812`， 支持 wire 协议，
-- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/influxdb/): 监听在端口 `9009`,
-  QuestDB 实现了[InfluxDB Line Protocol](https://docs.influxdata.com/influxdb/v1.8/write_protocols/line_protocol_tutorial/) 协议来支持高性能，高吞吐量单向数据插入。
+- [web 控制台](https://questdb.io/docs/develop/web-console/): QuestDB将会启动一个web控制台，默认运行在 `9000` 端口
+- [REST API](https://questdb.io/docs/reference/api/rest/) : QuestDB也支持使用REST API 来进行交互，默认需要使用 `9000` 端口进行访问
+- [PostgreSQL wire Protocol](https://questdb.io/docs/reference/api/postgres/): QuestDB也支持PostgreSQL wire protocol协议，默认运行在 `8812` 端口
+- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/influxdb/): QuestDB 实现了[InfluxDB Line Protocol](https://docs.influxdata.com/influxdb/v1.8/write_protocols/line_protocol_tutorial/) 协议来支持高性能，高吞吐量单向数据插入。默认运行在 `9009` 端口
 
 ## QuestDB 与其他开源 TSDB 的对比情况
 
