@@ -30,6 +30,49 @@ import org.junit.Test;
 
 public class LongListTest {
     @Test
+    public void testEquals() {
+        final LongList list1 = new LongList();
+        list1.add(1L);
+        list1.add(2L);
+        list1.add(3L);
+
+        // different order
+        final LongList list2 = new LongList();
+        list2.add(1L);
+        list2.add(3L);
+        list2.add(2L);
+        Assert.assertNotEquals(list1, list2);
+
+        // longer
+        final LongList list3 = new LongList();
+        list3.add(1L);
+        list3.add(2L);
+        list3.add(3L);
+        list3.add(4L);
+        Assert.assertNotEquals(list1, list3);
+
+        // shorter
+        final LongList list4 = new LongList();
+        list4.add(1L);
+        list4.add(2L);
+        Assert.assertNotEquals(list1, list4);
+
+        // empty
+        final LongList list5 = new LongList();
+        Assert.assertNotEquals(list1, list5);
+
+        // null
+        Assert.assertNotEquals(list1, null);
+
+        // equals
+        final LongList list6 = new LongList();
+        list6.add(1L);
+        list6.add(2L);
+        list6.add(3L);
+        Assert.assertEquals(list1, list6);
+    }
+
+    @Test
     public void testBinarySearchBlockFuzz() {
         final int N = 997; // prime
         final int skipRate = 4;
