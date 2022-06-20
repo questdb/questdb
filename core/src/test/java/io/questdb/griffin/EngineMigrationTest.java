@@ -1260,7 +1260,7 @@ public class EngineMigrationTest extends AbstractGriffinTest {
 
     private void doMigration(String dataZip, boolean freeTableId, boolean withO3, boolean withColTops, boolean withColTopO3) throws IOException, SqlException {
         if (freeTableId) {
-            engine.freeTableId();
+            engine.getTableIdGenerator().close();
         }
         replaceDbContent(dataZip);
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, true);
