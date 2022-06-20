@@ -81,8 +81,6 @@ public final class Net {
 
     public native static boolean bindUdp(long fd, int ipv4Address, int port);
 
-    public static native int blah();
-
     public static int close(long fd) {
         return Files.close(fd);
     }

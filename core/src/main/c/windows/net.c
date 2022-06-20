@@ -28,7 +28,7 @@
 #include "errno.h"
 
 int get_int_sockopt(SOCKET fd, int level, int opt) {
-    DWORD value = 0;
+    int value = 0;
     socklen_t len = sizeof(value);
     int result = getsockopt(fd, level, opt, (char *) &value, &len);
     if (result == SOCKET_ERROR) {
@@ -76,7 +76,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_socketUdp0
         closesocket(s);
         return -1;
     }
-    return s;
+    return (jlong)s;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_Net_getEWouldBlock
@@ -97,7 +97,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getAddrInfo
         (JNIEnv *e, jclass cl, jlong host, jint port) {
     struct addrinfo hints;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     struct addrinfo *addr = NULL;
 
