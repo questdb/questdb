@@ -2840,9 +2840,10 @@ public class IODispatcherTest {
                     NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
                     long fd = nf.socketTcp(true);
                     try {
-                        long sockAddr = nf.getAddrInfo("127.0.0.1", 9001);
+                        long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
+                        assert sockAddrInfo != -1;
                         try {
-                            TestUtils.assertConnectAddrInfo(fd, sockAddr);
+                            TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
                             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
 
                             final int len = request.length() * 2;
@@ -2873,7 +2874,7 @@ public class IODispatcherTest {
                                 Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
                             }
                         } finally {
-                            nf.freeAddrInfo(sockAddr);
+                            nf.freeAddrInfo(sockAddrInfo);
                         }
                     } finally {
                         nf.close(fd);
@@ -4377,6 +4378,7 @@ public class IODispatcherTest {
                     long fd = nf.socketTcp(true);
                     try {
                         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
+                        assert sockAddrInfo != -1;
                         try {
                             TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
                             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));

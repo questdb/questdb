@@ -24,7 +24,6 @@
 
 package io.questdb.log;
 
-import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -117,15 +116,19 @@ public class LogAlertSocket implements Closeable {
 
     public void connect() {
         fdAddressInfo = nf.getAddrInfo(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);
-        fdSocket = nf.socketTcp(true);
-        if (fdSocket > -1) {
-            if (nf.connectAddrInfo(fdSocket, fdAddressInfo) != 0) {
-                logNetworkConnectError("Could not connect with");
+        if (fdAddressInfo == -1) {
+            logNetworkConnectError("Could not connect with");
+        } else {
+            fdSocket = nf.socketTcp(true);
+            if (fdSocket > -1) {
+                if (nf.connectAddrInfo(fdSocket, fdAddressInfo) != 0) {
+                    logNetworkConnectError("Could not connect with");
+                    freeSocketAndAddress();
+                }
+            } else {
+                logNetworkConnectError("Could create TCP socket with");
                 freeSocketAndAddress();
             }
-        } else {
-            logNetworkConnectError("Could create TCP socket with");
-            freeSocketAndAddress();
         }
     }
 
@@ -255,11 +258,11 @@ public class LogAlertSocket implements Closeable {
 
     private void freeSocketAndAddress() {
         if (fdAddressInfo != -1) {
-            Net.freeAddrInfo(fdAddressInfo);
+            nf.freeAddrInfo(fdAddressInfo);
             fdAddressInfo = -1;
         }
         if (fdSocket != -1) {
-            Net.close(fdSocket);
+            nf.close(fdSocket);
             fdSocket = -1;
         }
     }
