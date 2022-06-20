@@ -2758,7 +2758,6 @@ public class TableWriter implements Closeable, WalWriterFactory {
             LOG.debug().$("adjusted [o3RowCount=").$(getO3RowCount0()).I$();
         }
     }
-
     public void processWalCommit(
             Path walPath,
             boolean inOrder,
