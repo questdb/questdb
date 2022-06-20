@@ -22,43 +22,21 @@
  *
  ******************************************************************************/
 
-import React, { ChangeEvent, useCallback, useState } from "react"
+package io.questdb.std;
 
-import { Input } from "components"
+import io.questdb.cairo.ColumnTypes;
 
-type Props = Readonly<{
-  dirty: boolean
-  onInit: () => void
-}>
+public class RostiAllocFacadeImpl implements RostiAllocFacade {
 
-const EmailInput = ({ dirty, onInit }: Props) => {
-  const [email, setEmail] = useState("")
+    public static final RostiAllocFacade INSTANCE = new RostiAllocFacadeImpl();
 
-  const handleChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      setEmail(event.target?.value)
+    @Override
+    public long alloc(ColumnTypes types, long capacity) {
+        return Rosti.alloc(types, capacity);
+    }
 
-      if (!dirty) {
-        onInit()
-      }
-    },
-    [dirty, onInit],
-  )
-
-  return (
-    <Input
-      name="email"
-      onChange={handleChange}
-      pattern={
-        "^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$"
-      }
-      required
-      size="lg"
-      title="email"
-      type="email"
-      value={email}
-    />
-  )
+    @Override
+    public void free(long pRosti) {
+        Rosti.free(pRosti);
+    }
 }
-
-export default EmailInput

@@ -22,16 +22,13 @@
  *
  ******************************************************************************/
 
-export type SettingsType = string | boolean | number
+package io.questdb.std;
 
-export type LocalConfig = {
-  authPayload: string
-  editorCol: number
-  editorLine: number
-  notificationDelay: number
-  isNotificationEnabled: boolean
-  queryText: string
-  editorSplitterBasis: number
-  resultsSplitterBasis: number
-  exampleQueriesVisited: boolean
+import io.questdb.cairo.ColumnTypes;
+
+public interface RostiAllocFacade {
+
+    long alloc(ColumnTypes types, long capacity);
+
+    void free(long pRosti);
 }
