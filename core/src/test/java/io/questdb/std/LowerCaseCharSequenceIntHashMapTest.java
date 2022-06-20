@@ -35,26 +35,6 @@ import java.util.Map;
 public class LowerCaseCharSequenceIntHashMapTest {
 
     @Test
-    public void testRemoveEntry() {
-        final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
-
-        StringSink ss = new StringSink();
-        ss.put("a");
-        lowerCaseMap.put(ss, 1);
-        ss.clear();
-        ss.put("Bb");
-        lowerCaseMap.put(ss, 2);
-
-        Assert.assertEquals(1, lowerCaseMap.removeEntry("A"));
-        Assert.assertEquals(1, lowerCaseMap.size());
-        Assert.assertEquals(-1, lowerCaseMap.get("a"));
-        Assert.assertEquals(2, lowerCaseMap.get("bb"));
-        Assert.assertEquals(2, lowerCaseMap.get("Bb"));
-        Assert.assertEquals(2, lowerCaseMap.removeEntry("BB"));
-        Assert.assertEquals(0, lowerCaseMap.size());
-    }
-
-    @Test
     public void testPutMutableCharSequence() {
         final LowerCaseCharSequenceIntHashMap lowerCaseMap = new LowerCaseCharSequenceIntHashMap();
 
@@ -144,5 +124,6 @@ public class LowerCaseCharSequenceIntHashMapTest {
                 Assert.assertTrue(referenceMap.containsKey(v.toString()));
             }
         }
+
     }
 }

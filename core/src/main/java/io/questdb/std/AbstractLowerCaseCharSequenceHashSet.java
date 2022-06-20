@@ -26,13 +26,14 @@ package io.questdb.std;
 
 import java.util.Arrays;
 
-abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
+public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
     protected static final CharSequence noEntryKey = null;
     protected static final int MIN_INITIAL_CAPACITY = 16;
     protected final double loadFactor;
     protected int mask;
     protected int free;
     protected int capacity;
+    // exposed for testing only
     protected CharSequence[] keys;
 
     public AbstractLowerCaseCharSequenceHashSet(int initialCapacity, double loadFactor) {

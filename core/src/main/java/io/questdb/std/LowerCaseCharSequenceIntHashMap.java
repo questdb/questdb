@@ -26,10 +26,11 @@ package io.questdb.std;
 
 import java.util.Arrays;
 
-public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequenceHashMap {
+public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequenceHashSet {
     private static final int NO_ENTRY_VALUE = -1;
     private final int noEntryValue;
     private int[] values;
+    private final ObjList<CharSequence> list;
 
     public LowerCaseCharSequenceIntHashMap() {
         this(8);
@@ -42,13 +43,15 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
     public LowerCaseCharSequenceIntHashMap(int initialCapacity, double loadFactor, int noEntryValue) {
         super(initialCapacity, loadFactor);
         this.noEntryValue = noEntryValue;
+        this.list = new ObjList<>(capacity);
         values = new int[keys.length];
         clear();
     }
 
     @Override
-    public void clear() {
+    public final void clear() {
         super.clear();
+        list.clear();
         Arrays.fill(values, noEntryValue);
     }
 
@@ -58,8 +61,22 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         values[index] = noEntryValue;
     }
 
+    @Override
+    public void removeAt(int index) {
+        if (index < 0) {
+            int index1 = -index - 1;
+            CharSequence key = keys[index1];
+            super.removeAt(index);
+            list.remove(key);
+        }
+    }
+
     public int valueAt(int index) {
         return index < 0 ? values[-index - 1] : noEntryValue;
+    }
+
+    public boolean contains(CharSequence key) {
+        return keyIndex(key) < 0;
     }
 
     public int get(CharSequence key) {
@@ -77,6 +94,7 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         }
         final String keyString = Chars.toString(key);
         putAt0(index, keyString, value);
+        list.add(keyString);
         return true;
     }
 
@@ -85,6 +103,7 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         if (index > -1) {
             String keyStr = Chars.toString(key);
             putAt0(index, keyStr, value);
+            list.add(keyStr);
             return true;
         }
         return false;
@@ -97,13 +116,15 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         erase(from);
     }
 
-    private void putAt0(int index, CharSequence key, int value) {
+    protected void putAt0(int index, CharSequence key, int value) {
+        keys[index] = key;
         values[index] = value;
-        putAt0(index, key);
+        if (--free == 0) {
+            rehash();
+        }
     }
 
-    @Override
-    protected void rehash() {
+    private void rehash() {
         int size = size();
         int newCapacity = capacity * 2;
         free = capacity = newCapacity;
@@ -127,10 +148,7 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
         }
     }
 
-    public int removeEntry(CharSequence key) {
-        int index = keyIndex(key);
-        int value = valueAt(index);
-        removeAt(index);
-        return value;
+    public ObjList<CharSequence> keys() {
+        return list;
     }
 }
