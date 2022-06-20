@@ -212,17 +212,29 @@ public final class Unsafe {
     }
 
     public static long malloc(long size, int memoryTag) {
-        long ptr = getUnsafe().allocateMemory(size);
-        recordMemAlloc(size, memoryTag);
-        MALLOC_COUNT.incrementAndGet();
-        return ptr;
+        try {
+            long ptr = getUnsafe().allocateMemory(size);
+            recordMemAlloc(size, memoryTag);
+            MALLOC_COUNT.incrementAndGet();
+            return ptr;
+        } catch (OutOfMemoryError oom) {
+            System.err.println("Unsafe.malloc() OutOfMemoryError, mem_used=" + MEM_USED.get()
+                    + ", size=" + size + ", memoryTag=" + memoryTag);
+            throw oom;
+        }
     }
 
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
-        long ptr = getUnsafe().reallocateMemory(address, newSize);
-        recordMemAlloc(-oldSize + newSize, memoryTag);
-        REALLOC_COUNT.incrementAndGet();
-        return ptr;
+        try {
+            long ptr = getUnsafe().reallocateMemory(address, newSize);
+            recordMemAlloc(-oldSize + newSize, memoryTag);
+            REALLOC_COUNT.incrementAndGet();
+            return ptr;
+        } catch (OutOfMemoryError oom) {
+            System.err.println("Unsafe.realloc() OutOfMemoryError, mem_used=" + MEM_USED.get()
+                    + ", old_size=" + oldSize + ", new_size=" + newSize + ", memoryTag=" + memoryTag);
+            throw oom;
+        }
     }
 
     public static void recordMemAlloc(long size, int memoryTag) {
