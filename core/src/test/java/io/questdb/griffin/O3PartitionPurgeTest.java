@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
@@ -392,6 +393,42 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionsNotVacuumedBeforeCommit() throws Exception {
+        assertMemoryLeak(() -> {
+
+            compiler.compile("create table tbl as (" +
+                    "select x, " +
+                    "timestamp_sequence('1970-01-01', 10 * 60 * 60 * 1000000L) ts " +
+                    "from long_sequence(1)" +
+                    ") timestamp(ts) partition by HOUR", sqlExecutionContext);
+
+            try (Path path = new Path()) {
+                try (TableWriter writer = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "tbl", "test")) {
+                    long startTimestamp = Timestamps.HOUR_MICROS + 10;
+
+                    for (int i = 0; i < 10; i ++) {
+                        TableWriter.Row row = writer.newRow(startTimestamp);
+                        row.putLong(0, i + 1);
+                        row.append();
+                        startTimestamp += Timestamps.HOUR_MICROS;
+                    }
+
+                    path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-01T01").concat("x.d").$();
+                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                    compiler.compile("vacuum table tbl", sqlExecutionContext);
+                    runPartitionPurgeJobs();
+
+                    path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-01T01").concat("x.d").$();
+                    Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                    writer.commit();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testReaderUsesPartition() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY", sqlExecutionContext);
@@ -460,7 +497,10 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 runPartitionPurgeJobs();
 
                 path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09").concat("x.d").$();
-                Assert.assertFalse(Chars.toString(path), Files.exists(path));
+
+                // We cannot remove the partition, it can be the version which TableWriter writes
+                // Ideally we want a way to say it's safe to delete dropped partition 1970-01-09 but there is no way atm
+                // Assert.assertFalse(Chars.toString(path), Files.exists(path));
             }
         });
     }
