@@ -608,11 +608,5 @@
             <version>42.3.3</version>
             <scope>test</scope>
         </dependency>
-        <dependency>
-            <groupId>com.eclipsesource.minimal-json</groupId>
-            <artifactId>minimal-json</artifactId>
-            <version>0.9.5</version>
-            <scope>test</scope>
-        </dependency>
     </dependencies>
 </project>

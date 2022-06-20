@@ -65,7 +65,7 @@ public class StringChannel implements LineChannel {
 
     @Override
     public int errno() {
-        throw new UnsupportedOperationException("errnot() not implemented");
+        throw new UnsupportedOperationException("errno() not implemented");
     }
 
     @Override
