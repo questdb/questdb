@@ -182,11 +182,11 @@ public class WalWriter implements Closeable {
         return metadataCache.getTimestampIndex();
     }
 
-    public Row newRow() {
+    public TableWriter.Row newRow() {
         return newRow(0L);
     }
 
-    public Row newRow(long timestamp) {
+    public TableWriter.Row newRow(long timestamp) {
         try {
             final int timestampIndex = metadataCache.getTimestampIndex();
             if (timestampIndex != -1) {
@@ -679,66 +679,7 @@ public class WalWriter implements Closeable {
         rowValueIsNotNull.setQuick(columnIndex, rowCount);
     }
 
-    public interface Row {
-
-        void append();
-
-        void cancel();
-
-        void putBin(int columnIndex, long address, long len);
-
-        void putBin(int columnIndex, BinarySequence sequence);
-
-        void putBool(int columnIndex, boolean value);
-
-        void putByte(int columnIndex, byte value);
-
-        void putChar(int columnIndex, char value);
-
-        void putDate(int columnIndex, long value);
-
-        void putDouble(int columnIndex, double value);
-
-        void putFloat(int columnIndex, float value);
-
-        void putGeoHash(int columnIndex, long value);
-
-        void putGeoHashDeg(int index, double lat, double lon);
-
-        void putGeoStr(int columnIndex, CharSequence value);
-
-        void putInt(int columnIndex, int value);
-
-        void putLong(int columnIndex, long value);
-
-        void putLong256(int columnIndex, long l0, long l1, long l2, long l3);
-
-        void putLong256(int columnIndex, Long256 value);
-
-        void putLong256(int columnIndex, CharSequence hexString);
-
-        void putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end);
-
-        void putShort(int columnIndex, short value);
-
-        void putStr(int columnIndex, CharSequence value);
-
-        void putStr(int columnIndex, char value);
-
-        void putStr(int columnIndex, CharSequence value, int pos, int len);
-
-        void putSym(int columnIndex, CharSequence value);
-
-        void putSym(int columnIndex, char value);
-
-        void putSymIndex(int columnIndex, int symIndex);
-
-        void putTimestamp(int columnIndex, long value);
-
-        void putTimestamp(int columnIndex, CharSequence value);
-    }
-
-    private class RowImpl implements Row {
+    private class RowImpl implements TableWriter.Row {
         private long timestamp;
 
         @Override
@@ -866,6 +807,13 @@ public class WalWriter implements Closeable {
         public void putLong256(int columnIndex, CharSequence hexString) {
             getPrimaryColumn(columnIndex).putLong256(hexString);
             setRowValueNotNull(columnIndex);
+        }
+
+        @Override
+        public void putLong128(int columnIndex, Long128 value) {
+            MemoryA primaryColumn = getPrimaryColumn(columnIndex);
+            primaryColumn.putLong(value.getLong0());
+            primaryColumn.putLong(value.getLong1());
         }
 
         @Override

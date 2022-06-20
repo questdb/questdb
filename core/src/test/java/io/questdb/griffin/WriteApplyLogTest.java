@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.Log2TableWriter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -127,10 +126,8 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
                 long timestampHi = timestampLo + count1 * tsIncrement;
 
-                Log2TableWriter log2TableWriter = new Log2TableWriter();
-
                 LOG.info().$("=== Applying WAL transaction ===").$();
-                log2TableWriter.applyWriteAheadLogData(writer, walPath, 0, count1, true, timestampLo, timestampHi);
+                applyWal(writer, walPath, 0, count1, true, timestampLo, timestampHi);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "wal_clean limit " + count1, "x", LOG);
 
                 // Apply second WAL segment
@@ -138,7 +135,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 long timestampLo2 = IntervalUtils.parseFloorPartialDate(startTime2);
                 long timestampHi2 = timestampLo2 + count2 * tsIncrement;
 
-                log2TableWriter.applyWriteAheadLogData(writer, walPath, count1, count1 + count2, true, timestampLo2, timestampHi2);
+                applyWal(writer, walPath, count1, count1 + count2, true, timestampLo2, timestampHi2);
 
                 compareTables("select * from wal_clean order by ts", "x");
             }
@@ -179,23 +176,25 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 long timestampLo = IntervalUtils.parseFloorPartialDate(startTime1);
                 long timestampHi = timestampLo + count1 * tsIncrement;
 
-                Log2TableWriter log2TableWriter = new Log2TableWriter();
-
                 LOG.info().$("=== Applying WAL transaction ===").$();
-                log2TableWriter.applyWriteAheadLogData(writer, walPath, 0, count1, false, timestampLo, timestampHi);
+                applyWal(writer, walPath, 0, count1, false, timestampLo, timestampHi);
 
                 compareTables("select * from (wal_clean limit " + count1 + ") order by ts", "x");
-//                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select * from (wal_clean limit " + count1 + ") order by ts", "x", LOG);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select * from (wal_clean limit " + count1 + ") order by ts", "x", LOG);
 
                 // Apply second WAL segment
                 LOG.info().$("=== Applying WAL transaction 2 ===").$();
                 long timestampLo2 = IntervalUtils.parseFloorPartialDate(startTime2);
                 long timestampHi2 = timestampLo2 + count2 * tsIncrement;
 
-                log2TableWriter.applyWriteAheadLogData(writer, walPath, count1, count1 + count2, false, timestampLo2, timestampHi2);
+                applyWal(writer, walPath, count1, count1 + count2, false, timestampLo2, timestampHi2);
 
                 compareTables("select * from wal_clean order by ts", "x");
             }
         });
+    }
+
+    private void applyWal(TableWriter writer, Path walPath, int rowLo, int count1, boolean inOrder, long timestampLo, long timestampHi) {
+        writer.processWalCommit(walPath, inOrder, rowLo, count1, timestampLo, timestampHi);
     }
 }

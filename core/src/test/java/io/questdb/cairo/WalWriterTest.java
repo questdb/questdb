@@ -83,7 +83,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
                 for (int i = 0; i < 10; i++) {
-                    WalWriter.Row row = walWriter.newRow();
+                    TableWriter.Row row = walWriter.newRow();
                     row.putByte(0, (byte) i);
                     row.putSym(1, "sym" + i);
                     row.putSym(2, "s" + i % 2);
@@ -209,7 +209,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
                 assertEquals(0, walWriter.size());
-                WalWriter.Row row = walWriter.newRow();
+                TableWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
                 assertEquals(1, walWriter.size());
@@ -310,7 +310,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
                 assertEquals(0, walWriter.size());
-                WalWriter.Row row = walWriter.newRow();
+                TableWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
                 assertEquals(1, walWriter.size());
@@ -392,7 +392,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow();
+                TableWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
                 walWriter.addColumn("c", ColumnType.INT);
@@ -462,7 +462,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow();
+                TableWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 1);
                 row.append();
                 walWriter.removeColumn("a");
@@ -512,7 +512,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow();
+                TableWriter.Row row = walWriter.newRow();
                 row.putByte(0, (byte) 125);
                 row.append();
                 walWriter.addColumn("c", ColumnType.SYMBOL);
@@ -579,7 +579,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             final String walName;
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow();
+                TableWriter.Row row = walWriter.newRow();
                 row.putInt(0, 12);
                 row.putSym(1, "sym");
                 row.append();
@@ -663,7 +663,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             final long ts = Os.currentTimeMicros();
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
                 walName = walWriter.getWalName();
-                WalWriter.Row row = walWriter.newRow(ts);
+                TableWriter.Row row = walWriter.newRow(ts);
                 row.putByte(0, (byte) 1);
                 row.append();
                 row = walWriter.newRow(ts + timestampOffsets[0]);
@@ -770,7 +770,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     walName = walWriter.getWalName();
                     for (int i = 0; i < rowsToInsertTotal; i++) {
                         stringSink.clear();
-                        WalWriter.Row row = walWriter.newRow(ts);
+                        TableWriter.Row row = walWriter.newRow(ts);
                         row.putInt(0, i);
                         row.putByte(1, (byte) i);
                         row.putLong(2, i);
@@ -1044,7 +1044,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertEquals(tableName, walWriter.getTableName());
                 walName = walWriter.getWalName();
                 for (int i = 0; i < rowsToInsertTotal; i++) {
-                    WalWriter.Row row = walWriter.newRow(ts);
+                    TableWriter.Row row = walWriter.newRow(ts);
                     row.putInt(0, i);
                     row.putByte(1, (byte) i);
                     row.putLong(2, i);

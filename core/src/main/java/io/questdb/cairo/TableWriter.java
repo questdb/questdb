@@ -2761,15 +2761,13 @@ public class TableWriter implements Closeable, WalWriterFactory {
 
     public void processWalCommit(
             Path walPath,
-            long lagRowCount,
-            int timestampIndex,
             boolean inOrder,
             long rowLo,
             long rowHi,
             long o3TimestampMin,
             long o3TimestampMax
     ) {
-        if (processO3Append(walPath, lagRowCount, timestampIndex, inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax)) {
+        if (processO3Append(walPath, 0, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax)) {
             return;
         }
 
