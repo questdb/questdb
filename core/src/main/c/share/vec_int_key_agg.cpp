@@ -94,7 +94,7 @@ struct long256_t {
     }
 
     [[nodiscard]] bool is_null() const {
-        return l0 == UL_MIN && l1 == UL_MIN && l2 == UL_MIN && l3 == UL_MIN;
+        return l0 == L_MIN && l1 == L_MIN && l2 == L_MIN && l3 == L_MIN;
     }
 
     void operator+=(const long256_t& rhs) {

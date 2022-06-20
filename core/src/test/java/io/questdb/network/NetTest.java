@@ -76,15 +76,15 @@ public class NetTest {
     @Test
     public void testGetAddrInfoConnect() {
         NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            final long lpAddrInfo = nf.getAddrInfo("questdb.io", 443);
-            Assert.assertNotEquals(-1, lpAddrInfo);
-            long fd = nf.socketTcp(true);
-            try {
-                Assert.assertEquals(0, nf.connectAddrInfo(fd, lpAddrInfo));
-            } finally {
-                nf.close(fd);
-                nf.freeAddrInfo(lpAddrInfo);
-            }
+        final long pAddrInfo = nf.getAddrInfo("questdb.io", 443);
+        Assert.assertNotEquals(-1, pAddrInfo);
+        long fd = nf.socketTcp(true);
+        try {
+            Assert.assertEquals(0, nf.connectAddrInfo(fd, pAddrInfo));
+        } finally {
+            nf.close(fd);
+            nf.freeAddrInfo(pAddrInfo);
+        }
     }
 
     @Test

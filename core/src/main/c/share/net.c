@@ -343,10 +343,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getAddrInfo
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_NUMERICSERV;
     struct addrinfo *addr = NULL;
 
-    char _port[32];
-    sprintf(_port, "%d", port);
+    char _port[13];
+    snprintf(_port,  sizeof(_port)/sizeof(_port[0]), "%d", port);
     int gai_err_code = getaddrinfo((const char *) host, (const char *) &_port, &hints, &addr);
 
     if (gai_err_code == 0) {

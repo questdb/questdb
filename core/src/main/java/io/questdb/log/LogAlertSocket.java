@@ -61,7 +61,7 @@ public class LogAlertSocket implements Closeable {
     private long inBufferPtr;
     private int alertHostsCount;
     private int alertHostIdx;
-    private long fdSocketAddress = -1; // tcp/ip host:port address
+    private long fdAddressInfo = -1; // tcp/ip host:port address
     private long fdSocket = -1;
     private String alertTargets; // host[:port](,host[:port])*
 
@@ -116,10 +116,10 @@ public class LogAlertSocket implements Closeable {
     }
 
     public void connect() {
-        fdSocketAddress = nf.sockaddr(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);
+        fdAddressInfo = nf.getAddrInfo(alertHosts[alertHostIdx], alertPorts[alertHostIdx]);
         fdSocket = nf.socketTcp(true);
         if (fdSocket > -1) {
-            if (nf.connect(fdSocket, fdSocketAddress) != 0) {
+            if (nf.connectAddrInfo(fdSocket, fdAddressInfo) != 0) {
                 logNetworkConnectError("Could not connect with");
                 freeSocketAndAddress();
             }
@@ -254,9 +254,9 @@ public class LogAlertSocket implements Closeable {
     }
 
     private void freeSocketAndAddress() {
-        if (fdSocketAddress != -1) {
-            Net.freeSockAddr(fdSocketAddress);
-            fdSocketAddress = -1;
+        if (fdAddressInfo != -1) {
+            Net.freeAddrInfo(fdAddressInfo);
+            fdAddressInfo = -1;
         }
         if (fdSocket != -1) {
             Net.close(fdSocket);
