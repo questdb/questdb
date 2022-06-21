@@ -146,6 +146,21 @@ public interface CharSink extends CharSinkBase {
         return this;
     }
 
+    default CharSink putMem(long bytes) {
+        long absB = bytes == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(bytes);
+        if (absB < 1024) {
+            return put(bytes).put(" B");
+        }
+        long value = absB;
+        int pos = 0;
+        for (int i = 40; i >= 0 && absB > 0xfffccccccccccccL >> i; i -= 10) {
+            value >>= 10;
+            pos++;
+        }
+        value *= Long.signum(bytes);
+        return put(bytes).put(" B (").put(Math.round(value / 1024.0 * 1000.0) / 1000.0).put(' ').put("KMGTPE".charAt(pos)).put("iB)");
+    }
+
     default CharSink putQuoted(CharSequence cs) {
         put('\"').put(cs).put('\"');
         return this;
