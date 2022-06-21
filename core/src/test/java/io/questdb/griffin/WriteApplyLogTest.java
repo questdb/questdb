@@ -31,10 +31,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.Ignore;
 import org.junit.Test;
 
-@Ignore
 public class WriteApplyLogTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(WriteApplyLogTest.class);
 
