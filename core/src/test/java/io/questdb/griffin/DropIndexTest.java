@@ -228,7 +228,6 @@ public class DropIndexTest extends AbstractGriffinTest {
         });
     }
 
-
     private void testVanillaDropIndexOfIndexedColumn(
             String createStatement,
             String tableName,

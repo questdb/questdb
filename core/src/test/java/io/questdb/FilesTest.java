@@ -32,7 +32,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -52,11 +51,6 @@ public class FilesTest {
 
     // Kick static LOG inits to not mess with assertMemoryLeak measurments inside the tests
     private final DateFormat IGNORED = DateFormatUtils.PG_DATE_FORMAT;
-
-    @BeforeClass
-    public static void init() {
-        Os.init();
-    }
 
     @Test
     public void testAllocate() throws Exception {
