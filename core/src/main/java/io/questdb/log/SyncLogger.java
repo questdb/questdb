@@ -86,6 +86,12 @@ public class SyncLogger implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $size(long memoryBytes) {
+        sink().putSize(memoryBytes);
+        return this;
+    }
+
+    @Override
     public LogRecord $(CharSequence sequence) {
         if (sequence == null) {
             sink().put("null");

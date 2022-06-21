@@ -60,14 +60,14 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
     private static class DumpMemoryUsageFunction extends BooleanFunction {
         @Override
         public boolean getBool(Record rec) {
-            final LogRecord record = LOG.advisory();
+            final LogRecord record = LOG.advisoryW();
 
-            record.$("\n\tTOTAL: ").$(Unsafe.getMemUsed());
-            record.$("\n\tMALLOC_COUNT: ").$(Unsafe.getMallocCount());
-            record.$("\n\tREALLOC_COUNT: ").$(Unsafe.getReallocCount());
-            record.$("\n\tFREE_COUNT: ").$(Unsafe.getFreeCount());
+            record.$("\n\tTOTAL: ").$size(Unsafe.getMemUsed());
+            record.$("\n\tMALLOC_COUNT: ").$size(Unsafe.getMallocCount());
+            record.$("\n\tREALLOC_COUNT: ").$size(Unsafe.getReallocCount());
+            record.$("\n\tFREE_COUNT: ").$size(Unsafe.getFreeCount());
             for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-                record.$('\n').$('\t').$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i));
+                record.$('\n').$('\t').$(MemoryTag.nameOf(i)).$(": ").$size(Unsafe.getMemUsedByTag(i));
             }
             record.$('\n');
             record.$();

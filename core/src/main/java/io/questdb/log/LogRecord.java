@@ -32,6 +32,8 @@ import java.io.File;
 public interface LogRecord extends CharSinkBase {
     void $();
 
+    LogRecord $size(long memoryBytes);
+
     default void I$() {
         $(']').$();
     }

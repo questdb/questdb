@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -40,7 +42,6 @@ public final class Unsafe {
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
     static final AtomicLong MEM_USED = new AtomicLong(0);
-    static final AtomicLong OFF_HEAP_ALLOCATED = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
     private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
@@ -51,10 +52,12 @@ public final class Unsafe {
     //#endif
     private static final AnonymousClassDefiner anonymousClassDefiner;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
+    static final AtomicLong OFF_HEAP_ALLOCATED = new AtomicLong(0);
     private final static long HEAP_BREATHING_SPACE = 1L << 29; // 512 GiB
     private final static long REEVALUATE_HEAP_SPACE_INCREMENT = 1L << 26; // 128 MiB
     static volatile long OFF_HEAP_CHECK_THRESHOLD = Long.MAX_VALUE;
     static long RSS_MEMORY_LIMIT = Long.MAX_VALUE;
+    private static Log LOG;
 
 
     public static void setRssMemoryLimit(long rssMemoryLimit) {
@@ -150,6 +153,10 @@ public final class Unsafe {
     private Unsafe() {
     }
 
+    public static void initLog() {
+        LOG = LogFactory.getLog("unsafe-mem");
+    }
+
     public static long arrayGetVolatile(long[] array, int index) {
         assert index > -1 && index < array.length;
         return Unsafe.getUnsafe().getLongVolatile(array, LONG_OFFSET + ((long) index << LONG_SCALE));
@@ -237,8 +244,13 @@ public final class Unsafe {
             return ptr;
         } catch (OutOfMemoryError oom) {
             long offHeapAllocated = OFF_HEAP_ALLOCATED.addAndGet(-size);
-            System.err.println("Unsafe.malloc() OutOfMemoryError, off_heap_used=" + offHeapAllocated
-                    + ", size=" + size + ", memoryTag=" + memoryTag);
+            if (LOG != null) {
+                LOG.errorW().$("malloc() OutOfMemoryError [off_heap_allocated=").$size(offHeapAllocated)
+                        .$(", java_runtime=").$size(Runtime.getRuntime().totalMemory())
+                        .$(", size=").$size(size)
+                        .$(", memoryTag=").$(MemoryTag.nameOf(memoryTag))
+                        .I$();
+            }
             throw oom;
         }
     }
@@ -259,8 +271,13 @@ public final class Unsafe {
             return ptr;
         } catch (OutOfMemoryError oom) {
             long offHeapAllocated = OFF_HEAP_ALLOCATED.addAndGet(-size);
-            System.err.println("Unsafe.realloc() OutOfMemoryError, off_heap_used=" + offHeapAllocated
-                    + ", old_size=" + oldSize + ", new_size=" + newSize + ", memoryTag=" + memoryTag);
+            if (LOG != null) {
+                LOG.errorW().$("realloc() OutOfMemoryError [off_heap_allocated=").$size(offHeapAllocated)
+                        .$(", java_runtime=").$size(Runtime.getRuntime().totalMemory())
+                        .$(", old_size=").$size(oldSize).$(", new_size=").$size(newSize)
+                        .$(", memoryTag=").$(MemoryTag.nameOf(memoryTag))
+                        .I$();
+            }
             throw oom;
         }
     }
@@ -268,7 +285,7 @@ public final class Unsafe {
     public static void recordMemAlloc(long size, int memoryTag) {
         long mem = MEM_USED.addAndGet(size);
         assert mem >= 0;
-        assert  memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
+        assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
     }
 

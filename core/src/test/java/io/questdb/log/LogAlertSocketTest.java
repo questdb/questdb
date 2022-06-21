@@ -551,6 +551,12 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord $size(long memoryBytes) {
+            sink.putSize(memoryBytes);
+            return this;
+        }
+
+        @Override
         public LogRecord $(CharSequence sequence) {
             sink.put(sequence);
             return this;

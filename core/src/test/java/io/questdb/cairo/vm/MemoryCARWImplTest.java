@@ -238,6 +238,18 @@ public class MemoryCARWImplTest {
     }
 
     @Test
+    public void testStableResize() {
+        int pageSize = 16 * 1024 * 1024;
+        try (MemoryCARWImpl mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            Assert.assertEquals(0, mem.size());
+
+            mem.resize(pageSize);
+            Assert.assertEquals(pageSize, mem.size());
+        }
+    }
+
+
+    @Test
     public void testByteRnd() {
         try (MemoryARW mem = new MemoryCARWImpl(11, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             int n = 120;

@@ -110,6 +110,25 @@ public class MemoryDetectTest {
     }
 
     @Test
+    public void testReallocOomWhenMemoryExceeded() {
+        long gib = 1L << 30;
+        Unsafe.setRssMemoryLimit(gib);
+        long offheapAllocated = Unsafe.OFF_HEAP_ALLOCATED.get();
+
+        try {
+            long ptr = Unsafe.malloc(gib / 100, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.realloc(ptr, gib / 100, gib, MemoryTag.NATIVE_DEFAULT);
+            Assert.fail();
+        } catch (OutOfMemoryError err) {
+            TestUtils.assertContains(err.getMessage(), "exceeded configured limit of 1,073,741,824");
+            Assert.assertEquals(offheapAllocated, Unsafe.OFF_HEAP_ALLOCATED.get());
+        } finally {
+            // Restore global limit
+            resetRssLimit();
+        }
+    }
+
+    @Test
     public void testOffHeapAllocationReevaluatesCheckThreshold() {
         // Windows likely to fail to allocate big block of memory
         Assume.assumeTrue(Os.type != Os.WINDOWS);

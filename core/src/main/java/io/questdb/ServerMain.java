@@ -91,6 +91,7 @@ public class ServerMain {
 
         LogFactory.configureFromSystemProperties(LogFactory.INSTANCE, null, rootDirectory);
         final Log log = LogFactory.getLog("server-main");
+        Unsafe.initLog();
 
         log.advisoryW().$("QuestDB server ")
                 .$(buildInformation.getQuestDbVersion())
@@ -300,17 +301,17 @@ public class ServerMain {
         try {
             MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
 
-            log.advisory().$("Java max memory: ").$(Runtime.getRuntime().maxMemory()).$();
+            log.advisory().$("Java max memory: ").$size(Runtime.getRuntime().maxMemory()).$();
 
             if (rssMemoryLimit == 0) {
 
                 Object freeMemSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "FreePhysicalMemorySize");
                 long freePhysicalMemorySize = (Long)freeMemSizeAttribute;
-                log.advisory().$("physical memory: ").$(freePhysicalMemorySize).$();
+                log.advisory().$("physical memory: ").$size(freePhysicalMemorySize).$();
 
                 Object freeSwapSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "FreeSwapSpaceSize");
                 long freeSwapSize = (Long)freeSwapSizeAttribute;
-                log.advisory().$("swap memory: ").$(freeSwapSize).$();
+                log.advisory().$("swap memory    : ").$size(freeSwapSize).$();
 
                 // On Windows swapSize already includes physical memory. On Mac, Linux swap and physical are independent numbers
                 final long totalRssMemory = Os.type == Os.WINDOWS ? freeSwapSize : freeSwapSize + freePhysicalMemorySize;
@@ -319,15 +320,16 @@ public class ServerMain {
                 long gib = 1L << 30;
 
                 rssMemoryLimit = Math.min((long) (totalRssMemory * 0.9), totalRssMemory - 2 * gib);
-                log.advisory().$("RSS memory limit: ").$(rssMemoryLimit).$();
-
-                Unsafe.setRssMemoryLimit(rssMemoryLimit);
-            } else if (rssMemoryLimit > 0) {
-                Unsafe.setRssMemoryLimit(rssMemoryLimit);
-            } else {
+            } else if (rssMemoryLimit < 0) {
+                log.advisory().$("QuestDB RSS memory usage is not limited").$();
                 Unsafe.setRssMemoryLimit(Long.MAX_VALUE);
+                return;
             }
+
+            log.advisory().$("setting QuestDB RSS memory limit: ").$size(rssMemoryLimit).$();
+            Unsafe.setRssMemoryLimit(rssMemoryLimit);
         } catch (Throwable e) {
+            log.debug().$(e).$();
             log.advisory().$("Will not set malloc memory limit, unable to detect runtime memory limits").$();
         }
     }

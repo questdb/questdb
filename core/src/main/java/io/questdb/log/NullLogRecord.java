@@ -40,6 +40,11 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $size(long memoryBytes) {
+        return this;
+    }
+
+    @Override
     public LogRecord $(CharSequence sequence) {
         return this;
     }
