@@ -31,6 +31,7 @@ import io.questdb.mp.*;
 import io.questdb.tasks.*;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.Lock;
 
 public interface MessageBus extends Closeable {
 
@@ -117,4 +118,6 @@ public interface MessageBus extends Closeable {
     Sequence getTextImportSubSeq();
 
     SCSequence getTextImportColSeq();
+
+    Lock getTextImportQueueLock();
 }

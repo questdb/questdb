@@ -44,6 +44,7 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
@@ -64,9 +65,7 @@ import java.util.function.Consumer;
  * <p>
  */
 public class ParallelCsvFileImporter implements Closeable, Mutable {
-
     private static final Log LOG = LogFactory.getLog(ParallelCsvFileImporter.class);
-    private static final ReentrantLock lock = new ReentrantLock();
 
     private static final String LOCK_REASON = "parallel import";
     private static final int NO_INDEX = -1;
@@ -98,6 +97,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final Sequence pubSeq;
     private final Sequence subSeq;
     private final Sequence collectSeq;
+    private final Lock lock;
     private final int workerCount;
 
     private final CharSequence inputRoot;
@@ -136,7 +136,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private boolean targetTableCreated;
     private int targetTableStatus;
     private final TableStructureAdapter targetTableStructure;
-//    private final SCSequence collectSeq = new SCSequence();
     private int bufferLength;
 
     //import status variables 
@@ -155,6 +154,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.pubSeq = bus.getTextImportPubSeq();
         this.subSeq = bus.getTextImportSubSeq();
         this.collectSeq = bus.getTextImportColSeq();
+        this.lock = bus.getTextImportQueueLock();
 
         CairoConfiguration cfg = sqlExecutionContext.getCairoEngine().getConfiguration();
         this.workerCount = sqlExecutionContext.getWorkerCount();

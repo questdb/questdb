@@ -33,6 +33,9 @@ import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
 public class MessageBusImpl implements MessageBus {
     private final CairoConfiguration configuration;
 
@@ -88,6 +91,7 @@ public class MessageBusImpl implements MessageBus {
     private final SPSequence textImportPubSeq;
     private final MCSequence textImportSubSeq;
     private final SCSequence textImportColSeq;
+    private final Lock textImportQueueLock;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -180,6 +184,7 @@ public class MessageBusImpl implements MessageBus {
         this.textImportPubSeq = new SPSequence(textImportQueue.getCycle());
         this.textImportSubSeq = new MCSequence(textImportQueue.getCycle());
         this.textImportColSeq = new SCSequence();
+        this.textImportQueueLock = new ReentrantLock();
         textImportPubSeq.then(textImportSubSeq).then(textImportColSeq).then(textImportPubSeq);
     }
 
@@ -398,5 +403,10 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public SCSequence getTextImportColSeq() {
         return textImportColSeq;
+    }
+
+    @Override
+    public Lock getTextImportQueueLock() {
+        return textImportQueueLock;
     }
 }
