@@ -26,6 +26,7 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cutlass.text.types.TimestampAdapter;
@@ -65,9 +66,11 @@ public class TextImportTask {
 
     public static final byte STATUS_OK = 0;
     public static final byte STATUS_ERROR = 1;
+    public static final byte STATUS_CANCEL = 2;
 
     private byte phase;
     private int index;
+    private SqlExecutionCircuitBreaker circuitBreaker;
 
     private final CountQuotesStage countQuotesStage = new CountQuotesStage();
     private final BuildPartitionIndexStage buildPartitionIndexStage = new BuildPartitionIndexStage();
@@ -108,11 +111,19 @@ public class TextImportTask {
     }
 
     public boolean isFailed() {
-        return this.status != STATUS_OK;
+        return this.status == STATUS_ERROR;
+    }
+
+    public boolean isCancelled() {
+        return this.status == STATUS_CANCEL;
     }
 
     public void setIndex(int index) {
         this.index = index;
+    }
+
+    public void setCircuitBreaker(SqlExecutionCircuitBreaker circuitBreaker) {
+        this.circuitBreaker = circuitBreaker;
     }
 
     public void ofBuildPartitionIndexStage(long chunkStart,
@@ -198,13 +209,16 @@ public class TextImportTask {
     ) {
         this.phase = PHASE_UPDATE_SYMBOL_KEYS;
         this.updateSymbolColumnKeysStage.of(cairoEngine, tableStructure, index, partitionSize, partitionTimestamp, root, columnName, symbolCount);
-
     }
 
     public boolean run() {
         try {
             status = STATUS_OK;
-
+            if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
+                status = STATUS_CANCEL;
+                this.errorMessage = "Task is cancelled";
+                return false;
+            }
             if (phase == PHASE_BOUNDARY_CHECK) {
                 countQuotesStage.run();
             } else if (phase == PHASE_INDEXING) {
