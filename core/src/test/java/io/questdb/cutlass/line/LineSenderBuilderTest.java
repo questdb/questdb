@@ -36,6 +36,8 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @ClassRule
     public static final TlsProxyRule TLS_PROXY = TlsProxyRule.toHostAndPort("localhost", 9002);
 
+    private static final String LOCALHOST = "127.0.0.1";
+
     @Test
     public void testHostNorAddressSet() {
         Sender.LineSenderBuilder builder = Sender.builder();
@@ -43,7 +45,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             builder.build();
             fail("not host should fail");
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "server host not set");
+            TestUtils.assertContains(e.getMessage(), "server address not set");
         }
     }
 
@@ -61,7 +63,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testConnectPlain() throws Exception {
         runInContext(r -> {
-            try (Sender sender = Sender.builder().address("localhost").port(bindPort).build()) {
+            try (Sender sender = Sender.builder().address(LOCALHOST).port(bindPort).build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
                 assertTableExistsEventually(engine, "mytable");
@@ -74,7 +76,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         runInContext(r -> {
             try (Sender sender = Sender.builder()
-                    .address("localhost")
+                    .address(LOCALHOST)
                     .port(bindPort)
                     .enableAuth(AUTH_KEY_ID1)
                     .token(AUTH_TOKEN_KEY1)
@@ -91,7 +93,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         runInContext(r -> {
             try (Sender sender = Sender.builder()
-                    .address("localhost")
+                    .address(LOCALHOST)
                     .port(bindPort)
                     .enableAuth(AUTH_KEY_ID1)
                     .privateKey(AUTH_PRIVATE_KEY1)
@@ -108,7 +110,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         String truststore = LineSenderBuilderTest.class.getResource(TRUSTSTORE_PATH).getFile();
         runInContext(r -> {
             try (Sender sender = Sender.builder()
-                    .address("localhost")
+                    .address(LOCALHOST)
                     .port(TLS_PROXY.getListeningPort())
                     .enableTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                     .build()) {
@@ -124,7 +126,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         String truststore = "classpath:" + TRUSTSTORE_PATH;
         runInContext(r -> {
             try (Sender sender = Sender.builder()
-                    .address("localhost")
+                    .address(LOCALHOST)
                     .port(TLS_PROXY.getListeningPort())
                     .enableTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                     .build()) {
@@ -139,7 +141,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testConnectTls_NonExistingTrustoreFile() throws Exception {
         String truststore = "/foo/whatever/non-existing";
         Sender.LineSenderBuilder builder = Sender.builder()
-                .address("localhost")
+                .address(LOCALHOST)
                 .port(TLS_PROXY.getListeningPort())
                 .enableTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
 
@@ -157,7 +159,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testConnectTls_NonExistingTrustoreClaspath() throws Exception {
         String truststore = "classpath:/foo/whatever/non-existing";
         Sender.LineSenderBuilder builder = Sender.builder()
-                .address("localhost")
+                .address(LOCALHOST)
                 .port(TLS_PROXY.getListeningPort())
                 .enableTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
 
@@ -175,7 +177,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testConnectTls_WrongTruststorePassword() throws Exception {
         String truststore = "classpath:" + TRUSTSTORE_PATH;
         Sender.LineSenderBuilder builder = Sender.builder()
-                .address("localhost")
+                .address(LOCALHOST)
                 .port(TLS_PROXY.getListeningPort())
                 .enableTls().customTrustStore(truststore, "wrong password".toCharArray());
         runInContext(r -> {
@@ -193,7 +195,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         String truststore = "classpath:" + TRUSTSTORE_PATH;
         Sender.LineSenderBuilder builder = Sender.builder()
-                .address("localhost")
+                .address(LOCALHOST)
                 .port(TLS_PROXY.getListeningPort())
                 .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
                 .enableTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
@@ -211,7 +213,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         String truststore = "classpath:" + TRUSTSTORE_PATH;
         Sender.LineSenderBuilder builder = Sender.builder()
-                .address("localhost")
+                .address(LOCALHOST)
                 .port(TLS_PROXY.getListeningPort())
                 .enableAuth(AUTH_KEY_ID1).privateKey(AUTH_PRIVATE_KEY1)
                 .enableTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
@@ -238,7 +240,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testAuthTooSmallBuffer() {
         Sender.LineSenderBuilder builder = Sender.builder()
-                .enableAuth("foo").token(AUTH_TOKEN_KEY1).address("localhost:9001")
+                .enableAuth("foo").token(AUTH_TOKEN_KEY1).address(LOCALHOST+":9001")
                 .bufferCapacity(1);
         try {
             builder.build();
@@ -251,7 +253,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testPlainAuth_connectionRefused() {
         Sender.LineSenderBuilder builder = Sender.builder()
-                .enableAuth("foo").token(AUTH_TOKEN_KEY1).address("localhost:19003");
+                .enableAuth("foo").token(AUTH_TOKEN_KEY1).address(LOCALHOST+":19003");
         try {
             builder.build();
             fail("connection refused should fail fast");
@@ -262,7 +264,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testPlain_connectionRefused() {
-        Sender.LineSenderBuilder builder = Sender.builder().address("localhost:19003");
+        Sender.LineSenderBuilder builder = Sender.builder().address(LOCALHOST+":19003");
         try {
             builder.build();
             fail("connection refused should fail fast");
@@ -273,7 +275,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testTls_connectionRefused() {
-        Sender.LineSenderBuilder builder = Sender.builder().enableTls().address("localhost:19003");
+        Sender.LineSenderBuilder builder = Sender.builder().enableTls().address(LOCALHOST+":19003");
         try {
             builder.build();
             fail("connection refused should fail fast");
@@ -285,16 +287,16 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testDnsResolutionFail() {
         try {
-            Sender.builder().address("this-domain-does-not-exist-i-hope-better-to-use-a-silly-tld.silly-tld");
+            Sender.builder().address("this-domain-does-not-exist-i-hope-better-to-use-a-silly-tld.silly-tld").build();
             fail("dns resolution errors should fail fast");
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "bad address");
+            TestUtils.assertContains(e.getMessage(), "cannot resolve");
         }
     }
 
     @Test
     public void testAddressDoubleSet_firstAddressThenAddress() {
-        Sender.LineSenderBuilder builder = Sender.builder().address("localhost");
+        Sender.LineSenderBuilder builder = Sender.builder().address(LOCALHOST);
         try {
             builder.address("127.0.0.1");
             fail("should not allow double host set");
@@ -316,7 +318,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testPortDoubleSet_firstAddressThenPort() {
-        Sender.LineSenderBuilder builder = Sender.builder().address("localhost:9000");
+        Sender.LineSenderBuilder builder = Sender.builder().address(LOCALHOST+":9000");
         try {
             builder.port(9000);
             fail("should not allow double port set");
@@ -329,7 +331,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testPortDoubleSet_firstPortThenAddress() {
         Sender.LineSenderBuilder builder = Sender.builder().port(9000);
         try {
-            builder.address("localhost:9000");
+            builder.address(LOCALHOST + ":9000");
             fail("should not allow double port set");
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), "already configured");
@@ -384,7 +386,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testCustomTruststoreButTlsNotEnabled() {
         Sender.LineSenderBuilder builder = Sender.builder()
                 .customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
-                .address("localhost");
+                .address(LOCALHOST);
         try {
             builder.build();
             fail("should not fail when custom trust store configured, but TLS not enabled");

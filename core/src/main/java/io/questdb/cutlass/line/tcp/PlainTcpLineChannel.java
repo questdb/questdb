@@ -50,6 +50,25 @@ public final class PlainTcpLineChannel implements LineChannel {
             stringSink.put(", [errno=").put(nf.errno()).put("]");
             throw new LineSenderException(stringSink.toString());
         }
+        configureBuffers(nf, sndBufferSize);
+    }
+
+    public PlainTcpLineChannel(NetworkFacade nf, CharSequence host, int port, int sndBufferSize) {
+        this.nf = nf;
+        this.sockaddr = -1;
+        this.fd = nf.socketTcp(true);
+        long addrInfo = nf.getAddrInfo(host, port);
+        if (addrInfo == -1) {
+            throw new LineSenderException("cannot resolve " + host + " to IP address");
+        }
+        if (nf.connectAddrInfo(fd, addrInfo) != 0) {
+            throw new LineSenderException("could not connect to " + host + "[errno=" + nf.errno() + "]");
+        }
+        nf.freeAddrInfo(addrInfo);
+        configureBuffers(nf, sndBufferSize);
+    }
+
+    private void configureBuffers(NetworkFacade nf, int sndBufferSize) {
         int orgSndBufSz = nf.getSndBuf(fd);
         nf.setSndBuf(fd, sndBufferSize);
         int newSndBufSz = nf.getSndBuf(fd);
@@ -61,7 +80,9 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (nf.close(fd) != 0) {
             LOG.error().$("could not close network socket [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
         }
-        nf.freeSockAddr(sockaddr);
+        if (sockaddr != -1) {
+            nf.freeSockAddr(sockaddr);
+        }
     }
 
     @Override

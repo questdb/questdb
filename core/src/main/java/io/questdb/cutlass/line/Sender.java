@@ -27,6 +27,7 @@ package io.questdb.cutlass.line;
 import io.questdb.cutlass.line.tcp.AuthDb;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
+import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -35,9 +36,6 @@ import io.questdb.std.NumericException;
 import javax.security.auth.DestroyFailedException;
 import java.io.Closeable;
 import java.io.IOException;
-import java.net.Inet4Address;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.security.PrivateKey;
 
 /**
@@ -181,7 +179,8 @@ public interface Sender extends Closeable {
         private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
 
         private int port = PORT_DEFAULT;
-        private int host;
+        private CharSequence address;
+        private int addressLimit;
         private PrivateKey privateKey;
         private boolean shouldDestroyPrivKey;
         private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
@@ -194,30 +193,6 @@ public interface Sender extends Closeable {
 
         }
 
-        /**
-         * Set address of an QuestDB server. InetAddress my represent IPv4 address.
-         * After using this method you have to explicitly set a port by calling {@link LineSenderBuilder#port(int)}
-         * Alternatively, you can use {@link LineSenderBuilder#address(CharSequence)} to set both address and port in one call.
-         *
-         * @param host host address to set
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder host(InetAddress host) {
-            if (!(host instanceof Inet4Address)) {
-                throw new LineSenderException("only IPv4 addresses are supported");
-            }
-            if (this.host != 0) {
-                throw new LineSenderException("host address is already configured");
-            }
-
-            byte[] addrBytes = host.getAddress();
-            int address  = addrBytes[3] & 0xFF;
-            address |= ((addrBytes[2] << 8) & 0xFF00);
-            address |= ((addrBytes[1] << 16) & 0xFF0000);
-            address |= ((addrBytes[0] << 24) & 0xFF000000);
-            this.host = address;
-            return this;
-        }
 
         /**
          * Set address of a QuestDB server. It can be either a domain name or a textual representation of an IP address.
@@ -232,8 +207,8 @@ public interface Sender extends Closeable {
          * @return this instance for method chaining.
          */
         public LineSenderBuilder address(CharSequence address) {
-            if (host != 0) {
-                throw new LineSenderException("host address is already configured");
+            if (this.address != null) {
+                throw new LineSenderException("server address is already configured to " + this.address);
             }
             if (address.length() == 0) {
                 throw new LineSenderException("address cannot be empty");
@@ -242,27 +217,21 @@ public interface Sender extends Closeable {
             if (portIndex + 1 == address.length()) {
                 throw new LineSenderException("cannot parse address " + address + ". address cannot ends with :");
             }
-            CharSequence hostname;
             if (portIndex != -1) {
                 if (port != 0) {
                     throw new LineSenderException("address " + address + " contains a port, but a port was already configured to " + port);
                 }
-                hostname = address.subSequence(0, portIndex);
+                addressLimit = portIndex;
                 try {
-                    port = Numbers.parseInt(address.subSequence(portIndex + 1, address.length()));
+                    port = Numbers.parseInt(address, portIndex + 1, address.length());
                 } catch (NumericException e) {
-                    throw new LineSenderException("cannot parse port", e);
+                    throw new LineSenderException("cannot parse port from address " + address, e);
                 }
             } else {
-                hostname = address;
+                addressLimit = address.length();
             }
-            try {
-                // todo: implement a DNS resolution which does not require InetAddress instantiation
-                InetAddress inet4Address = Inet4Address.getByName(hostname.toString());
-                return host(inet4Address);
-            } catch (UnknownHostException ex) {
-                throw new LineSenderException("bad address " + address, ex);
-            }
+            this.address = address;
+            return this;
         }
 
         /**
@@ -350,7 +319,9 @@ public interface Sender extends Closeable {
             configureDefaults();
             validateParameters();
 
-            LineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, host, port, bufferCapacity * 2);
+
+            NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            LineChannel channel = new PlainTcpLineChannel(nf, address.subSequence(0, addressLimit), port, bufferCapacity * 2);
             LineTcpSender sender;
             if (tlsEnabled) {
                 assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
@@ -398,8 +369,8 @@ public interface Sender extends Closeable {
         }
 
         private void validateParameters() {
-            if (host == 0) {
-                throw new LineSenderException("questdb server host not set");
+            if (address == null) {
+                throw new LineSenderException("questdb server address not set");
             }
             if (!tlsEnabled && trustStorePath != null) {
                 throw new LineSenderException("custom trust store configured to " + trustStorePath + ", but TLS was not enabled");

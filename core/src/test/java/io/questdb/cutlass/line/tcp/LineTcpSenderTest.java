@@ -156,18 +156,4 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             assertTableExistsEventually(engine, "mytable");
         });
     }
-
-    @Test
-    public void testBuilderPlainText_withExplicitHostnameAndPort() throws Exception {
-        runInContext(r -> {
-            try (Sender sender = Sender.builder()
-                    .host(Inet4Address.getByName("localhost"))
-                    .port(bindPort)
-                    .build()) {
-                sender.table("mytable").longColumn("my int field", 42).atNow();
-                sender.flush();
-            }
-            assertTableExistsEventually(engine, "mytable");
-        });
-    }
 }
