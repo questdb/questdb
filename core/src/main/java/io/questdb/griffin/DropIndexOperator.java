@@ -156,10 +156,8 @@ public class DropIndexOperator implements Closeable {
             }
 
             // columnVersion, partitionTimestamp, partitionNameTxn, columnIndex
-            final long columnVersion = cleanupColumnVersions.getQuick(0);
-            final long partitionTimestamp = cleanupColumnVersions.getQuick(1);
-            final long partitionNameTxn = cleanupColumnVersions.getQuick(2);
             final int columnIndex = (int) cleanupColumnVersions.getQuick(3);
+            cleanupColumnVersions.getAndSetQuick(3, 0L); // becomes rowIndex
 
             final TableWriterMetadata writerMetadata = tableWriter.getMetadata();
             final String tableName = tableWriter.getTableName();
@@ -167,8 +165,7 @@ public class DropIndexOperator implements Closeable {
             final long dropIndexTxn = tableWriter.getTxn();
 
             // submit async
-            cleanupColumnVersions.clear();
-            cleanupColumnVersions.add(columnVersion, partitionTimestamp, partitionNameTxn, 0L);
+
             final Sequence pubSeq = messageBus.getColumnPurgePubSeq();
             while (true) {
                 long cursor = pubSeq.next();

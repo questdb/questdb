@@ -32,6 +32,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -51,6 +52,11 @@ public class FilesTest {
 
     // Kick static LOG inits to not mess with assertMemoryLeak measurments inside the tests
     private final DateFormat IGNORED = DateFormatUtils.PG_DATE_FORMAT;
+
+    @BeforeClass
+    public static void init() {
+        Os.init();
+    }
 
     @Test
     public void testAllocate() throws Exception {
@@ -255,7 +261,7 @@ public class FilesTest {
             Path hardLinkFilePath = null;
             try {
                 final String EOL = System.lineSeparator();
-                String fileContent = "The theoretical tightest upper bound on the information rate of" + EOL +
+                final String fileContent = "The theoretical tightest upper bound on the information rate of" + EOL +
                         "data that can be communicated at an arbitrarily low error rate using an average" + EOL +
                         "received signal power S through an analog communication channel subject to" + EOL +
                         "additive white Gaussian noise (AWGN) of power N:" + EOL + EOL +
@@ -300,7 +306,7 @@ public class FilesTest {
     }
 
     @Test
-    public void testHardLinkFailures() throws Exception {
+    public void testHardLinkFailuresSrcDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
             File dbRoot = temporaryFolder.newFolder("dbRoot");
             dbRoot.mkdirs();
@@ -309,6 +315,25 @@ public class FilesTest {
             try {
                 srcFilePath = new Path().of(dbRoot.getAbsolutePath()).concat("some_column.d").$();
                 hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
+                Assert.assertEquals(-1, Files.hardLink(srcFilePath, hardLinkFilePath));
+            } finally {
+                Misc.free(srcFilePath);
+                Misc.free(hardLinkFilePath);
+                temporaryFolder.delete();
+            }
+        });
+    }
+
+    @Test
+    public void testHardLinkFailuresHardLinkExists() throws Exception {
+        assertMemoryLeak(() -> {
+            File dbRoot = temporaryFolder.newFolder("dbRoot");
+            dbRoot.mkdirs();
+            Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
+            Path hardLinkFilePath = new Path().of(dbRoot.getAbsolutePath());
+            try {
+                createTempFile(srcFilePath, "some_column.d", "some content");
+                createTempFile(srcFilePath, "some_column.d.1", "some other content");
                 Assert.assertEquals(-1, Files.hardLink(srcFilePath, hardLinkFilePath));
             } finally {
                 Misc.free(srcFilePath);
