@@ -319,25 +319,6 @@ public class FilesTest {
     }
 
     @Test
-    public void testHardLinkFailuresHardLinkExists() throws Exception {
-        assertMemoryLeak(() -> {
-            File dbRoot = temporaryFolder.newFolder("dbRoot");
-            dbRoot.mkdirs();
-            Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
-            Path hardLinkFilePath = new Path().of(dbRoot.getAbsolutePath());
-            try {
-                createTempFile(srcFilePath, "some_column.d", "some content");
-                createTempFile(srcFilePath, "some_column.d.1", "some other content");
-                Assert.assertEquals(-1, Files.hardLink(srcFilePath, hardLinkFilePath));
-            } finally {
-                Misc.free(srcFilePath);
-                Misc.free(hardLinkFilePath);
-                temporaryFolder.delete();
-            }
-        });
-    }
-
-    @Test
     public void testMkdirs() throws Exception {
         assertMemoryLeak(() -> {
             File r = temporaryFolder.newFolder("to_delete");
