@@ -43,6 +43,8 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -58,6 +60,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final long[] pRosti;
     private final int keyColumnIndex;
     private final RostiRecordCursor cursor;
+    private final RostiAllocFacade raf;
+    private final AtomicInteger oomCounter = new AtomicInteger();
 
     public GroupByRecordCursorFactory(
             CairoConfiguration configuration,
@@ -85,10 +89,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         this.pRosti = new long[workerCount];
         final int vafCount = vafList.size();
         this.vafList = new ObjList<>(vafCount);
+        this.raf = configuration.getRostiAllocFacade();
         for (int i = 0; i < workerCount; i++) {
-            pRosti[i] = Rosti.alloc(columnTypes, configuration.getGroupByMapCapacity());
-
-            // todo: init key to null value
+            long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
+            if (ptr == 0) {
+                for (int k = i -1; k > -1; k--) {
+                    raf.free(pRosti[k]);
+                }
+                throw new OutOfMemoryError();
+            }
+            pRosti[i] = ptr;
 
             // remember, single key for now
             switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {
@@ -155,7 +165,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     protected void _close() {
         Misc.freeObjList(vafList);
         for (int i = 0, n = pRosti.length; i < n; i++) {
-            Rosti.free(pRosti[i]);
+            raf.free(pRosti[i]);
         }
     }
 
@@ -166,6 +176,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         for (int i = 0, n = pRosti.length; i < n; i++) {
             Rosti.clear(pRosti[i]);
         }
+
+        oomCounter.set(0);
 
         final MessageBus bus = executionContext.getMessageBus();
 
@@ -198,60 +210,78 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             workerId = 0;
         }
 
-        PageFrame frame;
-        while ((frame = cursor.next()) != null) {
-            final long keyAddress = frame.getPageAddress(keyColumnIndex);
-            for (int i = 0; i < vafCount; i++) {
-                final VectorAggregateFunction vaf = vafList.getQuick(i);
-                // when column index = -1 we assume that vector function does not have value
-                // argument, and it can only derive count via memory size
-                final int columnIndex = vaf.getColumnIndex();
-                // for functions like `count()`, that do not have arguments we are required to provide
-                // count of rows in table in a form of "pageSize >> shr". Since `vaf` doesn't provide column
-                // this code used column 0. Assumption here that column 0 is fixed size.
-                // This assumption only holds because our aggressive algorithm for "top down columns", e.g.
-                // the algorithm that forces page frame to provide only columns required by the select. At the time
-                // of writing this code there is no way to return variable length column out of non-keyed aggregation
-                // query. This might change if we introduce something like `first(string)`. When this happens we will
-                // need to rethink our way of computing size for the count. This would be either type checking column
-                // 0 and working out size differently or finding any fixed-size column and using that.
-                final long valueAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
-                final int pageColIndex = columnIndex > -1 ? columnIndex : 0;
-                final int columnSizeShr = frame.getColumnShiftBits(pageColIndex);
-                final long valueAddressSize = frame.getPageSize(pageColIndex);
+        try {
+            PageFrame frame;
+            while ((frame = cursor.next()) != null) {
+                final long keyAddress = frame.getPageAddress(keyColumnIndex);
+                for (int i = 0; i < vafCount; i++) {
+                    final VectorAggregateFunction vaf = vafList.getQuick(i);
+                    // when column index = -1 we assume that vector function does not have value
+                    // argument, and it can only derive count via memory size
+                    final int columnIndex = vaf.getColumnIndex();
+                    // for functions like `count()`, that do not have arguments we are required to provide
+                    // count of rows in table in a form of "pageSize >> shr". Since `vaf` doesn't provide column
+                    // this code used column 0. Assumption here that column 0 is fixed size.
+                    // This assumption only holds because our aggressive algorithm for "top down columns", e.g.
+                    // the algorithm that forces page frame to provide only columns required by the select. At the time
+                    // of writing this code there is no way to return variable length column out of non-keyed aggregation
+                    // query. This might change if we introduce something like `first(string)`. When this happens we will
+                    // need to rethink our way of computing size for the count. This would be either type checking column
+                    // 0 and working out size differently or finding any fixed-size column and using that.
+                    final long valueAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
+                    final int pageColIndex = columnIndex > -1 ? columnIndex : 0;
+                    final int columnSizeShr = frame.getColumnShiftBits(pageColIndex);
+                    final long valueAddressSize = frame.getPageSize(pageColIndex);
 
-                long seq = pubSeq.next();
-                if (seq < 0) {
-                    if (keyAddress == 0) {
-                        vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, workerId);
-                    } else {
-                        vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, columnSizeShr, workerId);
-                    }
-                    ownCount++;
-                } else {
-                    if (keyAddress != 0 || valueAddress != 0) {
-                        final VectorAggregateEntry entry = entryPool.next();
+                    long seq = pubSeq.next();
+                    if (seq < 0) {
                         if (keyAddress == 0) {
-                            entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch);
+                            vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, workerId);
                         } else {
-                            entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch);
+                            if (!vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, columnSizeShr, workerId)) {
+                                oomCounter.incrementAndGet();
+                            }
                         }
-                        activeEntries.add(entry);
-                        queue.get(seq).entry = entry;
-                        pubSeq.done(seq);
+                        ownCount++;
+                    } else {
+                        if (keyAddress != 0 || valueAddress != 0) {
+                            final VectorAggregateEntry entry = entryPool.next();
+                            if (keyAddress == 0) {
+                                entry.of(queuedCount++, vaf, null, 0, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter);
+                            } else {
+                                entry.of(queuedCount++, vaf, pRosti, keyAddress, valueAddress, valueAddressSize, columnSizeShr, doneLatch, oomCounter);
+                            }
+                            activeEntries.add(entry);
+                            queue.get(seq).entry = entry;
+                            pubSeq.done(seq);
+                        }
                     }
+                    total++;
                 }
-                total++;
             }
+        } catch (Throwable e) {
+            Misc.free(cursor);
+            throw e;
+        } finally {
+            // all done? great start consuming the queue we just published
+            // how do we get to the end? If we consume our own queue there is chance we will be consuming
+            // aggregation tasks not related to this execution (we work in concurrent environment)
+            // To deal with that we need to have our own checklist.
+
+            // Make sure we're consuming jobs even when we failed. We cannot close "rosti" when there are
+            // tasks in flight.
+
+            // start at the back to reduce chance of clashing
+            reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG);
         }
 
-        // all done? great start consuming the queue we just published
-        // how do we get to the end? If we consume our own queue there is chance we will be consuming
-        // aggregation tasks not related to this execution (we work in concurrent environment)
-        // To deal with that we need to have our own checklist.
+        if (oomCounter.get() > 0) {
+            Misc.free(cursor);
+            throw new OutOfMemoryError();
+        }
 
-        // start at the back to reduce chance of clashing
-        reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(queuedCount, reclaimed, workerId, activeEntries, doneLatch, LOG);
+        // merge maps only when cursor was fetched successfully
+        // otherwise assume error and save CPU cycles
         long pRosti0 = pRosti[0];
 
         if (pRosti.length > 1) {
@@ -269,9 +299,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 vafList.getQuick(j).wrapUp(pRosti0);
             }
         }
-
         LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
-
         return this.cursor.of(cursor);
     }
 

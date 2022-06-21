@@ -136,7 +136,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 } else {
                     final VectorAggregateEntry entry = entryPool.next();
                     // null pRosti means that we do not need keyed aggregation
-                    entry.of(queuedCount++, vaf, null, 0, pageAddress, pageSize, colSizeShr, doneLatch);
+                    entry.of(queuedCount++, vaf, null, 0, pageAddress, pageSize, colSizeShr, doneLatch, null);
                     activeEntries.add(entry);
                     queue.get(seq).entry = entry;
                     pubSeq.done(seq);
