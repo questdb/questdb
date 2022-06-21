@@ -139,7 +139,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
             // If partition without version (txnVersion is -1 and nameTxn == 0)
             // We cannot say if it's the partition TableWriter is writing at the moment.
-            // Similarly if the version on disk is .2 (nameTxn == 3) we can only remove it if the lastTxn 4 or higher
+            // Similarly, if the version on disk is .2 (nameTxn == 3) we can only remove it if the lastTxn 4 or higher
             boolean rangeUnlocked = nameTxn > 0 && nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
             if (rangeUnlocked) {
                 // nameTxn can be deleted
