@@ -155,21 +155,32 @@ public class DropIndexOperator implements Closeable {
                 return;
             }
 
-            // columnVersion, partitionTimestamp, partitionNameTxn, columnIndex
             final int columnIndex = (int) cleanupColumnVersions.getQuick(3);
-            cleanupColumnVersions.getAndSetQuick(3, 0L); // becomes rowIndex
 
             final TableWriterMetadata writerMetadata = tableWriter.getMetadata();
             final String tableName = tableWriter.getTableName();
             final CharSequence columnName = writerMetadata.getColumnName(columnIndex);
             final long dropIndexTxn = tableWriter.getTxn();
 
-            // submit async
+            if (tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn()) {
+                LOG.info()
+                        .$("there are readers of the index, Please run 'VACUUM TABLE \"")
+                        .$(tableName)
+                        .$("\"' [columnName=")
+                        .$(columnName)
+                        .$(", dropIndexTxn=")
+                        .$(dropIndexTxn)
+                        .I$();
+                return;
+            }
 
+            // submit async
             final Sequence pubSeq = messageBus.getColumnPurgePubSeq();
             while (true) {
                 long cursor = pubSeq.next();
                 if (cursor > -1L) {
+                    // columnVersion, partitionTimestamp, partitionNameTxn, columnIndex
+                    cleanupColumnVersions.getAndSetQuick(3, 0L); // becomes rowIndex
                     ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
                     task.of(
                             tableName,

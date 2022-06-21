@@ -589,10 +589,10 @@ public class TableWriter implements Closeable {
 
             // swap meta commit
             metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, META_FLAG_BIT_NOT_INDEXED, defaultIndexValueBlockSize);
-            swapMetaFile(columnName); // bumps structure version
+            swapMetaFile(columnName); // bumps structure version, this is in effect a commit
 
             TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
-            columnMetadata.setIndexed(true);
+            columnMetadata.setIndexed(false);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
 
             // remove indexer

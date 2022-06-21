@@ -26,15 +26,14 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.*;
 
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -51,6 +50,29 @@ public class DropIndexTest extends AbstractGriffinTest {
             "        timestamp_sequence(0, 3600000) ts \n" +
             "    FROM long_sequence(2000)\n" +
             "), INDEX(sensor_id CAPACITY 32) TIMESTAMP(ts)";
+
+
+    protected static SqlExecutionContext sqlExecutionContext2;
+    protected static SqlCompiler compiler2;
+
+    @BeforeClass
+    public static void setUpStatic() {
+        AbstractGriffinTest.setUpStatic();
+        compiler2 = new SqlCompiler(engine, null, snapshotAgent);
+        sqlExecutionContext2 = new SqlExecutionContextImpl(engine, 1)
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        null,
+                        null,
+                        -1,
+                        null);
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        AbstractGriffinTest.tearDownStatic();
+        compiler2.close();
+    }
 
     @Test
     public void testDropIndexOfNonIndexedColumnShouldFail() throws Exception {
@@ -105,7 +127,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                 CREATE_TABLE_STMT + " PARTITION BY HOUR",
                 "sensors",
                 "sensor_id",
-                32
+                32,
+                4
         );
     }
 
@@ -115,7 +138,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                 CREATE_TABLE_STMT + " PARTITION BY NONE",
                 "sensors",
                 "sensor_id",
-                32
+                32,
+                2
         );
     }
 
@@ -147,7 +171,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                 int pathLen = path.length();
                 checkMetadataAndTxn(path, tableName, columnName, 0, 1, 0, true);
                 assertSql(tableName, expected);
-                verifyColumnIsIndexed(tableName, columnName, true, 4);
+                verifyColumnIsIndexed(tableName, columnName, true, 4, 2);
 
                 executeOperation(
                         "ALTER TABLE " + tableName + " ALTER COLUMN " + columnName + " DROP INDEX",
@@ -158,20 +182,18 @@ public class DropIndexTest extends AbstractGriffinTest {
                 path.trimTo(pathLen);
                 checkMetadataAndTxn(path, tableName, columnName, 1, 2, 1, false);
                 assertSql(tableName, expected);
-                verifyColumnIsIndexed(tableName, columnName, false, 256);
+                verifyColumnIsIndexed(tableName, columnName, false, 256, 0);
             } finally {
                 Misc.free(path);
             }
         });
     }
 
-    // TODO fix this test: compiler is not multi threaded
     @Test
-    @Ignore
-    public void testParallelDropIndexPreservesIndexFilesWhenThereIsATransactionReadingIt() throws Exception {
+    public void testParallelDropIndexPreservesIndexFilesWhenThereIsATransactionReadingThem() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
-            verifyColumnIsIndexed("sensors", "sensor_id", true, 32);
+            verifyColumnIsIndexed("sensors", "sensor_id", true, 32, 4);
             engine.releaseAllWriters();
 
             final String select = "SELECT ts, sensor_id " +
@@ -191,17 +213,22 @@ public class DropIndexTest extends AbstractGriffinTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
+                    int readerOutOfError = 0;
                     for (int i = 0; i < 5; i++) {
-                        System.out.printf("ROUND %d BEGIN%n", i);
-                        try (RecordCursorFactory factory = compiler.compile(select, sqlExecutionContext).getRecordCursorFactory()) {
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        try (RecordCursorFactory factory = compiler2.compile(select, sqlExecutionContext2).getRecordCursorFactory()) {
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext2)) {
                                 sink.clear();
                                 TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+                                // 1st reader sees the index as DROP INDEX has not happened yet
+                                // the readers that follow do not see the index,as it has been dropped
+                                verifyColumnIsIndexed("sensors", "sensor_id", i == 0, i == 0 ? 32 : 256, 4);
                             }
+                        } catch (ReaderOutOfDateException ex) {
+                            readerOutOfError++;
                         }
-                        System.out.printf("ROUND %d END%n", i);
                         Thread.sleep(100L);
                     }
+                    Assert.assertEquals(1, readerOutOfError);
                 } catch (Throwable e) {
                     failureReason.set(e);
                     e.printStackTrace();
@@ -210,21 +237,24 @@ public class DropIndexTest extends AbstractGriffinTest {
                     endLatch.countDown();
                 }
             }).start();
-            startBarrier.await();
 
+            startBarrier.await(); // there will be a reader seeing the index
             compile(
                     "alter table sensors alter column sensor_id drop index",
                     sqlExecutionContext
             );
-            verifyColumnIsIndexed("sensors", "sensor_id", false, configuration.getIndexValueBlockSize());
+            endLatch.await(); // no more readers
+            verifyColumnIsIndexed("sensors", "sensor_id", false, configuration.getIndexValueBlockSize(), 4);
+            compile(
+                    "VACUUM TABLE sensors",
+                    sqlExecutionContext
+            );
+            verifyColumnIsIndexed("sensors", "sensor_id", false, configuration.getIndexValueBlockSize(), 0);
 
-            endLatch.await();
-            Throwable excpt = failureReason.get();
-            if (excpt != null) {
-                Assert.fail(excpt.getMessage());
+            Throwable fail = failureReason.get();
+            if (fail != null) {
+                Assert.fail(fail.getMessage());
             }
-
-            Assert.assertTrue(findIndexFiles(configuration, "sensors", "sensor_id").isEmpty());
         });
     }
 
@@ -232,16 +262,17 @@ public class DropIndexTest extends AbstractGriffinTest {
             String createStatement,
             String tableName,
             String columnName,
-            int indexValueBockSize
+            int indexValueBockSize,
+            int expectedIndexFiles
     ) throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile(createStatement, sqlExecutionContext);
-            verifyColumnIsIndexed(tableName, columnName, true, indexValueBockSize);
+            verifyColumnIsIndexed(tableName, columnName, true, indexValueBockSize, expectedIndexFiles);
             compile(
                     "alter table " + tableName + " alter column " + columnName + " drop index",
                     sqlExecutionContext
             );
-            verifyColumnIsIndexed(tableName, columnName, false, configuration.getIndexValueBlockSize());
+            verifyColumnIsIndexed(tableName, columnName, false, configuration.getIndexValueBlockSize(), expectedIndexFiles);
         });
     }
 
@@ -278,7 +309,8 @@ public class DropIndexTest extends AbstractGriffinTest {
             String tableName,
             String columnName,
             boolean isIndexed,
-            int indexValueBlockSize
+            int indexValueBlockSize,
+            int expectedIndexFiles
     ) throws Exception {
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
             TableReaderMetadata metadata = reader.getMetadata();
@@ -286,8 +318,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             Assert.assertEquals(isIndexed, metadata.isColumnIndexed(columnIndex));
             Assert.assertEquals(indexValueBlockSize, metadata.getIndexValueBlockCapacity(columnIndex));
             if (isIndexed) {
-                final Set<?> indexFiles = findIndexFiles(configuration, tableName, columnName);
-                Assert.assertTrue(indexFiles.size() >= 2);
+                Assert.assertEquals(expectedIndexFiles, findIndexFiles(configuration, tableName, columnName).size());
             }
         }
     }
