@@ -95,9 +95,11 @@ public class NetTest {
         Net.listen(acceptFd, 1);
 
         long clientFd = Net.socketTcp(true);
+        Assert.assertTrue(clientFd > 0);
         long addrInfo = Net.getAddrInfo("localhost", port);
+        Assert.assertTrue(addrInfo > 0);
         TestUtils.assertConnectAddrInfo(clientFd, addrInfo);
-        Net.freeSockAddr(addrInfo);
+        Net.freeAddrInfo(addrInfo);
         Net.close(clientFd);
         Net.close(acceptFd);
     }
