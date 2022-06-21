@@ -571,15 +571,16 @@ public class TableWriter implements Closeable {
             // if a column is indexed, it is al so of type SYMBOL
             throw CairoException.metadataValidation("Column is not indexed", columnName);
         }
+        final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
-        LOG.info().$("BEGIN DROP INDEX [txn=")
-                .$(txWriter.getTxn())
-                .$(", table=")
-                .$(tableName)
-                .$(", column=")
-                .$(columnName)
-                .I$();
         try {
+            LOG.info().$("BEGIN DROP INDEX [txn=")
+                    .$(txWriter.getTxn())
+                    .$(", table=")
+                    .$(tableName)
+                    .$(", column=")
+                    .$(columnName)
+                    .I$();
             // drop index
             if (dropIndexOperator == null) {
                 dropIndexOperator = new DropIndexOperator(configuration, messageBus, this);
@@ -587,9 +588,9 @@ public class TableWriter implements Closeable {
             dropIndexOperator.executeDropIndex(tableName, columnName, columnIndex); // upserts column version in partitions
 
             // swap meta commit
-            final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
             metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, META_FLAG_BIT_NOT_INDEXED, defaultIndexValueBlockSize);
             swapMetaFile(columnName); // bumps structure version
+
             TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
             columnMetadata.setIndexed(true);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
@@ -602,8 +603,9 @@ public class TableWriter implements Closeable {
                 populateDenseIndexerList();
             }
 
-            // remove old column versions and index files
+            // remove old column versions
             dropIndexOperator.purgeOldColumnIndexVersions();
+
             LOG.info().$("END DROP INDEX [txn=")
                     .$(txWriter.getTxn())
                     .$(", table=")

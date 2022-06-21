@@ -127,10 +127,8 @@ public final class TableUtils {
     // INT - symbol map count, this is a variable part of transaction file
     // below this offset we will have INT values for symbol map size
     static final long META_OFFSET_PARTITION_BY = 4;
-
     static final int META_FLAG_BIT_NOT_INDEXED = 0;
     static final int META_FLAG_BIT_INDEXED = 1;
-
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
     static final String TODO_FILE_NAME = "_todo_";
     private static final int MIN_SYMBOL_CAPACITY = 2;
@@ -563,10 +561,6 @@ public final class TableUtils {
 
     public static void lockName(Path path) {
         path.put(".lock").$();
-    }
-
-    public static void lockName(Path root, int pathRootLen, @NotNull CharSequence name) {
-        root.trimTo(pathRootLen).concat(name).put(".lock").$();
     }
 
     public static long mapRO(FilesFacade ff, long fd, long size, int memoryTag) {

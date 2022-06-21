@@ -89,7 +89,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 rebuildPartitionColumn(ALL, partitionName, columnName, columnVersionReader, ff);
             }
         } finally {
-                lockName(path);
+            lockName(path);
             releaseLock(ff);
         }
     }

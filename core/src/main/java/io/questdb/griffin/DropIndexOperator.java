@@ -40,8 +40,7 @@ import static io.questdb.cairo.TableUtils.dFile;
 
 public class DropIndexOperator implements Closeable {
     private static final Log LOG = LogFactory.getLog(DropIndexOperator.class);
-    private final LongList cleanupColumnIndexVersions = new LongList();
-    private LongList cleanupColumnIndexVersionsAsync = new LongList();
+    private final LongList cleanupColumnVersions = new LongList();
     private final MessageBus messageBus;
     private final FilesFacade ff;
     private final TableWriter tableWriter;
@@ -80,51 +79,47 @@ public class DropIndexOperator implements Closeable {
                 tableWriter.commit();
             }
 
-            cleanupColumnIndexVersions.clear();
+            cleanupColumnVersions.clear();
             final int partitionBy = tableWriter.getPartitionBy();
 
-            for (int partitionIndex = 0, limit = tableWriter.getPartitionCount(); partitionIndex < limit; partitionIndex++) {
+            for (int pIndex = 0, limit = tableWriter.getPartitionCount(); pIndex < limit; pIndex++) {
 
-                final long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
-                final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
+                final long partitionTimestamp = tableWriter.getPartitionTimestamp(pIndex);
                 final long columnVersion = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                final long partitionNameTxn = tableWriter.getPartitionNameTxn(pIndex);
                 final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1L);
+
                 try {
-                    // check that the column file exists
-                    LPSZ srcDFile = partitionDFile(
-                            path,
-                            rootLen,
-                            tableName,
-                            partitionBy,
-                            partitionTimestamp,
-                            partitionNameTxn,
-                            columnName,
-                            columnVersion
-                    );
-                    if (!ff.exists(srcDFile)) {
-                        throw CairoException.instance(ff.errno())
-                                .put("Impossible! this file should exist: ")
-                                .put(path.toString());
-                    }
                     // add to cleanup tasks, the index will be removed in due time
-                    cleanupColumnIndexVersions.add(columnVersion, partitionTimestamp, partitionNameTxn, columnIndex);
+                    cleanupColumnVersions.add(columnVersion, partitionTimestamp, partitionNameTxn, columnIndex);
 
                     // bump up column version, metadata will be updated later
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
                     final long columnDropIndexTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
 
                     // create hard link to column data
-                    LPSZ hardLinkDFile = partitionDFile(
-                            auxPath,
-                            auxRootLen,
-                            tableName,
-                            partitionBy,
-                            partitionTimestamp,
-                            partitionNameTxn,
-                            columnName,
-                            columnDropIndexTxn
+                    final int errno = ff.hardLink(
+                            partitionDFile( // src
+                                    path,
+                                    rootLen,
+                                    tableName,
+                                    partitionBy,
+                                    partitionTimestamp,
+                                    partitionNameTxn,
+                                    columnName,
+                                    columnVersion
+                            ),
+                            partitionDFile( // hard link
+                                    auxPath,
+                                    auxRootLen,
+                                    tableName,
+                                    partitionBy,
+                                    partitionTimestamp,
+                                    partitionNameTxn,
+                                    columnName,
+                                    columnDropIndexTxn
+                            )
                     );
-                    final int errno = ff.hardLink(srcDFile, hardLinkDFile);
                     LOG.info()
                             .$("hard link call during DROP INDEX execution [txn=")
                             .$(tableWriter.getTxn())
@@ -134,17 +129,13 @@ public class DropIndexOperator implements Closeable {
                             .$(columnName)
                             .$(", errno=")
                             .$(errno)
-                            .$(", srcFile=")
-                            .$(srcDFile)
-                            .$(", hardLinkFile=")
-                            .$(hardLinkDFile)
+                            .$(", columnVersion.before=")
+                            .$(columnVersion)
+                            .$(", columnVersion.after=")
+                            .$(columnDropIndexTxn)
                             .I$();
                     if (errno < 0) {
-                        throw CairoException.instance(ff.errno())
-                                .put("Cannot hard link ")
-                                .put(srcDFile)
-                                .put(" as ")
-                                .put(hardLinkDFile);
+                        throw CairoException.instance(errno).put("Cannot hard link ");
                     }
                 } finally {
                     path.trimTo(rootLen);
@@ -152,7 +143,7 @@ public class DropIndexOperator implements Closeable {
                 }
             }
         } catch (Throwable th) {
-            LOG.error().$("could not update").$(th).$();
+            LOG.error().$("could not DROP INDEX").$(th).$();
             tableWriter.rollbackUpdate();
             throw th;
         }
@@ -160,99 +151,57 @@ public class DropIndexOperator implements Closeable {
 
     public void purgeOldColumnIndexVersions() {
         try {
-            if (cleanupColumnIndexVersions.size() < 4) {
+            if (cleanupColumnVersions.size() < 4) {
                 return;
             }
 
-            if (tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn()) {
-                // there are readers of the index
-                return;
-            }
-
-            final long columnNameTxn = cleanupColumnIndexVersions.getQuick(0);
-            final long partitionTimestamp = cleanupColumnIndexVersions.getQuick(1);
-            final long partitionNameTxn = cleanupColumnIndexVersions.getQuick(2);
-            final int columnIndex = (int) cleanupColumnIndexVersions.getQuick(3);
+            // columnVersion, partitionTimestamp, partitionNameTxn, columnIndex
+            final long columnVersion = cleanupColumnVersions.getQuick(0);
+            final long partitionTimestamp = cleanupColumnVersions.getQuick(1);
+            final long partitionNameTxn = cleanupColumnVersions.getQuick(2);
+            final int columnIndex = (int) cleanupColumnVersions.getQuick(3);
 
             final TableWriterMetadata writerMetadata = tableWriter.getMetadata();
             final String tableName = tableWriter.getTableName();
             final CharSequence columnName = writerMetadata.getColumnName(columnIndex);
-            final int partitionBy = tableWriter.getPartitionBy();
+            final long dropIndexTxn = tableWriter.getTxn();
 
-            LPSZ keysFile = partitionKFile(
-                    path,
-                    rootLen,
-                    tableName,
-                    partitionBy,
-                    partitionTimestamp,
-                    partitionNameTxn,
-                    columnName,
-                    columnNameTxn
-            );
-            LPSZ valuesFile = partitionVFile(
-                    auxPath,
-                    auxRootLen,
-                    tableName,
-                    partitionBy,
-                    partitionTimestamp,
-                    partitionNameTxn,
-                    columnName,
-                    columnNameTxn
-            );
-
-            boolean columnIndexPurged = ff.remove(keysFile) &&
-                    !ff.exists(keysFile) &&
-                    ff.remove(valuesFile) &&
-                    !ff.exists(valuesFile);
-
-            LOG.info()
-                    .$("attempting to delete  DROP INDEX execution [txn=")
-                    .$(tableWriter.getTxn())
-                    .$(", table=")
-                    .$(tableName)
-                    .$(", column=")
-                    .$(columnName)
-                    .I$();
-
-            if (!columnIndexPurged) {
-                // submit async
-                final long dropIndexTxn = tableWriter.getTxn();
-                cleanupColumnIndexVersionsAsync.clear();
-                cleanupColumnIndexVersionsAsync.add(columnNameTxn, partitionTimestamp, partitionNameTxn, 0L);
-                final Sequence pubSeq = messageBus.getColumnPurgePubSeq();
-                while (true) {
-                    long cursor = pubSeq.next();
-                    if (cursor > -1L) {
-                        ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
-                        task.of(
-                                tableName,
-                                columnName,
-                                writerMetadata.getId(),
-                                (int) tableWriter.getTruncateVersion(),
-                                writerMetadata.getColumnType(columnIndex),
-                                partitionBy,
-                                dropIndexTxn,
-                                cleanupColumnIndexVersionsAsync
-                        );
-                        pubSeq.done(cursor);
-                        return;
-                    } else if (cursor == -1L) {
-                        // Queue overflow
-                        LOG.error()
-                                .$("cannot schedule column purge, purge queue is full. Please run 'VACUUM TABLE \"")
-                                .$(tableName)
-                                .$("\"' [columnName=")
-                                .$(columnName)
-                                .$(", updateTxn=")
-                                .$(dropIndexTxn)
-                                .I$();
-                        return;
-                    }
+            // submit async
+            cleanupColumnVersions.clear();
+            cleanupColumnVersions.add(columnVersion, partitionTimestamp, partitionNameTxn, 0L);
+            final Sequence pubSeq = messageBus.getColumnPurgePubSeq();
+            while (true) {
+                long cursor = pubSeq.next();
+                if (cursor > -1L) {
+                    ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
+                    task.of(
+                            tableName,
+                            columnName,
+                            writerMetadata.getId(),
+                            (int) tableWriter.getTruncateVersion(),
+                            writerMetadata.getColumnType(columnIndex),
+                            tableWriter.getPartitionBy(),
+                            dropIndexTxn,
+                            cleanupColumnVersions
+                    );
+                    pubSeq.done(cursor);
+                    return;
+                } else if (cursor == -1L) {
+                    // Queue overflow
+                    LOG.error()
+                            .$("purge queue is full, Please run 'VACUUM TABLE \"")
+                            .$(tableName)
+                            .$("\"' [columnName=")
+                            .$(columnName)
+                            .$(", dropIndexTxn=")
+                            .$(dropIndexTxn)
+                            .I$();
+                    return;
                 }
             }
         } finally {
+            cleanupColumnVersions.clear();
             path.trimTo(rootLen);
-            cleanupColumnIndexVersions.clear();
         }
     }
 
@@ -275,48 +224,6 @@ public class DropIndexOperator implements Closeable {
                 partitionNameTxn
         );
         return dFile(path, columnName, columnNameTxn);
-    }
-
-    private static LPSZ partitionKFile(
-            Path path,
-            int rootLen,
-            CharSequence tableName,
-            int partitionBy,
-            long partitionTimestamp,
-            long partitionNameTxn,
-            CharSequence columnName,
-            long columnNameTxn
-    ) {
-        setPathOnPartition(
-                path,
-                rootLen,
-                tableName,
-                partitionBy,
-                partitionTimestamp,
-                partitionNameTxn
-        );
-        return BitmapIndexUtils.keyFileName(path, columnName, columnNameTxn);
-    }
-
-    private static LPSZ partitionVFile(
-            Path path,
-            int rootLen,
-            CharSequence tableName,
-            int partitionBy,
-            long partitionTimestamp,
-            long partitionNameTxn,
-            CharSequence columnName,
-            long columnNameTxn
-    ) {
-        setPathOnPartition(
-                path,
-                rootLen,
-                tableName,
-                partitionBy,
-                partitionTimestamp,
-                partitionNameTxn
-        );
-        return BitmapIndexUtils.valueFileName(path, columnName, columnNameTxn);
     }
 
     private static LPSZ setPathOnPartition(

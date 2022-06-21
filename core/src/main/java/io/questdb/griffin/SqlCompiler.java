@@ -1117,6 +1117,7 @@ public class SqlCompiler implements Closeable {
                             expectKeyword(lexer, "index");
                             tok = SqlUtil.fetchNext(lexer);
                             int indexValueCapacity = -1;
+
                             if (tok != null && (!isSemicolon(tok))) {
                                 if (!SqlKeywords.isCapacityKeyword(tok)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'capacity' expected");
@@ -1132,6 +1133,7 @@ public class SqlCompiler implements Closeable {
                                     }
                                 }
                             }
+
                             return alterTableColumnAddIndex(tableNamePosition, tableName, columnNameNamePosition, columnName, tableMetadata, indexValueCapacity);
                         } else if (SqlKeywords.isDropKeyword(tok)) {
                             // alter table <table name> alter column drop index

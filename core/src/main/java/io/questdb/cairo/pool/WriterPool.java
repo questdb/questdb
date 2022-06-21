@@ -256,7 +256,7 @@ public class WriterPool extends AbstractPool {
 
                 if (e.lockFd != -1L) {
                     ff.close(e.lockFd);
-                    TableUtils.lockName(path, rootLen, name);
+                    TableUtils.lockName(path.trimTo(rootLen).concat(name));
                     if (!ff.remove(path)) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
@@ -310,7 +310,7 @@ public class WriterPool extends AbstractPool {
 
     private void assertLockReasonIsNone(CharSequence lockReason) {
         if (lockReason == OWNERSHIP_REASON_NONE) {
-            throw new IllegalStateException();
+            throw new NullPointerException();
         }
     }
 
@@ -511,7 +511,7 @@ public class WriterPool extends AbstractPool {
 
     private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, CharSequence lockReason) {
         assertLockReasonIsNone(lockReason);
-        TableUtils.lockName(path, rootLen, tableName);
+        TableUtils.lockName(path.trimTo(rootLen).concat(tableName));
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
             LOG.error().$("could not lock [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
