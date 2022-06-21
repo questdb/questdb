@@ -64,12 +64,25 @@ public class LongListTest {
         // null
         Assert.assertNotEquals(list1, null);
 
-        // equals
-        final LongList list6 = new LongList();
+        // different noEntryValue
+        final LongList list6 = new LongList(4, Long.MIN_VALUE);
         list6.add(1L);
         list6.add(2L);
         list6.add(3L);
-        Assert.assertEquals(list1, list6);
+        Assert.assertNotEquals(list1, list6);
+
+        // equals
+        final LongList list7 = new LongList();
+        list7.add(1L);
+        list7.add(2L);
+        list7.add(3L);
+        Assert.assertEquals(list1, list7);
+
+        final LongList list8 = new LongList(4, -1L);
+        list8.add(1L);
+        list8.add(2L);
+        list8.add(3L);
+        Assert.assertEquals(list1, list8);
     }
 
     @Test
