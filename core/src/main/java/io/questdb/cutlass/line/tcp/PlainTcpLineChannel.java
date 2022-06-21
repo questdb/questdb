@@ -62,7 +62,7 @@ public final class PlainTcpLineChannel implements LineChannel {
             throw new LineSenderException("cannot resolve " + host + " to IP address");
         }
         if (nf.connectAddrInfo(fd, addrInfo) != 0) {
-            throw new LineSenderException("could not connect to " + host + "[errno=" + nf.errno() + "]");
+            throw new LineSenderException("could not connect to " + host + " [errno=" + nf.errno() + "]");
         }
         nf.freeAddrInfo(addrInfo);
         configureBuffers(nf, sndBufferSize);

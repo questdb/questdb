@@ -120,7 +120,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
             runInContext(c -> {
                 try (Sender sender = Sender.builder()
                         .enableTls()
-                        .address("localhost")
+                        .address("127.0.0.1")
                         .port(tlsProxy.getListeningPort())
                         .enableAuth(AUTH_KEY_ID1).token(TOKEN)
                         .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)

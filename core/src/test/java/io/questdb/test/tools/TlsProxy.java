@@ -90,18 +90,22 @@ public final class TlsProxy {
     }
 
     private void acceptorLoop(ServerSocket socket) {
-        try {
-            while (!shutdownRequested) {
-                Socket frontendSocket = socket.accept();
-                Socket backendSocket = SocketFactory.getDefault().createSocket(dstHost, dstPort);
-                Link link = new Link(frontendSocket, backendSocket);
-                links.add(link);
-                link.start();
+        while (!shutdownRequested) {
+            Socket frontendSocket = null;
+            Socket backendSocket;
+            try {
+                frontendSocket = socket.accept();
+                backendSocket = SocketFactory.getDefault().createSocket(dstHost, dstPort);
+            } catch (IOException e) {
+                if (shutdownRequested) {
+                    return;
+                }
+                closeQuietly(frontendSocket);
+                continue;
             }
-        } catch (IOException e) {
-            if (!shutdownRequested) {
-                throw new RuntimeException(e);
-            }
+            Link link = new Link(frontendSocket, backendSocket);
+            links.add(link);
+            link.start();
         }
     }
 
