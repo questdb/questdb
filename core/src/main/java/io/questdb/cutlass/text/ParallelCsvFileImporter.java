@@ -90,8 +90,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private final FilesFacade ff;
 
-    private final Path inputFilePath = new Path(133);
-    private final Path tmpPath = new Path(132);
+    private final Path inputFilePath = new Path();
+    private final Path tmpPath = new Path();
 
     private final RingQueue<TextImportTask> queue;
     private final Sequence pubSeq;
