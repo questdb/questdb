@@ -31,7 +31,7 @@ import java.util.Arrays;
 
 public class LongList implements Mutable, LongVec {
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final long DEFAULT_NO_ENTRY_VALUE = -1;
+    private static final long DEFAULT_NO_ENTRY_VALUE = -1L;
     private final long noEntryValue;
     private long[] data;
     private int pos = 0;
@@ -407,6 +407,9 @@ public class LongList implements Mutable, LongVec {
 
     private boolean equals(LongList that) {
         if (this.pos != that.pos) {
+            return false;
+        }
+        if (this.noEntryValue != that.noEntryValue) {
             return false;
         }
         for (int i = 0, n = pos; i < n; i++) {
