@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.std.Misc;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -57,6 +58,8 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
                     return method.invoke(ourConfig, args);
                 }
         );
+        // free engine from the superclass
+        Misc.free(engine);
         engine = new CairoEngine(configuration, metrics);
         compiler = new SqlCompiler(engine, null, null);
         compiler.setFullFatJoins(true);

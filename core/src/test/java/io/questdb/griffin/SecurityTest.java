@@ -33,13 +33,11 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -52,7 +50,8 @@ public class SecurityTest extends AbstractGriffinTest {
     private static long circuitBreakerTimeoutDeadline = Long.MAX_VALUE;
 
     @BeforeClass
-    public static void setUpReadOnlyExecutionContext() {
+    public static void setUpStatic() {
+        AbstractGriffinTest.setUpStatic();
         CairoConfiguration readOnlyConfiguration = new DefaultCairoConfiguration(root) {
             @Override
             public int getSqlJoinMetadataMaxResizes() {
@@ -147,6 +146,13 @@ public class SecurityTest extends AbstractGriffinTest {
                         dummyCircuitBreaker
                 );
         memoryRestrictedCompiler = new SqlCompiler(memoryRestrictedEngine);
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        AbstractGriffinTest.tearDownStatic();
+        Misc.free(memoryRestrictedCompiler);
+        Misc.free(memoryRestrictedEngine);
     }
 
     @Test

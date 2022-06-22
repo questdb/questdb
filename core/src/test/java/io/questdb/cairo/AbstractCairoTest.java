@@ -66,7 +66,7 @@ public class AbstractCairoTest {
     protected static CairoConfiguration configuration;
     protected static MessageBus messageBus;
     protected static long currentMicros = -1;
-    protected final static MicrosecondClock testMicrosClock =
+    protected static MicrosecondClock testMicrosClock =
             () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     protected static CairoEngine engine;
     protected static DatabaseSnapshotAgent snapshotAgent;
