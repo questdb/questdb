@@ -91,7 +91,7 @@ public class HttpFlushQueryCacheTest {
 
             // We need to wait until HTTP workers process the message. To do so, we simply try to
             // publish another query flush event. Since we set the queue size to 1, we're able to
-            // publish only when all consumers (PG Wire workers) have processed the previous event.
+            // publish only when all consumers (HTTP workers) have processed the previous event.
             Assert.assertEquals(1, engine.getConfiguration().getQueryCacheEventQueueCapacity());
             final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
             pubSeq.waitForNext();
