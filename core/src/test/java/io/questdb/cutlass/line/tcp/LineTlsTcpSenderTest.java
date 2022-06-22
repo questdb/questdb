@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.Sender;
@@ -86,7 +87,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     sender.table(tableName).longColumn("value", 42).atNow();
                 }
                 sender.flush();
-                assertTableSizeEventually(tableName, rows);
+                assertTableSizeEventually(engine, tableName, rows);
             }
         });
     }
@@ -130,20 +131,10 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                         sender.table(tableName).longColumn("value", 42).atNow();
                         sender.flush();
                     }
-                    assertTableSizeEventually(tableName, rows);
+                    assertTableSizeEventually(engine, tableName, rows);
                 }
             });
         }, "questdb.experimental.tls.buffersize", "1");
-    }
-
-    private static void assertTableSizeEventually(String tableName, long expectedSize) {
-        assertTableExistsEventually(engine, tableName);
-        TestUtils.assertEventually(() -> {
-            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-                long size = reader.getCursor().size();
-                assertEquals(expectedSize, size);
-            }
-        });
     }
 
     private interface RunnableWithException {

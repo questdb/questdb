@@ -24,15 +24,20 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.TableReader;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.cutlass.line.Sender;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import java.net.Inet4Address;
 import java.security.PrivateKey;
+import java.util.function.Consumer;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -126,6 +131,98 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.flush();
             }
             assertTableExistsEventually(engine, "mytable");
+        });
+    }
+
+    @Test
+    public void testWriteAllTypes() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long ts = IntervalUtils.parseFloorPartialDate("2022-02-25") * 1000L;
+                sender.table("mytable")
+                        .longColumn("int_field", 42)
+                        .boolColumn("bool_field", true)
+                        .stringColumn("string_field", "foo")
+                        .doubleColumn("double_field", 42.0)
+                        .at(ts);
+                sender.flush();
+            }
+
+            assertTableSizeEventually(engine, "mytable", 1);
+            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
+                TestUtils.assertReader("int_field\tbool_field\tstring_field\tdouble_field\ttimestamp\n" +
+                        "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+            }
+        });
+    }
+
+    @Test
+    public void testDouble_edgeValues() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+
+                long ts = IntervalUtils.parseFloorPartialDate("2022-02-25") * 1000L;
+                sender.table("mytable")
+                        .doubleColumn("negative_inf", Double.NEGATIVE_INFINITY)
+                        .doubleColumn("positive_inf", Double.POSITIVE_INFINITY)
+                        .doubleColumn("nan", Double.NaN)
+                        .doubleColumn("max_value", Double.MAX_VALUE)
+                        .doubleColumn("min_value", Double.MIN_VALUE)
+                        .at(ts);
+                sender.flush();
+            }
+
+            assertTableSizeEventually(engine, "mytable", 1);
+            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
+                TestUtils.assertReader("negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp\n" +
+                        "-Infinity\tInfinity\tNaN\t1.7976931348623157E308\t4.9E-307\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolsCannotBeWrittenAfterDouble() throws Exception {
+        assertSymbolsCannotBeWrittenAfterOtherType(s -> s.doubleColumn("columnName", 42.0));
+    }
+
+    @Test
+    public void testSymbolsCannotBeWrittenAfterString() throws Exception {
+        assertSymbolsCannotBeWrittenAfterOtherType(s -> s.stringColumn("columnName", "42"));
+    }
+
+    @Test
+    public void testSymbolsCannotBeWrittenAfterBool() throws Exception {
+        assertSymbolsCannotBeWrittenAfterOtherType(s -> s.boolColumn("columnName", false));
+    }
+
+    @Test
+    public void testSymbolsCannotBeWrittenAfterLong() throws Exception {
+        assertSymbolsCannotBeWrittenAfterOtherType(s -> s.longColumn("columnName", 42));
+    }
+
+    private void assertSymbolsCannotBeWrittenAfterOtherType(Consumer<Sender> otherTypeWritter) throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+                sender.table("mytable");
+                otherTypeWritter.accept(sender);
+                try {
+                    sender.symbol("name", "value");
+                    fail("symbols cannot be written after any other column type");
+                } catch (LineSenderException e) {
+                    TestUtils.assertContains(e.getMessage(), "before any other column types");
+                    sender.atNow();
+                }
+            }
         });
     }
 

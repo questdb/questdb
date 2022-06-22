@@ -249,13 +249,16 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender tag(CharSequence tag, CharSequence value) {
-        validateColumnName(tag);
-        if (hasTable) {
-            put(',').encodeUtf8(tag).put('=').encodeUtf8(value);
-            hasSymbols = true;
-            return this;
+        if (!hasTable) {
+            throw new LineSenderException("table expected");
         }
-        throw new LineSenderException("table expected");
+        if (hasColumns) {
+            throw new LineSenderException("symbols must be written before any other column types");
+        }
+        validateColumnName(tag);
+        put(',').encodeUtf8(tag).put('=').encodeUtf8(value);
+        hasSymbols = true;
+        return this;
     }
 
     @Override

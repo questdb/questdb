@@ -321,6 +321,16 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     }
 
+    public static void assertTableSizeEventually(CairoEngine engine, String tableName, long expectedSize) {
+        assertTableExistsEventually(engine, tableName);
+        TestUtils.assertEventually(() -> {
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                long size = reader.getCursor().size();
+                assertEquals(expectedSize, size);
+            }
+        });
+    }
+
     public static void assertTableExistsEventually(CairoEngine engine, CharSequence tableName) {
         assertEventually(() -> assertTableExists(engine, tableName));
     }
