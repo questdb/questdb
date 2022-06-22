@@ -48,8 +48,10 @@ import java.security.PrivateKey;
  *     <li>Obtain an instance via {@link #builder()}</li>
  *     <li>Use {@link #table(CharSequence)} to select a table</li>
  *     <li>Use {@link #symbol(CharSequence, CharSequence)} to add all symbols. You must add symbols before adding other columns.</li>
- *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)}, {@link #doubleColumn(CharSequence, double)},
- *     {@link #boolColumn(CharSequence, boolean)}, {@link #timestampColumn(CharSequence, long)}, {@link #timestampColumn(CharSequence, CharSequence)} to add remaining columns columns</li>
+ *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)},
+ *     {@link #doubleColumn(CharSequence, double)}, {@link #boolColumn(CharSequence, boolean)},
+ *     {@link #timestampColumn(CharSequence, long)}, {@link #timestampColumn(CharSequence, CharSequence)}
+ *     to add remaining columns columns</li>
  *     <li>Use {@link #at(long)} to finish a row with an explicit timestamp.Alternatively, you can use use
  *     {@link #atNow()} which will add a timestamp on a server.</li>
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
