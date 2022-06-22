@@ -155,6 +155,13 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, long value) {
+        validateColumnName(name);
+        field(name).put(value).put('t');
+        return this;
+    }
+
+    @Override
     public void flush() {
         sendLine();
         ptr = lineStart = lo;

@@ -196,6 +196,15 @@ public class TestInterop {
                                             encounteredError = true;
                                         }
                                         break;
+                                    case ColumnType.TIMESTAMP:
+                                        try {
+                                            sender.timestampColumn(name, Numbers.parseLong(tag));
+                                        } catch (NumericException e) {
+                                            throw JsonException.$(position, "bad long");
+                                        } catch (LineSenderException e) {
+                                            encounteredError = true;
+                                        }
+                                        break;
                                     case ColumnType.STRING:
                                         try {
                                             sender.stringColumn(name, Chars.toString(tag));
