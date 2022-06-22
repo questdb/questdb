@@ -142,20 +142,21 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long ts = IntervalUtils.parseFloorPartialDate("2022-02-25") * 1000L;
+                long tsMicros = IntervalUtils.parseFloorPartialDate("2022-02-25");
                 sender.table("mytable")
                         .longColumn("int_field", 42)
                         .boolColumn("bool_field", true)
                         .stringColumn("string_field", "foo")
                         .doubleColumn("double_field", 42.0)
-                        .at(ts);
+                        .timestampColumn("ts_field", tsMicros)
+                        .at(tsMicros * 1000);
                 sender.flush();
             }
 
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
-                TestUtils.assertReader("int_field\tbool_field\tstring_field\tdouble_field\ttimestamp\n" +
-                        "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+                TestUtils.assertReader("int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n" +
+                        "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }
         });
     }
