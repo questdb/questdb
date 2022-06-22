@@ -24,9 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.Sender;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
@@ -34,7 +32,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import java.util.UUID;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 
 public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
@@ -116,7 +114,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
             runInContext(c -> {
                 try (Sender sender = Sender.builder()
                         .enableTls()
-                        .address("127.0.0.1")
+                        .address("localhost")
                         .port(tlsProxy.getListeningPort())
                         .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
                         .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
@@ -136,13 +134,11 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testCertValidationDisabled() throws Exception {
         String tableName = UUID.randomUUID().toString();
         int rows = 5_000;
-        authKeyId = AUTH_KEY_ID1;
         runInContext(c -> {
             try (Sender sender = Sender.builder()
                     .enableTls()
                     .address("127.0.0.1")
                     .port(tlsProxy.getListeningPort())
-                    .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
                     .advancedTls().disableCertificateValidation()
                     .build()) {
 
@@ -152,6 +148,24 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                 }
                 assertTableSizeEventually(engine, tableName, rows);
             }
+        });
+    }
+
+    @Test
+    public void testHostnameValidation() throws Exception {
+        runInContext(c -> {
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .enableTls()
+                    .address("127.0.0.1")
+                    .port(tlsProxy.getListeningPort())
+                    .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+                try {
+                    builder.build();
+                    fail("should have failed during handshake, because we are connecting to 127.0.0.1, " +
+                            "but the server certificated was issued for localhost");
+                } catch (LineSenderException expected) {
+                    TestUtils.assertContains(expected.getMessage(), "TLS handshake");
+                }
         });
     }
 

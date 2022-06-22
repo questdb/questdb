@@ -36,7 +36,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @ClassRule
     public static final TlsProxyRule TLS_PROXY = TlsProxyRule.toHostAndPort("localhost", 9002);
 
-    private static final String LOCALHOST = "127.0.0.1";
+    private static final String LOCALHOST = "localhost";
 
     @Test
     public void testHostNorAddressSet() {

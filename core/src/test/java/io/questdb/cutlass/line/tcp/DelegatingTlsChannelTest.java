@@ -53,13 +53,13 @@ public class DelegatingTlsChannelTest {
             }
 
             @Override
-            public void close() throws IOException {
+            public void close() {
                 throw new UnsupportedOperationException("go away, yes, I throw an exception even during close()");
             }
         };
         TestUtils.assertMemoryLeak(() -> {
             try {
-                new DelegatingTlsChannel(exceptionThrowingChannel, null, null, Sender.TlsValidationMode.DEFAULT);
+                new DelegatingTlsChannel(exceptionThrowingChannel, null, null, Sender.TlsValidationMode.DEFAULT, "localhost");
             } catch (Throwable ignored) { }
         });
     }

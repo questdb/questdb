@@ -33,10 +33,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import javax.net.ssl.*;
-import java.io.BufferedInputStream;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.lang.reflect.Field;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
@@ -69,7 +66,7 @@ public final class DelegatingTlsChannel implements LineChannel {
     private final LineChannel delegate;
     private final SSLEngine sslEngine;
 
-    private ByteBuffer wrapInputBuffer;
+    private final ByteBuffer wrapInputBuffer;
     private ByteBuffer wrapOutputBuffer;
     private ByteBuffer unwrapInputBuffer;
     private ByteBuffer unwrapOutputBuffer;
@@ -98,9 +95,10 @@ public final class DelegatingTlsChannel implements LineChannel {
         CAPACITY_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(capacityField);
     }
 
-    public DelegatingTlsChannel(LineChannel delegate, String trustStorePath, char[] password, Sender.TlsValidationMode validationMode) {
+    public DelegatingTlsChannel(LineChannel delegate, String trustStorePath, char[] password,
+                                Sender.TlsValidationMode validationMode, CharSequence expectedHostname) {
         this.delegate = delegate;
-        this.sslEngine = createSslEngine(trustStorePath, password, validationMode);
+        this.sslEngine = createSslEngine(trustStorePath, password, validationMode, expectedHostname);
 
         // wrapInputBuffer is just a placeholder, we set the internal address, capacity and limit in send()
         this.wrapInputBuffer = ByteBuffer.allocateDirect(0);
@@ -124,7 +122,8 @@ public final class DelegatingTlsChannel implements LineChannel {
             handshakeLoop();
         } catch (Throwable e) {
             try {
-                close();
+                // do not close the delegate - we don't own it when our own constructors fails
+                close0(false);
             } catch (IOException ex) {
                 // ignored
             }
@@ -132,33 +131,16 @@ public final class DelegatingTlsChannel implements LineChannel {
         }
     }
 
-    private static SSLEngine createSslEngine(String trustStorePath, char[] trustStorePassword, Sender.TlsValidationMode validationMode) {
+    private static SSLEngine createSslEngine(String trustStorePath, char[] trustStorePassword, Sender.TlsValidationMode validationMode, CharSequence expectedHostname) {
         assert trustStorePath == null || validationMode == Sender.TlsValidationMode.DEFAULT;
         try {
             SSLContext sslContext;
-            // intentionally not exposed to end user as an option
-            // it's used for testing, but dangerous in prod
             if (trustStorePath != null) {
                 sslContext = SSLContext.getInstance("TLS");
                 TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
                 KeyStore jks = KeyStore.getInstance("JKS");
-
-                InputStream trustStoreStream = null;
-                try {
-                    if (trustStorePath.startsWith("classpath:")) {
-                        String adjustedPath = trustStorePath.substring("classpath:".length());
-                        trustStoreStream = DelegatingTlsChannel.class.getResourceAsStream(adjustedPath);
-                        if (trustStoreStream == null) {
-                            throw new LineSenderException("Configured trust at classpath:" + trustStorePath + " is unavailable on a classpath");
-                        }
-                    } else {
-                        trustStoreStream = new BufferedInputStream(new FileInputStream(trustStorePath));
-                    }
+                try (InputStream trustStoreStream = openTruststoreStream(trustStorePath)) {
                     jks.load(trustStoreStream, trustStorePassword);
-                } finally {
-                    if (trustStoreStream != null) {
-                        trustStoreStream.close();
-                    }
                 }
                 tmf.init(jks);
                 TrustManager[] trustManagers = tmf.getTrustManagers();
@@ -169,7 +151,23 @@ public final class DelegatingTlsChannel implements LineChannel {
             } else {
                 sslContext = SSLContext.getDefault();
             }
-            SSLEngine sslEngine = sslContext.createSSLEngine();
+
+            // SSLEngine needs to know hostname during TLS handshake to validate a server certificate was issued
+            // for the server we are connecting to. For details see the comment below.
+            // Hostname validation does not use port at all hence we can get away with a dummy value -1
+            SSLEngine sslEngine = sslContext.createSSLEngine(expectedHostname.toString(), -1);
+            if (validationMode != Sender.TlsValidationMode.INSECURE) {
+                SSLParameters sslParameters = sslEngine.getSSLParameters();
+                // The https validation algorithm? That looks confusing! After all we are not using any
+                // https here at so what does it mean?
+                // It's actually simple: It just instructs the SSLEngine to perform the same hostname validation
+                // as it does during HTTPS connections. SSLEngine does not do hostname validation by default. Without
+                // this option SSLEngine would happily accept any certificate as long as it's signed by a trusted CA.
+                // This option will make sure certificates are accepted only if they were issued for the
+                // server we are connecting to.
+                sslParameters.setEndpointIdentificationAlgorithm("https");
+                sslEngine.setSSLParameters(sslParameters);
+            }
             sslEngine.setUseClientMode(true);
             return sslEngine;
         } catch (Throwable t) {
@@ -178,6 +176,19 @@ public final class DelegatingTlsChannel implements LineChannel {
             }
             throw new LineSenderException("error while creating openssl engine", t);
         }
+    }
+
+    private static InputStream openTruststoreStream(String trustStorePath) throws FileNotFoundException {
+        InputStream trustStoreStream;
+        if (trustStorePath.startsWith("classpath:")) {
+            String adjustedPath = trustStorePath.substring("classpath:".length());
+            trustStoreStream = DelegatingTlsChannel.class.getResourceAsStream(adjustedPath);
+            if (trustStoreStream == null) {
+                throw new LineSenderException("Configured trust at classpath:" + trustStorePath + " is unavailable on a classpath");
+            }
+            return trustStoreStream;
+        }
+        return new FileInputStream(trustStorePath);
     }
 
     @Override
@@ -375,8 +386,7 @@ public final class DelegatingTlsChannel implements LineChannel {
         return delegate.errno();
     }
 
-    @Override
-    public void close() throws IOException {
+    public void close0(boolean closeDelegate) throws IOException {
         int prevState = state;
         state = CLOSING;
         if (prevState == AFTER_HANDSHAKE) {
@@ -389,10 +399,13 @@ public final class DelegatingTlsChannel implements LineChannel {
             }
         }
         state = CLOSED;
-        try {
-            Misc.free(delegate);
-        } catch (Throwable ignored) {
-            // not much we can do
+
+        if (closeDelegate) {
+            try {
+                Misc.free(delegate);
+            } catch (Throwable ignored) {
+                // not much we can do
+            }
         }
 
         // a bit of ceremony to make sure there is no point that a buffer or a pointer is referencing unallocated memory
@@ -413,5 +426,10 @@ public final class DelegatingTlsChannel implements LineChannel {
         unwrapOutputBuffer = null;
         unwrapOutputBufferPtr = 0;
         Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    @Override
+    public void close() throws IOException {
+        close0(true);
     }
 }

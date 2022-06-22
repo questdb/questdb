@@ -316,13 +316,14 @@ public interface Sender extends Closeable {
 
 
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            LineChannel channel = new PlainTcpLineChannel(nf, address.subSequence(0, addressLimit), port, bufferCapacity * 2);
+            CharSequence host = address.subSequence(0, addressLimit);
+            LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
             LineTcpSender sender;
             if (tlsEnabled) {
                 assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                 DelegatingTlsChannel tlsChannel;
                 try {
-                    tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword, tlsValidationMode);
+                    tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword, tlsValidationMode, host);
                 } catch (Throwable t) {
                     closeSilently(channel);
                     throw rethrow(t);
