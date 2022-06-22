@@ -173,7 +173,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             long value_micros = TimestampFormatUtils.parseUTCTimestamp(value);
             return fieldTimestamp(name, value_micros);
         } catch (NumericException e) {
-            throw new LineSenderException("could not parse timestamp is UTC ISO 8601 format.");
+            throw new LineSenderException("could not parse timestamp in UTC ISO 8601 format.");
         }
     }
 
