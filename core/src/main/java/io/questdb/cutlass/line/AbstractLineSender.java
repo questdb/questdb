@@ -156,22 +156,18 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return field(name, value);
     }
 
-    public AbstractLineSender fieldTimestamp(CharSequence name, long value) {
+    @Override
+    public final AbstractLineSender timestampColumn(CharSequence name, long value) {
         validateColumnName(name);
         field(name).put(value).put('t');
         return this;
     }
 
     @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, long value) {
-        return fieldTimestamp(name, value);
-    }
-
-    @Override
     public final AbstractLineSender timestampColumn(CharSequence name, CharSequence value) throws LineSenderException {
         try {
             long value_micros = TimestampFormatUtils.parseUTCTimestamp(value);
-            return fieldTimestamp(name, value_micros);
+            return timestampColumn(name, value_micros);
         } catch (NumericException e) {
             throw new LineSenderException("could not parse timestamp in UTC ISO 8601 format.");
         }
