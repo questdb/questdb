@@ -81,7 +81,7 @@ questdb stop  // 停止 questdb
 - [Web 控制台](https://questdb.io/docs/develop/web-console/)     在端口 `9000`
 - [REST API](https://questdb.io/docs/reference/api/rest/)       在端口 `9000`
 - [PostgreSQL](https://questdb.io/docs/reference/api/postgres/) 在端口 `8812` (支持 wire 協議)
-- [InfluxDB](https://questdb.io/docs/reference/api/influxdb/)   在端口 `9009` (支持 line 協議的高吞吐量數據獲取)
+- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/influxdb/)   在端口 `9009` (支持 line 協議的高吞吐量數據獲取)
 
 ## QuestDB 與其他開源 TSDB 的比較
 
