@@ -88,6 +88,23 @@ public class NetTest {
     }
 
     @Test
+    public void testGetAddrInfoConnectLocalhost() {
+        long acceptFd = Net.socketTcp(true);
+        Assert.assertTrue(acceptFd > 0);
+        int port = assertCanBind(acceptFd);
+        Net.listen(acceptFd, 1);
+
+        long clientFd = Net.socketTcp(true);
+        Assert.assertTrue(clientFd > 0);
+        long addrInfo = Net.getAddrInfo("localhost", port);
+        Assert.assertTrue(addrInfo > 0);
+        TestUtils.assertConnectAddrInfo(clientFd, addrInfo);
+        Net.freeAddrInfo(addrInfo);
+        Net.close(clientFd);
+        Net.close(acceptFd);
+    }
+
+    @Test
     @Ignore
     public void testMulticast() {
         long socket = Net.socketUdp();
