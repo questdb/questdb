@@ -215,7 +215,6 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             final CyclicBarrier startBarrier = new CyclicBarrier(2);
             final SOCountDownLatch endLatch = new SOCountDownLatch(1);
-            final AtomicReference<Throwable> failureReason = new AtomicReference<>();
             final int defaultIndexValueBlockSize = configuration.getIndexValueBlockSize();
 
             // reader thread
@@ -248,7 +247,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                         }
                     }
                 } catch (Throwable e) {
-                    failureReason.set(e);
+                    Assert.fail();
                 } finally {
                     engine.releaseAllReaders();
                     endLatch.countDown();
@@ -264,12 +263,6 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             // no more readers from this point
             endLatch.await();
-
-            Throwable fail = failureReason.get();
-            if (fail != null) {
-                Assert.fail(fail.getMessage());
-            }
-
             verifyColumnIsIndexed(
                     "sensors",
                     "sensor_id",
