@@ -26,11 +26,9 @@ package io.questdb.cutlass.line;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.line.tcp.AuthDb;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.NumericException;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.AbstractCharSink;
@@ -161,16 +159,6 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         validateColumnName(name);
         field(name).put(value).put('t');
         return this;
-    }
-
-    @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, CharSequence value) throws LineSenderException {
-        try {
-            long value_micros = TimestampFormatUtils.parseUTCTimestamp(value);
-            return timestampColumn(name, value_micros);
-        } catch (NumericException e) {
-            throw new LineSenderException("could not parse timestamp in UTC ISO 8601 format.");
-        }
     }
 
     @Override

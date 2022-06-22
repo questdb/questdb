@@ -50,8 +50,7 @@ import java.security.PrivateKey;
  *     <li>Use {@link #symbol(CharSequence, CharSequence)} to add all symbols. You must add symbols before adding other columns.</li>
  *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)},
  *     {@link #doubleColumn(CharSequence, double)}, {@link #boolColumn(CharSequence, boolean)},
- *     {@link #timestampColumn(CharSequence, long)}, {@link #timestampColumn(CharSequence, CharSequence)}
- *     to add remaining columns columns</li>
+ *     {@link #timestampColumn(CharSequence, long)} to add remaining columns columns</li>
  *     <li>Use {@link #at(long)} to finish a row with an explicit timestamp.Alternatively, you can use use
  *     {@link #atNow()} which will add a timestamp on a server.</li>
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
@@ -118,15 +117,6 @@ public interface Sender extends Closeable {
      * @return this instance for method chaining
      */
     Sender timestampColumn(CharSequence name, long value);
-
-    /**
-     * Add a column with a timestamp value
-     * @param name name of the column
-     * @param value value to add in UTC ISO 8601 format with microseconds
-     * @return this instance for method chaining
-     * @throws LineSenderException if the timestamp could not be parsed from value
-     */
-    Sender timestampColumn(CharSequence name, CharSequence value) throws LineSenderException;
 
     /**
      * Add a column with a symbol value. You must call add symbols before adding any other column types
