@@ -210,51 +210,82 @@ public class DropIndexTest extends AbstractGriffinTest {
             final SOCountDownLatch endLatch = new SOCountDownLatch(1);
             final AtomicReference<Throwable> failureReason = new AtomicReference<>();
 
+            final int defaultIndexValueBlockSize = configuration.getIndexValueBlockSize();
+
             new Thread(() -> {
                 try {
-                    startBarrier.await();
                     int readerOutOfError = 0;
+
                     for (int i = 0; i < 5; i++) {
                         try (RecordCursorFactory factory = compiler2.compile(select, sqlExecutionContext2).getRecordCursorFactory()) {
                             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext2)) {
                                 sink.clear();
                                 TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+                                if (i == 0) {
+                                    startBarrier.await();
+                                }
                                 // 1st reader sees the index as DROP INDEX has not happened yet
-                                // the readers that follow do not see the index,as it has been dropped
-                                verifyColumnIsIndexed("sensors", "sensor_id", i == 0, i == 0 ? 32 : 256, 4);
+                                // the readers that follow do not see the index, because it has been dropped
+                                boolean isIndexed = i == 0;
+                                int indexValueBlockSize = i == 0 ? 32 : defaultIndexValueBlockSize;
+                                int expectedIndexFiles = 4;
+                                verifyColumnIsIndexed(
+                                        "sensors",
+                                        "sensor_id",
+                                        isIndexed,
+                                        indexValueBlockSize,
+                                        expectedIndexFiles
+                                );
                             }
                         } catch (ReaderOutOfDateException ex) {
                             readerOutOfError++;
                         }
                         Thread.sleep(100L);
+                        Assert.assertEquals(0, readerOutOfError);
                     }
-                    Assert.assertEquals(1, readerOutOfError);
                 } catch (Throwable e) {
                     failureReason.set(e);
                     e.printStackTrace();
                 } finally {
-                    engine.releaseAllReaders();
                     endLatch.countDown();
                 }
             }).start();
 
-            startBarrier.await(); // there will be a reader seeing the index
+            // drop the index con column sensor_id
+            // there will be a reader seeing the index
+            startBarrier.await();
             compile(
                     "alter table sensors alter column sensor_id drop index",
                     sqlExecutionContext
             );
-            endLatch.await(); // no more readers
-            verifyColumnIsIndexed("sensors", "sensor_id", false, configuration.getIndexValueBlockSize(), 4);
-            compile(
-                    "VACUUM TABLE sensors",
-                    sqlExecutionContext
-            );
-            verifyColumnIsIndexed("sensors", "sensor_id", false, configuration.getIndexValueBlockSize(), 0);
 
+            // no more readers from this point
+            endLatch.await();
             Throwable fail = failureReason.get();
             if (fail != null) {
                 Assert.fail(fail.getMessage());
             }
+            engine.releaseAllReaders();
+            verifyColumnIsIndexed(
+                    "sensors",
+                    "sensor_id",
+                    false,
+                    defaultIndexValueBlockSize,
+                    4 // a reader prevented these files from being removed right away
+            );
+
+            // clean after
+            compile(
+                    "VACUUM TABLE sensors",
+                    sqlExecutionContext
+            );
+            verifyColumnIsIndexed(
+                    "sensors",
+                    "sensor_id",
+                    false,
+                    defaultIndexValueBlockSize,
+                    0
+            );
         });
     }
 
