@@ -28,7 +28,6 @@ import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Os;
 import org.junit.Test;
 
 public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
@@ -139,18 +138,17 @@ public class LineTcpCommitTest extends AbstractLineTcpReceiverFuzzTest {
         }, minIdleMsBeforeWriterRelease);
     }
 
-    void handleWriterReturnEvent(CharSequence name) {
-        setError("Table writer is not expected to be released, maintenanceInterval and minIdleMsBeforeWriterRelease are set very high");
+    void handleWriterUnlockEvent(CharSequence name) {
+        final String tableName = name.toString();
+        tableNames.putIfAbsent(tableName.toLowerCase(), tableName);
+
+        // set the table ready right after created
+        // instead of the 'ready' latch we will rely on the timeout in assertTable(table)
+        final TableData table = tables.get(name);
+        table.ready();
     }
 
-    void assertTable(TableData table) {
-        // timeout is 2 minutes, we try it every second
-        for (int i = 0; i < 120; i++) {
-            if (checkTable(table)) {
-                return;
-            }
-            Os.sleep(1000);
-        }
-        setError("Timed out on waiting for the data to be committed");
+    void handleWriterReturnEvent(CharSequence name) {
+        setError("Table writer is not expected to be released, maintenanceInterval and minIdleMsBeforeWriterRelease are set very high");
     }
 }
