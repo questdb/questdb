@@ -192,8 +192,15 @@ public class DropIndexTest extends AbstractGriffinTest {
     @Test
     public void testParallelDropIndexPreservesIndexFilesWhenThereIsATransactionReadingThem() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
-            verifyColumnIsIndexed("sensors", "sensor_id", true, 32, 4);
+            // create table
+            compile(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
+            verifyColumnIsIndexed(
+                    "sensors",
+                    "sensor_id",
+                    true,
+                    32,
+                    4
+            );
             engine.releaseAllWriters();
 
             final String select = "SELECT ts, sensor_id " +
@@ -209,50 +216,46 @@ public class DropIndexTest extends AbstractGriffinTest {
             final CyclicBarrier startBarrier = new CyclicBarrier(2);
             final SOCountDownLatch endLatch = new SOCountDownLatch(1);
             final AtomicReference<Throwable> failureReason = new AtomicReference<>();
-
             final int defaultIndexValueBlockSize = configuration.getIndexValueBlockSize();
 
+            // reader thread
             new Thread(() -> {
                 try {
-                    int readerOutOfError = 0;
-
-                    for (int i = 0; i < 5; i++) {
+                    for (int i = 0; i < 2; i++) {
                         try (RecordCursorFactory factory = compiler2.compile(select, sqlExecutionContext2).getRecordCursorFactory()) {
                             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext2)) {
+
                                 sink.clear();
                                 TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
-                                if (i == 0) {
-                                    startBarrier.await();
-                                }
+
                                 // 1st reader sees the index as DROP INDEX has not happened yet
                                 // the readers that follow do not see the index, because it has been dropped
                                 boolean isIndexed = i == 0;
-                                int indexValueBlockSize = i == 0 ? 32 : defaultIndexValueBlockSize;
-                                int expectedIndexFiles = 4;
+                                if (isIndexed) {
+                                    startBarrier.await(); // release writer
+                                }
                                 verifyColumnIsIndexed(
                                         "sensors",
                                         "sensor_id",
                                         isIndexed,
-                                        indexValueBlockSize,
-                                        expectedIndexFiles
+                                        isIndexed ? 32 : defaultIndexValueBlockSize,
+                                        4
                                 );
+                            } catch (ReaderOutOfDateException ignored) {
+                                // ignored
                             }
-                        } catch (ReaderOutOfDateException ex) {
-                            readerOutOfError++;
+                            Thread.sleep(60L);
                         }
-                        Thread.sleep(100L);
-                        Assert.assertEquals(0, readerOutOfError);
                     }
                 } catch (Throwable e) {
                     failureReason.set(e);
-                    e.printStackTrace();
                 } finally {
+                    engine.releaseAllReaders();
                     endLatch.countDown();
                 }
             }).start();
 
-            // drop the index con column sensor_id
-            // there will be a reader seeing the index
+            // drop the index, there will be a reader seeing the index
             startBarrier.await();
             compile(
                     "alter table sensors alter column sensor_id drop index",
@@ -261,11 +264,12 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             // no more readers from this point
             endLatch.await();
+
             Throwable fail = failureReason.get();
             if (fail != null) {
                 Assert.fail(fail.getMessage());
             }
-            engine.releaseAllReaders();
+
             verifyColumnIsIndexed(
                     "sensors",
                     "sensor_id",
@@ -367,7 +371,8 @@ public class DropIndexTest extends AbstractGriffinTest {
         ).collect(Collectors.toSet());
     }
 
-    private static boolean isIndexRelatedFile(java.nio.file.Path tablePath, String colName, java.nio.file.Path filePath) {
+    private static boolean isIndexRelatedFile(java.nio.file.Path tablePath, String colName, java.nio.file.Path
+            filePath) {
         final String fn = filePath.getFileName().toString();
         return (fn.equals(colName + ".k") || fn.equals(colName + ".v")) && !filePath.getParent().equals(tablePath);
     }
