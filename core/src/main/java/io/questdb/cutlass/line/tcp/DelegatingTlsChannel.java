@@ -69,10 +69,10 @@ public final class DelegatingTlsChannel implements LineChannel {
     private final LineChannel delegate;
     private final SSLEngine sslEngine;
 
-    private final ByteBuffer wrapInputBuffer;
-    private final ByteBuffer wrapOutputBuffer;
-    private final ByteBuffer unwrapInputBuffer;
-    private final ByteBuffer unwrapOutputBuffer;
+    private ByteBuffer wrapInputBuffer;
+    private ByteBuffer wrapOutputBuffer;
+    private ByteBuffer unwrapInputBuffer;
+    private ByteBuffer unwrapOutputBuffer;
     private final ByteBuffer dummyBuffer;
 
     private long wrapOutputBufferPtr;
@@ -122,7 +122,12 @@ public final class DelegatingTlsChannel implements LineChannel {
 
         try {
             handshakeLoop();
-        } catch (SSLException e) {
+        } catch (Throwable e) {
+            try {
+                close();
+            } catch (IOException ex) {
+                // ignored
+            }
             throw new LineSenderException("error during TLS handshake", e);
         }
     }
@@ -257,7 +262,7 @@ public final class DelegatingTlsChannel implements LineChannel {
                         return;
                     }
 
-                    // there was overflow and we have nothing
+                    // there was overflow, and we have nothing
                     // apparently the output buffer cannot fit even a single TLS record. let's grow it!
                     growUnwrapOutputBuffer();
                     break;
@@ -375,18 +380,38 @@ public final class DelegatingTlsChannel implements LineChannel {
         int prevState = state;
         state = CLOSING;
         if (prevState == AFTER_HANDSHAKE) {
-            sslEngine.closeOutbound();
-            wrapLoop(dummyBuffer);
             try {
+                sslEngine.closeOutbound();
+                wrapLoop(dummyBuffer);
                 writeToUpstreamAndClear();
-            } catch (LineSenderException e) {
+            } catch (Throwable e) {
                 // best effort TLS close signal
             }
         }
         state = CLOSED;
-        Misc.free(delegate);
-        Unsafe.free(wrapOutputBufferPtr, wrapOutputBuffer.capacity(), MemoryTag.NATIVE_DEFAULT);
-        Unsafe.free(unwrapInputBufferPtr, unwrapInputBuffer.capacity(), MemoryTag.NATIVE_DEFAULT);
-        Unsafe.free(unwrapOutputBufferPtr, unwrapOutputBuffer.capacity(), MemoryTag.NATIVE_DEFAULT);
+        try {
+            Misc.free(delegate);
+        } catch (Throwable ignored) {
+            // not much we can do
+        }
+
+        // a bit of ceremony to make sure there is no point that a buffer or a pointer is referencing unallocated memory
+        int capacity = wrapOutputBuffer.capacity();
+        long ptrToFree = wrapOutputBufferPtr;
+        wrapOutputBuffer = null; // if there is an attempt to use a buffer after close() then it's better to throw NPE than segfaulting
+        wrapOutputBufferPtr = 0;
+        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_DEFAULT);
+
+        capacity = unwrapInputBuffer.capacity();
+        ptrToFree = unwrapInputBufferPtr;
+        unwrapInputBuffer = null;
+        unwrapInputBufferPtr = 0;
+        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_DEFAULT);
+
+        capacity = unwrapOutputBuffer.capacity();
+        ptrToFree = unwrapOutputBufferPtr;
+        unwrapOutputBuffer = null;
+        unwrapOutputBufferPtr = 0;
+        Unsafe.free(ptrToFree, capacity, MemoryTag.NATIVE_DEFAULT);
     }
 }

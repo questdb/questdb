@@ -39,11 +39,6 @@ import static org.junit.Assert.assertEquals;
 
 public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
 
-    private static final String AUTH_KEY_ID1 = "testUser1";
-    private static final String TOKEN = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
-    private static final String TRUSTSTORE_PATH = "/keystore/server.keystore";
-    private static final char[] TRUSTSTORE_PASSWORD = "questdb".toCharArray();
-
     @Rule
     public TlsProxyRule tlsProxy = TlsProxyRule.toHostAndPort("localhost", 9002);
 
@@ -56,7 +51,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .enableTls()
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
-                    .enableAuth(AUTH_KEY_ID1).token(TOKEN)
+                    .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
                     .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.table(tableName).longColumn("value", 42).atNow();
@@ -80,7 +75,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .bufferCapacity(hugeBufferSize)
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
-                    .enableAuth(AUTH_KEY_ID1).token(TOKEN)
+                    .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
                     .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
                 for (long l = 0; l < rows; l++) {
@@ -102,7 +97,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .enableTls()
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
-                    .enableAuth(AUTH_KEY_ID1).token(TOKEN)
+                    .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
                     .advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.table(tableName).longColumn("value", 42).atNow();
@@ -123,7 +118,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .enableTls()
                         .address("127.0.0.1")
                         .port(tlsProxy.getListeningPort())
-                        .enableAuth(AUTH_KEY_ID1).token(TOKEN)
+                        .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
                         .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                         .build()) {
 
@@ -147,7 +142,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .enableTls()
                     .address("127.0.0.1")
                     .port(tlsProxy.getListeningPort())
-                    .enableAuth(AUTH_KEY_ID1).token(TOKEN)
+                    .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
                     .advancedTls().disableCertificateValidation()
                     .build()) {
 
