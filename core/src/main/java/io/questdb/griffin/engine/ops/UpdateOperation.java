@@ -39,6 +39,8 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class UpdateOperation extends AbstractOperation {
+
+    public final static String CMD_NAME = "UPDATE";
     public static final int WRITER_CLOSED_INCREMENT = 10;
     public static final int SENDER_CLOSED_INCREMENT = 7;
     public static final int FULLY_CLOSED_STATE = WRITER_CLOSED_INCREMENT + SENDER_CLOSED_INCREMENT;
@@ -55,7 +57,7 @@ public class UpdateOperation extends AbstractOperation {
             int tableNamePosition,
             RecordCursorFactory factory
     ) {
-        init(TableWriterTask.CMD_UPDATE_TABLE, "UPDATE", tableName, tableId, tableVersion, tableNamePosition);
+        init(TableWriterTask.CMD_UPDATE_TABLE, CMD_NAME, tableName, tableId, tableVersion, tableNamePosition);
         this.factory = factory;
     }
 

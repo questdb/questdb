@@ -277,7 +277,7 @@ public class FilesTest {
 
                 // perform the hard link
                 hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
-                Files.hardLink(srcFilePath, hardLinkFilePath);
+                Assert.assertEquals(0, Files.hardLink(srcFilePath, hardLinkFilePath));
 
                 // check content are the same
                 assertEqualsLinkedFileContent(hardLinkFilePath, fileContent);
@@ -309,7 +309,7 @@ public class FilesTest {
             try {
                 srcFilePath = new Path().of(dbRoot.getAbsolutePath()).concat("some_column.d").$();
                 hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
-                Assert.assertEquals(-1, Files.hardLink(srcFilePath, hardLinkFilePath));
+                Assert.assertTrue(Files.hardLink(srcFilePath, hardLinkFilePath) < 0);
             } finally {
                 Misc.free(srcFilePath);
                 Misc.free(hardLinkFilePath);

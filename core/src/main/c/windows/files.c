@@ -244,15 +244,17 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink(JNIEnv *e, jclass cl, 
     if (lenSrc > 0) {
         wchar_t bufSrc[lenSrc];
         MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, bufSrc, (int) lenSrc);
+
         size_t lenHardLink = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszHardLink, -1, NULL, 0);
         if (lenHardLink > 0) {
             wchar_t bufHardLink[lenHardLink];
             MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszHardLink, -1, bufHardLink, (int) lenHardLink);
-            if (0 == CreateHardLinkW(lpszHardLink, lpszSrc, NULL)) {
-                SaveLastError();
-                return -1;
+
+            if (CreateHardLinkA(lpszHardLink, lpszSrc, NULL)) {
+                return 0;
             }
-            return 0;
+            SaveLastError();
+            return -1;
         }
     }
     return -2;

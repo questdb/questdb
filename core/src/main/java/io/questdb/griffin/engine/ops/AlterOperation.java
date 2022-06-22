@@ -35,6 +35,7 @@ import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
 public class AlterOperation extends AbstractOperation implements Mutable {
+    public final static String CMD_NAME = "ALTER TABLE";
 
     public final static short DO_NOTHING = 0;
     public final static short ADD_COLUMN = 1;
@@ -188,7 +189,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             int tableId,
             int tableNamePosition
     ) {
-        init(TableWriterTask.CMD_ALTER_TABLE, "ALTER TABLE", tableName, tableId, -1, tableNamePosition);
+        init(TableWriterTask.CMD_ALTER_TABLE, CMD_NAME, tableName, tableId, -1, tableNamePosition);
         this.command = command;
         return this;
     }
