@@ -57,7 +57,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
                     .enableAuth(AUTH_KEY_ID1).token(TOKEN)
-                    .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
+                    .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.table(tableName).longColumn("value", 42).atNow();
                 sender.flush();
@@ -81,7 +81,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
                     .enableAuth(AUTH_KEY_ID1).token(TOKEN)
-                    .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
+                    .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
                 for (long l = 0; l < rows; l++) {
                     sender.table(tableName).longColumn("value", 42).atNow();
@@ -103,7 +103,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
                     .enableAuth(AUTH_KEY_ID1).token(TOKEN)
-                    .customTrustStore(truststore, TRUSTSTORE_PASSWORD)
+                    .advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.table(tableName).longColumn("value", 42).atNow();
                 sender.flush();
@@ -124,7 +124,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .address("127.0.0.1")
                         .port(tlsProxy.getListeningPort())
                         .enableAuth(AUTH_KEY_ID1).token(TOKEN)
-                        .customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
+                        .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                         .build()) {
 
                     for (int i = 0; i < rows; i++) {
@@ -135,6 +135,29 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                 }
             });
         }, "questdb.experimental.tls.buffersize", "1");
+    }
+
+    @Test
+    public void testCertValidationDisabled() throws Exception {
+        String tableName = UUID.randomUUID().toString();
+        int rows = 5_000;
+        authKeyId = AUTH_KEY_ID1;
+        runInContext(c -> {
+            try (Sender sender = Sender.builder()
+                    .enableTls()
+                    .address("127.0.0.1")
+                    .port(tlsProxy.getListeningPort())
+                    .enableAuth(AUTH_KEY_ID1).token(TOKEN)
+                    .advancedTls().disableCertificateValidation()
+                    .build()) {
+
+                for (int i = 0; i < rows; i++) {
+                    sender.table(tableName).longColumn("value", 42).atNow();
+                    sender.flush();
+                }
+                assertTableSizeEventually(engine, tableName, rows);
+            }
+        });
     }
 
     private interface RunnableWithException {

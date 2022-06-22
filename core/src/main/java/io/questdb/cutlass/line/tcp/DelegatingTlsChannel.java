@@ -26,17 +26,13 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.cutlass.line.Sender;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLEngine;
-import javax.net.ssl.SSLEngineResult;
-import javax.net.ssl.SSLException;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.*;
 import java.io.BufferedInputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -46,6 +42,7 @@ import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.security.KeyStore;
 import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
 
 public final class DelegatingTlsChannel implements LineChannel {
     private static final int INITIAL_BUFFER_CAPACITY = 64 * 1024;
@@ -57,6 +54,16 @@ public final class DelegatingTlsChannel implements LineChannel {
     private static final int AFTER_HANDSHAKE = 1;
     private static final int CLOSING = 2;
     private static final int CLOSED = 3;
+
+    private static final TrustManager[] BLIND_TRUST_MANAGERS = new TrustManager[]{new X509TrustManager() {
+        public void checkClientTrusted(X509Certificate[] certs, String t) {
+        }
+        public void checkServerTrusted(X509Certificate[] certs, String t) {
+        }
+        public X509Certificate[] getAcceptedIssuers() {
+            return null;
+        }
+    }};
 
 
     private final LineChannel delegate;
@@ -91,14 +98,14 @@ public final class DelegatingTlsChannel implements LineChannel {
         CAPACITY_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(capacityField);
     }
 
-    public DelegatingTlsChannel(LineChannel delegate, String trustStorePath, char[] password) {
+    public DelegatingTlsChannel(LineChannel delegate, String trustStorePath, char[] password, Sender.TlsValidationMode validationMode) {
         this.delegate = delegate;
-        this.sslEngine = createSslEngine(trustStorePath, password);
+        this.sslEngine = createSslEngine(trustStorePath, password, validationMode);
 
         // wrapInputBuffer is just a placeholder, we set the internal address, capacity and limit in send()
         this.wrapInputBuffer = ByteBuffer.allocateDirect(0);
 
-        // allows to override in tests, but we dont neccessary want to expose this to users.
+        // allows to override in tests, but we don't necessary want to expose this to users.
         int initialCapacity = Integer.getInteger("questdb.experimental.tls.buffersize", INITIAL_BUFFER_CAPACITY);
 
         // we want to track allocated memory hence we just create dummy direct byte buffers
@@ -120,13 +127,14 @@ public final class DelegatingTlsChannel implements LineChannel {
         }
     }
 
-    private static SSLEngine createSslEngine(String trustStorePath, char[] trustStorePassword) {
+    private static SSLEngine createSslEngine(String trustStorePath, char[] trustStorePassword, Sender.TlsValidationMode validationMode) {
+        assert trustStorePath == null || validationMode == Sender.TlsValidationMode.DEFAULT;
         try {
             SSLContext sslContext;
             // intentionally not exposed to end user as an option
             // it's used for testing, but dangerous in prod
             if (trustStorePath != null) {
-                sslContext = SSLContext.getInstance("SSL");
+                sslContext = SSLContext.getInstance("TLS");
                 TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
                 KeyStore jks = KeyStore.getInstance("JKS");
 
@@ -150,6 +158,9 @@ public final class DelegatingTlsChannel implements LineChannel {
                 tmf.init(jks);
                 TrustManager[] trustManagers = tmf.getTrustManagers();
                 sslContext.init(null, trustManagers, new SecureRandom());
+            } else if (validationMode == Sender.TlsValidationMode.INSECURE) {
+                sslContext = SSLContext.getInstance("TLS");
+                sslContext.init(null, BLIND_TRUST_MANAGERS, new SecureRandom());
             } else {
                 sslContext = SSLContext.getDefault();
             }

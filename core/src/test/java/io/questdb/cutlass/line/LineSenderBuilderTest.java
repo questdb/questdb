@@ -112,7 +112,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder()
                     .address(LOCALHOST)
                     .port(TLS_PROXY.getListeningPort())
-                    .enableTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
+                    .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
@@ -128,7 +128,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = Sender.builder()
                     .address(LOCALHOST)
                     .port(TLS_PROXY.getListeningPort())
-                    .enableTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
+                    .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
@@ -143,7 +143,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         Sender.LineSenderBuilder builder = Sender.builder()
                 .address(LOCALHOST)
                 .port(TLS_PROXY.getListeningPort())
-                .enableTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
+                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
 
         runInContext(r -> {
             try {
@@ -161,7 +161,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         Sender.LineSenderBuilder builder = Sender.builder()
                 .address(LOCALHOST)
                 .port(TLS_PROXY.getListeningPort())
-                .enableTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
+                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
 
         runInContext(r -> {
             try {
@@ -179,7 +179,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         Sender.LineSenderBuilder builder = Sender.builder()
                 .address(LOCALHOST)
                 .port(TLS_PROXY.getListeningPort())
-                .enableTls().customTrustStore(truststore, "wrong password".toCharArray());
+                .enableTls().advancedTls().customTrustStore(truststore, "wrong password".toCharArray());
         runInContext(r -> {
             try (Sender sender = builder.build()) {
                 fail("non existing trustore should throw an exception");
@@ -198,7 +198,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 .address(LOCALHOST)
                 .port(TLS_PROXY.getListeningPort())
                 .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
-                .enableTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
+                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
         runInContext(r -> {
             try (Sender sender = builder.build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
@@ -216,7 +216,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 .address(LOCALHOST)
                 .port(TLS_PROXY.getListeningPort())
                 .enableAuth(AUTH_KEY_ID1).privateKey(AUTH_PRIVATE_KEY1)
-                .enableTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
+                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
         runInContext(r -> {
             try (Sender sender = builder.build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
@@ -373,9 +373,9 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testCustomTruststoreDoubleSet() {
-        Sender.LineSenderBuilder builder = Sender.builder().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+        Sender.LineSenderBuilder builder = Sender.builder().advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
         try {
-            builder.customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+            builder.advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
             fail("should not allow double custom trust store set");
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), "already configured");
@@ -385,13 +385,72 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testCustomTruststoreButTlsNotEnabled() {
         Sender.LineSenderBuilder builder = Sender.builder()
-                .customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
+                .advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                 .address(LOCALHOST);
         try {
             builder.build();
-            fail("should not fail when custom trust store configured, but TLS not enabled");
+            fail("should fail when custom trust store configured, but TLS not enabled");
         } catch (LineSenderException e) {
             TestUtils.assertContains(e.getMessage(), "TLS was not enabled");
+        }
+    }
+
+    @Test
+    public void testTlsValidationDisabledButTlsNotEnabled() {
+        Sender.LineSenderBuilder builder = Sender.builder()
+                .advancedTls().disableCertificateValidation()
+                .address(LOCALHOST);
+        try {
+            builder.build();
+            fail("should fail when TLS validation is disabled, but TLS not enabled");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "TLS was not enabled");
+        }
+    }
+
+    @Test
+    public void testTlsValidationDisabledDoubleSet() {
+        Sender.LineSenderBuilder builder = Sender.builder()
+                .advancedTls().disableCertificateValidation();
+        try {
+            builder.advancedTls().disableCertificateValidation();
+            fail("should not allow double TLS validation disabled");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "TLS validation was already disabled");
+        }
+    }
+
+    @Test
+    public void testFirstTlsValidationDisabledThenCustomTruststore() {
+        Sender.LineSenderBuilder builder = Sender.builder()
+                .advancedTls().disableCertificateValidation();
+        try {
+            builder.advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+            fail("should not allow custom truststore when TLS validation was disabled disabled");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "TLS validation was already disabled");
+        }
+    }
+
+    @Test
+    public void testMalformedPortInAddress() {
+        Sender.LineSenderBuilder builder = Sender.builder();
+        try {
+            builder.address("foo:nonsense12334");
+            fail("should fail with malformated port");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "cannot parse port");
+        }
+    }
+
+    @Test
+    public void testAddressEndsWithColon() {
+        Sender.LineSenderBuilder builder = Sender.builder();
+        try {
+            builder.address("foo:");
+            fail("should fail when address ends with colon");
+        } catch (LineSenderException e) {
+            TestUtils.assertContains(e.getMessage(), "cannot parse address");
         }
     }
 }

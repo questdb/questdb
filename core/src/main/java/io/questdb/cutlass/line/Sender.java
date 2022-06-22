@@ -188,6 +188,7 @@ public interface Sender extends Closeable {
         private String trustStorePath;
         private String keyId;
         private char[] trustStorePassword;
+        private TlsValidationMode tlsValidationMode = TlsValidationMode.DEFAULT;
 
         private LineSenderBuilder() {
 
@@ -290,24 +291,18 @@ public interface Sender extends Closeable {
         }
 
         /**
-         * Configure a custom truststore. This is only needed when using {@link #enableTls()} when your default
-         * truststore does not contain certificate chain used by a server. Most users should not need it.
-         * <br>
-         * The path can be either a path on a local filesystem. Or you can prefix it with "classpath:" to instruct
-         * the Sender to load a trust store from a classpath.
+         * Advanced TLS configuration. Most users should not need to use this.
          *
-         *
-         * @param trustStorePath a path to a trust store.
-         * @param trustStorePassword a password to for the trustore
-         * @return this instance for method chaining
+         * @return instance of {@link AdvancedTlsSettings} to advanced TLS configuration
          */
-        public LineSenderBuilder customTrustStore(String trustStorePath, char[] trustStorePassword) {
-            if (this.trustStorePath != null) {
-                throw new LineSenderException("custom trust store was already configured to " + this.trustStorePath);
+        public AdvancedTlsSettings advancedTls() {
+            if (LineSenderBuilder.this.trustStorePath != null) {
+                throw new LineSenderException("custom trust store was already configured to " + LineSenderBuilder.this.trustStorePath);
             }
-            this.trustStorePath = trustStorePath;
-            this.trustStorePassword = trustStorePassword;
-            return this;
+            if (tlsValidationMode == TlsValidationMode.INSECURE) {
+                throw new LineSenderException("TLS validation was already disabled");
+            }
+            return new AdvancedTlsSettings();
         }
 
         /**
@@ -327,7 +322,7 @@ public interface Sender extends Closeable {
                 assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                 DelegatingTlsChannel tlsChannel;
                 try {
-                    tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword);
+                    tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword, tlsValidationMode);
                 } catch (Throwable t) {
                     closeSilently(channel);
                     throw rethrow(t);
@@ -374,6 +369,9 @@ public interface Sender extends Closeable {
             }
             if (!tlsEnabled && trustStorePath != null) {
                 throw new LineSenderException("custom trust store configured to " + trustStorePath + ", but TLS was not enabled");
+            }
+            if (!tlsEnabled && tlsValidationMode != TlsValidationMode.DEFAULT) {
+                throw new LineSenderException("TSL validation disabled, but TLS was not enabled");
             }
             if (keyId != null && bufferCapacity < MIN_BUFFER_SIZE_FOR_AUTH) {
                 throw new LineSenderException("Minimal buffer capacity is " + MIN_BUFFER_SIZE_FOR_AUTH + ". Requested buffer capacity: " + bufferCapacity);
@@ -430,5 +428,64 @@ public interface Sender extends Closeable {
                 return LineSenderBuilder.this;
             }
         }
+
+        public class AdvancedTlsSettings {
+            /**
+             * Configure a custom truststore. This is only needed when using {@link #enableTls()} when your default
+             * truststore does not contain certificate chain used by a server. Most users should not need it.
+             * <br>
+             * The path can be either a path on a local filesystem. Or you can prefix it with "classpath:" to instruct
+             * the Sender to load a trust store from a classpath.
+             *
+             *
+             * @param trustStorePath a path to a trust store.
+             * @param trustStorePassword a password to for the trustore
+             * @return an instance of LineSenderBuilder for further configuration
+             */
+            public LineSenderBuilder customTrustStore(String trustStorePath, char[] trustStorePassword) {
+                LineSenderBuilder.this.trustStorePath = trustStorePath;
+                LineSenderBuilder.this.trustStorePassword = trustStorePassword;
+                return LineSenderBuilder.this;
+            }
+
+            /**
+             * This server certification validation altogether.
+             * This is suitable when testing self-signed certificate. It's inherently insecure and should
+             * never be used in a production.
+             * <br>
+             * If you cannot use trusted certificate then you should prefer {@link  #customTrustStore(String, char[])}
+             * over disabling validation.
+             *
+             * @return an instance of LineSenderBuilder for further configuration
+             */
+            public LineSenderBuilder disableCertificateValidation() {
+                LineSenderBuilder.this.tlsValidationMode = TlsValidationMode.INSECURE;
+                return LineSenderBuilder.this;
+            }
+
+        }
+    }
+
+    /**
+     * Configure TLS mode.
+     * Most users should not need to use anything but the default mode.
+     *
+     */
+    enum TlsValidationMode {
+
+        /**
+         * Sender validates a server certificate chain and throws an exception
+         * when a certificate is not trusted.
+         *
+         */
+        DEFAULT,
+
+        /**
+         * Suitable for testing. In this mode Sender does not validate a server certificate chain.
+         * This is inherently insecure and should never be used in a production environment.
+         * Useful in test environments with self-signed certificates.
+         *
+         */
+        INSECURE
     }
 }
