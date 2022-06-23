@@ -51,7 +51,7 @@ import java.security.PrivateKey;
  *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)},
  *     {@link #doubleColumn(CharSequence, double)}, {@link #boolColumn(CharSequence, boolean)},
  *     {@link #timestampColumn(CharSequence, long)} to add remaining columns columns</li>
- *     <li>Use {@link #at(long)} to finish a row with an explicit timestamp.Alternatively, you can use use
+ *     <li>Use {@link #atMicros(long)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use use
  *     {@link #atNow()} which will add a timestamp on a server.</li>
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
  * </ol>
@@ -87,7 +87,8 @@ public interface Sender extends Closeable {
     Sender longColumn(CharSequence name, long value);
 
     /**
-     * Add a column with a string value
+     * Add a column with a string value.
+     *
      * @param name name of the column
      * @param value value to add
      * @return this instance for method chaining
@@ -95,7 +96,8 @@ public interface Sender extends Closeable {
     Sender stringColumn(CharSequence name, CharSequence value);
 
     /**
-     * Add a column with a floating point value
+     * Add a column with a floating point value.
+     *
      * @param name name of the column
      * @param value value to add
      * @return this instance for method chaining
@@ -103,7 +105,8 @@ public interface Sender extends Closeable {
     Sender doubleColumn(CharSequence name, double value);
 
     /**
-     * Add a column with a boolean value
+     * Add a column with a boolean value.
+     *
      * @param name name of the column
      * @param value value to add
      * @return this instance for method chaining
@@ -111,15 +114,18 @@ public interface Sender extends Closeable {
     Sender boolColumn(CharSequence name, boolean value);
 
     /**
-     * Add a column with a timestamp value
+     * Add a column with a non-designated timestamp value.
+     *
+     *
      * @param name name of the column
-     * @param value value to add (in microseconds)
+     * @param value value to add (in microseconds since epoch)
      * @return this instance for method chaining
      */
     Sender timestampColumn(CharSequence name, long value);
 
     /**
-     * Add a column with a symbol value. You must call add symbols before adding any other column types
+     * Add a column with a symbol value. You must call add symbols before adding any other column types.
+     *
      * @param name name of the column
      * @param value value to add
      * @return this instance for method chaining
@@ -128,7 +134,7 @@ public interface Sender extends Closeable {
 
     /**
      * Finalize the current row and let QuestDB server to assign a timestamp. If you need to set timestamp
-     * explicitly then see {@link #at(long)}
+     * explicitly then see {@link #atMicros(long)}.
      * <br>
      * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
      *
@@ -136,12 +142,13 @@ public interface Sender extends Closeable {
     void atNow();
 
     /**
-     *  Finalize the current row and assign an explicit timestamp in Epoch nanoseconds.
+     *  Finalize the current row and assign an explicit timestamp in microseconds since Epoch.
      *  After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
      *
      * @param timestamp timestamp in Epoch nanoseconds.
      */
-    void at(long timestamp);
+    void atMicros(long timestamp);
+
 
     /**
      * Force sending internal buffers to a server.

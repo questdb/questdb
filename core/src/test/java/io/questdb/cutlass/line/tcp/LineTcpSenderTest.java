@@ -149,7 +149,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .stringColumn("string_field", "foo")
                         .doubleColumn("double_field", 42.0)
                         .timestampColumn("ts_field", tsMicros)
-                        .at(tsMicros * 1000);
+                        .atMicros(tsMicros);
                 sender.flush();
             }
 
@@ -169,21 +169,21 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
-                long ts = IntervalUtils.parseFloorPartialDate("2022-02-25") * 1000L;
+                long ts = IntervalUtils.parseFloorPartialDate("2022-02-25");
                 sender.table("mytable")
                         .doubleColumn("negative_inf", Double.NEGATIVE_INFINITY)
                         .doubleColumn("positive_inf", Double.POSITIVE_INFINITY)
                         .doubleColumn("nan", Double.NaN)
                         .doubleColumn("max_value", Double.MAX_VALUE)
                         .doubleColumn("min_value", Double.MIN_VALUE)
-                        .at(ts);
+                        .atMicros(ts);
                 sender.flush();
-            }
 
-            assertTableSizeEventually(engine, "mytable", 1);
-            try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
-                TestUtils.assertReader("negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp\n" +
-                        "-Infinity\tInfinity\tNaN\t1.7976931348623157E308\t4.9E-307\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+                assertTableSizeEventually(engine, "mytable", 1);
+                try (TableReader reader = engine.getReader(lineConfiguration.getCairoSecurityContext(), "mytable")) {
+                    TestUtils.assertReader("negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp\n" +
+                            "-Infinity\tInfinity\tNaN\t1.7976931348623157E308\t4.9E-307\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+                }
             }
         });
     }

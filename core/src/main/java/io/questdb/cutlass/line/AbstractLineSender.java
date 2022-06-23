@@ -73,7 +73,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public void $(long timestamp) {
-        at(timestamp);
+        put(' ').put(timestamp);
+        atNow();
     }
 
     public void $() {
@@ -94,8 +95,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
-    public final void at(long timestamp) {
-        put(' ').put(timestamp);
+    public final void atMicros(long timestamp) {
+        put(' ').put(timestamp * 1000);
         atNow();
     }
 
