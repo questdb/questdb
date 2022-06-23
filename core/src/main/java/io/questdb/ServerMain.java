@@ -562,6 +562,7 @@ public class ServerMain {
     }
 
     protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
+        ShutdownFlag.INSTANCE.shutdown();
         workerPool.halt();
         Misc.freeObjList(instancesToClean);
     }
