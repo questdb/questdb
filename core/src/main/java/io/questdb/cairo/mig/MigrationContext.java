@@ -84,7 +84,7 @@ class MigrationContext {
     }
 
     public int getNextTableId() {
-        return (int) engine.getNextTableId();
+        return (int) engine.getTableIdGenerator().getNextId();
     }
 
     public Path getTablePath() {
