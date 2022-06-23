@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
@@ -31,44 +32,15 @@ import org.junit.runner.Description;
 import org.junit.runner.notification.Failure;
 import org.junit.runner.notification.RunListener;
 
-import java.lang.management.ManagementFactory;
-import java.lang.management.ThreadInfo;
-import java.lang.management.ThreadMXBean;
-
 @RunListener.ThreadSafe
 public class TestListener extends RunListener {
     private final static Log LOG = LogFactory.getLog(TestListener.class);
 
-    public static void dumpThreadStacks() {
-        StringBuilder s = new StringBuilder();
-
-        final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
-        final ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadMXBean.getAllThreadIds(), 20);
-
-        s.append("Thread dump: ");
-        for (ThreadInfo threadInfo : threadInfos) {
-            final Thread.State state = threadInfo.getThreadState();
-            s.append('\n');
-            s.append('\'').append(threadInfo.getThreadName()).append("': ").append(state);
-            final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
-            for (final StackTraceElement stackTraceElement : stackTraceElements) {
-                s.append("\n\t\tat ").append(stackTraceElement);
-            }
-            s.append("\n\n");
-        }
-        System.out.println(s);
-    }
-
     static {
         Thread monitor = new Thread(() -> {
-            try {
-                while (true) {
-                    dumpThreadStacks();
-                    Os.sleep(10 * 60 * 1000);
-                }
-            } catch (Throwable t) {
-                System.out.println("Thread dumper failed!");
-                t.printStackTrace();
+            while (true) {
+                DumpThreadStacksFunctionFactory.dumpThreadStacks();
+                Os.sleep(10 * 60 * 1000);
             }
         });
 
