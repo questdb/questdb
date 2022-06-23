@@ -24,8 +24,10 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.mp.MPSequence;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.sql.Connection;
@@ -35,6 +37,14 @@ import java.sql.Statement;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class PGFlushQueryCacheTest extends BasePGTest {
+
+    @Override
+    @Before
+    public void setUp() {
+        queryCacheEventQueueCapacity = 1;
+        super.setUp();
+    }
+
     @Test
     public void testFlushQueryCache() throws Exception {
         assertMemoryLeak(() -> {
@@ -113,6 +123,13 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     }
 
     private void checkQueryCacheFlushed(long memInitial, long memAfterJoin) {
+        // We need to wait until PG Wire workers process the message. To do so, we simply try to
+        // publish another query flush event. Since we set the queue size to 1, we're able to
+        // publish only when all consumers (PG Wire workers) have processed the previous event.
+        Assert.assertEquals(1, engine.getConfiguration().getQueryCacheEventQueueCapacity());
+        final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
+        pubSeq.waitForNext();
+
         // Sequence set to done before actual flush performed. We might have to try it a few times,
         // before memory usage drop is measured.
         assertEventually(() -> {
