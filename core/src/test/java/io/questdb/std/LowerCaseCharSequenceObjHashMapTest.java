@@ -34,6 +34,18 @@ import java.util.Map;
 public class LowerCaseCharSequenceObjHashMapTest {
 
     @Test
+    public void testPutIfAbsent() {
+        final LowerCaseCharSequenceObjHashMap<Integer> lowerCaseMap = new LowerCaseCharSequenceObjHashMap<>();
+        lowerCaseMap.put("a", 1);
+
+        lowerCaseMap.putIfAbsent("a", 1);
+        Assert.assertEquals(1, lowerCaseMap.keys().size());
+
+        lowerCaseMap.putIfAbsent("b", 2);
+        Assert.assertEquals(2, lowerCaseMap.keys().size());
+    }
+
+    @Test
     public void testSaturation() {
 
         final int N = 10_000;
