@@ -251,14 +251,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         recordStructureVersion++;
         final long partitionTimestampLo = getPartitionTimestampLo(timestamp);
         int index = findAttachedPartitionIndexByLoTimestamp(partitionTimestampLo);
-        assert index > -1;
-        final int size = attachedPartitions.size();
-        final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
-        if (index < lim) {
-            attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, lim - index);
+        if (index > -1) {
+            final int size = attachedPartitions.size();
+            final int lim = size - LONGS_PER_TX_ATTACHED_PARTITION;
+            if (index < lim) {
+                attachedPartitions.arrayCopy(index + LONGS_PER_TX_ATTACHED_PARTITION, index, lim - index);
+            }
+            attachedPartitions.setPos(lim);
+            partitionTableVersion++;
+        } else {
+            assert false;
         }
-        attachedPartitions.setPos(lim);
-        partitionTableVersion++;
     }
 
     public void reset(long fixedRowCount, long transientRowCount, long maxTimestamp, int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {

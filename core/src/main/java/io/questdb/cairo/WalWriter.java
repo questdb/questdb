@@ -563,11 +563,11 @@ public class WalWriter implements Closeable {
                 final int symbolCount = symbolMapWriter.getSymbolCount();
                 if (symbolCount > startSymbolCount) {
                     eventMem.putInt(i);
-                    eventMem.putInt(symbolCount - startSymbolCount);
                     for (int j = startSymbolCount; j < symbolCount; j++) {
                         eventMem.putInt(j);
                         eventMem.putStr(symbolMapWriter.valueOf(j));
                     }
+                    eventMem.putInt(SymbolMapDiff.END_OF_SYMBOL_ENTRIES);
                     startSymbolCounts.setQuick(i, symbolCount);
                 }
             }

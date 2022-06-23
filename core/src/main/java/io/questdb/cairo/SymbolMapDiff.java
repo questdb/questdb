@@ -24,35 +24,51 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-
 public class SymbolMapDiff {
     public static final int END_OF_SYMBOL_DIFFS = -1;
+    public static final int END_OF_SYMBOL_ENTRIES = -1;
 
-    private final IntList keys = new IntList();
-    private final ObjList<CharSequence> symbols = new ObjList<>();
+    private final WalEventCursor cursor;
+    private final Entry entry = new Entry();
 
-    SymbolMapDiff() {
+    private int columnIndex = -1;
+
+    SymbolMapDiff(WalEventCursor cursor) {
+        this.cursor = cursor;
     }
 
-    void add(CharSequence symbol, int key) {
-        keys.add(key);
-        symbols.add(symbol);
+    void of(int columnIndex) {
+        this.columnIndex = columnIndex;
+        entry.clear();
     }
 
-    public int size() {
-        assert keys.size() == symbols.size();
-        return keys.size();
+    public int getColumnIndex() {
+        return columnIndex;
     }
 
-    public int getKey(int index) {
-        assert index > -1 && index < keys.size();
-        return keys.get(index);
+    public Entry nextEntry() {
+        return cursor.readNextSymbolMapDiffEntry(entry);
     }
 
-    public CharSequence getSymbol(int index) {
-        assert index > -1 && index < symbols.size();
-        return symbols.get(index);
+    public static class Entry {
+        private int key;
+        private CharSequence symbol;
+
+        void of(int key, CharSequence symbol) {
+            this.key = key;
+            this.symbol = symbol;
+        }
+
+        public int getKey() {
+            return key;
+        }
+
+        public CharSequence getSymbol() {
+            return symbol;
+        }
+
+        void clear() {
+            of(-1, null);
+        }
     }
 }

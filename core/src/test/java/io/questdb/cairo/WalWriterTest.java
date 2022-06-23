@@ -170,22 +170,26 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertEquals(0, dataInfo.getMaxTimestamp());
                 assertFalse(dataInfo.isOutOfOrder());
 
-                assertNull(dataInfo.getSymbolMapDiff(0));
-                final SymbolMapDiff symbolMapDiff1 = dataInfo.getSymbolMapDiff(1);
-                assertEquals(5, symbolMapDiff1.size());
-                for (int k = 0; k < symbolMapDiff1.size(); k++) {
-                    final int expectedKey = k + 5;
-                    assertEquals(expectedKey, symbolMapDiff1.getKey(k));
-                    assertEquals("sym" + expectedKey, symbolMapDiff1.getSymbol(k));
+                SymbolMapDiff symbolMapDiff = dataInfo.nextSymbolMapDiff();
+                assertEquals(1, symbolMapDiff.getColumnIndex());
+                int expectedKey = 5;
+                SymbolMapDiff.Entry entry;
+                while ((entry = symbolMapDiff.nextEntry()) != null) {
+                    assertEquals(expectedKey, entry.getKey());
+                    assertEquals("sym" + expectedKey, entry.getSymbol().toString());
+                    expectedKey++;
                 }
-                assertNull(dataInfo.getSymbolMapDiff(2));
-                final SymbolMapDiff symbolMapDiff3 = dataInfo.getSymbolMapDiff(3);
-                assertEquals(1, symbolMapDiff3.size());
-                for (int k = 0; k < symbolMapDiff3.size(); k++) {
-                    final int expectedKey = k + 2;
-                    assertEquals(expectedKey, symbolMapDiff3.getKey(k));
-                    assertEquals("symbol" + expectedKey, symbolMapDiff3.getSymbol(k));
+                assertEquals(10, expectedKey);
+                symbolMapDiff = dataInfo.nextSymbolMapDiff();
+                assertEquals(3, symbolMapDiff.getColumnIndex());
+                expectedKey = 2;
+                while ((entry = symbolMapDiff.nextEntry()) != null) {
+                    assertEquals(expectedKey, entry.getKey());
+                    assertEquals("symbol" + expectedKey, entry.getSymbol().toString());
+                    expectedKey++;
                 }
+                assertEquals(3, expectedKey);
+                assertNull(dataInfo.nextSymbolMapDiff());
 
                 assertFalse(eventCursor.hasNext());
             }
@@ -571,9 +575,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(0, dataInfo.getMinTimestamp());
                     assertEquals(0, dataInfo.getMaxTimestamp());
                     assertFalse(dataInfo.isOutOfOrder());
-
-                    assertNull(dataInfo.getSymbolMapDiff(0));
-                    assertNull(dataInfo.getSymbolMapDiff(1));
+                    assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertFalse(eventCursor.hasNext());
                 }
@@ -660,11 +662,17 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertEquals(0, dataInfo.getMaxTimestamp());
                     assertFalse(dataInfo.isOutOfOrder());
 
-                    assertNull(dataInfo.getSymbolMapDiff(0));
-                    final SymbolMapDiff symbolMapDiff1 = dataInfo.getSymbolMapDiff(1);
-                    assertEquals(1, symbolMapDiff1.size());
-                    assertEquals(0, symbolMapDiff1.getKey(0));
-                    assertEquals("sym", symbolMapDiff1.getSymbol(0));
+                    final SymbolMapDiff symbolMapDiff = dataInfo.nextSymbolMapDiff();
+                    assertEquals(1, symbolMapDiff.getColumnIndex());
+                    int expectedKey = 0;
+                    SymbolMapDiff.Entry entry;
+                    while ((entry = symbolMapDiff.nextEntry()) != null) {
+                        assertEquals(expectedKey, entry.getKey());
+                        assertEquals("sym", entry.getSymbol().toString());
+                        expectedKey++;
+                    }
+                    assertEquals(1, expectedKey);
+                    assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertFalse(eventCursor.hasNext());
                 }
@@ -764,10 +772,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertEquals(ts, dataInfo.getMinTimestamp());
                 assertEquals(ts + Math.max(timestampOffsets[0], timestampOffsets[1]), dataInfo.getMaxTimestamp());
                 assertEquals(expectedOutOfOrder, dataInfo.isOutOfOrder());
-
-                assertNull(dataInfo.getSymbolMapDiff(0));
-                assertNull(dataInfo.getSymbolMapDiff(1));
-                assertNull(dataInfo.getSymbolMapDiff(2));
+                assertNull(dataInfo.nextSymbolMapDiff());
 
                 assertFalse(eventCursor.hasNext());
             }
