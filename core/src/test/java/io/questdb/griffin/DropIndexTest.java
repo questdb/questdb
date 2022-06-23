@@ -331,7 +331,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                                 }
                             }
                         }
-                        Thread.sleep(10L);
+                        Thread.sleep(100L);
                     }
                 } catch (Throwable e) {
                     readerFailure.set(e);
@@ -441,14 +441,17 @@ public class DropIndexTest extends AbstractGriffinTest {
             startBarrier.await();
             try {
                 compile(dropIndexStatement("sensors", "sensor_id"), sqlExecutionContext);
+                endLatch.await();
                 // we didnt fail, check they did
-                TestUtils.assertContains(concurrentDropIndexFailure.get().getMessage(), "Column is not indexed [name=sensor_id][errno=-100]");
+                Throwable fail = concurrentDropIndexFailure.get();
+                Assert.assertNotNull(fail);
+                TestUtils.assertContains(fail.getMessage(), "Column is not indexed [name=sensor_id][errno=-100]");
             } catch (EntryUnavailableException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=Alter table execute]");
                 // we failed, check they didnt
                 Assert.assertNull(concurrentDropIndexFailure.get());
+                endLatch.await();
             }
-            endLatch.await();
 
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
