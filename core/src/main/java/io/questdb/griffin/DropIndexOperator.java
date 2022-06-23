@@ -81,7 +81,6 @@ public class DropIndexOperator implements Closeable {
 
             cleanupColumnVersions.clear();
             final int partitionBy = tableWriter.getPartitionBy();
-
             for (int pIndex = 0, limit = tableWriter.getPartitionCount(); pIndex < limit; pIndex++) {
 
                 final long partitionTimestamp = tableWriter.getPartitionTimestamp(pIndex);
@@ -120,22 +119,14 @@ public class DropIndexOperator implements Closeable {
                                     columnDropIndexTxn
                             )
                     );
-                    LOG.info()
-                            .$("hard link call during DROP INDEX execution [txn=")
-                            .$(tableWriter.getTxn())
-                            .$(", table=")
-                            .$(tableName)
-                            .$(", column=")
-                            .$(columnName)
-                            .$(", errno=")
-                            .$(errno)
-                            .$(", columnVersion.before=")
-                            .$(columnVersion)
-                            .$(", columnVersion.after=")
-                            .$(columnDropIndexTxn)
-                            .I$();
+
                     if (errno < 0) {
-                        throw CairoException.instance(errno).put("Cannot hard link ");
+                        throw CairoException.instance(errno)
+                                .put("Cannot hardLink [src=")
+                                .put(path)
+                                .put(", hardLink=")
+                                .put(auxPath)
+                                .put(']');
                     }
                 } finally {
                     path.trimTo(rootLen);
@@ -143,7 +134,7 @@ public class DropIndexOperator implements Closeable {
                 }
             }
         } catch (Throwable th) {
-            LOG.error().$("could not DROP INDEX").$(th).$();
+            LOG.error().$("Could not DROP INDEX: ").$(th.getMessage()).$();
             tableWriter.rollbackUpdate();
             throw th;
         }

@@ -26,19 +26,23 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
+import java.io.IOException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
-import java.util.Set;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
 
 public class DropIndexTest extends AbstractGriffinTest {
 
@@ -153,6 +157,66 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDropIndexFailsWhenHardLinkFails() throws Exception {
+        final FilesFacade noHardLinksFF = new FilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                // always fails
+                return -1;
+            }
+        };
+
+        assertMemoryLeak(noHardLinksFF, () -> {
+            compile(CREATE_TABLE_STMT, sqlExecutionContext);
+            checkMetadataAndTxn(
+                    path,
+                    tableName,
+                    columnName,
+                    PartitionBy.NONE,
+                    1,
+                    0,
+                    0,
+                    true,
+                    indexBlockValueSize,
+                    2
+            );
+            try {
+                compile(dropIndexStatement(tableName, columnName), sqlExecutionContext);
+                Assert.fail();
+            } catch (SqlException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
+                TestUtils.assertContains(expected.getFlyweightMessage(), "[-1] Cannot hardLink ");
+                path.trimTo(tablePathLen);
+                checkMetadataAndTxn(
+                        path,
+                        tableName,
+                        columnName,
+                        PartitionBy.NONE,
+                        1,
+                        0,
+                        0,
+                        true,
+                        indexBlockValueSize,
+                        2
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndexNonPartitionedTable() throws Exception {
+        dropIndexOfIndexedColumn(
+                CREATE_TABLE_STMT + " PARTITION BY NONE",
+                "sensors",
+                "sensor_id",
+                PartitionBy.NONE,
+                true,
+                indexBlockValueSize,
+                2 // default partition with two files (*.k, *.v)
+        );
+    }
+
+    @Test
     public void testDropIndexPartitionedByDayTable() throws Exception {
         dropIndexOfIndexedColumn(
                 CREATE_TABLE_STMT + " PARTITION BY DAY",
@@ -175,19 +239,6 @@ public class DropIndexTest extends AbstractGriffinTest {
                 true,
                 indexBlockValueSize,
                 10 // 5 partitions times two files (*.k, *.v)
-        );
-    }
-
-    @Test
-    public void testDropIndexNonPartitionedTable() throws Exception {
-        dropIndexOfIndexedColumn(
-                CREATE_TABLE_STMT + " PARTITION BY NONE",
-                "sensors",
-                "sensor_id",
-                PartitionBy.NONE,
-                true,
-                indexBlockValueSize,
-                2 // default partition with two files (*.k, *.v)
         );
     }
 
@@ -230,7 +281,7 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelDropIndexPreservesIndexFilesWhenThereIsATransactionReadingThem() throws Exception {
+    public void testDropIndexPreservesIndexFilesWhenThereIsATransactionReadingThem() throws Exception {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
             compile(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
             checkMetadataAndTxn(
@@ -280,7 +331,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                                 }
                             }
                         }
-                        Thread.sleep(60L);
+                        Thread.sleep(10L);
                     }
                 } catch (Throwable e) {
                     readerFailure.set(e);
@@ -302,7 +353,6 @@ public class DropIndexTest extends AbstractGriffinTest {
             }
 
             // no more readers from this point
-
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
                     path,
@@ -330,9 +380,90 @@ public class DropIndexTest extends AbstractGriffinTest {
                     1,
                     false,
                     defaultIndexValueBlockSize,
+                    0 // index files are gone
+            );
+            assertSql(tableName, expected); // content is not gone
+        });
+    }
+
+    @Test
+    public void testDropIndexSimultaneously() throws Exception {
+        assertMemoryLeak(configuration.getFilesFacade(), () -> {
+            compile(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
+            checkMetadataAndTxn(
+                    path,
+                    "sensors",
+                    "sensor_id",
+                    PartitionBy.HOUR,
+                    1,
+                    0,
+                    0,
+                    true,
+                    indexBlockValueSize,
+                    10);
+
+            final CyclicBarrier startBarrier = new CyclicBarrier(2);
+            final SOCountDownLatch endLatch = new SOCountDownLatch(1);
+            final int defaultIndexValueBlockSize = configuration.getIndexValueBlockSize();
+            final AtomicReference<Throwable> concurrentDropIndexFailure = new AtomicReference<>();
+
+            // drop index thread
+            new Thread(() -> {
+                Path path2 = new Path().put(configuration.getRoot()).concat(tableName);
+                try {
+                    CompiledQuery cc = compiler2.compile(dropIndexStatement("sensors", "sensor_id"), sqlExecutionContext2);
+                    startBarrier.await(); // we should win
+                    try (OperationFuture future = cc.execute(null)) {
+                        future.await();
+                    }
+                    checkMetadataAndTxn(
+                            path2,
+                            "sensors",
+                            "sensor_id",
+                            PartitionBy.HOUR,
+                            2,
+                            1,
+                            1,
+                            false,
+                            defaultIndexValueBlockSize,
+                            0
+                    );
+                } catch (Throwable e) {
+                    concurrentDropIndexFailure.set(e);
+                } finally {
+                    Misc.free(path2);
+                    engine.releaseAllWriters();
+                    endLatch.countDown();
+                }
+            }).start();
+
+            // drop the index concurrently
+            startBarrier.await();
+            try {
+                compile(dropIndexStatement("sensors", "sensor_id"), sqlExecutionContext);
+                // we didnt fail, check they did
+                TestUtils.assertContains(concurrentDropIndexFailure.get().getMessage(), "Column is not indexed [name=sensor_id][errno=-100]");
+            } catch (EntryUnavailableException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=Alter table execute]");
+                // we failed, check they didnt
+                Assert.assertNull(concurrentDropIndexFailure.get());
+            }
+            endLatch.await();
+
+            path.trimTo(tablePathLen);
+            checkMetadataAndTxn(
+                    path,
+                    "sensors",
+                    "sensor_id",
+                    PartitionBy.HOUR,
+                    2,
+                    1,
+                    1,
+                    false,
+                    defaultIndexValueBlockSize,
                     0
             );
-            assertSql(tableName, expected);
+            assertSql(tableName, expected); // content is not gone
         });
     }
 
@@ -391,7 +522,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             boolean isColumnIndexed,
             int indexValueBlockSize,
             int expectedIndexFiles
-    ) throws Exception {
+    ) {
         try (TxReader txReader = new TxReader(ff)) {
             txReader.ofRO(path, partitionedBy);
             txReader.unsafeLoadAll();
@@ -409,28 +540,25 @@ public class DropIndexTest extends AbstractGriffinTest {
             }
         }
         if (isColumnIndexed) {
-            Assert.assertEquals(expectedIndexFiles, findIndexFiles(configuration, tableName, columnName).size());
+            try {
+                Assert.assertEquals(expectedIndexFiles, countIndexFiles(configuration, tableName));
+            } catch (IOException e) {
+                Assert.fail("could not count index files");
+            }
         }
     }
 
-    private static Set<java.nio.file.Path> findIndexFiles(
-            CairoConfiguration config,
-            String tableName,
-            String columnName
-    ) throws Exception {
+    private static long countIndexFiles(CairoConfiguration config, String tableName) throws IOException {
         final java.nio.file.Path tablePath = FileSystems.getDefault().getPath((String) config.getRoot(), tableName);
         return Files.find(
                 tablePath,
                 Integer.MAX_VALUE,
-                (filePath, _attrs) -> isIndexRelatedFile(tablePath, columnName, filePath)
-        ).collect(Collectors.toSet());
+                (filePath, _attrs) -> isIndexRelatedFile(tablePath, filePath)
+        ).count();
     }
 
-    private static boolean isIndexRelatedFile(
-            java.nio.file.Path tablePath,
-            String colName,
-            java.nio.file.Path filePath) {
+    private static boolean isIndexRelatedFile(java.nio.file.Path tablePath, java.nio.file.Path filePath) {
         final String fn = filePath.getFileName().toString();
-        return !filePath.getParent().equals(tablePath) && (fn.equals(colName + ".k") || fn.equals(colName + ".v"));
+        return !filePath.getParent().equals(tablePath) && (fn.endsWith(".k") || fn.endsWith(".v"));
     }
 }
