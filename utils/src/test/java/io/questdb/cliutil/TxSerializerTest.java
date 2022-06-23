@@ -101,13 +101,13 @@ public class TxSerializerTest {
     @Before
     public void setUp() {
         createTestPath(root);
-        engine.openTableId();
-        engine.resetTableId();
+        engine.getTableIdGenerator().open();
+        engine.getTableIdGenerator().reset();
     }
 
     @After
     public void tearDown() {
-        engine.freeTableId();
+        engine.getTableIdGenerator().close();
         engine.clear();
         removeTestPath(root);
     }
