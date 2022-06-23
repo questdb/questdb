@@ -34,14 +34,12 @@ import java.io.Closeable;
 public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
     private final FilesFacade ff;
     private final MemoryMR metaMem;
-    private final ObjList<SymbolMapDiff> symbolMapDiffs;
 
     public WalReaderMetadata(FilesFacade ff) {
         this.ff = ff;
         this.metaMem = Vm.getMRInstance();
         this.columnMetadata = new ObjList<>(columnCount);
         this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-        this.symbolMapDiffs = new ObjList<>();
     }
 
     @Override
@@ -50,15 +48,15 @@ public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
         Misc.free(metaMem);
     }
 
-    public WalReaderMetadata of(Path path, long segmentId, int expectedVersion, int timestampIndex) {
+    public WalReaderMetadata of(Path path, long segmentId, int expectedVersion) {
         final int pathLen = path.length();
         try {
             path.slash().put(segmentId).concat(TableUtils.META_FILE_NAME).$();
             metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
             columnNameIndexMap.clear();
-            TableUtils.loadWalMetadata(metaMem, columnMetadata, columnNameIndexMap, symbolMapDiffs, expectedVersion);
-            columnCount = metaMem.getInt(TableUtils.WAL_META_OFFSET_COUNT);
-            this.timestampIndex = timestampIndex;
+            TableUtils.loadWalMetadata(metaMem, columnMetadata, columnNameIndexMap, expectedVersion);
+            columnCount = metaMem.getInt(TableUtils.WAL_META_OFFSET_COLUMN_COUNT);
+            timestampIndex = metaMem.getInt(TableUtils.WAL_META_OFFSET_TIMESTAMP_INDEX);
         } catch (Throwable e) {
             close();
             throw e;
@@ -66,9 +64,5 @@ public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
             path.trimTo(pathLen);
         }
         return this;
-    }
-
-    public SymbolMapDiff getSymbolMapDiff(int columnIndex) {
-        return symbolMapDiffs.getQuiet(columnIndex);
     }
 }

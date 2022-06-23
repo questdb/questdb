@@ -50,7 +50,7 @@ public class WalWriter implements Closeable {
     private final ObjList<MemoryMA> columns;
     private final ObjList<MapWriter> symbolMapWriters;
     private final ObjList<MapWriter> denseSymbolMapWriters;
-    private final IntList initSymbolCounts = new IntList();
+    private final IntList startSymbolCounts = new IntList();
     private final MillisecondClock millisecondClock;
     private final Path path;
     private final LongList rowValueIsNotNull = new LongList();
@@ -351,7 +351,7 @@ public class WalWriter implements Closeable {
         if (!ColumnType.isSymbol(columnType)) {
             // maintain sparse list of symbol writers
             symbolMapWriters.extendAndSet(columnIndex, NullMapWriter.INSTANCE);
-            initSymbolCounts.add(-1);
+            startSymbolCounts.add(-1);
             return;
         }
 
@@ -374,7 +374,7 @@ public class WalWriter implements Closeable {
 
         symbolMapWriters.extendAndSet(columnIndex, symbolMapWriter);
         denseSymbolMapWriters.add(symbolMapWriter);
-        initSymbolCounts.add(symbolMapWriter.getSymbolCount());
+        startSymbolCounts.add(symbolMapWriter.getSymbolCount());
     }
 
     private void doClose(boolean truncate) {
@@ -481,7 +481,6 @@ public class WalWriter implements Closeable {
     }
 
     private void closeCurrentSegment() {
-        writeSymbolMapDiffs();
         events.data(segmentCount, 0, rowCount, segmentMinTimestamp, segmentMaxTimestamp, isOutOfOrder);
         events.close();
     }
@@ -541,6 +540,7 @@ public class WalWriter implements Closeable {
         openMetaFile(ff, path, pathLen, metaMem);
         metaMem.putInt(WAL_FORMAT_VERSION);
         metaMem.putInt(liveColumnCount);
+        metaMem.putInt(metadata.getTimestampIndex());
         for (int i = 0; i < columnCount; i++) {
             int type = metadata.getColumnType(i);
             if (type > 0) {
@@ -557,21 +557,22 @@ public class WalWriter implements Closeable {
 
     private void writeSymbolMapDiffs() {
         for (int i = 0; i < columnCount; i++) {
-            final int initSymbolCount = initSymbolCounts.get(i);
-            if (initSymbolCount > -1) {
+            final int startSymbolCount = startSymbolCounts.get(i);
+            if (startSymbolCount > -1) {
                 final MapWriter symbolMapWriter = symbolMapWriters.get(i);
                 final int symbolCount = symbolMapWriter.getSymbolCount();
-                if (symbolCount > initSymbolCount) {
-                    metaMem.putInt(i);
-                    metaMem.putInt(symbolCount - initSymbolCount);
-                    for (int j = initSymbolCount; j < symbolCount; j++) {
-                        metaMem.putInt(j);
-                        metaMem.putStr(symbolMapWriter.valueOf(j));
+                if (symbolCount > startSymbolCount) {
+                    eventMem.putInt(i);
+                    eventMem.putInt(symbolCount - startSymbolCount);
+                    for (int j = startSymbolCount; j < symbolCount; j++) {
+                        eventMem.putInt(j);
+                        eventMem.putStr(symbolMapWriter.valueOf(j));
                     }
+                    startSymbolCounts.setQuick(i, symbolCount);
                 }
             }
         }
-        metaMem.putInt(SymbolMapDiff.END_OF_SYMBOL_DIFFS);
+        eventMem.putInt(SymbolMapDiff.END_OF_SYMBOL_DIFFS);
     }
 
     private void releaseLock(boolean keepLockFile) {
@@ -609,7 +610,7 @@ public class WalWriter implements Closeable {
             }
             Misc.free(writer);
         }
-        initSymbolCounts.setQuick(index, -1);
+        startSymbolCounts.setQuick(index, -1);
     }
 
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
@@ -918,6 +919,7 @@ public class WalWriter implements Closeable {
             eventMem.putLong(minTimestamp);
             eventMem.putLong(maxTimestamp);
             eventMem.putBool(isOutOfOrder);
+            writeSymbolMapDiffs();
         }
 
         private void addColumn(long txn, int columnIndex, CharSequence columnName, int columnType) {

@@ -58,7 +58,7 @@ public class WalReader implements Closeable, SymbolTableSource {
     private final ObjList<MemoryMR> columns;
     private final int columnCount;
 
-    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, IntList walSymbolCounts, long rowCount, int timestampIndex) {
+    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, IntList walSymbolCounts, long rowCount) {
         this.configuration = configuration;
         this.tableName = Chars.toString(tableName);
         this.walName = Chars.toString(walName);
@@ -67,13 +67,13 @@ public class WalReader implements Closeable, SymbolTableSource {
 
         ff = configuration.getFilesFacade();
         path = new Path();
-        path.of(configuration.getRoot()).concat(this.tableName).concat(this.walName);
+        path.of(configuration.getRoot()).concat(tableName).concat(walName);
         rootLen = path.length();
         try {
             events = new WalReaderEvents(ff);
             eventCursor = events.of(path, segmentId, WalWriter.WAL_FORMAT_VERSION);
             metadata = new WalReaderMetadata(ff);
-            metadata.of(path, segmentId, WalWriter.WAL_FORMAT_VERSION, timestampIndex);
+            metadata.of(path, segmentId, WalWriter.WAL_FORMAT_VERSION);
             columnCount = metadata.getColumnCount();
             LOG.debug().$("open [table=").$(this.tableName).I$();
             openSymbolMaps(walSymbolCounts);
@@ -194,10 +194,6 @@ public class WalReader implements Closeable, SymbolTableSource {
 
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
         return symbolMapReaders.getQuiet(columnIndex);
-    }
-
-    public SymbolMapDiff getSymbolMapDiff(int columnIndex) {
-        return metadata.getSymbolMapDiff(columnIndex);
     }
 
     @Override

@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.std.ObjList;
 
 public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
@@ -95,6 +96,8 @@ public class WalEventCursor {
     }
 
     public class DataInfo {
+        private final ObjList<SymbolMapDiff> symbolMapDiffs = new ObjList<>();
+
         private long startRowID;
         private long endRowID;
         private long minTimestamp;
@@ -107,6 +110,8 @@ public class WalEventCursor {
             minTimestamp = readLong();
             maxTimestamp = readLong();
             outOfOrder = readBool();
+
+            readSymbolMapDiffs(symbolMapDiffs);
         }
 
         public long getStartRowID() {
@@ -127,6 +132,10 @@ public class WalEventCursor {
 
         public boolean isOutOfOrder() {
             return outOfOrder;
+        }
+
+        public SymbolMapDiff getSymbolMapDiff(int columnIndex) {
+            return symbolMapDiffs.getQuiet(columnIndex);
         }
     }
 
@@ -203,6 +212,28 @@ public class WalEventCursor {
         final CharSequence value = eventMem.getStr(offset);
         offset += storageLength;
         return value;
+    }
+
+    private void readSymbolMapDiffs(ObjList<SymbolMapDiff> symbolMapDiffs) {
+        symbolMapDiffs.clear();
+        while (true) {
+            final int columnIndex = readInt();
+            if (columnIndex == SymbolMapDiff.END_OF_SYMBOL_DIFFS) {
+                break;
+            }
+
+            // do something about the garbage, do not create always new object
+            // change API to cursor style maybe... no symbolMapDiffs list and only a single SymbolMapDiff object
+            final SymbolMapDiff symbolMapDiff = new SymbolMapDiff();
+            symbolMapDiffs.extendAndSet(columnIndex, symbolMapDiff);
+
+            final int numOfNewSymbols = readInt();
+            for (int i = 0; i < numOfNewSymbols; i++) {
+                final int key = readInt();
+                final String symbol = readStr().toString();
+                symbolMapDiff.add(symbol, key);
+            }
+        }
     }
 
     private void checkMemSize(long requiredBytes) {

@@ -521,11 +521,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int fromIndex = getPrimaryColumnIndex(fromBase, fromColumnIndex);
         final int toIndex = getPrimaryColumnIndex(toBase, toColumnIndex);
 
-        toColumns.getAndSetQuick(toIndex, columns.getAndSetQuick(fromIndex, null));
-        toColumns.getAndSetQuick(toIndex + 1, columns.getAndSetQuick(fromIndex + 1, null));
-        toColumnTops.getAndSetQuick(toBase / 2 + toColumnIndex, columnTops.getQuick(fromBase / 2 + fromColumnIndex));
-        toIndexReaders.getAndSetQuick(toIndex, bitmapIndexes.getAndSetQuick(fromIndex, null));
-        toIndexReaders.getAndSetQuick(toIndex + 1, bitmapIndexes.getAndSetQuick(fromIndex + 1, null));
+        toColumns.setQuick(toIndex, columns.getAndSetQuick(fromIndex, null));
+        toColumns.setQuick(toIndex + 1, columns.getAndSetQuick(fromIndex + 1, null));
+        toColumnTops.setQuick(toBase / 2 + toColumnIndex, columnTops.getQuick(fromBase / 2 + fromColumnIndex));
+        toIndexReaders.setQuick(toIndex, bitmapIndexes.getAndSetQuick(fromIndex, null));
+        toIndexReaders.setQuick(toIndex + 1, bitmapIndexes.getAndSetQuick(fromIndex + 1, null));
     }
 
     private void copyOrRenewSymbolMapReader(SymbolMapReader reader, int columnIndex) {

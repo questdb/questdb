@@ -74,8 +74,9 @@ public final class TableUtils {
     public static final long META_OFFSET_COMMIT_LAG = 24; // LONG
     public static final long META_OFFSET_STRUCTURE_VERSION = 32; // LONG
     public static final long WAL_META_OFFSET_VERSION = 0;
-    public static final long WAL_META_OFFSET_COUNT = 4;
-    public static final long WAL_META_OFFSET_COLUMNS = 8;
+    public static final long WAL_META_OFFSET_COLUMN_COUNT = 4;
+    public static final long WAL_META_OFFSET_TIMESTAMP_INDEX = 8;
+    public static final long WAL_META_OFFSET_COLUMNS = 12;
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
@@ -912,12 +913,9 @@ public final class TableUtils {
             }
 
             // validate designated timestamp column
-            final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
-            if (timestampIndex < -1 || timestampIndex >= columnCount) {
-                throw validationException(metaMem).put("Timestamp index is outside of columnCount");
-            }
+            final int timestampIndex = getTimestampIndex(metaMem, META_OFFSET_TIMESTAMP_INDEX, columnCount);
             if (timestampIndex != -1) {
-                int timestampType = getColumnType(metaMem, timestampIndex);
+                final int timestampType = getColumnType(metaMem, timestampIndex);
                 if (!ColumnType.isTimestamp(timestampType)) {
                     throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
                 }
@@ -961,13 +959,13 @@ public final class TableUtils {
             MemoryMR metaMem,
             ObjList<TableColumnMetadata> columnMetadata,
             LowerCaseCharSequenceIntHashMap nameIndex,
-            ObjList<SymbolMapDiff> symbolMapDiffs,
             int expectedVersion
     ) {
         try {
             final long memSize = checkMemSize(metaMem, WAL_META_OFFSET_COLUMNS);
             validateMetaVersion(metaMem, WAL_META_OFFSET_VERSION, expectedVersion);
-            final int columnCount = getColumnCount(metaMem, WAL_META_OFFSET_COUNT);
+            final int columnCount = getColumnCount(metaMem, WAL_META_OFFSET_COLUMN_COUNT);
+            final int timestampIndex = getTimestampIndex(metaMem, WAL_META_OFFSET_TIMESTAMP_INDEX, columnCount);
 
             // load column types and names
             long offset = WAL_META_OFFSET_COLUMNS;
@@ -987,29 +985,11 @@ public final class TableUtils {
                 }
             }
 
-            // load symbol diffs
-            while (true) {
-                final int columnIndex = getInt(metaMem, memSize, offset);
-                offset += Integer.BYTES;
-
-                if (columnIndex == SymbolMapDiff.END_OF_SYMBOL_DIFFS) {
-                    break;
-                }
-
-                final SymbolMapDiff symbolMapDiff = new SymbolMapDiff();
-                symbolMapDiffs.extendAndSet(columnIndex, symbolMapDiff);
-
-                final int numOfNewSymbols = getInt(metaMem, memSize, offset);
-                offset += Integer.BYTES;
-
-                for (int i = 0; i < numOfNewSymbols; i++) {
-                    final int key = getInt(metaMem, memSize, offset);
-                    offset += Integer.BYTES;
-
-                    final String symbol = getSymbol(metaMem, memSize, offset).toString();
-                    offset += Vm.getStorageLength(symbol);
-
-                    symbolMapDiff.add(symbol, key);
+            // validate designated timestamp column
+            if (timestampIndex != -1) {
+                final int timestampType = columnMetadata.getQuick(timestampIndex).getType();
+                if (!ColumnType.isTimestamp(timestampType)) {
+                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
                 }
             }
         } catch (Throwable e) {
@@ -1036,12 +1016,20 @@ public final class TableUtils {
         }
     }
 
-    private static int getColumnCount(MemoryMR metaMem, long columnCountOffset) {
-        final int columnCount = metaMem.getInt(columnCountOffset);
+    private static int getColumnCount(MemoryMR metaMem, long offset) {
+        final int columnCount = metaMem.getInt(offset);
         if (columnCount < 0) {
             throw validationException(metaMem).put("Incorrect columnCount: ").put(columnCount);
         }
         return columnCount;
+    }
+
+    private static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
+        final int timestampIndex = metaMem.getInt(offset);
+        if (timestampIndex < -1 || timestampIndex >= columnCount) {
+            throw validationException(metaMem).put("Timestamp index is outside of range, timestampIndex=").put(timestampIndex);
+        }
+        return timestampIndex;
     }
 
     private static int getColumnType(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
