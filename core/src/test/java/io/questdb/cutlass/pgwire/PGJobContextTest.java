@@ -6241,11 +6241,9 @@ create table tab as (
             }
         };
 
-        WorkerPool pool = new WorkerPool(conf, metrics);
-
-        final PGWireServer pgWireServer = PGWireServer.create(
+        return PGWireServer.create(
                 conf,
-                pool,
+                null,
                 LOG,
                 engine,
                 compiler.getFunctionFactoryCache(),
@@ -6253,9 +6251,6 @@ create table tab as (
                 metrics,
                 createPGConnectionContextFactory(conf, workerCount, null, queryScheduledCount)
         );
-
-        pool.start(LOG);
-        return pgWireServer;
     }
 
     @Test

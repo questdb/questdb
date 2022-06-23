@@ -970,6 +970,12 @@ public class TableWriter implements Closeable {
                     break;
             }
         } else {
+            LOG.info()
+                    .$("not my command [cmdTableId=").$(cmd.getTableId())
+                            .$(", cmdTableName=").$(cmd.getTableName())
+                            .$(", myTableId=").$(getMetadata().getId())
+                            .$(", myTableName=").$(tableName)
+                            .I$();
             commandSubSeq.done(cursor);
         }
     }
@@ -4074,6 +4080,7 @@ public class TableWriter implements Closeable {
     }
 
     private void processCommandQueue(boolean contextAllowsAnyStructureChanges) {
+        LOG.info().$("tick [table=").$(tableName).I$();
         long cursor;
         while ((cursor = commandSubSeq.next()) > -1) {
             TableWriterTask cmd = commandQueue.get(cursor);
