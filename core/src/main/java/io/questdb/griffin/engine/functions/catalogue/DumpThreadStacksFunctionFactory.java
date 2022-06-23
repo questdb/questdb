@@ -79,16 +79,19 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
         // Generally overrun will truncate the log message. We are likely to overrun considering how
         // many threads we could be running
         for (ThreadInfo threadInfo : threadInfos) {
-            final LogRecord record = LOG.advisory();
-            final Thread.State state = threadInfo.getThreadState();
-            record.$('\n');
-            record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
-            final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
-            for (final StackTraceElement stackTraceElement : stackTraceElements) {
-                record.$("\n\t\tat ").$(stackTraceElement);
+            // it turns out it is possible to have null "infos"
+            if (threadInfo != null) {
+                final LogRecord record = LOG.advisory();
+                final Thread.State state = threadInfo.getThreadState();
+                record.$('\n');
+                record.$('\'').$(threadInfo.getThreadName()).$("': ").$(state);
+                final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
+                for (final StackTraceElement stackTraceElement : stackTraceElements) {
+                    record.$("\n\t\tat ").$(stackTraceElement);
+                }
+                record.$("\n\n");
+                record.$();
             }
-            record.$("\n\n");
-            record.$();
         }
     }
 }
