@@ -30,6 +30,7 @@ import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -53,6 +54,7 @@ import java.security.PrivateKey;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     public static final String AUTH_KEY_ID1 = "testUser1";
@@ -321,12 +323,16 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     }
 
-    public static void assertTableSizeEventually(CairoEngine engine, String tableName, long expectedSize) {
-        assertTableExistsEventually(engine, tableName);
+    public static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) {
         TestUtils.assertEventually(() -> {
+            assertTableExists(engine, tableName);
+
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 long size = reader.getCursor().size();
                 assertEquals(expectedSize, size);
+            } catch (EntryLockedException e) {
+                // if table is busy we want to fail this round and have the assertEventually() to retry later
+                fail("table +" + tableName + " is locked");
             }
         });
     }
