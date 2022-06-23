@@ -88,7 +88,6 @@ public class NetTest {
     }
 
     @Test
-    @Ignore("broken for windows-other, mac-other, linux-other and linux-griffin")
     public void testGetAddrInfoConnectLocalhost() {
         long acceptFd = Net.socketTcp(true);
         Assert.assertTrue(acceptFd > 0);

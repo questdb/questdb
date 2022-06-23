@@ -26,13 +26,11 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
-import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 import java.nio.file.FileSystems;
@@ -43,17 +41,31 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 public class DropIndexTest extends AbstractGriffinTest {
-    private static final String CREATE_TABLE_STMT = "CREATE TABLE sensors AS (\n" +
-            "    select\n" +
-            "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') sensor_id, \n" +
-            "        rnd_int() temperature, \n" +
-            "        timestamp_sequence(0, 3600000) ts \n" +
-            "    FROM long_sequence(2000)\n" +
-            "), INDEX(sensor_id CAPACITY 32) TIMESTAMP(ts)";
+
+    private static final String tableName = "sensors";
+    private static final String columnName = "sensor_id";
+    private static final int indexBlockValueSize = 32;
+    private static final String CREATE_TABLE_STMT = "CREATE TABLE " + tableName + " AS (" +
+            "    SELECT" +
+            "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') " + columnName + "," +
+            "        rnd_int() temperature," +
+            "        timestamp_sequence(0, 21600000000) ts" + // 6h
+            "    FROM long_sequence(5)" +
+            "), INDEX(" + columnName + " CAPACITY " + indexBlockValueSize + ") TIMESTAMP(ts)"; // 5 partitions by hour, 2 partitions by day
+
+    private static final String expected = "sensor_id\ttemperature\tts\n" +
+            "ALPHA\t315515118\t1970-01-01T00:00:00.000000Z\n" +
+            "OMEGA\t-727724771\t1970-01-01T06:00:00.000000Z\n" +
+            "THETA\t-948263339\t1970-01-01T12:00:00.000000Z\n" +
+            "THETA\t592859671\t1970-01-01T18:00:00.000000Z\n" +
+            "ALPHA\t-847531048\t1970-01-02T00:00:00.000000Z\n";
 
 
     protected static SqlExecutionContext sqlExecutionContext2;
     protected static SqlCompiler compiler2;
+
+    private Path path;
+    private int tablePathLen;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -74,27 +86,25 @@ public class DropIndexTest extends AbstractGriffinTest {
         compiler2.close();
     }
 
-    @Test
-    public void testDropIndexOfNonIndexedColumnShouldFail() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(
-                    "CREATE TABLE підрахунок AS (select rnd_symbol('K1', 'K2') колонка from long_sequence(317))",
-                    sqlExecutionContext
-            );
-            try {
-                compile("alter table підрахунок alter column колонка drop index", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(12, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Column is not indexed [name=колонка][errno=-100]");
-            }
-        });
+    @Before
+    @Override
+    public void setUp() {
+        super.setUp();
+        path = new Path().put(configuration.getRoot()).concat(tableName);
+        tablePathLen = path.length();
+    }
+
+    @After
+    @Override
+    public void tearDown() {
+        super.tearDown();
+        path = Misc.free(path);
     }
 
     @Test
-    public void testAlterTableAlterColumnDropIndexSyntaxErrors0() throws Exception {
+    public void testDropIndexSyntaxErrors0() throws Exception {
         assertFailure(
-                "alter table sensors alter column sensor_id dope index",
+                "ALTER TABLE sensors ALTER COLUMN sensor_id dope INDEX",
                 CREATE_TABLE_STMT,
                 43,
                 "'add', 'drop', 'cache' or 'nocache' expected found 'dope'"
@@ -102,9 +112,9 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAlterColumnDropIndexSyntaxErrors1() throws Exception {
+    public void testDropIndexSyntaxErrors1() throws Exception {
         assertFailure(
-                "alter table sensors alter column sensor_id drop",
+                "ALTER TABLE sensors ALTER COLUMN sensor_id DROP",
                 CREATE_TABLE_STMT,
                 47,
                 "'index' expected"
@@ -112,9 +122,9 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlterTableAlterColumnDropIndexSyntaxErrors2() throws Exception {
+    public void testDropIndexSyntaxErrors2() throws Exception {
         assertFailure(
-                "alter table sensors alter column sensor_id drop index,",
+                "ALTER TABLE sensors ALTER COLUMN sensor_id DROP INDEX,",
                 CREATE_TABLE_STMT,
                 53,
                 "unexpected token [,] while trying to drop index"
@@ -122,133 +132,160 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testVanillaDropIndexOfIndexedColumnPartitionedTable() throws Exception {
-        testVanillaDropIndexOfIndexedColumn(
+    public void testDropIndexOfNonIndexedColumnShouldFail() throws Exception {
+        assertMemoryLeak(() -> {
+            compile(
+                    "CREATE TABLE підрахунок AS (" +
+                            "  select " +
+                            "    rnd_symbol('K1', 'K2') колонка " +
+                            "  from long_sequence(317)" +
+                            ")",
+                    sqlExecutionContext
+            );
+            engine.releaseAllWriters();
+            assertFailure(
+                    dropIndexStatement("підрахунок", "колонка"),
+                    null,
+                    12,
+                    "Column is not indexed [name=колонка][errno=-100]"
+            );
+        });
+    }
+
+    @Test
+    public void testDropIndexPartitionedByDayTable() throws Exception {
+        dropIndexOfIndexedColumn(
+                CREATE_TABLE_STMT + " PARTITION BY DAY",
+                "sensors",
+                "sensor_id",
+                PartitionBy.DAY,
+                true,
+                indexBlockValueSize,
+                4 // 2 partitions times two files (*.k, *.v)
+        );
+    }
+
+    @Test
+    public void testDropIndexPartitionedByHourTable() throws Exception {
+        dropIndexOfIndexedColumn(
                 CREATE_TABLE_STMT + " PARTITION BY HOUR",
                 "sensors",
                 "sensor_id",
-                32,
-                4
+                PartitionBy.HOUR,
+                true,
+                indexBlockValueSize,
+                10 // 5 partitions times two files (*.k, *.v)
         );
     }
 
     @Test
-    public void testVanillaDropIndexOfIndexedColumnNonPartitionedTable() throws Exception {
-        testVanillaDropIndexOfIndexedColumn(
+    public void testDropIndexNonPartitionedTable() throws Exception {
+        dropIndexOfIndexedColumn(
                 CREATE_TABLE_STMT + " PARTITION BY NONE",
                 "sensors",
                 "sensor_id",
-                32,
-                2
+                PartitionBy.NONE,
+                true,
+                indexBlockValueSize,
+                2 // default partition with two files (*.k, *.v)
         );
     }
 
     @Test
-    public void testDropIndex() throws Exception {
+    public void testDropIndexStructureOfTableAndColumnIncrease() throws Exception {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
-
-            String expected = "sensor_id\tts\n" +
-                    "ALPHA\t1970-01-01T00:00:00.000000Z\n" +
-                    "ALPHA\t1970-01-01T00:00:36.000000Z\n" +
-                    "OMEGA\t1970-01-01T00:01:12.000000Z\n";
-
-            String tableName = "sensors";
-            String columnName = "sensor_id";
-
-            compile(
-                    "create table " + tableName + " as (" +
-                            "    select" +
-                            "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') " + columnName + "," +
-                            "        timestamp_sequence(0, 36000000) ts" +
-                            "    from long_sequence(3)" +
-                            "), index(" + columnName + " capacity 4) timestamp(ts) partition by DAY;",
-                    sqlExecutionContext
-            );
+            compile(CREATE_TABLE_STMT + " PARTITION BY DAY", sqlExecutionContext);
+            checkMetadataAndTxn(
+                    path,
+                    tableName,
+                    columnName,
+                    PartitionBy.DAY,
+                    1,
+                    0,
+                    0,
+                    true,
+                    indexBlockValueSize,
+                    4);
             assertSql(tableName, expected);
 
-            Path path = new Path().put(configuration.getRoot()).concat(tableName);
-            try {
-                int pathLen = path.length();
-                checkMetadataAndTxn(path, tableName, columnName, 0, 1, 0, true);
-                assertSql(tableName, expected);
-                verifyColumnIsIndexed(tableName, columnName, true, 4, 2);
-
-                executeOperation(
-                        "ALTER TABLE " + tableName + " ALTER COLUMN " + columnName + " DROP INDEX",
-                        CompiledQuery.ALTER,
-                        CompiledQuery::getAlterOperation
-                );
-
-                path.trimTo(pathLen);
-                checkMetadataAndTxn(path, tableName, columnName, 1, 2, 1, false);
-                assertSql(tableName, expected);
-                verifyColumnIsIndexed(tableName, columnName, false, 256, 0);
-            } finally {
-                Misc.free(path);
-            }
+            executeOperation(
+                    dropIndexStatement(tableName, columnName),
+                    CompiledQuery.ALTER,
+                    CompiledQuery::getAlterOperation
+            );
+            path.trimTo(tablePathLen);
+            checkMetadataAndTxn(
+                    path,
+                    tableName,
+                    columnName,
+                    PartitionBy.DAY,
+                    2,
+                    1,
+                    1,
+                    false,
+                    configuration.getIndexValueBlockSize(),
+                    0);
+            assertSql(tableName, expected);
         });
     }
 
     @Test
     public void testParallelDropIndexPreservesIndexFilesWhenThereIsATransactionReadingThem() throws Exception {
-        assertMemoryLeak(() -> {
-            // create table
+        assertMemoryLeak(configuration.getFilesFacade(), () -> {
             compile(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
-            verifyColumnIsIndexed(
+            checkMetadataAndTxn(
+                    path,
                     "sensors",
                     "sensor_id",
+                    PartitionBy.HOUR,
+                    1,
+                    0,
+                    0,
                     true,
-                    32,
-                    4
-            );
-            engine.releaseAllWriters();
-
-            final String select = "SELECT ts, sensor_id " +
-                    "FROM sensors " +
-                    "WHERE sensor_id = 'OMEGA' and ts > '1970-01-01T01:59:06.000000Z'";
-            final String expected = "ts\tsensor_id\n" +
-                    "1970-01-01T01:59:24.000000Z\tOMEGA\n" +
-                    "1970-01-01T01:59:38.400000Z\tOMEGA\n" +
-                    "1970-01-01T01:59:42.000000Z\tOMEGA\n" +
-                    "1970-01-01T01:59:45.600000Z\tOMEGA\n" +
-                    "1970-01-01T01:59:56.400000Z\tOMEGA\n";
+                    indexBlockValueSize,
+                    10);
 
             final CyclicBarrier startBarrier = new CyclicBarrier(2);
             final SOCountDownLatch endLatch = new SOCountDownLatch(1);
             final int defaultIndexValueBlockSize = configuration.getIndexValueBlockSize();
+            final AtomicReference<Throwable> readerFailure = new AtomicReference<>();
 
             // reader thread
             new Thread(() -> {
+
+                final String select = "SELECT ts, sensor_id FROM sensors WHERE sensor_id = 'OMEGA' and ts > '1970-01-01T01:59:06.000000Z'";
+                Path path2 = new Path().put(configuration.getRoot()).concat(tableName);
                 try {
-                    for (int i = 0; i < 2; i++) {
+                    for (int i = 0; i < 5; i++) {
                         try (RecordCursorFactory factory = compiler2.compile(select, sqlExecutionContext2).getRecordCursorFactory()) {
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext2)) {
-
-                                sink.clear();
-                                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
-
+                            try (RecordCursor ignored = factory.getCursor(sqlExecutionContext2)) {
                                 // 1st reader sees the index as DROP INDEX has not happened yet
                                 // the readers that follow do not see the index, because it has been dropped
                                 boolean isIndexed = i == 0;
+                                path2.trimTo(tablePathLen);
+                                checkMetadataAndTxn(
+                                        path2,
+                                        "sensors",
+                                        "sensor_id",
+                                        PartitionBy.HOUR,
+                                        isIndexed ? 1 : 2,
+                                        isIndexed ? 0 : 1,
+                                        isIndexed ? 0 : 1,
+                                        isIndexed,
+                                        isIndexed ? 32 : defaultIndexValueBlockSize,
+                                        10 // while there is a reader they cannot be deleted
+                                );
                                 if (isIndexed) {
                                     startBarrier.await(); // release writer
                                 }
-                                verifyColumnIsIndexed(
-                                        "sensors",
-                                        "sensor_id",
-                                        isIndexed,
-                                        isIndexed ? 32 : defaultIndexValueBlockSize,
-                                        4
-                                );
-                            } catch (ReaderOutOfDateException ignored) {
-                                // ignored
                             }
-                            Thread.sleep(60L);
                         }
+                        Thread.sleep(60L);
                     }
                 } catch (Throwable e) {
-                    Assert.fail();
+                    readerFailure.set(e);
                 } finally {
+                    Misc.free(path2);
                     engine.releaseAllReaders();
                     endLatch.countDown();
                 }
@@ -256,98 +293,123 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             // drop the index, there will be a reader seeing the index
             startBarrier.await();
-            compile(
-                    "alter table sensors alter column sensor_id drop index",
-                    sqlExecutionContext
-            );
+            compile(dropIndexStatement("sensors", "sensor_id"), sqlExecutionContext);
+            endLatch.await();
+
+            Throwable fail = readerFailure.get();
+            if (fail != null) {
+                Assert.fail(fail.getMessage());
+            }
 
             // no more readers from this point
-            endLatch.await();
-            verifyColumnIsIndexed(
+
+            path.trimTo(tablePathLen);
+            checkMetadataAndTxn(
+                    path,
                     "sensors",
                     "sensor_id",
+                    PartitionBy.HOUR,
+                    2,
+                    1,
+                    1,
                     false,
                     defaultIndexValueBlockSize,
-                    4 // a reader prevented these files from being removed right away
+                    10 // a reader prevented these files from being removed right away
             );
 
             // clean after
-            compile(
-                    "VACUUM TABLE sensors",
-                    sqlExecutionContext
-            );
-            verifyColumnIsIndexed(
+            compile("VACUUM TABLE sensors", sqlExecutionContext);
+            path.trimTo(tablePathLen);
+            checkMetadataAndTxn(
+                    path,
                     "sensors",
                     "sensor_id",
+                    PartitionBy.HOUR,
+                    2,
+                    1,
+                    1,
                     false,
                     defaultIndexValueBlockSize,
+                    0
+            );
+            assertSql(tableName, expected);
+        });
+    }
+
+    private void dropIndexOfIndexedColumn(
+            String createStatement,
+            String tableName,
+            String columnName,
+            int partitionedBy,
+            boolean expectedIsIndexed,
+            int expectedIndexValueBockSize,
+            int expectedIndexFiles
+    ) throws Exception {
+        assertMemoryLeak(configuration.getFilesFacade(), () -> {
+            compile(createStatement, sqlExecutionContext);
+            checkMetadataAndTxn(
+                    path,
+                    tableName,
+                    columnName,
+                    partitionedBy,
+                    1,
+                    0,
+                    0,
+                    expectedIsIndexed,
+                    expectedIndexValueBockSize,
+                    expectedIndexFiles
+            );
+            compile(dropIndexStatement(tableName, columnName), sqlExecutionContext);
+            path.trimTo(tablePathLen);
+            checkMetadataAndTxn(
+                    path,
+                    tableName,
+                    columnName,
+                    partitionedBy,
+                    2,
+                    1,
+                    1,
+                    false,
+                    configuration.getIndexValueBlockSize(),
                     0
             );
         });
     }
 
-    private void testVanillaDropIndexOfIndexedColumn(
-            String createStatement,
-            String tableName,
-            String columnName,
-            int indexValueBockSize,
-            int expectedIndexFiles
-    ) throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile(createStatement, sqlExecutionContext);
-            verifyColumnIsIndexed(tableName, columnName, true, indexValueBockSize, expectedIndexFiles);
-            compile(
-                    "alter table " + tableName + " alter column " + columnName + " drop index",
-                    sqlExecutionContext
-            );
-            verifyColumnIsIndexed(tableName, columnName, false, configuration.getIndexValueBlockSize(), expectedIndexFiles);
-        });
+    private static String dropIndexStatement(String tableName, String columnName) {
+        return "ALTER TABLE " + tableName + " ALTER COLUMN " + columnName + " DROP INDEX";
     }
 
-    private void checkMetadataAndTxn(
-            io.questdb.std.str.Path path,
+    private static void checkMetadataAndTxn(
+            Path path,
             String tableName,
             String columnName,
-            long expectedStructureVersion,
+            int partitionedBy,
             long expectedReaderVersion,
+            long expectedStructureVersion,
             long expectedColumnVersion,
-            boolean isColumnIndexed
-    ) {
+            boolean isColumnIndexed,
+            int indexValueBlockSize,
+            int expectedIndexFiles
+    ) throws Exception {
         try (TxReader txReader = new TxReader(ff)) {
-            txReader.ofRO(path, PartitionBy.DAY);
+            txReader.ofRO(path, partitionedBy);
             txReader.unsafeLoadAll();
             Assert.assertEquals(expectedStructureVersion, txReader.getStructureVersion());
             Assert.assertEquals(expectedReaderVersion, txReader.getTxn());
             Assert.assertEquals(expectedReaderVersion, txReader.getVersion());
             Assert.assertEquals(expectedColumnVersion, txReader.getColumnVersion());
-            Assert.assertEquals(3, txReader.getTransientRowCount());
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
                 TableReaderMetadata metadata = reader.getMetadata();
-                Assert.assertEquals(PartitionBy.DAY, metadata.getPartitionBy());
+                Assert.assertEquals(partitionedBy, metadata.getPartitionBy());
                 Assert.assertEquals(expectedStructureVersion, metadata.getStructureVersion());
-                Assert.assertEquals(2, metadata.getColumnCount());
                 int columnIndex = metadata.getColumnIndex(columnName);
-                Assert.assertEquals(0, columnIndex);
                 Assert.assertEquals(isColumnIndexed, metadata.isColumnIndexed(columnIndex));
+                Assert.assertEquals(indexValueBlockSize, metadata.getIndexValueBlockCapacity(columnIndex));
             }
         }
-    }
-
-    private void verifyColumnIsIndexed(
-            String tableName,
-            String columnName,
-            boolean isIndexed,
-            int indexValueBlockSize,
-            int expectedIndexFiles
-    ) throws Exception {
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-            TableReaderMetadata metadata = reader.getMetadata();
-            final int columnIndex = metadata.getColumnIndex(columnName);
-            Assert.assertEquals(isIndexed, metadata.isColumnIndexed(columnIndex));
-            Assert.assertEquals(indexValueBlockSize, metadata.getIndexValueBlockCapacity(columnIndex));
-            if (isIndexed) {
-                Assert.assertEquals(expectedIndexFiles, findIndexFiles(configuration, tableName, columnName).size());
-            }
+        if (isColumnIndexed) {
+            Assert.assertEquals(expectedIndexFiles, findIndexFiles(configuration, tableName, columnName).size());
         }
     }
 
@@ -360,13 +422,15 @@ public class DropIndexTest extends AbstractGriffinTest {
         return Files.find(
                 tablePath,
                 Integer.MAX_VALUE,
-                (path, _attrs) -> isIndexRelatedFile(tablePath, columnName, path)
+                (filePath, _attrs) -> isIndexRelatedFile(tablePath, columnName, filePath)
         ).collect(Collectors.toSet());
     }
 
-    private static boolean isIndexRelatedFile(java.nio.file.Path tablePath, String colName, java.nio.file.Path
-            filePath) {
+    private static boolean isIndexRelatedFile(
+            java.nio.file.Path tablePath,
+            String colName,
+            java.nio.file.Path filePath) {
         final String fn = filePath.getFileName().toString();
-        return (fn.equals(colName + ".k") || fn.equals(colName + ".v")) && !filePath.getParent().equals(tablePath);
+        return !filePath.getParent().equals(tablePath) && (fn.equals(colName + ".k") || fn.equals(colName + ".v"));
     }
 }
