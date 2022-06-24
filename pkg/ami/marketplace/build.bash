@@ -44,5 +44,7 @@ cp -f questdb-$QUESTDB_VERSION-no-jre-bin/questdb.jar /usr/local/bin/questdb.jar
 # config
 sudo mv /tmp/assets/cloudwatch.template.json /etc/questdb/
 sudo mv /tmp/assets/server.conf /etc/questdb/
+sudo mkdir -p /var/lib/questdb/conf/
+sudo cp /etc/questdb/server.conf /var/lib/questdb/conf/server.conf
 sudo mv /tmp/scripts/1-per-boot.sh /var/lib/cloud/scripts/per-boot/
 sudo mv /tmp/assets/systemd.service /usr/lib/systemd/system/questdb.service
