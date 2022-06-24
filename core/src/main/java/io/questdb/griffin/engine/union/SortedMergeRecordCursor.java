@@ -38,13 +38,13 @@ public final class SortedMergeRecordCursor implements NoRandomAccessRecordCursor
     private static final int READ_FROM_A__B_EXHAUSTED = 4;
     private static final int BOTH_EXHAUSTED = 5;
 
-    private final ComparingUnionRecord unionRecord;
+    private final MergingRecord unionRecord;
     private int state = INITIAL_STATE;
     private RecordCursor cursorA;
     private RecordCursor cursorB;
 
     public SortedMergeRecordCursor() {
-        this.unionRecord = new ComparingUnionRecord();
+        this.unionRecord = new MergingRecord();
     }
 
     @Override
@@ -104,11 +104,16 @@ public final class SortedMergeRecordCursor implements NoRandomAccessRecordCursor
 
         if (aHasNext && bHasNext) {
             // both cursors have remaining records, let's pick the next by a record comparator
-            state = unionRecord.setByComparing() ? READ_FROM_A : READ_FROM_B;
+            state = unionRecord.selectByComparing() ? READ_FROM_A : READ_FROM_B;
         } else {
             assert aHasNext || bHasNext;
-            unionRecord.setAb(aHasNext);
-            state = aHasNext ? READ_FROM_A__B_EXHAUSTED : READ_FROM_B__A_EXHAUSTED;
+            if (aHasNext) {
+                unionRecord.selectA();
+                state = READ_FROM_A__B_EXHAUSTED;
+            } else {
+                unionRecord.selectB();
+                state = READ_FROM_B__A_EXHAUSTED;
+            }
         }
         return true;
     }

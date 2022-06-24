@@ -34,8 +34,8 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Misc;
 
 public final class SortedMergeRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory factoryA;
-    private final RecordCursorFactory factoryB;
+    private RecordCursorFactory factoryA;
+    private RecordCursorFactory factoryB;
     private final SortedMergeRecordCursor cursor;
     private final RecordComparator comparator;
 
@@ -49,8 +49,8 @@ public final class SortedMergeRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     protected void _close() {
-        Misc.free(factoryA);
-        Misc.free(factoryB);
+        factoryA = Misc.free(factoryA);
+        factoryB = Misc.free(factoryB);
     }
 
     @Override
