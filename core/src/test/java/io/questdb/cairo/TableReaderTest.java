@@ -1567,7 +1567,7 @@ public class TableReaderTest extends AbstractCairoTest {
             readerThread.join();
 
             if (exceptions.size() != 0) {
-                var ex = exceptions.poll();
+                Throwable ex = exceptions.poll();
                 ex.printStackTrace();
                 throw new Exception(ex);
             }
