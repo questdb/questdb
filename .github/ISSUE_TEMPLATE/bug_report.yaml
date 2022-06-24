@@ -7,7 +7,7 @@ body:
       value: |
         Thank you for reporting the bug.  
         Please provide all the required information to receive faster responses from the maintainers. 
-  - type: textarean
+  - type: textarea
     attributes:
       label: Describe the bug
       description: A concise description of what you're experiencing.
