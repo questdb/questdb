@@ -95,18 +95,25 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
 
     @Override
     public void startAsync() {
-        this.executingAsync = true;
+        assert closeState.get() == 0;
+        executingAsync = true;
     }
 
     public void forceTestTimeout() {
         if (requesterTimeout || circuitBreaker.checkIfTripped()) {
-            throw CairoException.instance(0).put("timeout, query aborted [fd=").put(circuitBreaker != null ? circuitBreaker.getFd() : -1L).put(']').setInterruption(true);
+            throw CairoException.instance(0)
+                    .put("timeout, query aborted [fd=").put(circuitBreaker != null ? circuitBreaker.getFd() : -1L)
+                    .put(']')
+                    .setInterruption(true);
         }
     }
 
     public void testTimeout() {
         if (requesterTimeout) {
-            throw CairoException.instance(0).put("timeout, query aborted [fd=").put(circuitBreaker != null ? circuitBreaker.getFd() : -1L).put(']').setInterruption(true);
+            throw CairoException.instance(0)
+                    .put("timeout, query aborted [fd=").put(circuitBreaker != null ? circuitBreaker.getFd() : -1L)
+                    .put(']')
+                    .setInterruption(true);
         }
 
         circuitBreaker.statefulThrowExceptionIfTripped();
