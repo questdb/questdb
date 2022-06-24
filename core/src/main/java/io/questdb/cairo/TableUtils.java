@@ -1185,6 +1185,15 @@ public final class TableUtils {
         }
     }
 
+    static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName, int memoryTag) {
+        path.concat(fileName).$();
+        try {
+            metaMem.smallFile(ff, path, memoryTag);
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     private static CairoException validationException(MemoryMR mem) {
         return CairoException.instance(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }

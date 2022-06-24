@@ -54,7 +54,7 @@ public class WalReaderEvents implements Closeable {
         final int pathLen = path.length();
         try {
             path.slash().put(segmentId).concat(TableUtils.EVENT_FILE_NAME).$();
-            eventMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+            eventMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WAL_READER);
 
             // minimum we need is WAL_FORMAT_VERSION (int) and END_OF_EVENTS (long)
             checkMemSize(eventMem, Integer.BYTES + Long.BYTES);

@@ -57,16 +57,14 @@ public class WalWriter implements Closeable {
     private final int rootLen;
     private final FilesFacade ff;
     private final MemoryMAR symbolMapMem = Vm.getMARInstance();
-    private final MemoryMAR metaMem = Vm.getMARInstance();
-    private final MemoryMAR eventMem = Vm.getMARInstance();
     private final int mkDirMode;
     private final String tableName;
     private final String walName;
-    private final WalWriterMetadataCache metadataCache;
+    private final WalWriterMetadata metadata = new WalWriterMetadata();
+    private final WalWriterEvents events = new WalWriterEvents();
     private final CairoConfiguration configuration;
     private final ObjList<Runnable> nullSetters;
     private final RowImpl row = new RowImpl();
-    private final Events events = new Events();
     private long lockFd = -1;
     private int columnCount;
     private long startRowCount = -1;
@@ -110,15 +108,17 @@ public class WalWriter implements Closeable {
         try {
             lock();
 
-            this.columnCount = tableReader.getColumnCount();
-            this.columns = new ObjList<>(columnCount * 2);
-            this.symbolMapWriters = new ObjList<>(columnCount);
-            this.denseSymbolMapWriters = new ObjList<>(columnCount);
-            this.nullSetters = new ObjList<>(columnCount);
-            this.metadataCache = new WalWriterMetadataCache(configuration).of(tableReader);
+            columnCount = tableReader.getColumnCount();
+            columns = new ObjList<>(columnCount * 2);
+            symbolMapWriters = new ObjList<>(columnCount);
+            denseSymbolMapWriters = new ObjList<>(columnCount);
+            nullSetters = new ObjList<>(columnCount);
 
-            configureColumns(metadataCache);
-            openNewSegment(metadataCache);
+            metadata.of(tableReader);
+            events.of(startSymbolCounts, symbolMapWriters);
+
+            configureColumns();
+            openNewSegment();
             configureSymbolTable(tableReader);
         } catch (Throwable e) {
             doClose(false);
@@ -146,7 +146,7 @@ public class WalWriter implements Closeable {
         assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
         assert isValidColumnName(name, configuration.getMaxFileNameLength()) : "invalid column name";
 
-        if (metadataCache.getColumnIndexQuiet(name) != -1) {
+        if (metadata.getColumnIndexQuiet(name) != -1) {
             throw CairoException.instance(0).put("Duplicate column name: ").put(name);
         }
 
@@ -155,7 +155,7 @@ public class WalWriter implements Closeable {
             commit(true);
 
             final int index = columnCount;
-            metadataCache.addColumn(index, name, type);
+            metadata.addColumn(index, name, type);
             configureColumn(index, type);
             columnCount++;
             configureSymbolMapWriter(index, name, type, null);
@@ -186,7 +186,7 @@ public class WalWriter implements Closeable {
     }
 
     public int getTimestampIndex() {
-        return metadataCache.getTimestampIndex();
+        return metadata.getTimestampIndex();
     }
 
     public TableWriter.Row newRow() {
@@ -199,7 +199,7 @@ public class WalWriter implements Closeable {
                 rollSegment();
             }
 
-            final int timestampIndex = metadataCache.getTimestampIndex();
+            final int timestampIndex = metadata.getTimestampIndex();
             if (timestampIndex != -1) {
                 //avoid lookups by having a designated field with primaryColumn
                 final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
@@ -218,12 +218,12 @@ public class WalWriter implements Closeable {
             LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
             commit(true);
 
-            final int index = metadataCache.getColumnIndex(name);
-            final int type = metadataCache.getColumnType(index);
+            final int index = metadata.getColumnIndex(name);
+            final int type = metadata.getColumnType(index);
             if (ColumnType.isSymbol(type)) {
                 removeSymbolMapWriter(index);
             }
-            metadataCache.removeColumn(index);
+            metadata.removeColumn(index);
             removeColumn(index);
 
             events.removeColumn(nextTxn(), index);
@@ -299,23 +299,6 @@ public class WalWriter implements Closeable {
         }
     }
 
-    private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem) {
-        openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME);
-    }
-
-    private static void openEventFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem) {
-        openSmallFile(ff, path, rootLen, metaMem, EVENT_FILE_NAME);
-    }
-
-    private static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName) {
-        path.concat(fileName).$();
-        try {
-            metaMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WAL_WRITER);
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     private void configureColumn(int index, int type) {
         final MemoryMA primary;
         final MemoryMA secondary;
@@ -343,7 +326,7 @@ public class WalWriter implements Closeable {
         rowValueIsNotNull.extendAndSet(index, -1);
     }
 
-    private void configureColumns(BaseRecordMetadata metadata) {
+    private void configureColumns() {
         for (int i = 0; i < columnCount; i++) {
             configureColumn(i, metadata.getColumnType(i));
         }
@@ -397,8 +380,8 @@ public class WalWriter implements Closeable {
     }
 
     private void doClose(boolean truncate) {
-        Misc.free(metaMem);
-        Misc.free(eventMem);
+        Misc.free(metadata);
+        Misc.free(events);
         freeSymbolMapWriters();
         Misc.free(symbolMapMem);
         freeColumns(truncate);
@@ -531,10 +514,10 @@ public class WalWriter implements Closeable {
 
     private void closeCurrentSegment() {
         commit();
-        events.close();
+        events.end();
     }
 
-    private void openNewSegment(BaseRecordMetadata metadata) {
+    private void openNewSegment() {
         try {
             segmentCount++;
             rowCount = 0;
@@ -552,8 +535,8 @@ public class WalWriter implements Closeable {
                 }
             }
 
-            initMetadata(metadata, segmentPathLen, liveColumnCount);
-            initEventFile(segmentPathLen);
+            metadata.openMetaFile(ff, path, segmentPathLen, liveColumnCount);
+            events.openEventFile(ff, path, segmentPathLen);
             segmentStartMillis = millisecondClock.getTicks();
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
@@ -569,45 +552,6 @@ public class WalWriter implements Closeable {
         }
         path.trimTo(segmentPathLen);
         return segmentPathLen;
-    }
-
-    private void initMetadata(BaseRecordMetadata metadata, int pathLen, int liveColumnCount) {
-        openMetaFile(ff, path, pathLen, metaMem);
-        metaMem.putInt(WAL_FORMAT_VERSION);
-        metaMem.putInt(liveColumnCount);
-        metaMem.putInt(metadata.getTimestampIndex());
-        for (int i = 0; i < columnCount; i++) {
-            int type = metadata.getColumnType(i);
-            if (type > 0) {
-                metaMem.putInt(type);
-                metaMem.putStr(metadata.getColumnName(i));
-            }
-        }
-    }
-
-    private void initEventFile(int pathLen) {
-        openEventFile(ff, path, pathLen, eventMem);
-        events.init();
-    }
-
-    private void writeSymbolMapDiffs() {
-        for (int i = 0; i < columnCount; i++) {
-            final int startSymbolCount = startSymbolCounts.get(i);
-            if (startSymbolCount > -1) {
-                final MapWriter symbolMapWriter = symbolMapWriters.get(i);
-                final int symbolCount = symbolMapWriter.getSymbolCount();
-                if (symbolCount > startSymbolCount) {
-                    eventMem.putInt(i);
-                    for (int j = startSymbolCount; j < symbolCount; j++) {
-                        eventMem.putInt(j);
-                        eventMem.putStr(symbolMapWriter.valueOf(j));
-                    }
-                    eventMem.putInt(SymbolMapDiff.END_OF_SYMBOL_ENTRIES);
-                    startSymbolCounts.setQuick(i, symbolCount);
-                }
-            }
-        }
-        eventMem.putInt(SymbolMapDiff.END_OF_SYMBOL_DIFFS);
     }
 
     private void releaseLock(boolean keepLockFile) {
@@ -671,7 +615,7 @@ public class WalWriter implements Closeable {
         try {
             closeCurrentSegment();
             final long rolledRowCount = rowCount;
-            openNewSegment(metadataCache);
+            openNewSegment();
             return rolledRowCount;
         } catch (Throwable e) {
             throw new CairoError(e);
@@ -778,20 +722,20 @@ public class WalWriter implements Closeable {
 
         @Override
         public void putGeoHash(int index, long value) {
-            int type = metadataCache.getColumnType(index);
+            int type = metadata.getColumnType(index);
             putGeoHash0(index, value, type);
         }
 
         @Override
         public void putGeoHashDeg(int index, double lat, double lon) {
-            int type = metadataCache.getColumnType(index);
+            int type = metadata.getColumnType(index);
             putGeoHash0(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type);
         }
 
         @Override
         public void putGeoStr(int index, CharSequence hash) {
             long val;
-            final int type = metadataCache.getColumnType(index);
+            final int type = metadata.getColumnType(index);
             if (hash != null) {
                 final int hashLen = hash.length();
                 final int typeBits = ColumnType.getGeoHashBits(type);
@@ -942,41 +886,6 @@ public class WalWriter implements Closeable {
                     break;
             }
             setRowValueNotNull(index);
-        }
-    }
-
-    private class Events {
-        private void data(long txn, long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
-            eventMem.putLong(txn);
-            eventMem.putByte(WalTxnType.DATA);
-            eventMem.putLong(startRowID);
-            eventMem.putLong(endRowID);
-            eventMem.putLong(minTimestamp);
-            eventMem.putLong(maxTimestamp);
-            eventMem.putBool(outOfOrder);
-            writeSymbolMapDiffs();
-        }
-
-        private void addColumn(long txn, int columnIndex, CharSequence columnName, int columnType) {
-            eventMem.putLong(txn);
-            eventMem.putByte(WalTxnType.ADD_COLUMN);
-            eventMem.putInt(columnIndex);
-            eventMem.putStr(columnName);
-            eventMem.putInt(columnType);
-        }
-
-        private void removeColumn(long txn, int columnIndex) {
-            eventMem.putLong(txn);
-            eventMem.putByte(WalTxnType.REMOVE_COLUMN);
-            eventMem.putInt(columnIndex);
-        }
-
-        private void init() {
-            eventMem.putInt(WAL_FORMAT_VERSION);
-        }
-
-        private void close() {
-            eventMem.putLong(WalEventCursor.END_OF_EVENTS);
         }
     }
 }

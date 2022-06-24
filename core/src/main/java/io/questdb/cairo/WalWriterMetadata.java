@@ -24,18 +24,24 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.std.*;
+import io.questdb.std.str.Path;
 
-public class WalWriterMetadataCache extends BaseRecordMetadata {
-    private final CairoConfiguration configuration;
+import java.io.Closeable;
 
-    public WalWriterMetadataCache(CairoConfiguration configuration) {
-        this.configuration = configuration;
-        this.columnMetadata = new ObjList<>();
-        this.columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+import static io.questdb.cairo.TableUtils.*;
+
+class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
+    private final MemoryMAR metaMem = Vm.getMARInstance();
+
+    WalWriterMetadata() {
+        columnMetadata = new ObjList<>();
+        columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
-    public WalWriterMetadataCache of(TableReader tableReader) {
+    void of(TableReader tableReader) {
         reset();
 
         final TableReaderMetadata metadata = tableReader.getMetadata();
@@ -46,7 +52,6 @@ public class WalWriterMetadataCache extends BaseRecordMetadata {
             final int type = metadata.getColumnType(i);
             addColumn(i, name, type);
         }
-        return this;
     }
 
     private void reset() {
@@ -56,16 +61,15 @@ public class WalWriterMetadataCache extends BaseRecordMetadata {
         timestampIndex = -1;
     }
 
+    @Override
+    public void close() {
+        Misc.free(metaMem);
+    }
+
     void addColumn(int columnIndex, CharSequence columnName, int columnType) {
         final String name = columnName.toString();
         columnNameIndexMap.put(name, columnNameIndexMap.size());
-        if (ColumnType.isSymbol(columnType)) {
-            columnMetadata.add(new TableColumnMetadata(name, -1L, columnType,
-                    configuration.getDefaultSymbolCacheFlag(), configuration.getDefaultSymbolCapacity(),
-                    true, null, columnIndex));
-        } else {
-            columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnIndex));
-        }
+        columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnIndex));
         columnCount++;
     }
 
@@ -73,5 +77,19 @@ public class WalWriterMetadataCache extends BaseRecordMetadata {
         final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         deletedMeta.markDeleted();
         columnNameIndexMap.remove(deletedMeta.getName());
+    }
+
+    void openMetaFile(FilesFacade ff, Path path, int pathLen, int liveColumnCount) {
+        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
+        metaMem.putInt(WalWriter.WAL_FORMAT_VERSION);
+        metaMem.putInt(liveColumnCount);
+        metaMem.putInt(timestampIndex);
+        for (int i = 0; i < columnCount; i++) {
+            int type = getColumnType(i);
+            if (type > 0) {
+                metaMem.putInt(type);
+                metaMem.putStr(getColumnName(i));
+            }
+        }
     }
 }

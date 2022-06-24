@@ -52,7 +52,7 @@ public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
         final int pathLen = path.length();
         try {
             path.slash().put(segmentId).concat(TableUtils.META_FILE_NAME).$();
-            metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+            metaMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WAL_READER);
             columnNameIndexMap.clear();
             TableUtils.loadWalMetadata(metaMem, columnMetadata, columnNameIndexMap, expectedVersion);
             columnCount = metaMem.getInt(TableUtils.WAL_META_OFFSET_COLUMN_COUNT);
