@@ -787,7 +787,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.inputWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.inputRoot);
             this.maxImportIndexChunkSize = getLong(properties, env, PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
             this.maxImportIndexChunkSize -= (maxImportIndexChunkSize % CsvFileIndexer.INDEX_ENTRY_SIZE);
-            this.parallelImportQueueCapacity = getInt(properties, env, PropertyKey.CAIRO_IMPORT_QUEUE_CAPACITY, 32);
+            this.parallelImportQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_IMPORT_QUEUE_CAPACITY, 32));
 
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);

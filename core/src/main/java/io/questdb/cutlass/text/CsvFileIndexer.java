@@ -108,6 +108,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     //timestamp field of current line
     final private DirectByteCharSequence timestampField;
+    private long timestampValue;
 
     //fields taken & adjusted  from textLexer
     private final int fieldRollBufLimit;
@@ -121,7 +122,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private boolean header;
     private long lastQuotePos = -1;
     private long errorCount = 0;
-    private int maxLineLength;
 
     private int fieldIndex;
     private long lineCount;
@@ -162,10 +162,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.failOnTsError = false;
     }
 
-    public int getMaxLineLength() {
-        return maxLineLength;
-    }
-
     public void of(CharSequence inputFileName, CharSequence importRoot, int index, int partitionBy, byte columnDelimiter, int timestampIndex, TimestampAdapter adapter, boolean ignoreHeader, int atomicity) {
         this.inputFileName = inputFileName;
         this.importRoot = importRoot;
@@ -178,25 +174,27 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.header = ignoreHeader;
         this.index = index;
         this.failOnTsError = (atomicity == Atomicity.SKIP_ALL);
+        this.timestampValue = Long.MIN_VALUE;
     }
 
-    public void onTimestampField() throws TextException {
-        long timestamp;
-        try {
-            timestamp = timestampAdapter.getTimestamp(timestampField);
-        } catch (Exception e) {
-            if (failOnTsError) {
-                throw TextException.$("Can't parse timestamp on line ").put(lineCount).put(" column ").put(timestampIndex);
-            } else {
-                LOG.error().$("Can't parse timestamp on line ").$(lineCount).$(" column ").$(timestampIndex).$();
-                errorCount++;
-                return;
-            }
+    public void indexLine(long ptr, long lo) throws TextException {
+        //this is fine because Long.MIN_VALUE is treated as null and would be rejected by partitioned tables 
+        if (timestampValue == Long.MIN_VALUE) {
+            return;
         }
 
         long lineStartOffset = lastLineStart;
+        long length = offset + ptr - lo - lastLineStart;
+        if (length >= (1L << 16)) {
+            throw TextException.$("Row exceeds maximum length for parallel import ").put(1 << 16);
+        }
 
-        long partitionKey = partitionFloorMethod.floor(timestamp);
+        //second long stores: 
+        // length as 16 bits unsigned number followed by 
+        // offset as 48-bits unsigned number 
+        // allowing for importing 256TB big files with rows up to 65kB long  
+        long lengthAndOffset = (length << 48 | lineStartOffset);
+        long partitionKey = partitionFloorMethod.floor(timestampValue);
         long mapKey = partitionKey / Timestamps.HOUR_MICROS; //remove trailing zeros to avoid excessive collisions in hashmap 
 
         IndexOutputFile target = outputFiles.get(mapKey);
@@ -205,10 +203,23 @@ public class CsvFileIndexer implements Closeable, Mutable {
             outputFiles.put(mapKey, target);
         }
 
-        target.putEntry(timestamp, lineStartOffset);
+        target.putEntry(timestampValue, lengthAndOffset);
 
         if (target.size == maxIndexChunkSize) {
             target.nextChunk(ff, getPartitionIndexPrefix(partitionKey));
+        }
+    }
+
+    private void parseTimestamp() {
+        try {
+            timestampValue = timestampAdapter.getTimestamp(timestampField);
+        } catch (Exception e) {
+            if (failOnTsError) {
+                throw TextException.$("Can't parse timestamp on line ").put(lineCount).put(" column ").put(timestampIndex);
+            } else {
+                LOG.error().$("Can't parse timestamp on line ").$(lineCount).$(" column ").$(timestampIndex).$();
+                errorCount++;
+            }
         }
     }
 
@@ -313,6 +324,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.offset = -1;
         this.timestampField.clear();
         this.lastQuotePos = -1;
+        this.timestampValue = Long.MIN_VALUE;
 
         this.inputFileName = null;
 
@@ -429,8 +441,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
 
         stashField(fieldIndex, ptr);
+        indexLine(ptr, lo);
         triggerLine(ptr);
-        this.maxLineLength = (int) Math.max(maxLineLength, offset + ptr - lo - lastLineStart);
     }
 
     private void onQuote() {
@@ -533,7 +545,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
                 timestampField.of(this.fieldLo, this.fieldHi - 1);
             }
 
-            onTimestampField();
+            parseTimestamp();
 
             if (useFieldRollBuf) {
                 clearRollBuffer(ptr);
@@ -557,6 +569,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
 
         lineCount++;
+        timestampValue = Long.MIN_VALUE;
     }
 
     private void uneol(long lo) {
@@ -576,7 +589,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         this.lastLineStart = offset;
         this.lineCount = lineNumber;
-        this.maxLineLength = 0;
 
         try {
             do {
@@ -600,7 +612,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             closeOutputFiles();
         }
 
-        LOG.debug().$("Finished indexing chunk [start=").$(chunkLo).$(",end=").$(chunkHi)
+        LOG.info().$("Finished indexing chunk [start=").$(chunkLo).$(",end=").$(chunkHi)
                 .$(",lines=").$(lineCount - lineNumber).$(",errors=").$(errorCount).$(']').$();
     }
 
@@ -688,7 +700,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         try {
             srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_DEFAULT);
             bufferPtr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
-
+            //TODO: use a single buffer or max chunk size instead of allocating per file 
             Vect.radixSortLongIndexAscInPlace(srcAddress, srcSize / INDEX_ENTRY_SIZE, bufferPtr);
         } finally {
             if (srcAddress != -1) {

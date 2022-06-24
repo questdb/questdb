@@ -177,11 +177,10 @@ public class TextImportTask {
                                            int index,
                                            long lo,
                                            long hi,
-                                           final ObjList<CharSequence> partitionNames,
-                                           int maxLineLength
+                                           final ObjList<CharSequence> partitionNames
     ) {
         this.phase = PHASE_PARTITION_IMPORT;
-        this.importPartitionDataStage.of(cairoEngine, targetTableStructure, types, atomicity, columnDelimiter, importRoot, inputFileName, index, lo, hi, partitionNames, maxLineLength);
+        this.importPartitionDataStage.of(cairoEngine, targetTableStructure, types, atomicity, columnDelimiter, importRoot, inputFileName, index, lo, hi, partitionNames);
     }
 
     public void ofMergeSymbolTablesStage(CairoConfiguration cfg,
@@ -383,7 +382,6 @@ public class TextImportTask {
         private long chunkStart;
         private long chunkEnd;
         private long lineNumber;
-        private long maxLineLength;
         private CharSequence inputFileName;
         private CharSequence importRoot;
         private int index;
@@ -395,10 +393,6 @@ public class TextImportTask {
         private CairoConfiguration configuration;
         private int bufferLen;
         private int atomicity;
-
-        public long getMaxLineLength() {
-            return maxLineLength;
-        }
 
         public LongList getPartitionKeys() {
             return partitionKeys;
@@ -443,7 +437,6 @@ public class TextImportTask {
                 splitter.setBufferLength(bufferLen);
                 splitter.of(inputFileName, importRoot, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader, atomicity);
                 splitter.index(chunkStart, chunkEnd, lineNumber, partitionKeys);
-                this.maxLineLength = splitter.getMaxLineLength();
             }
         }
 
@@ -480,12 +473,12 @@ public class TextImportTask {
         private long lo;
         private long hi;
         private ObjList<CharSequence> partitionNames;
-        private int maxLineLength;
 
         private TableWriter tableWriterRef;
         private int timestampIndex;
         private TimestampAdapter timestampAdapter;
 
+        private long offset;
         private int errors;
         private final LongList importedRows = new LongList();
 
@@ -499,8 +492,7 @@ public class TextImportTask {
                        int index,
                        long lo,
                        long hi,
-                       final ObjList<CharSequence> partitionNames,
-                       int maxLineLength
+                       final ObjList<CharSequence> partitionNames
         ) {
             this.cairoEngine = cairoEngine;
             this.targetTableStructure = targetTableStructure;
@@ -513,7 +505,6 @@ public class TextImportTask {
             this.lo = lo;
             this.hi = hi;
             this.partitionNames = partitionNames;
-            this.maxLineLength = maxLineLength;
             this.timestampIndex = targetTableStructure.getTimestampIndex();
             this.timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
 
@@ -550,10 +541,11 @@ public class TextImportTask {
                             errors = 0;
                             final CharSequence name = partitionNames.get(i);
                             path.of(importRoot).concat(name);
-                            mergePartitionIndexAndImportData(ff, path, lexer, maxLineLength);
+                            mergePartitionIndexAndImportData(ff, path, lexer);
 
                             long imported = atomicity == Atomicity.SKIP_ROW ? lexer.getLineCount() - errors : lexer.getLineCount();
                             importedRows.add(imported);
+                            writer.commit(CommitMode.SYNC);
                             LOG.info().$("Imported partition data [partition=").$(name).$(",lines=").$(lexer.getLineCount()).$(",errors=").$(errors).$("]").$();
                         }
                     } finally {
@@ -583,11 +575,11 @@ public class TextImportTask {
             this.lo = -1;
             this.hi = -1;
             this.partitionNames = null;
-            this.maxLineLength = -1;
             this.timestampIndex = -1;
             this.timestampAdapter = null;
 
             this.errors = 0;
+            this.offset = 0;
             this.importedRows.clear();
             this.tableNameSink.clear();
         }
@@ -596,25 +588,51 @@ public class TextImportTask {
             LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(column).getType())).$(",line offset=").$(offset).$(",column=").$(column).$(" value='").$(dbcs).$("']").$();
         }
 
-        private void importPartitionData(final TextLexer lexer, long address, long size, int len) throws TextException {
+        private void importPartitionData(final TextLexer lexer, long address, long size) throws TextException {
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
-            long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+            long bufLength = configuration.getSqlCopyBufferSize();
+            long buf = Unsafe.malloc(bufLength, MemoryTag.NATIVE_DEFAULT);
             long fd = -1;
             int utf8SinkSize = cairoEngine.getConfiguration().getTextConfiguration().getUtf8SinkSize();
             try (Path path = new Path().of(configuration.getInputRoot()).concat(inputFileName);
                  DirectCharSink utf8Sink = new DirectCharSink(utf8SinkSize)) {
                 fd = ff.openRO(path.$());
 
+                TextLexer.Listener listener = (long line, ObjList<DirectByteCharSequence> fields, int fieldCount) ->
+                        this.onFieldsPartitioned(fields, fieldCount, utf8Sink);
+
+                long MASK = ~((255L) << 56 | (255L) << 48);
                 final long count = size / (2 * Long.BYTES);
+                long bytesToRead;
+                int linesToRead;
+
                 for (long i = 0; i < count; i++) {
-                    final long offset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
-                    long n = ff.read(fd, buf, len, offset);
+                    long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
+                    long lineLength = lengthAndOffset >>> 48;
+                    offset = lengthAndOffset & MASK;
+                    bytesToRead = lineLength;
+                    linesToRead = 0;
+
+                    for (long j = i + 1; j < count; j++) {
+                        long nextLengthAndOffset = Unsafe.getUnsafe().getLong(address + j * 2L * Long.BYTES + Long.BYTES);
+                        long nextLineLength = nextLengthAndOffset >>> 48;
+                        long nextOffset = nextLengthAndOffset & MASK;
+
+                        //line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
+                        long diff = nextOffset - offset - bytesToRead;
+                        if (diff < 2 && bytesToRead + nextLineLength < bufLength) {
+                            bytesToRead += diff + nextLineLength;
+                            linesToRead++;
+                        }
+                    }
+
+                    i += linesToRead;
+
+                    long n = ff.read(fd, buf, bytesToRead, offset);
                     if (n > 0) {
-                        lexer.parse(buf, buf + n, 0,
-                                (long line, ObjList<DirectByteCharSequence> fields, int fieldCount) ->
-                                        this.onFieldsPartitioned(offset, fields, fieldCount, utf8Sink));
+                        lexer.parse(buf, buf + n, linesToRead, listener);
                     } else {
                         throw TextException.$("Can't read from file path='").put(path).put("', errno=").put(ff.errno()).put(",offset=").put(offset);
                     }
@@ -626,14 +644,13 @@ public class TextImportTask {
                     ff.close(fd);
                 }
 
-                Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(buf, bufLength, MemoryTag.NATIVE_DEFAULT);
             }
         }
 
         private void mergePartitionIndexAndImportData(final FilesFacade ff,
                                                       final Path partitionPath,
-                                                      final TextLexer lexer,
-                                                      int maxLineLength) throws TextException {
+                                                      final TextLexer lexer) throws TextException {
             try (DirectLongList mergeIndexes = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT)) {
                 partitionPath.slash$();
                 int partitionLen = partitionPath.length();
@@ -648,42 +665,48 @@ public class TextImportTask {
                     partitionPath.concat(CsvFileIndexer.INDEX_FILE_NAME).$();
 
                     fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
-                    address = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
+                    address = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
                     ff.close(fd);
                     fd = -1;
 
-                    final long merged = Vect.mergeLongIndexesAscExt(mergeIndexes.getAddress(), indexesCount, address);
-                    importPartitionData(lexer, merged, mergedIndexSize, maxLineLength);
+                    final long merged;
+                    try {
+                        merged = Vect.mergeLongIndexesAscExt(mergeIndexes.getAddress(), indexesCount, address);
+                    } finally {
+                        //release chunk memory early
+                        //if there's only one chunk we didn't have to merge, can use it and have to release after loading data
+                        if (mergeIndexes.size() > 2) {
+                            unmap(ff, mergeIndexes);
+                        }
+                    }
+
+                    importPartitionData(lexer, merged, mergedIndexSize);
                 } finally {
                     if (fd > -1) {
                         ff.close(fd);
                     }
                     if (address != -1) {
-                        ff.munmap(address, mergedIndexSize, MemoryTag.MMAP_DEFAULT);
+                        ff.munmap(address, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
                     }
-                    for (long i = 0, sz = mergeIndexes.size() / 2; i < sz; i++) {
-                        final long addr = mergeIndexes.get(2 * i);
-                        final long size = mergeIndexes.get(2 * i + 1) * CsvFileIndexer.INDEX_ENTRY_SIZE;
-                        ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
-                    }
+                    unmap(ff, mergeIndexes);
                 }
             }
+        }
+
+        private void unmap(FilesFacade ff, DirectLongList mergeIndexes) {
+            for (long i = 0, sz = mergeIndexes.size() / 2; i < sz; i++) {
+                final long addr = mergeIndexes.get(2 * i);
+                final long size = mergeIndexes.get(2 * i + 1) * CsvFileIndexer.INDEX_ENTRY_SIZE;
+                ff.munmap(addr, size, MemoryTag.MMAP_PARALLEL_IMPORT);
+            }
+            mergeIndexes.clear();
         }
 
         private boolean onField(long offset, final DirectByteCharSequence dbcs, TableWriter.Row w, int fieldIndex, DirectCharSink utf8Sink)
                 throws TextException {
             TypeAdapter type = this.types.getQuick(fieldIndex);
             try {
-                switch (ColumnType.tagOf(type.getType())) {
-                    case ColumnType.STRING:
-                    case ColumnType.SYMBOL:
-                    case ColumnType.TIMESTAMP:
-                    case ColumnType.DATE:
-                        type.write(w, fieldIndex, dbcs, utf8Sink);
-                        break;
-                    default:
-                        type.write(w, fieldIndex, dbcs);
-                }
+                type.write(w, fieldIndex, dbcs, utf8Sink);
             } catch (Exception ignore) {
                 errors++;
                 logError(offset, fieldIndex, dbcs);
@@ -701,7 +724,7 @@ public class TextImportTask {
             return false;
         }
 
-        private void onFieldsPartitioned(long offset, final ObjList<DirectByteCharSequence> values, int valuesLength, DirectCharSink utf8Sink) {
+        private void onFieldsPartitioned(final ObjList<DirectByteCharSequence> values, int valuesLength, DirectCharSink utf8Sink) {
             assert tableWriterRef != null;
             DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
             final TableWriter.Row w = getRow(dbcs, offset);
@@ -743,10 +766,17 @@ public class TextImportTask {
                         if (chunkType == Files.DT_FILE) {
                             partitionPath.trimTo(partitionLen);
                             partitionPath.concat(chunkName).$();
+
                             final long fd = TableUtils.openRO(ff, partitionPath, LOG);
-                            final long size = ff.length(fd);
-                            final long address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
-                            ff.close(fd);
+                            final long size;
+                            final long address;
+
+                            try {
+                                size = ff.length(fd);
+                                address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_PARALLEL_IMPORT);
+                            } finally {
+                                ff.close(fd);
+                            }
 
                             mergeIndexes.add(address);
                             mergeIndexes.add(size / CsvFileIndexer.INDEX_ENTRY_SIZE);
@@ -808,7 +838,7 @@ public class TextImportTask {
                             try (MemoryCMARW mem = Vm.getSmallCMARWInstance(
                                     ff,
                                     path.concat(column).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),
-                                    MemoryTag.MMAP_DEFAULT,
+                                    MemoryTag.MMAP_PARALLEL_IMPORT,
                                     cfg.getWriterFileOpenOpts()
                             )) {
                                 SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(columnIndex), reader, mem);//TODO: use result !
@@ -885,8 +915,8 @@ public class TextImportTask {
                     remapTableMemorySize = ff.length(remapFd);
 
                     if (columnMemorySize >= Integer.BYTES && remapTableMemorySize >= Integer.BYTES) {
-                        columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_DEFAULT);
-                        remapTableMemory = TableUtils.mapRW(ff, remapFd, remapTableMemorySize, MemoryTag.MMAP_DEFAULT);
+                        columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                        remapTableMemory = TableUtils.mapRW(ff, remapFd, remapTableMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
                         long columnMemSize = partitionSize * Integer.BYTES;
                         long remapMemSize = (long) symbolCount * Integer.BYTES;
                         ColumnUtils.symbolColumnUpdateKeys(columnMemory, columnMemSize, remapTableMemory, remapMemSize);
@@ -899,10 +929,10 @@ public class TextImportTask {
                         ff.close(remapFd);
                     }
                     if (columnMemory > 0) {
-                        ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_DEFAULT);
+                        ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
                     }
                     if (remapTableMemory > 0) {
-                        ff.munmap(remapTableMemory, remapTableMemorySize, MemoryTag.MMAP_DEFAULT);
+                        ff.munmap(remapTableMemory, remapTableMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
                     }
                 }
             }

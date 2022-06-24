@@ -122,7 +122,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     //index of timestamp column in input file
     private int timestampIndex;
-    private int maxLineLength;
     private final CairoSecurityContext securityContext;
 
     private final DirectCharSink utf8Sink;
@@ -254,7 +253,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     final TextImportTask task = queue.get(seq);
                     task.setIndex(i);
                     task.setCircuitBreaker(circuitBreaker);
-                    task.ofImportPartitionDataStage(cairoEngine, targetTableStructure, textMetadataDetector.getColumnTypes(), atomicity, columnDelimiter, importRoot, inputFileName, i, lo, hi, partitionNames, maxLineLength);
+                    task.ofImportPartitionDataStage(cairoEngine, targetTableStructure, textMetadataDetector.getColumnTypes(), atomicity, columnDelimiter, importRoot, inputFileName, i, lo, hi, partitionNames);
                     pubSeq.done(seq);
                     queuedCount++;
                     break;
@@ -419,7 +418,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         columnDelimiter = -1;
         timestampAdapter = null;
         forceHeader = false;
-        maxLineLength = 0;
 
         isSuccess = true;
         phase = 0;
@@ -580,10 +578,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void processInner() throws TextException {
-
         if (this.queue.getCycle() <= 0) {
             throw TextException.$("Unable to process, the processing queue is misconfigured");
         }
+
+        long startMs = configuration.getMillisecondClock().getTicks();
 
         long fd = ff.openRO(inputFilePath);
         if (fd < 0) {
@@ -616,6 +615,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             removeWorkDir();
             ff.close(fd);
         }
+
+        long endMs = configuration.getMillisecondClock().getTicks();
+
+        LOG.info().$("Finished importing file='").$(inputFileName).$("' time=").$((endMs - startMs) / 1000).$(" s").$();
     }
 
     private void cleanUp(TableWriter writer) {
@@ -644,7 +647,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
             final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
             try {
-                writer.attachPartition(timestamp, true); //TODO: change to false to speed up attaching
+                writer.attachPartition(timestamp, false);
             } catch (CairoException e) {
                 throw TextException.$("Can't attach partition ").put(partitionDirName).put(". ").put(e.getMessage());
             }
@@ -672,8 +675,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         checkStatus(task);
         final TextImportTask.BuildPartitionIndexStage buildPartitionIndexStage = task.getBuildPartitionIndexStage();
         final int chunkIndex = task.getIndex();
-        final long lineLength = buildPartitionIndexStage.getMaxLineLength();
-        this.maxLineLength = (int) Math.max(maxLineLength, lineLength);
         final LongList keys = buildPartitionIndexStage.getPartitionKeys();
         this.partitionKeys.add(keys);
     }
@@ -801,7 +802,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
         }
 
-        this.maxLineLength = 0;
         collectedCount += collect(queuedCount - collectedCount, this::collectIndexStats);
         assert collectedCount == queuedCount;
         checkImportStatus();
@@ -924,11 +924,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             indexChunkStats.add(fileLength);
             indexChunkStats.add(totalLines);//doesn't matter
         }
-    }
-
-    @TestOnly
-    int getMaxLineLength() {
-        return maxLineLength;
     }
 
     private void logTypeError(int i, int type) {
