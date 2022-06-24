@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thank you for reporting the bug.  
-        Please provide all the required information to receive faster responses from the maintainers. 
+        ❗ Please provide all the required information to receive faster responses from the maintainers. 
   - type: textarea
     attributes:
       label: Describe the bug
