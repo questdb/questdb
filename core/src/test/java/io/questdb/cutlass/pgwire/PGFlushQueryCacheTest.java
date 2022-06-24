@@ -27,7 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
-import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.sql.Connection;
@@ -39,11 +39,10 @@ import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class PGFlushQueryCacheTest extends BasePGTest {
 
-    @Override
-    @Before
-    public void setUp() {
+    @BeforeClass
+    public static void setUpStatic() {
         queryCacheEventQueueCapacity = 1;
-        super.setUp();
+        BasePGTest.setUpStatic();
     }
 
     @Test
