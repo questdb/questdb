@@ -4080,7 +4080,6 @@ public class TableWriter implements Closeable {
     }
 
     private void processCommandQueue(boolean contextAllowsAnyStructureChanges) {
-        LOG.info().$("tick [table=").$(tableName).I$();
         long cursor;
         while ((cursor = commandSubSeq.next()) > -1) {
             TableWriterTask cmd = commandQueue.get(cursor);
