@@ -66,6 +66,9 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
     }
 
     /**
+     * Check if more records may be accessed.
+     * If <code>true</code>then it also advances the cursor to the next record.
+     *
      * @return true if more records may be accessed, otherwise false
      */
     boolean hasNext();

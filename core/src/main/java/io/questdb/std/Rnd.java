@@ -189,4 +189,11 @@ public class Rnd {
         return (int) ((nextLong() & mask) >>> (48 - bits));
     }
 
+    public long getS0() {
+        return s0;
+    }
+
+    public long getS1() {
+        return s1;
+    }
 }
