@@ -51,3 +51,5 @@ sudo mkdir -p /var/lib/questdb/conf/
 sudo cp /etc/questdb/server.conf /var/lib/questdb/conf/server.conf
 sudo mv /tmp/scripts/1-per-boot.sh /var/lib/cloud/scripts/per-boot/
 sudo mv /tmp/assets/systemd.service /usr/lib/systemd/system/questdb.service
+sudo mkdir -p /etc/systemd/system/questdb.service.d/
+sudo mv /tmp/assets/override.conf /etc/systemd/system/questdb.service.d/override.conf

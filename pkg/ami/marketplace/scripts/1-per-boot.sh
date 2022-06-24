@@ -26,10 +26,6 @@
 
 if [ ! -f "/var/lib/questdb/conf/server.conf" ]; then
   cp /etc/questdb/server.conf /var/lib/questdb/conf/server.conf
-else
-  cp /etc/questdb/server.conf /var/lib/questdb/conf/server.conf_new
-fi
-
 
 if [ ! -f "/var/lib/questdb/conf/full_auth.json" ]; then
     # influxdb and postgres auth

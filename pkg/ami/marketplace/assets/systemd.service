@@ -12,7 +12,6 @@ LimitNOFILE=134217728
 User=questdb
 Group=questdb
 Environment=QDB_PACKAGE=ami-market
-ExecStartPre=+/bin/bash -c 'chown questdb:questdb -R /var/lib/questdb'
 ExecStart=/usr/bin/java \
     --add-exports java.base/jdk.internal.math=io.questdb \
     -p /usr/local/bin/questdb.jar \
