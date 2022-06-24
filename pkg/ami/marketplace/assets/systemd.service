@@ -8,6 +8,7 @@ RequiresMountsFor=/var/lib/questdb
 Type=simple
 Restart=always
 RestartSec=2
+LimitNOFILE=134217728
 Environment=QDB_PACKAGE=ami-market
 ExecStart=/usr/bin/java \
     --add-exports java.base/jdk.internal.math=io.questdb \
