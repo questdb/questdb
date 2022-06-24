@@ -36,6 +36,9 @@ sudo mount /var/lib/questdb
 
 sudo yum install -y jose jq
 
+groupadd -g 10001 questdb
+useradd -u 10001 -g 10001 -d /var/lib/questdb -M -s /sbin/nologin questdb
+
 # questb binary
 wget https://github.com/questdb/questdb/releases/download/$QUESTDB_VERSION/questdb-$QUESTDB_VERSION-no-jre-bin.tar.gz
 tar xf questdb-$QUESTDB_VERSION-no-jre-bin.tar.gz
