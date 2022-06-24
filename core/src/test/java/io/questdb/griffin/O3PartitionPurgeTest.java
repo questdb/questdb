@@ -29,10 +29,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -413,13 +410,12 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                         startTimestamp += Timestamps.HOUR_MICROS;
                     }
 
-                    path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-01T01").concat("x.d").$();
+                    path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-01T01.0").concat("x.d").$();
                     Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
                     compiler.compile("vacuum table tbl", sqlExecutionContext);
                     runPartitionPurgeJobs();
 
-                    path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-01T01").concat("x.d").$();
                     Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
                     writer.commit();
@@ -471,7 +467,7 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 // OOO inserts partition 1970-01-09
                 compiler.compile("insert into tbl select 4, '1970-01-09T10'", sqlExecutionContext);
 
-                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09.0").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
                 try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "tbl")) {
@@ -496,11 +492,8 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                 }
                 runPartitionPurgeJobs();
 
-                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09").concat("x.d").$();
-
-                // We cannot remove the partition, it can be the version which TableWriter writes
-                // Ideally we want a way to say it's safe to delete dropped partition 1970-01-09 but there is no way atm
-                // Assert.assertFalse(Chars.toString(path), Files.exists(path));
+                path.of(engine.getConfiguration().getRoot()).concat("tbl").concat("1970-01-09.0").concat("x.d").$();
+                Assert.assertFalse(Chars.toString(path), Files.exists(path));
             }
         });
     }
@@ -544,13 +537,13 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     , sqlExecutionContext);
 
             try (Path path = new Path()) {
-                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-10").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-10.0").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
 
                 path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
 
-                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-11").concat("x.d").$();
+                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-11.0").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
 
                 path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-11.1").concat("x.d").$();
