@@ -1912,7 +1912,8 @@ public final class SqlParser {
                 node.rhs.token = "double";
             } else if (SqlKeywords.isDateKeyword(node.rhs.token)) {
                 node.token = "to_pg_date";
-                node.rhs = null;
+                node.rhs = node.lhs;
+                node.lhs = null;
                 node.paramCount = 1;
             }
         }
