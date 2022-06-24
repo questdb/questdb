@@ -1568,10 +1568,8 @@ public class TableReaderTest extends AbstractCairoTest {
 
             if (exceptions.size() != 0) {
                 var ex = exceptions.poll();
-                if (ex instanceof Exception) {
-                    throw (Exception) ex;
-                }
-                throw (Error) ex;
+                ex.printStackTrace();
+                throw new Exception(ex);
             }
 
             Assert.assertTrue(reloadCount.get() > totalColAddCount / 10);
