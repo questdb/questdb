@@ -85,8 +85,15 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnect(NetworkFacade nf, long fd, long ilpSockAddr) {
-        long rc = nf.connect(fd, ilpSockAddr);
+    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
+        long rc = connectAddrInfo(fd, sockAddrInfo);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + Os.errno());
+        }
+    }
+
+    public static void assertConnect(NetworkFacade nf, long fd, long pSockAddr) {
+        long rc = nf.connect(fd, pSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());
         }
@@ -555,6 +562,11 @@ public final class TestUtils {
     public static long connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
         return Net.connect(fd, sockAddr);
+    }
+
+    public static long connectAddrInfo(long fd, long sockAddrInfo) {
+        Assert.assertTrue(fd > -1);
+        return Net.connectAddrInfo(fd, sockAddrInfo);
     }
 
     public static void copyDirectory(Path src, Path dst, int dirMode) {

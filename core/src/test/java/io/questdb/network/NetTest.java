@@ -74,6 +74,37 @@ public class NetTest {
     }
 
     @Test
+    public void testGetAddrInfoConnect() {
+        NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+        final long pAddrInfo = nf.getAddrInfo("questdb.io", 443);
+        Assert.assertNotEquals(-1, pAddrInfo);
+        long fd = nf.socketTcp(true);
+        try {
+            Assert.assertEquals(0, nf.connectAddrInfo(fd, pAddrInfo));
+        } finally {
+            nf.close(fd);
+            nf.freeAddrInfo(pAddrInfo);
+        }
+    }
+
+    @Test
+    public void testGetAddrInfoConnectLocalhost() {
+        long acceptFd = Net.socketTcp(true);
+        Assert.assertTrue(acceptFd > 0);
+        int port = assertCanBind(acceptFd);
+        Net.listen(acceptFd, 1);
+
+        long clientFd = Net.socketTcp(true);
+        Assert.assertTrue(clientFd > 0);
+        long addrInfo = Net.getAddrInfo("localhost", port);
+        Assert.assertTrue(addrInfo > 0);
+        TestUtils.assertConnectAddrInfo(clientFd, addrInfo);
+        Net.freeAddrInfo(addrInfo);
+        Net.close(clientFd);
+        Net.close(acceptFd);
+    }
+
+    @Test
     @Ignore
     public void testMulticast() {
         long socket = Net.socketUdp();
