@@ -537,11 +537,17 @@ public class O3PartitionPurgeTest extends AbstractGriffinTest {
                     , sqlExecutionContext);
 
             try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-10").concat("x.d").$();
+                Assert.assertFalse(Chars.toString(path), Files.exists(path));
+
                 path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-10.0").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
 
                 path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-10.1").concat("x.d").$();
                 Assert.assertTrue(Chars.toString(path), Files.exists(path));
+
+                path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-11").concat("x.d").$();
+                Assert.assertFalse(Chars.toString(path), Files.exists(path));
 
                 path.of(engine.getConfiguration().getRoot()).concat(tableName).concat("1970-01-11.0").concat("x.d").$();
                 Assert.assertFalse(Chars.toString(path), Files.exists(path));
