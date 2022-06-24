@@ -27,12 +27,12 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
-import java.sql.SQLException;
 import java.sql.Statement;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
@@ -43,6 +43,14 @@ public class PGFlushQueryCacheTest extends BasePGTest {
     public static void setUpStatic() {
         queryCacheEventQueueCapacity = 1;
         BasePGTest.setUpStatic();
+        Assert.assertEquals(1, engine.getConfiguration().getQueryCacheEventQueueCapacity());
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        // Make sure to reset the publisher sequence after what we published to it in checkQueryCacheFlushed().
+        engine.getMessageBus().getQueryCacheEventPubSeq().clear();
     }
 
     @Test
@@ -65,15 +73,11 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                 engine.releaseInactive();
                 long memInitial = Unsafe.getMemUsed();
 
-                statement.execute("SELECT dump_memory_usage()");
-
                 String sql = "SELECT *\n" +
                         "FROM test t1 JOIN test t2 \n" +
                         "ON t1.id = t2.id\n" +
                         "LIMIT 1";
                 statement.execute(sql);
-
-                statement.execute("SELECT dump_memory_usage()");
 
                 engine.releaseInactive();
                 long memAfterJoin = Unsafe.getMemUsed();
@@ -81,7 +85,7 @@ public class PGFlushQueryCacheTest extends BasePGTest {
 
                 statement.execute("SELECT flush_query_cache()");
 
-                checkQueryCacheFlushed(memInitial, memAfterJoin, statement);
+                checkQueryCacheFlushed(memInitial, memAfterJoin);
             }
         });
     }
@@ -106,8 +110,6 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                 engine.releaseInactive();
                 long memInitial = Unsafe.getMemUsed();
 
-                statement.execute("SELECT dump_memory_usage()");
-
                 String sql = "UPDATE test t1 set id = ? \n" +
                         "FROM test t2 \n" +
                         "WHERE t1.id = t2.id";
@@ -117,28 +119,23 @@ public class PGFlushQueryCacheTest extends BasePGTest {
                     updateSt.execute();
                 }
 
-                statement.execute("SELECT dump_memory_usage()");
-
                 engine.releaseInactive();
                 long memAfterJoin = Unsafe.getMemUsed();
                 Assert.assertTrue("Factory used for JOIN should allocate native memory", memAfterJoin > memInitial);
 
                 statement.execute("SELECT flush_query_cache()");
 
-                checkQueryCacheFlushed(memInitial, memAfterJoin, statement);
+                checkQueryCacheFlushed(memInitial, memAfterJoin);
             }
         });
     }
 
-    private void checkQueryCacheFlushed(long memInitial, long memAfterJoin, Statement statement) throws SQLException {
+    private void checkQueryCacheFlushed(long memInitial, long memAfterJoin) {
         // We need to wait until PG Wire workers process the message. To do so, we simply try to
         // publish another query flush event. Since we set the queue size to 1, we're able to
         // publish only when all consumers (PG Wire workers) have processed the previous event.
-        Assert.assertEquals(1, engine.getConfiguration().getQueryCacheEventQueueCapacity());
         final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
         pubSeq.waitForNext();
-
-        statement.execute("SELECT dump_memory_usage()");
 
         // Sequence set to done before actual flush performed. We might have to try it a few times,
         // before memory usage drop is measured.
