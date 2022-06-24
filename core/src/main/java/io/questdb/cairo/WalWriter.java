@@ -69,15 +69,23 @@ public class WalWriter implements Closeable {
     private final Events events = new Events();
     private long lockFd = -1;
     private int columnCount;
+    private long startRowCount = -1;
     private long rowCount = -1;
     private long segmentCount = -1;
     private long segmentStartMillis;
-    private boolean isOutOfOrder;
-    private long segmentMinTimestamp;
-    private long segmentMaxTimestamp;
+    private boolean txnOutOfOrder = false;
+    private long txnMinTimestamp = Long.MAX_VALUE;
+    private long txnMaxTimestamp = -1;
+    private boolean rollSegmentOnNextRow = false;
     private WalWriterRollStrategy rollStrategy = new WalWriterRollStrategy() {
     };
 
+    // extract this out into a Sequencer
+    // local implemented with idgen for now?
+    private long txn = -1;
+
+    // replace TableReader with Sequencer
+    // TableWriter registers metadata with Sequencer?
     public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, TableReader reader) {
         this(configuration, tableName, walName, reader, configuration.getRoot());
     }
@@ -143,17 +151,16 @@ public class WalWriter implements Closeable {
         }
 
         try {
-            closeCurrentSegment();
             LOG.info().$("adding column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
+            commit(true);
 
             final int index = columnCount;
             metadataCache.addColumn(index, name, type);
             configureColumn(index, type);
             columnCount++;
-
-            events.addColumn(segmentCount, index, name, type);
-            openNewSegment(metadataCache);
             configureSymbolMapWriter(index, name, type, null);
+
+            events.addColumn(nextTxn(), index, name, type);
             LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
         } catch (Throwable e) {
             throw new CairoError(e);
@@ -188,6 +195,10 @@ public class WalWriter implements Closeable {
 
     public TableWriter.Row newRow(long timestamp) {
         try {
+            if (rollSegmentOnNextRow) {
+                rollSegment();
+            }
+
             final int timestampIndex = metadataCache.getTimestampIndex();
             if (timestampIndex != -1) {
                 //avoid lookups by having a designated field with primaryColumn
@@ -204,20 +215,18 @@ public class WalWriter implements Closeable {
 
     public void removeColumn(CharSequence name) {
         try {
-            closeCurrentSegment();
             LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
+            commit(true);
 
             final int index = metadataCache.getColumnIndex(name);
             final int type = metadataCache.getColumnType(index);
             if (ColumnType.isSymbol(type)) {
                 removeSymbolMapWriter(index);
             }
-
             metadataCache.removeColumn(index);
             removeColumn(index);
 
-            events.removeColumn(segmentCount, index);
-            openNewSegment(metadataCache);
+            events.removeColumn(nextTxn(), index);
             LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
         } catch (Throwable e) {
             throw new CairoError(e);
@@ -355,6 +364,16 @@ public class WalWriter implements Closeable {
             return;
         }
 
+        createSymbolMapFiles(
+                ff,
+                symbolMapMem,
+                path.trimTo(rootLen),
+                columnName,
+                COLUMN_NAME_TXN_NONE,
+                configuration.getDefaultSymbolCapacity(), // take this from metadata provided by Sequencer !!!
+                configuration.getDefaultSymbolCacheFlag() // take this from metadata provided by Sequencer !!!
+        );
+
         final SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
                 configuration,
                 path.trimTo(rootLen),
@@ -480,8 +499,38 @@ public class WalWriter implements Closeable {
         }
     }
 
+    public long getTransientRowCount() {
+        return rowCount - startRowCount;
+    }
+
+    private long nextTxn() {
+        // request next free txn from Sequencer for commit
+        return ++txn;
+    }
+
+    public long commit() {
+        return commit(false);
+    }
+
+    private long commit(boolean rollSegment) {
+        rollSegmentOnNextRow = rollSegment;
+        final long transientRowCount = getTransientRowCount();
+        if (transientRowCount != 0) {
+            events.data(nextTxn(), startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+            resetDataTxnProperties();
+        }
+        return transientRowCount;
+    }
+
+    private void resetDataTxnProperties() {
+        startRowCount = rowCount;
+        txnMinTimestamp = Long.MAX_VALUE;
+        txnMaxTimestamp = -1;
+        txnOutOfOrder = false;
+    }
+
     private void closeCurrentSegment() {
-        events.data(segmentCount, 0, rowCount, segmentMinTimestamp, segmentMaxTimestamp, isOutOfOrder);
+        commit();
         events.close();
     }
 
@@ -489,6 +538,7 @@ public class WalWriter implements Closeable {
         try {
             segmentCount++;
             rowCount = 0;
+            startRowCount = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
             final int segmentPathLen = createSegmentDir();
 
@@ -499,27 +549,12 @@ public class WalWriter implements Closeable {
                     liveColumnCount++;
                     final CharSequence name = metadata.getColumnName(i);
                     openColumnFiles(name, i, segmentPathLen);
-                    if (ColumnType.isSymbol(type)) {
-                        createSymbolMapFiles(
-                                ff,
-                                symbolMapMem,
-                                path.trimTo(rootLen),
-                                name,
-                                COLUMN_NAME_TXN_NONE,
-                                configuration.getDefaultSymbolCapacity(), // take this from TableStructure/TableWriter !!!
-                                configuration.getDefaultSymbolCacheFlag() // take this from TableStructure/TableWriter !!!
-                        );
-                        path.slash().put(segmentCount);
-                    }
                 }
             }
 
             initMetadata(metadata, segmentPathLen, liveColumnCount);
             initEventFile(segmentPathLen);
             segmentStartMillis = millisecondClock.getTicks();
-            segmentMinTimestamp = Long.MAX_VALUE;
-            segmentMaxTimestamp = -1;
-            isOutOfOrder = false;
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {
             path.trimTo(rootLen);
@@ -620,13 +655,13 @@ public class WalWriter implements Closeable {
             }
         }
 
-        if (rowTimestamp > segmentMaxTimestamp) {
-            segmentMaxTimestamp = rowTimestamp;
+        if (rowTimestamp > txnMaxTimestamp) {
+            txnMaxTimestamp = rowTimestamp;
         } else {
-            isOutOfOrder = segmentMaxTimestamp != rowTimestamp;
+            txnOutOfOrder = txnMaxTimestamp != rowTimestamp;
         }
-        if (rowTimestamp < segmentMinTimestamp) {
-            segmentMinTimestamp = rowTimestamp;
+        if (rowTimestamp < txnMinTimestamp) {
+            txnMinTimestamp = rowTimestamp;
         }
 
         rowCount++;
@@ -911,14 +946,14 @@ public class WalWriter implements Closeable {
     }
 
     private class Events {
-        private void data(long txn, long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean isOutOfOrder) {
+        private void data(long txn, long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
             eventMem.putLong(txn);
             eventMem.putByte(WalTxnType.DATA);
             eventMem.putLong(startRowID);
             eventMem.putLong(endRowID);
             eventMem.putLong(minTimestamp);
             eventMem.putLong(maxTimestamp);
-            eventMem.putBool(isOutOfOrder);
+            eventMem.putBool(outOfOrder);
             writeSymbolMapDiffs();
         }
 

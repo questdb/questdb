@@ -70,12 +70,12 @@ public class WalReader implements Closeable, SymbolTableSource {
         path.of(configuration.getRoot()).concat(tableName).concat(walName);
         rootLen = path.length();
         try {
-            events = new WalReaderEvents(ff);
-            eventCursor = events.of(path, segmentId, WalWriter.WAL_FORMAT_VERSION);
             metadata = new WalReaderMetadata(ff);
             metadata.of(path, segmentId, WalWriter.WAL_FORMAT_VERSION);
             columnCount = metadata.getColumnCount();
-            LOG.debug().$("open [table=").$(this.tableName).I$();
+            events = new WalReaderEvents(ff);
+            eventCursor = events.of(path, segmentId, WalWriter.WAL_FORMAT_VERSION);
+            LOG.debug().$("open [table=").$(tableName).I$();
             openSymbolMaps(walSymbolCounts);
 
             final int capacity = 2 * columnCount + 2;

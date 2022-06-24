@@ -27,6 +27,8 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 
+import static io.questdb.cairo.WalTxnType.*;
+
 public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
 
@@ -38,7 +40,7 @@ public class WalEventCursor {
     private long memSize;
     private long offset = Integer.BYTES; // skip wal meta version
     private long txn = END_OF_EVENTS;
-    private byte type = WalTxnType.NONE;
+    private byte type = NONE;
 
     public WalEventCursor(MemoryMR eventMem) {
         this.eventMem = eventMem;
@@ -52,13 +54,13 @@ public class WalEventCursor {
 
         type = readByte();
         switch (type) {
-            case WalTxnType.DATA:
+            case DATA:
                 dataInfo.read();
                 break;
-            case WalTxnType.ADD_COLUMN:
+            case ADD_COLUMN:
                 addColumnInfo.read();
                 break;
-            case WalTxnType.REMOVE_COLUMN:
+            case REMOVE_COLUMN:
                 removeColumnInfo.read();
                 break;
             default:
@@ -75,14 +77,23 @@ public class WalEventCursor {
     }
 
     public DataInfo getDataInfo() {
+        if (type != DATA) {
+            throw CairoException.instance(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
+        }
         return dataInfo;
     }
 
     public AddColumnInfo getAddColumnInfo() {
+        if (type != ADD_COLUMN) {
+            throw CairoException.instance(CairoException.ILLEGAL_OPERATION).put("WAL event type is not ADD_COLUMN, type=").put(type);
+        }
         return addColumnInfo;
     }
 
     public RemoveColumnInfo getRemoveColumnInfo() {
+        if (type != REMOVE_COLUMN) {
+            throw CairoException.instance(CairoException.ILLEGAL_OPERATION).put("WAL event type is not REMOVE_COLUMN, type=").put(type);
+        }
         return removeColumnInfo;
     }
 
