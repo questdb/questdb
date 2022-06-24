@@ -27,11 +27,10 @@ package io.questdb.griffin.engine.union;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.std.Misc;
 
-public final class SortedMergeRecordCursor extends AbstractSetRecordCursor implements NoRandomAccessRecordCursor {
+public final class SortedMergeRecordCursor implements NoRandomAccessRecordCursor {
     private static final int INITIAL_STATE = 0;
     private static final int READ_FROM_A = 1;
     private static final int READ_FROM_B = 2;
@@ -41,7 +40,8 @@ public final class SortedMergeRecordCursor extends AbstractSetRecordCursor imple
 
     private final ComparingUnionRecord unionRecord;
     private int state = INITIAL_STATE;
-
+    private RecordCursor cursorA;
+    private RecordCursor cursorB;
 
     public SortedMergeRecordCursor() {
         this.unionRecord = new ComparingUnionRecord();
@@ -54,6 +54,13 @@ public final class SortedMergeRecordCursor extends AbstractSetRecordCursor imple
 
     @Override
     public boolean hasNext() {
+        // We could pull aHasNext and bHasNext to class fields and avoid unconditional assignments in some states.
+        // But that would make the state a bit fuzzy. Currently, the state is nicely contained in a single variable.
+        // Given unconditional assignments are cheap anyway I decided to keep it simple.
+
+        // The other option could be to eliminate the _EXHAUSTED states and keep just
+        // INITIAL, READ_FROM_A, READ_FROM_B. but that would force us to check "if (aHasNext && bHasNext)"
+        // in each pass.
         boolean aHasNext;
         boolean bHasNext;
         switch (state) {
@@ -106,14 +113,11 @@ public final class SortedMergeRecordCursor extends AbstractSetRecordCursor imple
         return true;
     }
 
-    @Override
-    void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        throw new UnsupportedOperationException("use overloaded of() method with a comparator");
-    }
-
-    void of(RecordCursor cursorA, RecordCursor cursorB, RecordComparator comparator, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        super.of(cursorA, cursorB, circuitBreaker);
+    void of(RecordCursor cursorA, RecordCursor cursorB, RecordComparator comparator) {
+        this.cursorA = cursorA;
+        this.cursorB = cursorB;
         unionRecord.of(cursorA.getRecord(), cursorB.getRecord(), comparator);
+        toTop();
     }
 
     @Override
@@ -132,5 +136,11 @@ public final class SortedMergeRecordCursor extends AbstractSetRecordCursor imple
             return -1;
         }
         return sizeA + sizeB;
+    }
+
+    @Override
+    public void close() {
+        this.cursorA = Misc.free(this.cursorA);
+        this.cursorB = Misc.free(this.cursorB);
     }
 }

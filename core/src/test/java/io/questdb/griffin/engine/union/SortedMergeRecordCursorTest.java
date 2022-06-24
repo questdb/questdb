@@ -30,7 +30,6 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -76,6 +75,7 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
         private final Rnd rnd;
         private final long s0;
         private final long s1;
+        private boolean isClosed;
 
         public TestRecordCursor() {
             this(100, new Rnd(), true);
@@ -92,7 +92,11 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
 
         @Override
         public void close() {
-            // noop
+            isClosed = true;
+        }
+
+        public boolean isClosed() {
+            return isClosed;
         }
 
         @Override
@@ -157,12 +161,12 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHappyMerging() throws SqlException {
+    public void testHappyMerging()  {
         TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
         TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor();
-        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator(), null);
+        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
         metadata.add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
         assertCursor(HAPPY_MERGED_RESULT, mergeSortRecordCursor, metadata, true);
 
@@ -170,13 +174,32 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
         Assert.assertFalse(mergeSortRecordCursor.hasNext());
     }
 
+    private static void exhaustCursor(RecordCursor cursor) {
+        while (cursor.hasNext());
+    }
+
     @Test
-    public void testToTopHappy() throws SqlException {
+    public void testOfRewindsToTop()  {
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
+        TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
+        TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
+        SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor();
+
+        exhaustCursor(cursorA);
+        exhaustCursor(cursorB);
+
+        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
+        assertCursor(HAPPY_MERGED_RESULT, mergeSortRecordCursor, metadata, true);
+    }
+
+    @Test
+    public void testToTopHappy()  {
         TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
         TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor();
-        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator(), null);
+        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
         metadata.add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
         assertCursor(HAPPY_MERGED_RESULT, mergeSortRecordCursor, metadata, true);
 
@@ -188,12 +211,12 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBothEmpty() throws SqlException {
+    public void testBothEmpty()  {
         TestRecordCursor cursorA = new TestRecordCursor(0, new Rnd(), true);
         TestRecordCursor cursorB = new TestRecordCursor(0, new Rnd(), true);
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor();
-        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator(), null);
+        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
         metadata.add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
         assertCursor(EMPTY_RESULT, mergeSortRecordCursor, metadata, true);
 
@@ -202,12 +225,12 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAEmpty() throws SqlException {
+    public void testAEmpty()  {
         TestRecordCursor cursorA = new TestRecordCursor(0, new Rnd(), true);
         TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(), true);
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor();
-        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator(), null);
+        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
         metadata.add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
         assertCursor(SINGLE_RESULT, mergeSortRecordCursor, metadata, true);
 
@@ -216,12 +239,12 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBEmpty() throws SqlException {
+    public void testBEmpty()  {
         TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(), true);
         TestRecordCursor cursorB = new TestRecordCursor(0, new Rnd(), true);
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor();
-        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator(), null);
+        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
         metadata.add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
         assertCursor(SINGLE_RESULT, mergeSortRecordCursor, metadata, true);
 
@@ -230,12 +253,12 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAUnknownSize() throws SqlException {
+    public void testAUnknownSize()  {
         TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), false);
         TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor();
-        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator(), null);
+        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
         metadata.add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
         assertCursor(HAPPY_MERGED_RESULT, mergeSortRecordCursor, metadata, true);
 
@@ -244,12 +267,12 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBUnknownSize() throws SqlException {
+    public void testBUnknownSize()  {
         TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
         TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), false);
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor();
-        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator(), null);
+        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
         metadata.add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
         assertCursor(HAPPY_MERGED_RESULT, mergeSortRecordCursor, metadata, true);
 
@@ -258,28 +281,27 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBothUnknownSize() throws SqlException {
+    public void testBothUnknownSize() {
         TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), false);
         TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), false);
         GenericRecordMetadata metadata = new GenericRecordMetadata();
         SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor();
-        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator(), null);
+        mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
         metadata.add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
         assertCursor(HAPPY_MERGED_RESULT, mergeSortRecordCursor, metadata, true);
 
         Assert.assertEquals(-1, mergeSortRecordCursor.size());
         Assert.assertFalse(mergeSortRecordCursor.hasNext());
     }
-
+    
     @Test
-    public void testSuperOfThrowsException() throws SqlException {
-        TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), false);
-        TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), false);
-        SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor();
-        try {
-            mergeSortRecordCursor.of(cursorA, cursorB, null);
-            Assert.fail("the of() without comparator should throw an exception");
-        } catch (UnsupportedOperationException expected) {}
+    public void testClosesUpstreamCursors() {
+        TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
+        TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
+        try (SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor()) {
+            mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
+        }
+        Assert.assertTrue(cursorA.isClosed);
+        Assert.assertTrue(cursorB.isClosed);
     }
-
 }

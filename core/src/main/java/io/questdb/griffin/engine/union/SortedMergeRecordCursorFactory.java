@@ -60,7 +60,7 @@ public final class SortedMergeRecordCursorFactory extends AbstractRecordCursorFa
         try {
             cursorA = factoryA.getCursor(executionContext);
             cursorB = factoryB.getCursor(executionContext);
-            cursor.of(cursorA, cursorB, comparator, executionContext.getCircuitBreaker());
+            cursor.of(cursorA, cursorB, comparator);
             return cursor;
         } catch (Throwable ex) {
             Misc.free(cursorA);
