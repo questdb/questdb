@@ -97,18 +97,27 @@ public class UpdateOperation extends AbstractOperation {
 
     @Override
     public void startAsync() {
-        this.executingAsync = true;
+        assert closeState.get() == 0;
+        executingAsync = true;
     }
 
     public void forceTestTimeout() {
         if (requesterTimeout || (circuitBreaker != null && circuitBreaker.checkIfTripped())) {
-            throw CairoException.instance(0).put("timeout, query aborted [fd=").put(circuitBreaker != null ? circuitBreaker.getFd() : -1L).put(']').setInterruption(true);
+            throw CairoException.instance(0)
+                    .put("timeout, query aborted [fd=")
+                    .put(circuitBreaker != null ? circuitBreaker.getFd() : -1L)
+                    .put(']')
+                    .setInterruption(true);
         }
     }
 
     public void testTimeout() {
         if (requesterTimeout) {
-            throw CairoException.instance(0).put("timeout, query aborted [fd=").put(circuitBreaker != null ? circuitBreaker.getFd() : -1L).put(']').setInterruption(true);
+            throw CairoException.instance(0)
+                    .put("timeout, query aborted [fd=")
+                    .put(circuitBreaker != null ? circuitBreaker.getFd() : -1L)
+                    .put(']')
+                    .setInterruption(true);
         }
 
         if (circuitBreaker != null) {

@@ -46,8 +46,10 @@ import io.questdb.std.WeakSelfReturningObjectPool;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.tasks.TableWriterTask;
 
-import static io.questdb.tasks.TableWriterTask.*;
-import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
+import static io.questdb.cairo.sql.AsyncWriterCommand.Error.OK;
+import static io.questdb.cairo.sql.AsyncWriterCommand.Error.READER_OUT_OF_DATE;
+import static io.questdb.tasks.TableWriterTask.TSK_BEGIN;
+import static io.questdb.tasks.TableWriterTask.TSK_COMPLETE;
 
 class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImpl> implements OperationFuture {
     private static final Log LOG = LogFactory.getLog(OperationFutureImpl.class);
@@ -137,7 +139,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         this.eventSubSeq = eventSubSeq;
 
         try {
-            // Publish new command and get published command correlation id
+            // Publish new command and get published command correlation id.
             final CharSequence cmdName = asyncWriterCommand.getCommandName();
             tableName = asyncWriterCommand.getTableName();
             correlationId = engine.getCommandCorrelationId();
@@ -162,7 +164,8 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
                             .$(",tableName=").$(tableName)
                             .$(",instance=").$(correlationId)
                             .I$();
-                    asyncWriterCommand.startAsync();
+                    // No need to call asyncWriterCommand.startAsync() method here since
+                    // it's done when publishing to the writer queue.
                     affectedRowsCount = 0;
                     status = QUERY_NO_RESPONSE;
                 }
@@ -188,7 +191,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         while (true) {
             long seq = eventSubSeq.next();
             if (seq < 0) {
-                // Queue is empty, check if the execution blocked for too long
+                // Queue is empty, check if the execution blocked for too long.
                 if (clock.getTicks() - start > writerAsyncCommandBusyWaitTimeout) {
                     queryFutureUpdateListener.reportBusyWaitExpired(tableName, correlationId);
                     return status;
