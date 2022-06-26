@@ -100,7 +100,11 @@ public class CairoTestUtils {
     }
 
     public static void createTestTable(CairoConfiguration configuration, int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
-        try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)) {
+        createTestTable(configuration, "x", n, rnd, binarySequence);
+    }
+
+    public static void createTestTable(CairoConfiguration configuration, String tableName, int n, Rnd rnd, TestRecord.ArrayBinarySequence binarySequence) {
+        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
             model
                     .col("a", ColumnType.BYTE)
                     .col("b", ColumnType.SHORT)
@@ -117,7 +121,7 @@ public class CairoTestUtils {
             create(model);
         }
 
-        try (TableWriter writer = new TableWriter(configuration, "x", Metrics.disabled())) {
+        try (TableWriter writer = new TableWriter(configuration, tableName, Metrics.disabled())) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putByte(0, rnd.nextByte());

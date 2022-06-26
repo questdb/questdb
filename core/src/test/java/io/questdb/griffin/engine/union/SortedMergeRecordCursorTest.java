@@ -28,13 +28,14 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -328,106 +329,36 @@ public final class SortedMergeRecordCursorTest extends AbstractGriffinTest {
         Assert.assertTrue(cursorB.isClosed);
     }
 
-//    @Test
-    public void foo() throws Exception {
-        //todo: finish this thingie
+    @Test
+    public void testCompareCursorWithUnionAll() throws Exception {
+        Rnd rnd = new Rnd();
+        CairoTestUtils.createTestTable(configuration, "x", 30, rnd, new io.questdb.cairo.TestRecord.ArrayBinarySequence());
+        CairoTestUtils.createTestTable(configuration, "y", 30, rnd, new io.questdb.cairo.TestRecord.ArrayBinarySequence());
 
-        CairoTestUtils.createAllTableWithNewTypes(configuration, PartitionBy.DAY);
+        // both factories will be closed by SortedMergeRecordCursorFactory
+        RecordCursorFactory factoryX = compiler.compile("select * from x order by 1, 2", sqlExecutionContext).getRecordCursorFactory();
+        RecordCursorFactory factoryY = compiler.compile("select * from y order by 1, 2", sqlExecutionContext).getRecordCursorFactory();
+        GenericRecordMetadata metadata = GenericRecordMetadata.copyOfSansTimestamp(factoryX.getMetadata());
+        RecordComparator recordComparator = compileComparator(metadata, 1, 2);
 
-        compiler.compile("insert into all2 select * from (" +
-                        "select" +
-                        " x," +
-                        " x," +
-                        " x," +
-                        " x," +
-                        " x," +
-                        " x," +
-                        " cast(x as string)," +
-                        " rnd_symbol('A','D')," +
-                        " rnd_boolean()," +
-                        " rnd_bin()," +
-                        " rnd_date()," +
-                        " rnd_long256()," +
-                        " rnd_char()," +
-                        " timestamp_sequence(0L, 2L) ts from long_sequence(2)) timestamp(ts)",
-                sqlExecutionContext
-        );
+        try (SortedMergeRecordCursorFactory sortedMergeRecordCursorFactory = new SortedMergeRecordCursorFactory(metadata, factoryX, factoryY, recordComparator);
+             RecordCursor sortedMergeCursor = sortedMergeRecordCursorFactory.getCursor(sqlExecutionContext);
+             RecordCursorFactory factoryUnionAll = compiler.compile("(select * from y union all select * from x) order by 1, 2", sqlExecutionContext).getRecordCursorFactory();
+             RecordCursor unionAllCursor = factoryUnionAll.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue("It seems 'union all' no longer uses SortedRecordCursorFactory. Check if this test still makes sense. " +
+                    "If 'union all' already switched to SortedMergeRecordCursorFactory then this test is pointless.", factoryUnionAll instanceof SortedRecordCursorFactory);
+            TestUtils.assertEquals(unionAllCursor, factoryUnionAll.getMetadata(), sortedMergeCursor, sortedMergeRecordCursorFactory.getMetadata(), true);
+        }
+    }
 
-        compiler.compile("CREATE TABLE clone AS(\n" +
-                "  SELECT\n" +
-                "    * \n" +
-                "  FROM\n" +
-                "    all2\n" +
-                ")", sqlExecutionContext);
-
+    private static RecordComparator compileComparator(GenericRecordMetadata metadata, int...columns) {
+        IntList intList = new IntList(1);
+        for (int i : columns) {
+            intList.add(i);
+        }
         BytecodeAssembler assembler = new BytecodeAssembler();
         RecordComparatorCompiler comparatorCompiler = new RecordComparatorCompiler(assembler);
-
-        try (RecordCursorFactory factoryA = compiler.compile("select * from all2", sqlExecutionContext).getRecordCursorFactory();
-             RecordCursorFactory factoryB = compiler.compile("select * from clone", sqlExecutionContext).getRecordCursorFactory()) {
-            RecordMetadata rawMatadataA = factoryA.getMetadata();
-            RecordMetadata rawMatadataB = factoryA.getMetadata();
-
-            Assert.assertEquals(rawMatadataA, rawMatadataB);
-
-            GenericRecordMetadata metadata = GenericRecordMetadata.copyOfSansTimestamp(rawMatadataA);
-
-
-            IntList intList = new IntList();
-            intList.add(1);
-            RecordComparator recordComparator = comparatorCompiler.compile(metadata, intList);
-
-            RecordCursor cursorA = factoryA.getCursor(sqlExecutionContext);
-            Record recordA = cursorA.getRecord();
-
-
-            SortedMergeRecordCursorFactory sortedMergeRecordCursorFactory = new SortedMergeRecordCursorFactory(metadata, factoryA, factoryB, recordComparator);
-            assertCursor("foo", sortedMergeRecordCursorFactory, false, false, true);
-
-//            UnionAllRecordCursorFactory unionAllRecordCursorFactory = new UnionAllRecordCursorFactory(metadata, factoryA, factoryB, null, null);
-//            assertCursor("foo", unionAllRecordCursorFactory, false, false, true);
-        }
-
-
-//        try (TableReader readerA = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "all2");
-//             TableReader readerB = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "all2")) {
-//            TableReaderRecordCursor cursorA = readerA.getCursor();
-//            TableReaderRecordCursor cursorB = readerB.getCursor();
-//
-//            TableReaderMetadata metadata = readerA.getMetadata();
-//            GenericRecordMetadata metadataSansTimestamp = GenericRecordMetadata.copyOfSansTimestamp(metadata);
-//            new SortedMergeRecordCursorFactory(metadataSansTimestamp, )
-//        }
-
-
-//        try (TableModel modelA = new TableModel(configuration, "quote", PartitionBy.NONE)
-//                .timestamp()
-//                .col("sym", ColumnType.SYMBOL)
-//                .col("bid", ColumnType.DOUBLE)
-//                .col("ask", ColumnType.DOUBLE)
-//                .col("bidSize", ColumnType.INT)
-//                .col("askSize", ColumnType.INT)
-//                .col("mode", ColumnType.SYMBOL).symbolCapacity(2)
-//                .col("ex", ColumnType.SYMBOL).symbolCapacity(2)) {
-//            CairoTestUtils.create(modelA);
-//        }
-//
-//        try (TableModel modelB = new TableModel(configuration, "quote", PartitionBy.NONE)
-//                .timestamp()
-//                .col("sym", ColumnType.SYMBOL)
-//                .col("bid", ColumnType.DOUBLE)
-//                .col("ask", ColumnType.DOUBLE)
-//                .col("bidSize", ColumnType.INT)
-//                .col("askSize", ColumnType.INT)
-//                .col("mode", ColumnType.SYMBOL).symbolCapacity(2)
-//                .col("ex", ColumnType.SYMBOL).symbolCapacity(2)) {
-//            CairoTestUtils.create(modelB);
-//
-//        }
-//
-//        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "all2", "testing")) {
-//            TableWriter.Row row = writer.newRow();
-//            row.
-//        }
+        RecordComparator recordComparator = comparatorCompiler.compile(metadata, intList);
+        return recordComparator;
     }
 }

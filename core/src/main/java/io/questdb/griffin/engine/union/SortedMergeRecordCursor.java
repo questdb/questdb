@@ -56,26 +56,9 @@ public final class SortedMergeRecordCursor implements NoRandomAccessRecordCursor
     public boolean hasNext() {
         switch (state) {
             case INITIAL_STATE:
-                boolean aHasNext = cursorA.hasNext();
-                boolean bHasNext = cursorB.hasNext();
-                if (!aHasNext && !bHasNext) {
-                    state = BOTH_EXHAUSTED;
-                    return false;
-                }
-                if (aHasNext && bHasNext) {
-                    unionRecord.resetComparatorLeft();
-                    state = unionRecord.selectByComparing() ? READ_FROM_A : READ_FROM_B;
-                } else if (aHasNext) {
-                   unionRecord.selectA();
-                   state = READ_FROM_A__B_EXHAUSTED;
-                } else if (bHasNext) {
-                    unionRecord.selectB();
-                    state = READ_FROM_B__A_EXHAUSTED;
-                }
-                return true;
+                return advanceFromInitState();
             case READ_FROM_A:
-                aHasNext = cursorA.hasNext();
-                if (aHasNext) {
+                if (cursorA.hasNext()) {
                     unionRecord.resetComparatorLeft();
                     state = unionRecord.selectByComparing() ? READ_FROM_A : READ_FROM_B;
                 } else {
@@ -84,8 +67,7 @@ public final class SortedMergeRecordCursor implements NoRandomAccessRecordCursor
                 }
                 return true;
             case READ_FROM_B:
-                bHasNext = cursorB.hasNext();
-                if (bHasNext) {
+                if (cursorB.hasNext()) {
                     state = unionRecord.selectByComparing() ? READ_FROM_A : READ_FROM_B;
                 } else {
                     unionRecord.selectA();
@@ -93,8 +75,7 @@ public final class SortedMergeRecordCursor implements NoRandomAccessRecordCursor
                 }
                 return true;
             case READ_FROM_A__B_EXHAUSTED:
-                aHasNext = cursorA.hasNext();
-                if (aHasNext) {
+                if (cursorA.hasNext()) {
                     // state stays as it is
                     return true;
                 } else {
@@ -102,8 +83,7 @@ public final class SortedMergeRecordCursor implements NoRandomAccessRecordCursor
                     return false;
                 }
             case READ_FROM_B__A_EXHAUSTED:
-                bHasNext = cursorB.hasNext();
-                if (bHasNext) {
+                if (cursorB.hasNext()) {
                     // state stays as it is
                     return true;
                 } else {
@@ -115,6 +95,25 @@ public final class SortedMergeRecordCursor implements NoRandomAccessRecordCursor
             default:
                 throw new AssertionError("cannot happen");
         }
+    }
+
+    private boolean advanceFromInitState() {
+        if (cursorA.hasNext()) {
+            if (cursorB.hasNext()) {
+                unionRecord.resetComparatorLeft();
+                state = unionRecord.selectByComparing() ? READ_FROM_A : READ_FROM_B;
+            } else {
+                unionRecord.selectA();
+                state = READ_FROM_A__B_EXHAUSTED;
+            }
+            return true;
+        } else if (cursorB.hasNext()) {
+            unionRecord.selectB();
+            state = READ_FROM_B__A_EXHAUSTED;
+            return true;
+        }
+        state = BOTH_EXHAUSTED;
+        return false;
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, RecordComparator comparator) {
