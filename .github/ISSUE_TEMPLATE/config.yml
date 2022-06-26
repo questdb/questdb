@@ -1,6 +1,8 @@
+blank_issues_enabled: false
 contact_links:
   - name: Stack Overflow Community
     url: https://stackoverflow.com/questions/tagged/questdb
-    about:
-      Ask generic questions or find popular solutions suggested by the QuestDB
-      community
+    about: Ask Stack Overflow community or search for popular solutions.
+  - name: Community on Slack
+    url: https://slack.questdb.io
+    about: Ask generic questions or meet other developers who are building with QuestDB.

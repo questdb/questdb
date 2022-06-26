@@ -28,6 +28,7 @@ import io.questdb.mp.MPSequence;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.sql.Connection;
@@ -38,11 +39,18 @@ import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class PGFlushQueryCacheTest extends BasePGTest {
 
-    @Override
+    @BeforeClass
+    public static void setUpStatic() {
+        queryCacheEventQueueCapacity = 1;
+        BasePGTest.setUpStatic();
+        Assert.assertEquals(1, engine.getConfiguration().getQueryCacheEventQueueCapacity());
+    }
+
     @Before
     public void setUp() {
-        queryCacheEventQueueCapacity = 1;
         super.setUp();
+        // Make sure to reset the publisher sequence after what we published to it in checkQueryCacheFlushed().
+        engine.getMessageBus().getQueryCacheEventPubSeq().clear();
     }
 
     @Test
@@ -126,7 +134,6 @@ public class PGFlushQueryCacheTest extends BasePGTest {
         // We need to wait until PG Wire workers process the message. To do so, we simply try to
         // publish another query flush event. Since we set the queue size to 1, we're able to
         // publish only when all consumers (PG Wire workers) have processed the previous event.
-        Assert.assertEquals(1, engine.getConfiguration().getQueryCacheEventQueueCapacity());
         final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
         pubSeq.waitForNext();
 
