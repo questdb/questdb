@@ -839,6 +839,10 @@ public class TableWriter implements Closeable {
         return txWriter.getTruncateVersion();
     }
 
+    TxReader getTxReader() {
+        return txWriter;
+    }
+
     public long getTxn() {
         return txWriter.getTxn();
     }
@@ -2384,7 +2388,7 @@ public class TableWriter implements Closeable {
         return columnTops.getQuick(columnIndex);
     }
 
-    ColumnVersionWriter getColumnVersionWriter() {
+    ColumnVersionReader getColumnVersionReader() {
         return columnVersionWriter;
     }
 

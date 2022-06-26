@@ -63,7 +63,7 @@ public class IndexBuilder extends RebuildColumnBase {
     }
 
     @Override
-    protected boolean checkColumnType(TableReaderMetadata metadata, int rebuildColumnIndex) {
+    protected boolean checkColumnType(BaseRecordMetadata metadata, int rebuildColumnIndex) {
         return metadata.isColumnIndexed(rebuildColumnIndex);
     }
 

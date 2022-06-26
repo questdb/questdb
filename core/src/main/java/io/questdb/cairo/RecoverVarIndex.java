@@ -36,7 +36,8 @@ import io.questdb.std.MemoryTag;
 public class RecoverVarIndex extends RebuildColumnBase {
     private static final Log LOG = LogFactory.getLog(RecoverVarIndex.class);
 
-    protected boolean checkColumnType(TableReaderMetadata metadata, int rebuildColumnIndex) {
+    @Override
+    protected boolean checkColumnType(BaseRecordMetadata metadata, int rebuildColumnIndex) {
         return metadata.getColumnType(rebuildColumnIndex) == ColumnType.STRING;
     }
 
