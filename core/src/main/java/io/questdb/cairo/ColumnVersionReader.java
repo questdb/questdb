@@ -101,7 +101,36 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 2) : -1L;
     }
 
+    /**
+     * Checks that column exists in the partition and returns the column top
+     * @param partitionTimestamp timestamp of the partition
+     * @param columnIndex column index
+     * @return column top in the partition or -1 if column does not exist in the partition
+     */
     public long getColumnTop(long partitionTimestamp, int columnIndex) {
+        // Check if there is explicit record for this partitionTimestamp / columnIndex combination
+        int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
+        if (recordIndex > -1L) {
+            return cachedList.getQuick(recordIndex + 3);
+        }
+
+        // Check if column has been already added before this partition
+        long columnTopDefaultPartition = getColumnTopPartitionTimestamp(columnIndex);
+        if (columnTopDefaultPartition <= partitionTimestamp) {
+            return 0;
+        }
+
+        // This column does not exist in the partition
+        return -1L;
+    }
+
+    /**
+     * Returns the column top without checking that column exists in the partition
+     * @param partitionTimestamp timestamp of the partition
+     * @param columnIndex column index
+     * @return column top in the partition or 0 if column does not exist in the partition or column exists with no colum top
+     */
+    public long getColumnTopQuick(long partitionTimestamp, int columnIndex) {
         int index = getRecordIndex(partitionTimestamp, columnIndex);
         return getColumnTopByIndex(index);
     }
@@ -110,6 +139,15 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return versionRecordIndex > -1 ? cachedList.getQuick(versionRecordIndex + 3) : 0L;
     }
 
+    /**
+     * Get partition when the column was added first into the table.
+     * All partitions before that one should not have any data in the column
+     * All partitions after that will have 0 column top (column fully exists)
+     * Exception is when O3 commit can overwrite column top for any partition where the column did not exist
+     * with concrete column top value
+     * @param columnIndex colum index
+     * @return the partition timestamp where column added or Long.MIN_VALUE if column was present from table creation
+     */
     public long getColumnTopPartitionTimestamp(int columnIndex) {
         int index = getRecordIndex(COL_TOP_DEFAULT_PARTITION, columnIndex);
         return index > -1 ? getColumnTopByIndex(index) : Long.MIN_VALUE;

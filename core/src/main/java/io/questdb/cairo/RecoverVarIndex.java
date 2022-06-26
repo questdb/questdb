@@ -53,10 +53,9 @@ public class RecoverVarIndex extends RebuildColumnBase {
             long partitionNameTxn
     ) {
         long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
-        long columnAddedPartition = columnVersionReader.getColumnTopPartitionTimestamp(columnIndex);
         long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
 
-        if (columnTop == 0 && partitionTimestamp < columnAddedPartition) {
+        if (columnTop == -1L) {
             LOG.info().$("not rebuilding column ").$(columnName).$(" in partition ").$ts(partitionTimestamp).$(", column not added to partition").$();
             return;
         }

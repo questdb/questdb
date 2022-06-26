@@ -749,20 +749,8 @@ public class TableWriter implements Closeable {
     }
 
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
-        // Check if there is explicit record for this partitionTimestamp / columnIndex combination
-        int recordIndex = columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex);
-        if (recordIndex > -1L) {
-            return columnVersionWriter.getColumnTopByIndex(recordIndex);
-        }
-
-        // Check if column has been already added before this partition
-        long columnTopDefaultPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
-        if (columnTopDefaultPartition <= partitionTimestamp) {
-            return 0;
-        }
-
-        // This column does not exist in the partition
-        return defaultValue;
+        long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+        return colTop > -1L ? colTop : defaultValue;
     }
 
     public long getCommitInterval() {
@@ -1256,7 +1244,7 @@ public class TableWriter implements Closeable {
 
                     for (int j = 0; j < columnCount; j++) {
                         final CharSequence columnName = metadata.getColumnName(j);
-                        long top = columnVersionWriter.getColumnTop(ts, j);
+                        long top = columnVersionWriter.getColumnTopQuick(ts, j);
                         if (top > 0) {
                             model.addColumnTop(ts, j, top);
                         }
@@ -2489,7 +2477,7 @@ public class TableWriter implements Closeable {
                             final long partitionSize = txWriter.getPartitionSizeByPartitionTimestamp(timestamp);
                             final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
-                            if (partitionSize > columnTop) {
+                            if (columnTop > -1L && partitionSize > columnTop) {
                                 TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
                                 final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
                                 roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
@@ -2511,7 +2499,7 @@ public class TableWriter implements Closeable {
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, plen, true);
 
         final long lastPartitionTs = txWriter.getLastPartitionTimestamp();
-        final long columnTop = columnVersionWriter.getColumnTop(lastPartitionTs, columnIndex);
+        final long columnTop = columnVersionWriter.getColumnTopQuick(lastPartitionTs, columnIndex);
 
         // set indexer up to continue functioning as normal
         indexer.configureFollowerAndWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
@@ -3948,7 +3936,7 @@ public class TableWriter implements Closeable {
                     }
 
                     openColumnFiles(name, columnNameTxn, i, plen);
-                    columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, i);
+                    columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, i);
                     columnTops.extendAndSet(i, columnTop);
 
                     if (indexer != null) {

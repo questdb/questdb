@@ -89,9 +89,9 @@ public class IndexBuilder extends RebuildColumnBase {
                 removeIndexFiles(columnName, ff, columnNameTxn);
                 TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
 
-                if (columnVersionReader.getColumnTopPartitionTimestamp(columnIndex) <= partitionTimestamp) {
+                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
+                if (columnTop > -1L) {
                     LOG.info().$("indexing [path=").utf8(path).I$();
-                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
                     createIndexFiles(columnName, indexValueBlockCapacity, plen, ff, columnNameTxn);
 
                     if (partitionSize > columnTop) {
