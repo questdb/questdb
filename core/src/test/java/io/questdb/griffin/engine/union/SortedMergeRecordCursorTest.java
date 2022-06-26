@@ -24,18 +24,21 @@
 
 package io.questdb.griffin.engine.union;
 
-import io.questdb.cairo.AbstractCairoTest;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
+public final class SortedMergeRecordCursorTest extends AbstractGriffinTest {
 
     // 100 records with default seed
     private static final String SINGLE_RESULT = "foo\n0\n8\n11\n12\n13\n22\n24\n25\n31\n39\n45\n47\n51\n54\n55\n57\n63\n" +
@@ -59,10 +62,22 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
 
     static class TestRecord implements Record {
         long value;
+        private boolean ready;
 
         @Override
         public long getLong(int col) {
+            if (!ready) {
+                throw new IllegalStateException("cannot get a value out of uninitialized record");
+            }
             return value;
+        }
+
+        public void ready() {
+            ready = true;
+        }
+
+        public void notReady() {
+            ready = false;
         }
     }
 
@@ -109,9 +124,14 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
             if (remaining == 0) {
                 return false;
             }
+            if (remaining == recordCount) {
+                leftRecord.ready();
+                rightRecord.ready();
+            }
             remaining--;
             int nextInc = rnd.nextInt(10);
             leftRecord.value += nextInc;
+            rightRecord.value = leftRecord.value;
             return true;
         }
 
@@ -130,6 +150,8 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
             leftRecord.value = 0;
             remaining = recordCount;
             rnd.reset(s0, s1);
+            leftRecord.notReady();
+            rightRecord.notReady();
         }
 
         @Override
@@ -139,16 +161,17 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
     }
 
     private class TestRecordComparator implements RecordComparator {
-        private Record left;
+        private long leftLong;
 
         @Override
         public int compare(Record record) {
-            return Long.compare(left.getLong(0), record.getLong(0));
+            // mimic behaviour of RecordComparators produced by the RecordComparatorCompiler
+            return Long.compare(leftLong, record.getLong(0));
         }
 
         @Override
         public void setLeft(Record record) {
-            this.left = record;
+            this.leftLong = record.getLong(0);
         }
     }
 
@@ -303,5 +326,108 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
         }
         Assert.assertTrue(cursorA.isClosed);
         Assert.assertTrue(cursorB.isClosed);
+    }
+
+//    @Test
+    public void foo() throws Exception {
+        //todo: finish this thingie
+
+        CairoTestUtils.createAllTableWithNewTypes(configuration, PartitionBy.DAY);
+
+        compiler.compile("insert into all2 select * from (" +
+                        "select" +
+                        " x," +
+                        " x," +
+                        " x," +
+                        " x," +
+                        " x," +
+                        " x," +
+                        " cast(x as string)," +
+                        " rnd_symbol('A','D')," +
+                        " rnd_boolean()," +
+                        " rnd_bin()," +
+                        " rnd_date()," +
+                        " rnd_long256()," +
+                        " rnd_char()," +
+                        " timestamp_sequence(0L, 2L) ts from long_sequence(2)) timestamp(ts)",
+                sqlExecutionContext
+        );
+
+        compiler.compile("CREATE TABLE clone AS(\n" +
+                "  SELECT\n" +
+                "    * \n" +
+                "  FROM\n" +
+                "    all2\n" +
+                ")", sqlExecutionContext);
+
+        BytecodeAssembler assembler = new BytecodeAssembler();
+        RecordComparatorCompiler comparatorCompiler = new RecordComparatorCompiler(assembler);
+
+        try (RecordCursorFactory factoryA = compiler.compile("select * from all2", sqlExecutionContext).getRecordCursorFactory();
+             RecordCursorFactory factoryB = compiler.compile("select * from clone", sqlExecutionContext).getRecordCursorFactory()) {
+            RecordMetadata rawMatadataA = factoryA.getMetadata();
+            RecordMetadata rawMatadataB = factoryA.getMetadata();
+
+            Assert.assertEquals(rawMatadataA, rawMatadataB);
+
+            GenericRecordMetadata metadata = GenericRecordMetadata.copyOfSansTimestamp(rawMatadataA);
+
+
+            IntList intList = new IntList();
+            intList.add(1);
+            RecordComparator recordComparator = comparatorCompiler.compile(metadata, intList);
+
+            RecordCursor cursorA = factoryA.getCursor(sqlExecutionContext);
+            Record recordA = cursorA.getRecord();
+
+
+            SortedMergeRecordCursorFactory sortedMergeRecordCursorFactory = new SortedMergeRecordCursorFactory(metadata, factoryA, factoryB, recordComparator);
+            assertCursor("foo", sortedMergeRecordCursorFactory, false, false, true);
+
+//            UnionAllRecordCursorFactory unionAllRecordCursorFactory = new UnionAllRecordCursorFactory(metadata, factoryA, factoryB, null, null);
+//            assertCursor("foo", unionAllRecordCursorFactory, false, false, true);
+        }
+
+
+//        try (TableReader readerA = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "all2");
+//             TableReader readerB = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "all2")) {
+//            TableReaderRecordCursor cursorA = readerA.getCursor();
+//            TableReaderRecordCursor cursorB = readerB.getCursor();
+//
+//            TableReaderMetadata metadata = readerA.getMetadata();
+//            GenericRecordMetadata metadataSansTimestamp = GenericRecordMetadata.copyOfSansTimestamp(metadata);
+//            new SortedMergeRecordCursorFactory(metadataSansTimestamp, )
+//        }
+
+
+//        try (TableModel modelA = new TableModel(configuration, "quote", PartitionBy.NONE)
+//                .timestamp()
+//                .col("sym", ColumnType.SYMBOL)
+//                .col("bid", ColumnType.DOUBLE)
+//                .col("ask", ColumnType.DOUBLE)
+//                .col("bidSize", ColumnType.INT)
+//                .col("askSize", ColumnType.INT)
+//                .col("mode", ColumnType.SYMBOL).symbolCapacity(2)
+//                .col("ex", ColumnType.SYMBOL).symbolCapacity(2)) {
+//            CairoTestUtils.create(modelA);
+//        }
+//
+//        try (TableModel modelB = new TableModel(configuration, "quote", PartitionBy.NONE)
+//                .timestamp()
+//                .col("sym", ColumnType.SYMBOL)
+//                .col("bid", ColumnType.DOUBLE)
+//                .col("ask", ColumnType.DOUBLE)
+//                .col("bidSize", ColumnType.INT)
+//                .col("askSize", ColumnType.INT)
+//                .col("mode", ColumnType.SYMBOL).symbolCapacity(2)
+//                .col("ex", ColumnType.SYMBOL).symbolCapacity(2)) {
+//            CairoTestUtils.create(modelB);
+//
+//        }
+//
+//        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "all2", "testing")) {
+//            TableWriter.Row row = writer.newRow();
+//            row.
+//        }
     }
 }

@@ -38,13 +38,13 @@ public final class SortedMergeRecordCursor implements NoRandomAccessRecordCursor
     private static final int READ_FROM_A__B_EXHAUSTED = 4;
     private static final int BOTH_EXHAUSTED = 5;
 
-    private final MergingRecord unionRecord;
+    private final SelectableRecord unionRecord;
     private int state = INITIAL_STATE;
     private RecordCursor cursorA;
     private RecordCursor cursorB;
 
     public SortedMergeRecordCursor() {
-        this.unionRecord = new MergingRecord();
+        this.unionRecord = new SelectableRecord();
     }
 
     @Override
@@ -54,68 +54,67 @@ public final class SortedMergeRecordCursor implements NoRandomAccessRecordCursor
 
     @Override
     public boolean hasNext() {
-        // We could pull aHasNext and bHasNext to class fields and avoid unconditional assignments in some states.
-        // But that would make the state a bit fuzzy. Currently, the state is nicely contained in a single variable.
-        // Given unconditional assignments are cheap anyway I decided to keep it simple.
-
-        // The other option could be to eliminate the _EXHAUSTED states and keep just
-        // INITIAL, READ_FROM_A, READ_FROM_B. but that would force us to check "if (aHasNext && bHasNext)"
-        // in each pass.
-        boolean aHasNext;
-        boolean bHasNext;
         switch (state) {
             case INITIAL_STATE:
-                aHasNext = cursorA.hasNext();
-                bHasNext = cursorB.hasNext();
+                boolean aHasNext = cursorA.hasNext();
+                boolean bHasNext = cursorB.hasNext();
                 if (!aHasNext && !bHasNext) {
                     state = BOTH_EXHAUSTED;
                     return false;
                 }
-                break;
+                if (aHasNext && bHasNext) {
+                    unionRecord.resetComparatorLeft();
+                    state = unionRecord.selectByComparing() ? READ_FROM_A : READ_FROM_B;
+                } else if (aHasNext) {
+                   unionRecord.selectA();
+                   state = READ_FROM_A__B_EXHAUSTED;
+                } else if (bHasNext) {
+                    unionRecord.selectB();
+                    state = READ_FROM_B__A_EXHAUSTED;
+                }
+                return true;
             case READ_FROM_A:
                 aHasNext = cursorA.hasNext();
-                bHasNext = true;
-                break;
+                if (aHasNext) {
+                    unionRecord.resetComparatorLeft();
+                    state = unionRecord.selectByComparing() ? READ_FROM_A : READ_FROM_B;
+                } else {
+                    unionRecord.selectB();
+                    state = READ_FROM_B__A_EXHAUSTED;
+                }
+                return true;
             case READ_FROM_B:
                 bHasNext = cursorB.hasNext();
-                aHasNext = true;
-                break;
+                if (bHasNext) {
+                    state = unionRecord.selectByComparing() ? READ_FROM_A : READ_FROM_B;
+                } else {
+                    unionRecord.selectA();
+                    state = READ_FROM_A__B_EXHAUSTED;
+                }
+                return true;
             case READ_FROM_A__B_EXHAUSTED:
                 aHasNext = cursorA.hasNext();
-                if (!aHasNext) {
+                if (aHasNext) {
+                    // state stays as it is
+                    return true;
+                } else {
                     state = BOTH_EXHAUSTED;
                     return false;
                 }
-                bHasNext = false;
-                break;
             case READ_FROM_B__A_EXHAUSTED:
                 bHasNext = cursorB.hasNext();
-                if (!bHasNext) {
+                if (bHasNext) {
+                    // state stays as it is
+                    return true;
+                } else {
                     state = BOTH_EXHAUSTED;
                     return false;
                 }
-                aHasNext = false;
-                break;
             case BOTH_EXHAUSTED:
                 return false;
             default:
                 throw new AssertionError("cannot happen");
         }
-
-        if (aHasNext && bHasNext) {
-            // both cursors have remaining records, let's pick the next by a record comparator
-            state = unionRecord.selectByComparing() ? READ_FROM_A : READ_FROM_B;
-        } else {
-            assert aHasNext || bHasNext;
-            if (aHasNext) {
-                unionRecord.selectA();
-                state = READ_FROM_A__B_EXHAUSTED;
-            } else {
-                unionRecord.selectB();
-                state = READ_FROM_B__A_EXHAUSTED;
-            }
-        }
-        return true;
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, RecordComparator comparator) {

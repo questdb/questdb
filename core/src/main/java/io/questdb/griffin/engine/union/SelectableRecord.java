@@ -30,7 +30,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
-public final class MergingRecord implements Record {
+public final class SelectableRecord implements Record {
     private RecordComparator comparator;
     private Record recordA;
     private Record recordB;
@@ -40,7 +40,6 @@ public final class MergingRecord implements Record {
         this.recordA = recordA;
         this.recordB = recordB;
         this.comparator = comparator;
-        this.comparator.setLeft(recordA);
     }
 
     @Override
@@ -103,7 +102,11 @@ public final class MergingRecord implements Record {
         return selectedRecord.getLong256A(col);
     }
 
-    // todo: check what to do with symbols
+    @Override
+    public CharSequence getSym(int col) {
+        // todo: check what to do with symbols. is this working? UnionRecord does not support symbols at all. for a reason?
+        return selectedRecord.getSym(col);
+    }
 
     @Override
     public Long256 getLong256B(int col) {
@@ -178,5 +181,9 @@ public final class MergingRecord implements Record {
     
     void selectB() {
         selectedRecord = recordB;
+    }
+
+    void resetComparatorLeft() {
+        this.comparator.setLeft(recordA);
     }
 }
