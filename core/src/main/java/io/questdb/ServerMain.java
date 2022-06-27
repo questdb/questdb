@@ -47,7 +47,9 @@ import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import sun.misc.Signal;
 
+import javax.management.*;
 import java.io.*;
+import java.lang.management.ManagementFactory;
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.locks.LockSupport;
@@ -112,6 +114,8 @@ public class ServerMain {
             log.errorW().$(sce.getMessage()).$();
             throw sce;
         }
+
+        setTotalPhysicalMemorySize(log, configuration);
 
         final CairoConfiguration cairoConfiguration = configuration.getCairoConfiguration();
 
@@ -289,6 +293,38 @@ public class ServerMain {
             log.errorW().$((Sinkable) e).$();
             LockSupport.parkNanos(10000000L);
             System.exit(55);
+        }
+    }
+
+    private static void setTotalPhysicalMemorySize(Log log, ServerConfiguration configuration) {
+        try {
+            MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
+
+            log.info().$("Java max memory: ").$(Runtime.getRuntime().maxMemory()).$();
+
+            long configuredMaxMalloc = configuration.getCairoConfiguration().getOutOfHeapMallocMemoryLimit();
+            if (configuredMaxMalloc == 0) {
+
+                Object memSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "TotalPhysicalMemorySize");
+                long memSize = Numbers.parseLong(memSizeAttribute.toString());
+                log.info().$("physical memory: ").$(memSize).$();
+
+                Object swapSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "TotalSwapSpaceSize");
+                long swapSize = Numbers.parseLong(swapSizeAttribute.toString());
+                log.info().$("swap memory: ").$(swapSize).$();
+
+                // Leave at least 2GB for OS
+                long gb = 2 * 1024L * 1024L * 1024L;
+
+                long maxMallocMemory = Math.min((long) ((memSize + swapSize) * 0.9), memSize + swapSize - 2 * gb - Runtime.getRuntime().maxMemory());
+                log.info().$("Setting malloc memory limit: ").$(maxMallocMemory).$();
+
+                Unsafe.setMallocMemoryLimit(maxMallocMemory);
+            } else if (configuredMaxMalloc > 0) {
+                Unsafe.setMallocMemoryLimit(configuredMaxMalloc);
+            }
+        } catch (Throwable e) {
+            log.info().$("Will not set malloc memory limit, unable to detect runtime memory limits").$();
         }
     }
 

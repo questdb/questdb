@@ -42,7 +42,6 @@ public interface CairoConfiguration {
     long O_ASYNC = 0x40;
     long O_SYNC = 0x80;
     long O_DIRECT = 0x4000;
-
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
     boolean enableTestFactories();
@@ -180,6 +179,8 @@ public interface CairoConfiguration {
     int getO3PartitionUpdateQueueCapacity();
 
     int getO3PurgeDiscoveryQueueCapacity();
+
+    long getOutOfHeapMallocMemoryLimit();
 
     int getPageFrameReduceColumnListCapacity();
 

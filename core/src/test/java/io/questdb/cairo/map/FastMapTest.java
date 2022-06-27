@@ -228,7 +228,7 @@ public class FastMapTest extends AbstractCairoTest {
 
         // These are default FastMap configuration for a join
         try (FastMap map = new FastMap(4194304, keyTypes, valueTypes, 2097152, 0.5, 10000)) {
-            for (int i = 0; i < 40_000_000; i++) {
+            for (int i = 0; i < 30_000_000; i++) {
                 MapKey key = map.withKey();
                 key.putLong(i / 151);
                 key.putInt((i + 15) % 269);

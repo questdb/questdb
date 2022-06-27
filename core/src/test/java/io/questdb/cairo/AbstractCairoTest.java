@@ -104,6 +104,7 @@ public class AbstractCairoTest {
     protected static double columnPurgeRetryDelayMultiplier = -1;
     protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
+    protected static int dataAppendPageSize = -1;
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -318,6 +319,11 @@ public class AbstractCairoTest {
             public RostiAllocFacade getRostiAllocFacade() {
                 return rostiAllocFacade != null? rostiAllocFacade : super.getRostiAllocFacade();
             }
+
+            @Override
+            public int getO3ColumnMemorySize() {
+                return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -373,6 +379,7 @@ public class AbstractCairoTest {
         columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
+        dataAppendPageSize = -1;
     }
 
     protected static void configureForBackups() throws IOException {

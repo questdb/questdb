@@ -193,6 +193,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
         Assert.assertEquals(1, configuration.getCairoConfiguration().getPartitionPurgeListCapacity());
         Assert.assertEquals(CairoConfiguration.O_NONE, configuration.getCairoConfiguration().getWriterFileOpenOpts());
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getOutOfHeapMallocMemoryLimit());
 
         Assert.assertEquals(0, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineUdpReceiverConfiguration().getPort());
@@ -856,6 +857,8 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewColumns());
             Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
             Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
+
+            Assert.assertEquals((long)(3.5 * 1024L * 1024L * 1024L), configuration.getCairoConfiguration().getOutOfHeapMallocMemoryLimit());
         }
     }
 

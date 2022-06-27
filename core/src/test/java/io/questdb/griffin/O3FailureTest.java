@@ -969,6 +969,7 @@ public class O3FailureTest extends AbstractO3Test {
     @Test
     public void testPartitionedWithAllocationCallLimit() throws Exception {
         counter.set(0);
+        maxUncommittedRows = 1000000;
         executeWithPool(0, O3FailureTest::testPartitionedWithAllocationCallLimit0, new FilesFacadeImpl() {
             @Override
             public boolean allocate(long fd, long size) {

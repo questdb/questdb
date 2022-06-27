@@ -397,6 +397,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxFileNameLength;
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
+    private final long outOfHeapMemoryAllocationLimit;
 
     public PropServerConfiguration(
             String root,
@@ -427,6 +428,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
+        this.outOfHeapMemoryAllocationLimit = (long)(getDouble(properties, env, PropertyKey.CAIRO_OUT_OF_HEAP_MEMORY_ALLOC_LIMIT, 0) * 1024L * 1024L * 1024L);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
@@ -1783,6 +1785,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropCairoConfiguration implements CairoConfiguration {
+
+        @Override
+        public long getOutOfHeapMallocMemoryLimit() {
+            return outOfHeapMemoryAllocationLimit;
+        }
 
         @Override
         public boolean enableTestFactories() {

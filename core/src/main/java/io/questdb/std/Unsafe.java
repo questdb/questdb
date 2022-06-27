@@ -40,6 +40,7 @@ public final class Unsafe {
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
     static final AtomicLong MEM_USED = new AtomicLong(0);
+    static final AtomicLong RAM_USED = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
     private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
@@ -50,6 +51,11 @@ public final class Unsafe {
     //#endif
     private static final AnonymousClassDefiner anonymousClassDefiner;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
+    private static long MAX_MEM = Long.MAX_VALUE;
+
+    public static void setMallocMemoryLimit(long maxMallocMemory) {
+        MAX_MEM = maxMallocMemory;
+    }
 
     static {
         try {
@@ -172,6 +178,7 @@ public final class Unsafe {
         getUnsafe().freeMemory(ptr);
         FREE_COUNT.incrementAndGet();
         recordMemAlloc(-size, memoryTag);
+        RAM_USED.addAndGet(-size);
     }
 
     public static boolean getBool(long address) {
@@ -213,12 +220,17 @@ public final class Unsafe {
 
     public static long malloc(long size, int memoryTag) {
         try {
+            long ram = RAM_USED.addAndGet(size);
+            if (ram > MAX_MEM) {
+                RAM_USED.addAndGet(-size);
+                throw new OutOfMemoryError(String.format("Total mallocated %,d exceeded configured limit of %,d", ram, MAX_MEM));
+            }
             long ptr = getUnsafe().allocateMemory(size);
             recordMemAlloc(size, memoryTag);
             MALLOC_COUNT.incrementAndGet();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            System.err.println("Unsafe.malloc() OutOfMemoryError, mem_used=" + MEM_USED.get()
+            System.err.println("Unsafe.malloc() OutOfMemoryError, ram_used=" + RAM_USED.get()
                     + ", size=" + size + ", memoryTag=" + memoryTag);
             throw oom;
         }
@@ -226,12 +238,19 @@ public final class Unsafe {
 
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         try {
+            long size = -oldSize + newSize;
+            long ram = RAM_USED.addAndGet(size);
+            if (ram > MAX_MEM) {
+                RAM_USED.addAndGet(-size);
+                throw new OutOfMemoryError(String.format("Total mallocated %,d exceeded configured limit of %,d", ram, MAX_MEM));
+            }
+
             long ptr = getUnsafe().reallocateMemory(address, newSize);
-            recordMemAlloc(-oldSize + newSize, memoryTag);
+            recordMemAlloc(size, memoryTag);
             REALLOC_COUNT.incrementAndGet();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            System.err.println("Unsafe.realloc() OutOfMemoryError, mem_used=" + MEM_USED.get()
+            System.err.println("Unsafe.realloc() OutOfMemoryError, ram_used=" + RAM_USED.get()
                     + ", old_size=" + oldSize + ", new_size=" + newSize + ", memoryTag=" + memoryTag);
             throw oom;
         }

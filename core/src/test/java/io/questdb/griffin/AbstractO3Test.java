@@ -60,6 +60,7 @@ public class AbstractO3Test {
     public static TemporaryFolder temp = new TemporaryFolder();
     protected static CharSequence root;
     protected static int dataAppendPageSize = -1;
+    protected static int maxUncommittedRows = -1;
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -89,6 +90,7 @@ public class AbstractO3Test {
     public void tearDown() {
         TestUtils.removeTestPath(root);
         dataAppendPageSize = -1;
+        maxUncommittedRows = -1;
     }
 
     protected static void assertIndexConsistency(
@@ -280,6 +282,11 @@ public class AbstractO3Test {
                     public int getO3ColumnMemorySize() {
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
+
+                    @Override
+                    public int getMaxUncommittedRows() {
+                        return maxUncommittedRows > 0 ? maxUncommittedRows : super.getMaxUncommittedRows();
+                    }
                 };
 
                 TestUtils.execute(pool, runnable, configuration);
@@ -329,6 +336,11 @@ public class AbstractO3Test {
                     @Override
                     public int getO3PurgeDiscoveryQueueCapacity() {
                         return 0;
+                    }
+
+                    @Override
+                    public int getMaxUncommittedRows() {
+                        return maxUncommittedRows > 0 ? maxUncommittedRows : super.getMaxUncommittedRows();
                     }
                 };
                 TestUtils.execute(null, runnable, configuration);

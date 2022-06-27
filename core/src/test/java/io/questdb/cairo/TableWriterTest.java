@@ -2847,7 +2847,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 for (int i = 0, n = w.columns.size(); i < n; i++) {
                     MemoryMA m = w.columns.getQuick(i);
                     if (m != null) {
-                        Assert.assertEquals(configuration.getDataAppendPageSize(), m.getExtendSegmentSize());
+                        Assert.assertTrue(configuration.getDataAppendPageSize() >= m.getExtendSegmentSize());
                     }
                 }
             }
@@ -3156,6 +3156,11 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public FilesFacade getFilesFacade() {
                 return ff;
+            }
+
+            @Override
+            public int getMaxUncommittedRows() {
+                return 500_000;
             }
         }, PRODUCT, partitionBy)
                 .col("productId", ColumnType.INT)
@@ -3888,7 +3893,6 @@ public class TableWriterTest extends AbstractCairoTest {
 
     private void testSetAppendPositionFailure() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
 
             class X extends FilesFacadeImpl {
                 long fd = -1;
@@ -3910,14 +3914,24 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
             }
             final X ff = new X();
+
+            DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff;
+                }
+
+                @Override
+                public int getMaxUncommittedRows() {
+                    return 500_000;
+                }
+            };
+            CairoTestUtils.createAllTable(configuration, PartitionBy.NONE);
+
             testAppendNulls(new Rnd(), TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z"));
             try {
-                new TableWriter(new DefaultCairoConfiguration(root) {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
-                }, "all", metrics);
+
+                new TableWriter(configuration, "all", metrics);
                 Assert.fail();
             } catch (CairoException ignore) {
             }

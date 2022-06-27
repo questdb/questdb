@@ -193,6 +193,7 @@ public class TableWriter implements Closeable {
     private long commitIntervalDefault;
     private long commitInterval;
     private UpdateOperator updateOperator;
+    private final boolean o3supported;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
@@ -272,6 +273,7 @@ public class TableWriter implements Closeable {
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
+            this.o3supported = PartitionBy.isPartitioned(partitionBy);
             this.txWriter = new TxWriter(ff).ofRW(path, partitionBy);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
@@ -457,7 +459,7 @@ public class TableWriter implements Closeable {
         // create column files
         if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
             try {
-                openNewColumnFiles(name, isIndexed, indexValueBlockCapacity);
+                openNewColumnFiles(name, type, isIndexed, indexValueBlockCapacity);
             } catch (CairoException e) {
                 runFragile(RECOVER_FROM_COLUMN_OPEN_FAILURE, name, e);
             }
@@ -2063,25 +2065,27 @@ public class TableWriter implements Closeable {
         final MemoryCARW oooSecondary;
         final MemoryCARW oooPrimary2;
         final MemoryCARW oooSecondary2;
+        final long memSize = calculateColumnDefaultMemorySize(o3ColumnMemorySize, type);
 
         if (type > 0) {
             primary = Vm.getMAInstance();
-            oooPrimary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
-            oooPrimary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
 
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.BINARY:
-                case ColumnType.STRING:
-                    secondary = Vm.getMAInstance();
-                    oooSecondary = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
-                    oooSecondary2 = Vm.getCARWInstance(o3ColumnMemorySize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
-                    break;
-                default:
-                    secondary = null;
-                    oooSecondary = null;
-                    oooSecondary2 = null;
-                    break;
-            }
+                oooPrimary = o3supported ? Vm.getCARWInstance(memSize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3) : NullMemory.INSTANCE;
+                oooPrimary2 = o3supported ? Vm.getCARWInstance(memSize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3) : NullMemory.INSTANCE;
+
+                switch (ColumnType.tagOf(type)) {
+                    case ColumnType.BINARY:
+                    case ColumnType.STRING:
+                        secondary = Vm.getMAInstance();
+                        oooSecondary = o3supported ? Vm.getCARWInstance(memSize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3) : NullMemory.INSTANCE;
+                        oooSecondary2 = o3supported ? Vm.getCARWInstance(memSize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3) : NullMemory.INSTANCE;
+                        break;
+                    default:
+                        secondary = null;
+                        oooSecondary = null;
+                        oooSecondary2 = null;
+                        break;
+                }
         } else {
             primary = secondary = NullMemory.INSTANCE;
             oooPrimary = oooSecondary = oooPrimary2 = oooSecondary2 = NullMemory.INSTANCE;
@@ -2090,17 +2094,27 @@ public class TableWriter implements Closeable {
         int baseIndex = getPrimaryColumnIndex(index);
         columns.extendAndSet(baseIndex, primary);
         columns.extendAndSet(baseIndex + 1, secondary);
+
         o3Columns.extendAndSet(baseIndex, oooPrimary);
         o3Columns.extendAndSet(baseIndex + 1, oooSecondary);
         o3Columns2.extendAndSet(baseIndex, oooPrimary2);
         o3Columns2.extendAndSet(baseIndex + 1, oooSecondary2);
-        configureNullSetters(nullSetters, type, primary, secondary);
         configureNullSetters(o3NullSetters, type, oooPrimary, oooSecondary);
+
+        configureNullSetters(nullSetters, type, primary, secondary);
 
         if (indexFlag) {
             indexers.extendAndSet(index, new SymbolColumnIndexer());
         }
         rowValueIsNotNull.add(0);
+    }
+
+    private long calculateColumnDefaultMemorySize(long max, int type) {
+        final long typeSize = ColumnType.isVariableLength(type) ? Integer.BYTES : ColumnType.sizeOf(type);
+        // If column type smaller than LONG, allocate less
+        final long maxPerType = typeSize < Long.BYTES ? max * typeSize / Long.BYTES : max;
+        final long memSize = Math.min(maxPerType, typeSize * metadata.getMaxUncommittedRows());
+        return Math.max(memSize, ff.getPageSize());
     }
 
     private void configureColumnMemory() {
@@ -3844,14 +3858,15 @@ public class TableWriter implements Closeable {
         o3TimestampMem.putLong128(timestamp, getO3RowCount0());
     }
 
-    private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
+    private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int columnType, int pathTrimToLen) {
         MemoryMA mem1 = getPrimaryColumn(columnIndex);
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
+        long pageSize = calculateColumnDefaultMemorySize(configuration.getDataAppendPageSize(), columnType);
 
         try {
             mem1.of(ff,
                     dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                    configuration.getDataAppendPageSize(),
+                    pageSize,
                     -1,
                     MemoryTag.MMAP_TABLE_WRITER,
                     configuration.getWriterFileOpenOpts()
@@ -3860,7 +3875,7 @@ public class TableWriter implements Closeable {
                 mem2.of(
                         ff,
                         iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                        configuration.getDataAppendPageSize(),
+                        pageSize,
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
                         configuration.getWriterFileOpenOpts()
@@ -3882,7 +3897,7 @@ public class TableWriter implements Closeable {
         txWriter.openFirstPartition(ts);
     }
 
-    private void openNewColumnFiles(CharSequence name, boolean indexFlag, int indexValueBlockCapacity) {
+    private void openNewColumnFiles(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity) {
         try {
             // open column files
             long partitionTimestamp = txWriter.getLastPartitionTimestamp();
@@ -3899,7 +3914,7 @@ public class TableWriter implements Closeable {
                 createIndexFiles(name, columnNameTxn, indexValueBlockCapacity, plen, true);
             }
 
-            openColumnFiles(name, columnNameTxn, columnIndex, plen);
+            openColumnFiles(name, columnNameTxn, columnIndex, type, plen);
             if (txWriter.getTransientRowCount() > 0) {
                 // write top offset to column version file
                 columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, columnNameTxn, txWriter.getTransientRowCount());
@@ -3933,7 +3948,8 @@ public class TableWriter implements Closeable {
 
             long partitionTimestamp = txWriter.getPartitionTimestampLo(timestamp);
             for (int i = 0; i < columnCount; i++) {
-                if (metadata.getColumnType(i) > 0) {
+                int columnType = metadata.getColumnType(i);
+                if (columnType > 0) {
                     final CharSequence name = metadata.getColumnName(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, i);
                     final ColumnIndexer indexer = metadata.isColumnIndexed(i) ? indexers.getQuick(i) : null;
@@ -3947,7 +3963,7 @@ public class TableWriter implements Closeable {
                         indexer.closeSlider();
                     }
 
-                    openColumnFiles(name, columnNameTxn, i, plen);
+                    openColumnFiles(name, columnNameTxn, i, columnType, plen);
                     columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, i);
                     columnTops.extendAndSet(i, columnTop);
 
