@@ -295,7 +295,7 @@ public class VacuumColumnVersionTest extends AbstractGriffinTest {
                 }
 
                 runPurgeJob(purgeJob);
-                String[] partitions = new String[]{"1970-02-01"};
+                String[] partitions = new String[]{"1970-02-01.2"};
                 String[] files = {"x.d"};
                 assertFilesExist(partitions, "testPurge", files, ".2", true);
 
