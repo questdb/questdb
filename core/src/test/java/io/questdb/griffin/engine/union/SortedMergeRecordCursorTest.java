@@ -25,14 +25,16 @@
 package io.questdb.griffin.engine.union;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
 import org.junit.Test;
 
-public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
+public final class SortedMergeRecordCursorTest extends AbstractGriffinTest {
 
     private static final GenericRecordMetadata METADATA = new GenericRecordMetadata()
             .add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
@@ -94,12 +96,11 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
         }
     }
 
-    static class TestRecordCursor implements RecordCursor {
+    static class TestRecordCursor implements NoRandomAccessRecordCursor {
         private final int recordCount;
         private final boolean knownSize;
         private int remaining;
         private final TestRecord leftRecord = new TestRecord();
-        private final TestRecord rightRecord = new TestRecord();
         private final Rnd rnd;
         private final long s0;
         private final long s1;
@@ -139,23 +140,11 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
             }
             if (remaining == recordCount) {
                 leftRecord.ready();
-                rightRecord.ready();
             }
             remaining--;
             int nextInc = rnd.nextInt(10);
             leftRecord.value += nextInc;
-            rightRecord.value = leftRecord.value;
             return true;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return rightRecord;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException("rowId not supported");
         }
 
         @Override
@@ -164,7 +153,6 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
             remaining = recordCount;
             rnd.reset(s0, s1);
             leftRecord.notReady();
-            rightRecord.notReady();
         }
 
         @Override
@@ -195,7 +183,7 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
             TestRecordCursor cursor = new TestRecordCursor();
             GenericRecordMetadata metadata = new GenericRecordMetadata();
             metadata.add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
-            assertCursor(SINGLE_RESULT, cursor, metadata, true);
+            assertCursor(SINGLE_RESULT, false, true, true, false, cursor, METADATA, true);
         });
     }
 
@@ -280,17 +268,18 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
                 Assert.assertEquals(expectedSize, mergeSortRecordCursor.size());
 
                 // check cursor yields expected records
-                assertCursor(expectedResult, mergeSortRecordCursor, METADATA, true);
+                mergeSortRecordCursor.toTop();
+                assertCursor(expectedResult, false, true, expectedSize != -1, false, mergeSortRecordCursor, METADATA, true);
                 assertAllExhausted(cursorA, cursorB, mergeSortRecordCursor);
 
                 // check toTop() rewinds cursor
                 mergeSortRecordCursor.toTop();
-                assertCursor(expectedResult, mergeSortRecordCursor, METADATA, true);
+                assertCursor(expectedResult, false, true, expectedSize != -1, false, mergeSortRecordCursor, METADATA, true);
                 assertAllExhausted(cursorA, cursorB, mergeSortRecordCursor);
 
                 // of() rewinds upstream cursors to top
                 mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
-                assertCursor(expectedResult, mergeSortRecordCursor, METADATA, true);
+                assertCursor(expectedResult, false, true, expectedSize != -1, false, mergeSortRecordCursor, METADATA, true);
                 assertAllExhausted(cursorA, cursorB, mergeSortRecordCursor);
             }
             // assert upstream cursors are closed

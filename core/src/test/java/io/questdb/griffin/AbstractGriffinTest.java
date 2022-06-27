@@ -63,7 +63,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             boolean sizeCanBeVariable,
             RecordCursor cursor,
             RecordMetadata metadata,
-            boolean framingSupported
+            boolean fragmentedSymbolTables
     ) {
         return assertCursor(
                 expected,
@@ -76,7 +76,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
                 sink,
                 printer,
                 rows,
-                framingSupported
+                fragmentedSymbolTables
         );
     }
 
