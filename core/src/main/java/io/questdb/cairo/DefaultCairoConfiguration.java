@@ -616,6 +616,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlSmallMapKeyCapacity() {
+        return 64;
+    }
+
+    @Override
     public int getSqlMapMaxPages() {
         return 1024;
     }
