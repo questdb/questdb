@@ -52,7 +52,7 @@ public class FastMap implements Map {
     private final int initialKeyCapacity;
     private final int initialPageSize;
     private long capacity;
-    // Offsets are shifted by 1 (-1 -> 0, 0 -> 1, etc.), so that we can zero the memory when clearing/rehashing.
+    // Offsets are shifted by +1 (-1 -> 0, 0 -> 1, etc.), so that we can zero the memory when clearing/rehashing.
     private DirectLongList offsets;
     private long kStart;
     private long kLimit;
