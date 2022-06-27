@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -336,6 +336,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             for (int i = 0; i < maxSamplePeriodSize && currentTs <= lastInDataTimestamp; i++) {
                 currentTs = nextTs;
                 nextTs = getNextTimestamp();
+                assert nextTs != currentTs;
                 samplePeriodAddress.add(currentTs);
             }
             return (int) samplePeriodAddress.size();

@@ -136,7 +136,10 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         long lastTxn = txReader.getTxn();
         for (int i = hi - 2, n = lo - 1; i > n; i -= 2) {
             long nameTxn = partitionList.get(i);
-            boolean rangeUnlocked = txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
+
+            // If last committed transaction number is 4, TableWriter can write partition with ending .4 and .3
+            // If the version on disk is .2 (nameTxn == 3) can remove it if the lastTxn > 3, e.g. when nameTxn < lastTxn
+            boolean rangeUnlocked = nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
             if (rangeUnlocked) {
                 // nameTxn can be deleted
                 // -1 here is to compensate +1 added when partition version parsed from folder name

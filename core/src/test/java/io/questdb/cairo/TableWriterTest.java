@@ -2559,7 +2559,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int rmdir(Path from) {
-                if (Chars.endsWith(from, "2013-03-12")) {
+                if (Chars.endsWith(from, "2013-03-12.0")) {
                     removeAttempted = true;
                     return 1;
                 }
@@ -2610,7 +2610,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             @Override
             public int rmdir(Path path) {
-                if (Chars.endsWith(path, "2013-03-12")) {
+                if (Chars.endsWith(path, "2013-03-12.0")) {
                     removeAttempted = true;
                     return 1;
                 }
