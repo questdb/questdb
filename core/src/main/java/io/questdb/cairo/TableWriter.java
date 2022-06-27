@@ -2110,10 +2110,11 @@ public class TableWriter implements Closeable {
     }
 
     private long calculateColumnDefaultMemorySize(long max, int type) {
-        final long typeSize = ColumnType.isVariableLength(type) ? Integer.BYTES : ColumnType.sizeOf(type);
-        // If column type smaller than LONG, allocate less
+        final long typeSize = ColumnType.isVariableLength(type) ? Long.BYTES : ColumnType.sizeOf(type);
+        // If column type smaller than LONG, allocate proportionally less
         final long maxPerType = typeSize < Long.BYTES ? max * typeSize / Long.BYTES : max;
-        final long memSize = Math.min(maxPerType, typeSize * metadata.getMaxUncommittedRows());
+        int maxUncommittedRows = Math.max(metadata.getMaxUncommittedRows(), 10_000);
+        final long memSize = Math.min(maxPerType, typeSize * maxUncommittedRows);
         return Math.max(memSize, ff.getPageSize());
     }
 

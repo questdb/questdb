@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -58,7 +59,7 @@ public class MemoryDetectTest {
             Unsafe.malloc(gb, MemoryTag.NATIVE_DEFAULT);
             Assert.fail();
         } catch (OutOfMemoryError err) {
-            Assert.assertEquals("Total mallocated 1,073,741,824 exceeded configured limit of 536,870,912", err.getMessage());
+            TestUtils.assertContains(err.getMessage(), "exceeded configured limit of 536,870,912");
         }
     }
 }
