@@ -36,6 +36,9 @@ sudo mount /var/lib/questdb
 
 sudo yum install -y jose jq
 
+groupadd -g 10001 questdb
+useradd -u 10001 -g 10001 -d /var/lib/questdb -M -s /sbin/nologin questdb
+
 # questb binary
 wget https://github.com/questdb/questdb/releases/download/$QUESTDB_VERSION/questdb-$QUESTDB_VERSION-no-jre-bin.tar.gz
 tar xf questdb-$QUESTDB_VERSION-no-jre-bin.tar.gz
@@ -44,5 +47,9 @@ cp -f questdb-$QUESTDB_VERSION-no-jre-bin/questdb.jar /usr/local/bin/questdb.jar
 # config
 sudo mv /tmp/assets/cloudwatch.template.json /etc/questdb/
 sudo mv /tmp/assets/server.conf /etc/questdb/
+sudo mkdir -p /var/lib/questdb/conf/
+sudo cp /etc/questdb/server.conf /var/lib/questdb/conf/server.conf
 sudo mv /tmp/scripts/1-per-boot.sh /var/lib/cloud/scripts/per-boot/
 sudo mv /tmp/assets/systemd.service /usr/lib/systemd/system/questdb.service
+sudo mkdir -p /etc/systemd/system/questdb.service.d/
+sudo mv /tmp/assets/override.conf /etc/systemd/system/questdb.service.d/override.conf
