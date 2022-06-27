@@ -34,6 +34,9 @@ import org.junit.Test;
 
 public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
 
+    private static final GenericRecordMetadata METADATA = new GenericRecordMetadata()
+            .add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
+
     // 100 records with default seed
     private static final String SINGLE_RESULT = "foo\n0\n8\n11\n12\n13\n22\n24\n25\n31\n39\n45\n47\n51\n54\n55\n57\n63\n" +
             "70\n75\n79\n86\n93\n97\n104\n111\n111\n111\n119\n124\n128\n133\n134\n138\n147\n155\n164\n171\n179\n182\n190\n" +
@@ -42,7 +45,7 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
             "388\n397\n402\n407\n410\n416\n417\n417\n420\n428\n432\n436\n441\n443\n447\n450\n";
 
     // 100 records with default seed merged with 100 records with swapped seed
-    private static final String HAPPY_MERGED_RESULT = "foo\n0\n8\n8\n11\n12\n13\n14\n22\n22\n24\n25\n28\n31\n33\n37\n39\n41\n43\n" +
+    private static final String EQUAL_MERGED_RESULT = "foo\n0\n8\n8\n11\n12\n13\n14\n22\n22\n24\n25\n28\n31\n33\n37\n39\n41\n43\n" +
             "43\n45\n45\n47\n51\n52\n54\n55\n57\n58\n63\n63\n69\n70\n72\n75\n79\n81\n86\n87\n87\n87\n90\n90\n93\n94\n96\n97\n" +
             "100\n102\n104\n108\n110\n111\n111\n111\n115\n117\n119\n120\n124\n128\n128\n129\n131\n133\n134\n138\n139\n141\n147\n" +
             "147\n148\n155\n157\n164\n164\n171\n171\n171\n177\n179\n182\n184\n184\n185\n190\n190\n192\n193\n194\n194\n195\n199\n" +
@@ -52,6 +55,22 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
             "345\n352\n352\n358\n361\n366\n368\n370\n373\n374\n376\n382\n384\n388\n391\n394\n397\n398\n402\n402\n404\n407\n408\n" +
             "410\n414\n415\n416\n417\n417\n420\n421\n424\n428\n432\n436\n441\n443\n447\n450\n";
 
+    // 50 records with default seed merged with 100 records with swapped seed
+    private static final String LEFT_SIDE_SMALLER_MERGED_RESULT = "foo\n0\n8\n8\n11\n12\n13\n14\n22\n22\n24\n25\n28\n31\n33\n37\n39\n41\n43\n43\n45\n45\n47\n" +
+            "51\n52\n54\n55\n57\n58\n63\n63\n69\n70\n72\n75\n79\n81\n86\n87\n87\n87\n90\n90\n93\n94\n96\n97\n100\n102\n104\n108\n" +
+            "110\n111\n111\n111\n115\n117\n119\n120\n124\n128\n128\n129\n131\n133\n134\n138\n139\n141\n147\n147\n148\n155\n157\n" +
+            "164\n164\n171\n171\n171\n177\n179\n182\n184\n184\n185\n190\n190\n192\n193\n194\n194\n195\n199\n200\n202\n204\n208\n" +
+            "209\n213\n213\n217\n220\n229\n229\n237\n238\n244\n247\n248\n255\n263\n263\n266\n271\n273\n278\n279\n282\n287\n287\n" +
+            "289\n292\n300\n307\n307\n315\n322\n322\n329\n329\n335\n340\n341\n345\n352\n358\n366\n370\n373\n376\n384\n391\n394\n" +
+            "398\n402\n404\n408\n414\n415\n421\n424\n";
+
+    private static final String RIGHT_SIDE_SMALLER_MERGED_RESULT = "foo\n0\n8\n8\n11\n12\n13\n14\n22\n22\n24\n25\n28\n31\n33\n37\n39\n41\n43\n43\n45\n45\n47\n" +
+            "51\n52\n54\n55\n57\n58\n63\n63\n69\n70\n72\n75\n79\n81\n86\n87\n87\n87\n90\n90\n93\n94\n96\n97\n100\n102\n104\n108\n" +
+            "110\n111\n111\n111\n115\n117\n119\n120\n124\n128\n128\n129\n131\n133\n134\n138\n139\n141\n147\n147\n148\n155\n157\n" +
+            "164\n164\n171\n171\n171\n177\n179\n182\n184\n184\n185\n190\n190\n192\n193\n194\n194\n195\n199\n200\n202\n204\n208\n" +
+            "209\n213\n213\n217\n219\n226\n229\n231\n231\n239\n242\n251\n259\n267\n274\n280\n286\n290\n298\n300\n306\n306\n306\n" +
+            "310\n315\n318\n322\n330\n335\n338\n341\n344\n345\n352\n361\n368\n374\n382\n388\n397\n402\n407\n410\n416\n417\n417\n" +
+            "420\n428\n432\n436\n441\n443\n447\n450\n";
     private static final String EMPTY_RESULT = "foo\n";
 
     static class TestRecord implements Record {
@@ -182,128 +201,107 @@ public final class SortedMergeRecordCursorTest extends AbstractCairoTest {
 
     @Test
     public void testHappyMerging() throws Exception {
-        assertMemoryLeak(() -> {
-            TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
-            TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
+        TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
+        TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
 
-            assertScenarios(cursorA, cursorB, HAPPY_MERGED_RESULT, 200);
-        });
-    }
-
-    @Test
-    public void testOfRewindsToTop() throws Exception {
-        assertMemoryLeak(() -> {
-            TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
-            TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
-
-            assertScenarios(cursorA, cursorB, HAPPY_MERGED_RESULT, 200);
-        });
-    }
-
-    @Test
-    public void testToTopHappy() throws Exception {
-        assertMemoryLeak(() -> {
-            TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
-            TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
-
-            assertScenarios(cursorA, cursorB, HAPPY_MERGED_RESULT, 200);
-        });
+        assertScenarios(cursorA, cursorB, EQUAL_MERGED_RESULT, 200);
     }
 
     @Test
     public void testBothEmpty() throws Exception {
-        assertMemoryLeak(() -> {
-            TestRecordCursor cursorA = new TestRecordCursor(0, new Rnd(), true);
-            TestRecordCursor cursorB = new TestRecordCursor(0, new Rnd(), true);
+        TestRecordCursor cursorA = new TestRecordCursor(0, new Rnd(), true);
+        TestRecordCursor cursorB = new TestRecordCursor(0, new Rnd(), true);
 
-            assertScenarios(cursorA, cursorB, EMPTY_RESULT, 0);
-        });
+        assertScenarios(cursorA, cursorB, EMPTY_RESULT, 0);
     }
 
     @Test
     public void testAEmpty() throws Exception {
-        assertMemoryLeak(() -> {
-            TestRecordCursor cursorA = new TestRecordCursor(0, new Rnd(), true);
-            TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(), true);
+        TestRecordCursor cursorA = new TestRecordCursor(0, new Rnd(), true);
+        TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(), true);
 
-            assertScenarios(cursorA, cursorB, SINGLE_RESULT, 100);
-        });
+        assertScenarios(cursorA, cursorB, SINGLE_RESULT, 100);
+    }
+
+    @Test
+    public void testASmaller() throws Exception {
+        TestRecordCursor cursorA = new TestRecordCursor(50, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
+        TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
+
+        assertScenarios(cursorA, cursorB, LEFT_SIDE_SMALLER_MERGED_RESULT, 150);
+    }
+
+    @Test
+    public void testBSmaller() throws Exception {
+        TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
+        TestRecordCursor cursorB = new TestRecordCursor(50, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
+
+        assertScenarios(cursorA, cursorB, RIGHT_SIDE_SMALLER_MERGED_RESULT, 150);
     }
 
     @Test
     public void testBEmpty() throws Exception {
-        assertMemoryLeak(() -> {
-            TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(), true);
-            TestRecordCursor cursorB = new TestRecordCursor(0, new Rnd(), true);
+        TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(), true);
+        TestRecordCursor cursorB = new TestRecordCursor(0, new Rnd(), true);
 
-            assertScenarios(cursorA, cursorB, SINGLE_RESULT, 100);
-        });
+        assertScenarios(cursorA, cursorB, SINGLE_RESULT, 100);
     }
 
     @Test
     public void testAUnknownSize()  throws Exception {
-        assertMemoryLeak(() -> {
-            TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), false);
-            TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
+        TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), false);
+        TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
 
-            assertScenarios(cursorA, cursorB, HAPPY_MERGED_RESULT, -1);
-        });
+        assertScenarios(cursorA, cursorB, EQUAL_MERGED_RESULT, -1);
     }
 
     @Test
     public void testBUnknownSize() throws Exception {
-        assertMemoryLeak(() -> {
-            TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
-            TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), false);
+        TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
+        TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), false);
 
-            assertScenarios(cursorA, cursorB, HAPPY_MERGED_RESULT, -1);
-        });
+        assertScenarios(cursorA, cursorB, EQUAL_MERGED_RESULT, -1);
     }
 
     @Test
     public void testBothUnknownSize() throws Exception {
-        assertMemoryLeak(() -> {
-            TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), false);
-            TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), false);
+        TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), false);
+        TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), false);
 
-            assertScenarios(cursorA, cursorB, HAPPY_MERGED_RESULT, -1);
-        });
+        assertScenarios(cursorA, cursorB, EQUAL_MERGED_RESULT, -1);
     }
     
-    @Test
-    public void testClosesUpstreamCursors() throws Exception {
+    private void assertScenarios(TestRecordCursor cursorA, TestRecordCursor cursorB, String expectedResult, int expectedSize) throws Exception {
         assertMemoryLeak(() -> {
-            TestRecordCursor cursorA = new TestRecordCursor(100, new Rnd(0xdeadbeef, 0xdee4c0ed), true);
-            TestRecordCursor cursorB = new TestRecordCursor(100, new Rnd(0xdee4c0ed, 0xdeadbeef), true);
             try (SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor()) {
                 mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
+
+                // check cursor indicates expected size()
+                Assert.assertEquals(expectedSize, mergeSortRecordCursor.size());
+
+                // check cursor yields expected records
+                assertCursor(expectedResult, mergeSortRecordCursor, METADATA, true);
+                assertAllExhausted(cursorA, cursorB, mergeSortRecordCursor);
+
+                // check toTop() rewinds cursor
+                mergeSortRecordCursor.toTop();
+                assertCursor(expectedResult, mergeSortRecordCursor, METADATA, true);
+                assertAllExhausted(cursorA, cursorB, mergeSortRecordCursor);
+
+                // of() rewinds upstream cursors to top
+                mergeSortRecordCursor.of(cursorA, cursorB, new TestRecordComparator());
+                assertCursor(expectedResult, mergeSortRecordCursor, METADATA, true);
+                assertAllExhausted(cursorA, cursorB, mergeSortRecordCursor);
             }
+            // assert upstream cursors are closed
             Assert.assertTrue(cursorA.isClosed);
             Assert.assertTrue(cursorB.isClosed);
         });
     }
-
-    private void assertScenarios(TestRecordCursor cursorA, TestRecordCursor cursorB, String expectedResult, int expectedSize) {
-        SortedMergeRecordCursor mergeSortRecordCursor = new SortedMergeRecordCursor();
-        RecordComparator comparator = new TestRecordComparator();
-        mergeSortRecordCursor.of(cursorA, cursorB, comparator);
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(0, new TableColumnMetadata("foo", 0, ColumnType.LONG));
-
-        Assert.assertEquals(expectedSize, mergeSortRecordCursor.size());
-        assertCursor(expectedResult, mergeSortRecordCursor, metadata, true);
-
-        // check both cursors are fully exhausted
-        Assert.assertFalse(cursorA.hasNext());
-        Assert.assertFalse(cursorB.hasNext());
-        mergeSortRecordCursor.of(cursorA, cursorB, comparator);
-        assertCursor(expectedResult, mergeSortRecordCursor, metadata, true);
-
-        // check all cursors are fully exhausted
-        Assert.assertFalse(cursorA.hasNext());
-        Assert.assertFalse(cursorB.hasNext());
-        Assert.assertFalse(mergeSortRecordCursor.hasNext());
-        mergeSortRecordCursor.toTop();
-        assertCursor(expectedResult, mergeSortRecordCursor, metadata, true);
+    
+    private static void assertAllExhausted(RecordCursor...cursors) {
+        for (RecordCursor cursor : cursors) {
+            Assert.assertFalse(cursor.hasNext());
+        }
     }
 }

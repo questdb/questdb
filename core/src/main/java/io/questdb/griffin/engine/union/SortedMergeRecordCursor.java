@@ -93,7 +93,7 @@ public final class SortedMergeRecordCursor implements NoRandomAccessRecordCursor
             case BOTH_EXHAUSTED:
                 return false;
             default:
-                throw new AssertionError("cannot happen");
+                throw new AssertionError("unexpected state encountered. please open a new issue.");
         }
     }
 
