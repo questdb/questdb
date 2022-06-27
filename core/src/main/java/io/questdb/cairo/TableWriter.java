@@ -639,7 +639,7 @@ public class TableWriter implements Closeable {
                     boolean appendPartitionAttached = size() == 0 || getPartitionLo(nextMaxTimestamp) > getPartitionLo(txWriter.getMaxTimestamp());
 
                     txWriter.beginPartitionSizeUpdate();
-                    txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize);
+                    txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, -1L);
                     txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
                     txWriter.bumpTruncateVersion();
                     txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
@@ -2738,7 +2738,12 @@ public class TableWriter implements Closeable {
                             srcNameTxn = getPartitionNameTxnByIndex(partitionIndex);
                         } else {
                             srcDataMax = 0;
-                            srcNameTxn = -1;
+                            // A version needed to housekeep dropped partitions
+                            // When partition created without O3 merge, use `txn-1` as partition version.
+                            // `txn` version is used when partition is merged. Both `txn-1` and `txn` can
+                            // be written within the same commit when new partition initially written in order
+                            // and then O3 triggers a merge of the partition.
+                            srcNameTxn = txWriter.getTxn() - 1;
                         }
 
                         // We're appending onto the last partition.
@@ -4965,9 +4970,12 @@ public class TableWriter implements Closeable {
      */
     private void setStateForTimestamp(Path path, long timestamp, boolean updatePartitionInterval) {
         final long partitionTimestampHi = TableUtils.setPathForPartition(path, partitionBy, timestamp, true);
+        // When partition is create a txn name must always be set to purge dropped partitions.
+        // When partition is created outside O3 merge use `txn-1` as the version
+        long partitionTxnName = PartitionBy.isPartitioned(partitionBy) ? txWriter.getTxn() - 1 : -1;
         TableUtils.txnPartitionConditionally(
                 path,
-                txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestampHi)
+                txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestampHi, partitionTxnName)
         );
         if (updatePartitionInterval) {
             this.partitionTimestampHi = partitionTimestampHi;
