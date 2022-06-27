@@ -24,7 +24,7 @@ public class PGFunctionsTest extends BasePGTest {
                 try (CallableStatement st1 = connection.prepareCall("create table a (i int)")) {
                     st1.execute();
                 }
-
+                sink.clear();
                 long openFilesBefore = FilesFacadeImpl.INSTANCE.getOpenFileCount();
                 try (PreparedStatement ps = connection.prepareStatement("select * from tables()")) {
                     try (ResultSet rs = ps.executeQuery()) {
