@@ -70,6 +70,11 @@ public final class SortedMergeRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return true;
+    }
+
+    @Override
     public boolean fragmentedSymbolTables() {
         return true;
     }
