@@ -24,37 +24,31 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 
 public class RecoverVarIndex extends RebuildColumnBase {
     private static final Log LOG = LogFactory.getLog(RecoverVarIndex.class);
 
     @Override
-    protected boolean checkColumnType(BaseRecordMetadata metadata, int rebuildColumnIndex) {
-        return metadata.getColumnType(rebuildColumnIndex) == ColumnType.STRING;
+    protected boolean isSupportedColumn(RecordMetadata metadata, int columnIndex) {
+        return metadata.getColumnType(columnIndex) == ColumnType.STRING;
     }
 
     @Override
-    protected void rebuildColumn(
-            CharSequence columnName,
+    protected void doReindex(
+            ColumnVersionReader columnVersionReader, int columnWriterIndex, CharSequence columnName,
             CharSequence partitionName,
-            int indexValueBlockCapacity,
-            long partitionSize,
-            FilesFacade ff,
-            ColumnVersionReader columnVersionReader,
-            int columnIndex,
-            long partitionTimestamp,
-            long partitionNameTxn
+            long partitionNameTxn, long partitionSize, long partitionTimestamp, int indexValueBlockCapacity
     ) {
-        long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
-        long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
+        long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
+        long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
 
         if (columnTop == -1L) {
             LOG.info().$("not rebuilding column ").$(columnName).$(" in partition ").$ts(partitionTimestamp).$(", column not added to partition").$();

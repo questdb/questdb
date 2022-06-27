@@ -128,7 +128,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
      * Returns the column top without checking that column exists in the partition
      * @param partitionTimestamp timestamp of the partition
      * @param columnIndex column index
-     * @return column top in the partition or 0 if column does not exist in the partition or column exists with no colum top
+     * @return column top in the partition or 0 if column does not exist in the partition or column exists with no column top
      */
     public long getColumnTopQuick(long partitionTimestamp, int columnIndex) {
         int index = getRecordIndex(partitionTimestamp, columnIndex);
@@ -145,7 +145,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
      * All partitions after that will have 0 column top (column fully exists)
      * Exception is when O3 commit can overwrite column top for any partition where the column did not exist
      * with concrete column top value
-     * @param columnIndex colum index
+     * @param columnIndex column index
      * @return the partition timestamp where column added or Long.MIN_VALUE if column was present from table creation
      */
     public long getColumnTopPartitionTimestamp(int columnIndex) {
