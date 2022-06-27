@@ -33,18 +33,37 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class MapFactory {
+
     public static Map createMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @NotNull ColumnTypes valueTypes
     ) {
-        CharSequence mapType = configuration.getDefaultMapType();
+        return createMap(false, configuration, keyTypes, valueTypes);
+    }
+
+    public static Map createSmallMap(
+            CairoConfiguration configuration,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @NotNull ColumnTypes valueTypes
+    ) {
+        return createMap(true, configuration, keyTypes, valueTypes);
+    }
+
+    private static Map createMap(
+            boolean smallMap,
+            CairoConfiguration configuration,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @NotNull ColumnTypes valueTypes
+    ) {
+        final int keyCapacity = smallMap ? configuration.getSqlSmallMapKeyCapacity() : configuration.getSqlMapKeyCapacity();
+        final CharSequence mapType = configuration.getDefaultMapType();
         if (Chars.equalsLowerCaseAscii(mapType, "fast")) {
             return new FastMap(
                     configuration.getSqlMapPageSize(),
                     keyTypes,
                     valueTypes,
-                    configuration.getSqlMapKeyCapacity(),
+                    keyCapacity,
                     configuration.getSqlFastMapLoadFactor(),
                     configuration.getSqlMapMaxResizes());
         }
@@ -54,7 +73,7 @@ public class MapFactory {
                     configuration.getSqlMapPageSize(),
                     keyTypes,
                     valueTypes,
-                    configuration.getSqlMapKeyCapacity(),
+                    keyCapacity,
                     configuration.getSqlCompactMapLoadFactor(),
                     configuration.getSqlMapMaxResizes(),
                     configuration.getSqlMapMaxPages()
