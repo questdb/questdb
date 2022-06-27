@@ -787,14 +787,19 @@ public class UpdateOperator implements Closeable {
         path.trimTo(pathTrimToLen);
     }
 
-    private void rebuildIndexes(long partitionTimestamp, String tableName, TableWriterMetadata writerMetadata, TableWriter tableWriter) {
+    private void rebuildIndexes(
+            long partitionTimestamp,
+            String tableName,
+            TableWriterMetadata writerMetadata,
+            TableWriter tableWriter
+    ) {
         int pathTrimToLen = path.length();
         indexBuilder.of(path.concat(tableName), configuration);
         for (int i = 0, n = updateColumnIndexes.size(); i < n; i++) {
             int columnIndex = updateColumnIndexes.get(i);
             if (writerMetadata.isColumnIndexed(columnIndex)) {
                 CharSequence colName = writerMetadata.getColumnName(columnIndex);
-                indexBuilder.rebuildPartitionColumn(partitionTimestamp, colName, tableWriter);
+                indexBuilder.reindexAfterUpdate(partitionTimestamp, colName, tableWriter);
             }
         }
         indexBuilder.clear();

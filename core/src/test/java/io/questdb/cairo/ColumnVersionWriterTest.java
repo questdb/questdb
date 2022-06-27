@@ -56,28 +56,28 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 w.upsertDefaultTxnName(columnIndex, 123, partitionTimestamp);
 
                 // Verify
-                Assert.assertEquals(0, w.getColumnTop(partitionTimestamp, columnIndex + 1));
+                Assert.assertEquals(0, w.getColumnTopQuick(partitionTimestamp, columnIndex + 1));
                 Assert.assertEquals(partitionTimestamp, w.getColumnTopPartitionTimestamp(columnIndex));
                 Assert.assertEquals(123, w.getColumnNameTxn(partitionTimestamp, columnIndex));
-                Assert.assertEquals(987, w.getColumnTop(partitionTimestamp, columnIndex));
+                Assert.assertEquals(987, w.getColumnTopQuick(partitionTimestamp, columnIndex));
                 int recordIndex = w.getRecordIndex(partitionTimestamp, columnIndex);
                 Assert.assertEquals(123, w.getColumnNameTxnByIndex(recordIndex));
                 Assert.assertEquals(987, w.getColumnTopByIndex(recordIndex));
 
                 // Remove non-existing column top
                 w.removeColumnTop(partitionTimestamp, columnIndex + 1);
-                Assert.assertEquals(0, w.getColumnTop(partitionTimestamp, columnIndex + 1));
+                Assert.assertEquals(0, w.getColumnTopQuick(partitionTimestamp, columnIndex + 1));
 
                 Assert.assertEquals(partitionTimestamp, w.getColumnTopPartitionTimestamp(columnIndex));
                 Assert.assertEquals(123, w.getColumnNameTxn(partitionTimestamp, columnIndex));
-                Assert.assertEquals(987, w.getColumnTop(partitionTimestamp, columnIndex));
+                Assert.assertEquals(987, w.getColumnTopQuick(partitionTimestamp, columnIndex));
 
                 // Remove existing column top
                 w.removeColumnTop(partitionTimestamp, columnIndex);
 
                 Assert.assertEquals(partitionTimestamp, w.getColumnTopPartitionTimestamp(columnIndex));
                 Assert.assertEquals(123, w.getColumnNameTxn(partitionTimestamp, columnIndex));
-                Assert.assertEquals(0, w.getColumnTop(partitionTimestamp, columnIndex));
+                Assert.assertEquals(0, w.getColumnTopQuick(partitionTimestamp, columnIndex));
             }
         });
     }
@@ -98,7 +98,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
                 r.readSafe(configuration.getMicrosecondClock(), 1000);
                 for (int i = 0; i < 100; i++) {
-                    long colTop = r.getColumnTop(i, i % 10);
+                    long colTop = r.getColumnTopQuick(i, i % 10);
                     Assert.assertEquals(i % 2 == 0 ? i * 10 : 0, colTop);
                 }
 
@@ -140,13 +140,13 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(-1, w.getColumnNameTxn(day3, columnIndex1));
 
                 // Check column top values
-                Assert.assertEquals(15, w.getColumnTop(day1, columnIndex));
-                Assert.assertEquals(0, w.getColumnTop(day2, columnIndex));
-                Assert.assertEquals(987, w.getColumnTop(day3, columnIndex));
+                Assert.assertEquals(15, w.getColumnTopQuick(day1, columnIndex));
+                Assert.assertEquals(0, w.getColumnTopQuick(day2, columnIndex));
+                Assert.assertEquals(987, w.getColumnTopQuick(day3, columnIndex));
 
-                Assert.assertEquals(15, w.getColumnTop(day1, columnIndex1));
-                Assert.assertEquals(0, w.getColumnTop(day2, columnIndex1));
-                Assert.assertEquals(0, w.getColumnTop(day3, columnIndex1));
+                Assert.assertEquals(15, w.getColumnTopQuick(day1, columnIndex1));
+                Assert.assertEquals(0, w.getColumnTopQuick(day2, columnIndex1));
+                Assert.assertEquals(0, w.getColumnTopQuick(day3, columnIndex1));
             }
         });
     }
@@ -168,7 +168,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
                 r.readSafe(configuration.getMicrosecondClock(), 1000);
                 for (int i = 0; i < 100; i++) {
-                    long colTop = r.getColumnTop(i, i % 10);
+                    long colTop = r.getColumnTopQuick(i, i % 10);
                     Assert.assertEquals(i % 2 == 0 ? i * 10 : 0, colTop);
                 }
 

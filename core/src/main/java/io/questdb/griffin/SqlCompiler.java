@@ -2531,7 +2531,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(lexer.getPosition(), "EOF expected");
         }
 
-        rebuildIndex.rebuildPartitionColumn(partition, columnName);
+        rebuildIndex.reindex(partition, columnName);
         return compiledQuery.ofRepair();
     }
 

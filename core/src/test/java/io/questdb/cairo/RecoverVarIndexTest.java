@@ -118,7 +118,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
 
         checkRecoverVarIndex(createAlterInsertSql,
                 tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.NONE, tablePath, 0, -1L),
-                rebuildIndex -> rebuildIndex.rebuildColumn("str2"));
+                rebuildIndex -> rebuildIndex.reindexColumn("str2"));
     }
 
     @Test
@@ -160,7 +160,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
 
         checkRecoverVarIndex(createTableSql,
                 tablePath -> removeFileAtPartition("str1.i", PartitionBy.NONE, tablePath, 0, -1L),
-                rebuildIndex -> rebuildIndex.rebuildColumn("str1"));
+                rebuildIndex -> rebuildIndex.reindexColumn("str1"));
     }
 
     @Test
@@ -218,7 +218,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
 
         checkRecoverVarIndex(createTableSql,
                 tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
-                rebuildIndex -> rebuildIndex.rebuildColumn("str1"));
+                rebuildIndex -> rebuildIndex.reindexColumn("str1"));
     }
 
     @Test
@@ -234,7 +234,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
 
         checkRecoverVarIndex(createTableSql,
                 tablePath -> removeFileAtPartition("str1.i", PartitionBy.DAY, tablePath, 0, -1L),
-                rebuildIndex -> rebuildIndex.rebuildPartitionColumn("1970-01-01", "str1"));
+                rebuildIndex -> rebuildIndex.reindex("1970-01-01", "str1"));
     }
 
     @Test
@@ -259,7 +259,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
 
         checkRecoverVarIndex(createAlterInsertSql,
                 tablePath -> removeFileAtPartition("str2.i.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11, 1L),
-                rebuildIndex -> rebuildIndex.rebuildColumn("str2"));
+                rebuildIndex -> rebuildIndex.reindexColumn("str2"));
     }
 
     @Test
@@ -280,7 +280,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                         tablePath -> tempWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), "xxx", "test lock"),
                         rebuildIndex -> {
                             try {
-                                rebuildIndex.rebuildColumn("str1");
+                                rebuildIndex.reindexColumn("str1");
                             } finally {
                                 tempWriter.close();
                             }
@@ -319,7 +319,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                 checkRecoverVarIndex(createTableSql,
                         tablePath -> {
                         },
-                        rebuildIndex -> rebuildIndex.rebuildColumn("str2"));
+                        rebuildIndex -> rebuildIndex.reindexColumn("str2"));
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-write");
@@ -342,7 +342,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             checkRecoverVarIndex(createTableSql,
                     tablePath -> {
                     },
-                    rebuildIndex -> rebuildIndex.rebuildColumn("x"));
+                    rebuildIndex -> rebuildIndex.reindexColumn("x"));
             Assert.fail();
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "Wrong column type");
