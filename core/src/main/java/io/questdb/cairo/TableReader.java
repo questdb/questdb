@@ -770,7 +770,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             boolean existanceChecked = false;
             while (true) {
                 try {
-                    return metadata.of(path, ColumnType.VERSION);
+                    return metadata.deferredInit(path, ColumnType.VERSION);
                 } catch (CairoException ex) {
                     if (!existanceChecked) {
                         path.trimTo(rootLen).put(Files.SEPARATOR).$();

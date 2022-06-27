@@ -46,7 +46,7 @@ public class IndexBuilder extends RebuildColumnBase {
 
     public IndexBuilder() {
         super();
-        columnTypeErrorMsg = "Column is not indexed";
+        unsupportedColumnMessage = "Column is not indexed";
     }
 
     @Override

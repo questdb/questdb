@@ -39,14 +39,13 @@ import static io.questdb.cairo.TableUtils.lockName;
 
 public abstract class RebuildColumnBase implements Closeable, Mutable {
     static final int REBUILD_ALL_COLUMNS = -1;
-    final Path path = new Path();
     private final StringSink tempStringSink = new StringSink();
-    CairoConfiguration configuration;
-    int rootLen;
-    String columnTypeErrorMsg = "Wrong column type";
-    private long lockFd;
-    private TableReaderMetadata metadata;
+    protected Path path = new Path();
+    protected CairoConfiguration configuration;
+    protected int rootLen;
+    protected String unsupportedColumnMessage = "Wrong column type";
     protected FilesFacade ff;
+    private long lockFd;
 
     @Override
     public void clear() {
@@ -56,8 +55,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
 
     @Override
     public void close() {
-        this.path.close();
-        Misc.free(metadata);
+        this.path = Misc.free(path);
     }
 
     public RebuildColumnBase of(CharSequence tablePath, CairoConfiguration configuration) {
@@ -72,12 +70,23 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         reindex(null, null);
     }
 
-    public void reindexColumn(CharSequence columnName) {
-        reindex(null, columnName);
-    }
-
-    public void reindexAllInPartition(CharSequence partitionName) {
-        reindex(partitionName, null);
+    public void reindex(
+            @Nullable CharSequence partitionName,
+            @Nullable CharSequence columnName
+    ) {
+        try {
+            lock(ff);
+            path.concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+            try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path)) {
+                final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
+                columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
+                path.trimTo(rootLen);
+                reindex0(columnVersionReader, partitionName, columnName);
+            }
+        } finally {
+            lockName(path);
+            releaseLock(ff);
+        }
     }
 
     public void reindexAfterUpdate(long partitionTimestamp, CharSequence columnName, TableWriter tableWriter) {
@@ -114,24 +123,24 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         );
     }
 
-    public void reindex(
-            @Nullable CharSequence partitionName,
-            @Nullable CharSequence columnName
-    ) {
-        try {
-            lock(ff);
-            path.concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-            try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path)) {
-                final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
-                columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
-                path.trimTo(rootLen);
-                reindex0(columnVersionReader, partitionName, columnName);
-            }
-        } finally {
-            lockName(path);
-            releaseLock(ff);
-        }
+    public void reindexAllInPartition(CharSequence partitionName) {
+        reindex(partitionName, null);
     }
+
+    public void reindexColumn(CharSequence columnName) {
+        reindex(null, columnName);
+    }
+
+    abstract protected void doReindex(
+            ColumnVersionReader columnVersionReader,
+            int columnWriterIndex,
+            CharSequence columnName,
+            CharSequence partitionName,
+            long partitionNameTxn,
+            long partitionSize,
+            long partitionTimestamp,
+            int indexValueBlockCapacity
+    );
 
     protected abstract boolean isSupportedColumn(RecordMetadata metadata, int columnIndex);
 
@@ -149,17 +158,6 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         }
     }
 
-    abstract protected void doReindex(
-            ColumnVersionReader columnVersionReader,
-            int columnWriterIndex,
-            CharSequence columnName,
-            CharSequence partitionName,
-            long partitionNameTxn,
-            long partitionSize,
-            long partitionTimestamp,
-            int indexValueBlockCapacity
-    );
-
     // this method is not used by UPDATE SQL
     private void reindex0(
             ColumnVersionReader columnVersionReader,
@@ -167,12 +165,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             @Nullable CharSequence columnName // will reindex all columns if name is not provided
     ) {
         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
-        if (metadata == null) {
-            metadata = new TableReaderMetadata(ff);
-        }
-        metadata.of(path.$(), ColumnType.VERSION);
-
-        try {
+        try (TableReaderMetadata metadata = new TableReaderMetadata(ff)) {
+            metadata.deferredInit(path.$(), ColumnType.VERSION);
             // Resolve column id if the column name specified
             final int columnIndex;
             if (columnName != null) {
@@ -196,22 +190,24 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                         int partitionIndex = txReader.findAttachedPartitionIndexByLoTimestamp(partitionTimestamp);
                         if (partitionIndex > -1L) {
                             reindexPartition(
-                                    partitionIndex,
-                                    columnIndex,
+                                    metadata,
                                     columnVersionReader,
-                                    partitionDirFormatMethod,
                                     txReader,
+                                    columnIndex,
+                                    partitionIndex,
+                                    partitionDirFormatMethod,
                                     partitionTimestamp
                             );
                         }
                     } else {
                         for (int partitionIndex = txReader.getPartitionCount() - 1; partitionIndex > -1; partitionIndex--) {
                             reindexPartition(
-                                    partitionIndex,
-                                    columnIndex,
+                                    metadata,
                                     columnVersionReader,
-                                    partitionDirFormatMethod,
                                     txReader,
+                                    columnIndex,
+                                    partitionIndex,
+                                    partitionDirFormatMethod,
                                     txReader.getPartitionTimestamp(partitionIndex)
                             );
                         }
@@ -219,17 +215,17 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                 } else {
                     // reindexing columns in non-partitioned table
                     reindexOneOrAllColumns(
+                            metadata,
+                            columnVersionReader,
                             columnIndex,
                             partitionDirFormatMethod,
-                            0L,
-                            txReader.getTransientRowCount(),
                             -1L,
-                            columnVersionReader
+                            0L,
+                            txReader.getTransientRowCount()
                     );
                 }
             }
         } finally {
-            metadata.close();
             path.trimTo(rootLen);
         }
     }
@@ -256,12 +252,13 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     }
 
     private void reindexOneOrAllColumns(
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
             int columnIndex,
             DateFormat partitionDirFormatMethod,
-            long partitionTimestamp,
-            long partitionSize,
             long partitionNameTxn,
-            ColumnVersionReader columnVersionReader
+            long partitionTimestamp,
+            long partitionSize
     ) {
         tempStringSink.clear();
         partitionDirFormatMethod.format(partitionTimestamp, null, null, tempStringSink);
@@ -292,36 +289,39 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                         partitionSize
                 );
             } else {
-                throw CairoException.instance(0).put(columnTypeErrorMsg);
+                throw CairoException.instance(0).put(unsupportedColumnMessage);
             }
         }
     }
 
     private void reindexPartition(
-            int partitionIndex,
-            int columnIndex,
+            RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
-            DateFormat partitionDirFormatMethod,
             TxReader txReader,
+            int columnIndex,
+            int partitionIndex,
+            DateFormat partitionDirFormatMethod,
             long partitionTimestamp
     ) {
-        long partitionSize = partitionIndex == txReader.getPartitionCount() - 1
+        final long partitionSize = partitionIndex == txReader.getPartitionCount() - 1
                 ? txReader.getTransientRowCount()
                 : txReader.getPartitionSize(partitionIndex);
 
         reindexOneOrAllColumns(
+                metadata,
+                columnVersionReader,
                 columnIndex,
                 partitionDirFormatMethod,
-                partitionTimestamp,
-                partitionSize,
                 txReader.getPartitionNameTxn(partitionIndex),
-                columnVersionReader
+                partitionTimestamp,
+                partitionSize
         );
     }
 
     private void releaseLock(FilesFacade ff) {
         if (lockFd != -1L) {
             ff.close(lockFd);
+            lockFd = -1L;
             try {
                 path.trimTo(rootLen);
                 lockName(path);
