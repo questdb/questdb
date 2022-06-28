@@ -2057,7 +2057,13 @@ public class TableWriter implements Closeable {
         final MemoryCARW oooSecondary;
         final MemoryCARW oooPrimary2;
         final MemoryCARW oooSecondary2;
-        final long memSize = calculateColumnDefaultMemorySize(o3ColumnMemorySize, type);
+        final long memSize = calculateO3ColumnMemorySize(
+                o3ColumnMemorySize,
+                type,
+                true,
+                index == metadata.getTimestampIndex(),
+                metadata.getMaxUncommittedRows()
+        );
 
         if (type > 0) {
             primary = Vm.getMAInstance();
@@ -2068,9 +2074,16 @@ public class TableWriter implements Closeable {
                 switch (ColumnType.tagOf(type)) {
                     case ColumnType.BINARY:
                     case ColumnType.STRING:
+                        long memSize2 = calculateO3ColumnMemorySize(
+                                o3ColumnMemorySize,
+                                type,
+                                false,
+                                index == metadata.getTimestampIndex(),
+                                metadata.getMaxUncommittedRows()
+                        );
                         secondary = Vm.getMAInstance();
-                        oooSecondary = o3supported ? Vm.getCARWInstance(memSize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3) : NullMemory.INSTANCE;
-                        oooSecondary2 = o3supported ? Vm.getCARWInstance(memSize, Integer.MAX_VALUE, MemoryTag.NATIVE_O3) : NullMemory.INSTANCE;
+                        oooSecondary = o3supported ? Vm.getCARWInstance(memSize2, Integer.MAX_VALUE, MemoryTag.NATIVE_O3) : NullMemory.INSTANCE;
+                        oooSecondary2 = o3supported ? Vm.getCARWInstance(memSize2, Integer.MAX_VALUE, MemoryTag.NATIVE_O3) : NullMemory.INSTANCE;
                         break;
                     default:
                         secondary = null;
@@ -2101,11 +2114,26 @@ public class TableWriter implements Closeable {
         rowValueIsNotNull.add(0);
     }
 
-    private long calculateColumnDefaultMemorySize(long max, int type) {
-        final long typeSize = ColumnType.isVariableLength(type) ? Long.BYTES : ColumnType.sizeOf(type);
+    private long calculateMappedColumnMemorySize(long configuredMaxMemory, int type, boolean isPrimary) {
+        return calculateO3ColumnMemorySize(configuredMaxMemory, type, isPrimary, false, Integer.MAX_VALUE);
+    }
+
+    private long calculateO3ColumnMemorySize(long configuredMaxMemory, int type, boolean isPrimary, boolean isDesignatedTimestamp, long maxUncommittedRows) {
+        final long typeSize;
+        switch (type) {
+            case ColumnType.STRING:
+                typeSize = isPrimary ? Long.BYTES : Integer.BYTES;
+                break;
+            case ColumnType.BINARY:
+                typeSize = Long.BYTES;
+                break;
+            default:
+                typeSize = isDesignatedTimestamp ? 2 * Long.BYTES : ColumnType.sizeOf(type);
+                break;
+        }
+
         // If column type smaller than LONG, allocate proportionally less
-        final long maxPerType = typeSize < Long.BYTES ? max * typeSize / Long.BYTES : max;
-        int maxUncommittedRows = Math.max(metadata.getMaxUncommittedRows(), 10_000);
+        final long maxPerType = typeSize < Long.BYTES ? configuredMaxMemory * typeSize / Long.BYTES : configuredMaxMemory;
         final long memSize = Math.min(maxPerType, typeSize * maxUncommittedRows);
         return Math.max(memSize, ff.getPageSize());
     }
@@ -3859,9 +3887,9 @@ public class TableWriter implements Closeable {
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int columnType, int pathTrimToLen) {
         MemoryMA mem1 = getPrimaryColumn(columnIndex);
         MemoryMA mem2 = getSecondaryColumn(columnIndex);
-        long pageSize = calculateColumnDefaultMemorySize(configuration.getDataAppendPageSize(), columnType);
 
         try {
+            long pageSize = calculateMappedColumnMemorySize(configuration.getDataAppendPageSize(), columnType,true);
             mem1.of(ff,
                     dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
                     pageSize,
@@ -3870,10 +3898,11 @@ public class TableWriter implements Closeable {
                     configuration.getWriterFileOpenOpts()
             );
             if (mem2 != null) {
+                long pageSizeSecondary = calculateMappedColumnMemorySize(configuration.getDataAppendPageSize(), columnType,false);
                 mem2.of(
                         ff,
                         iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
-                        pageSize,
+                        pageSizeSecondary,
                         -1,
                         MemoryTag.MMAP_TABLE_WRITER,
                         configuration.getWriterFileOpenOpts()
