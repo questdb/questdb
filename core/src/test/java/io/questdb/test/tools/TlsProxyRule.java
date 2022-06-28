@@ -49,10 +49,6 @@ public final class TlsProxyRule implements TestRule {
         return new TlsProxyRule(host, port, DEFAULT_KEYSTORE, DEFAULT_KEYSTORE_PASSWORD);
     }
 
-    public TlsProxyRule withCustomKeystore(String keystoreClasspath, char[] keystorePassword) {
-        return new TlsProxyRule(dstHost, dstPort, keystoreClasspath, keystorePassword);
-    }
-
     public int getListeningPort() {
         if (srcPort < 0) {
             throw new IllegalStateException("test is not running yet!");

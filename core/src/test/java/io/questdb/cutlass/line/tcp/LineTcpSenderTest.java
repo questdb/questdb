@@ -25,17 +25,19 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.cutlass.line.Sender;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-import java.net.Inet4Address;
+import java.io.IOException;
 import java.security.PrivateKey;
 import java.util.function.Consumer;
 
@@ -91,15 +93,13 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.authenticate(AUTH_KEY_ID2_INVALID, AUTH_PRIVATE_KEY1);
                 //30 seconds should be enough even on a slow CI server
                 long deadline = Os.currentTimeNanos() + SECONDS.toNanos(30);
-                try {
-                    while (Os.currentTimeNanos() < deadline) {
-                        sender.metric("mytable").field("my int field", 42).$();
-                        sender.flush();
-                    }
-                    fail("Client fail to detected qdb server closed a connection due to wrong credentials");
-                } catch (LineSenderException e) {
-                    // expected
+                while (Os.currentTimeNanos() < deadline) {
+                    sender.metric("mytable").field("my int field", 42).$();
+                    sender.flush();
                 }
+                fail("Client fail to detected qdb server closed a connection due to wrong credentials");
+            } catch (LineSenderException expected){
+                // ignored
             }
         });
     }
@@ -111,7 +111,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             try (Sender sender = Sender.builder()
                     .address(address)
-                    .enableAuth(AUTH_KEY_ID1).token(TOKEN)
+                    .enableAuth(AUTH_KEY_ID1).authToken(TOKEN)
                     .build()) {
                 sender.table("mytable").longColumn("my int field", 42).atNow();
                 sender.flush();
@@ -253,5 +253,205 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             }
             assertTableExistsEventually(engine, "mytable");
         });
+    }
+
+    @Test
+    public void testCloseImpliesFlush() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder()
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+                sender.table("mytable").longColumn("my int field", 42).atNow();
+            }
+            assertTableExistsEventually(engine, "mytable");
+        });
+    }
+
+    @Test
+    public void testCloseIdempotent() {
+        DummyLineChannel channel = new DummyLineChannel();
+
+        try (LineTcpSender sender = new LineTcpSender(channel, 1000)) {
+            sender.close(); // first close
+            // the 2nd close is due to try-with-resource
+        }
+        assertTrue(channel.closed);
+    }
+
+    @Test
+    public void testUseAfterClose_table() {
+        DummyLineChannel channel = new DummyLineChannel();
+
+        Sender sender = new LineTcpSender(channel, 1000);
+        sender.close();
+
+        try {
+            sender.table("mytable");
+            fail("use-after-close must throw exception");
+        } catch (LineSenderException e) {
+            assertContains(e.getMessage(), "Sender already closed");
+        }
+    }
+
+    @Test
+    public void testUseAfterClose_symbol() {
+        DummyLineChannel channel = new DummyLineChannel();
+
+        Sender sender = new LineTcpSender(channel, 1000);
+        sender.table("mytable");
+        sender.close();
+
+        try {
+            sender.symbol("sym", "val");
+            fail("use-after-close must throw exception");
+        } catch (LineSenderException e) {
+            assertContains(e.getMessage(), "Sender already closed");
+        }
+    }
+
+    @Test
+    public void testUseAfterClose_tsColumn() {
+        DummyLineChannel channel = new DummyLineChannel();
+
+        Sender sender = new LineTcpSender(channel, 1000);
+        sender.table("mytable");
+        sender.close();
+
+        try {
+            sender.timestampColumn("col", 0);
+            fail("use-after-close must throw exception");
+        } catch (LineSenderException e) {
+            assertContains(e.getMessage(), "Sender already closed");
+        }
+    }
+
+    @Test
+    public void testUseAfterClose_stringColumn() {
+        DummyLineChannel channel = new DummyLineChannel();
+
+        Sender sender = new LineTcpSender(channel, 1000);
+        sender.table("mytable");
+        sender.close();
+
+        try {
+            sender.stringColumn("col", "val");
+            fail("use-after-close must throw exception");
+        } catch (LineSenderException e) {
+            assertContains(e.getMessage(), "Sender already closed");
+        }
+    }
+
+    @Test
+    public void testUseAfterClose_doubleColumn() {
+        DummyLineChannel channel = new DummyLineChannel();
+
+        Sender sender = new LineTcpSender(channel, 1000);
+        sender.table("mytable");
+        sender.close();
+
+        try {
+            sender.doubleColumn("col", 42.42);
+            fail("use-after-close must throw exception");
+        } catch (LineSenderException e) {
+            assertContains(e.getMessage(), "Sender already closed");
+        }
+    }
+
+    @Test
+    public void testUseAfterClose_boolColumn() {
+        DummyLineChannel channel = new DummyLineChannel();
+
+        Sender sender = new LineTcpSender(channel, 1000);
+        sender.table("mytable");
+        sender.close();
+
+        try {
+            sender.boolColumn("col", true);
+            fail("use-after-close must throw exception");
+        } catch (LineSenderException e) {
+            assertContains(e.getMessage(), "Sender already closed");
+        }
+    }
+
+    @Test
+    public void testUseAfterClose_longColumn() {
+        DummyLineChannel channel = new DummyLineChannel();
+
+        Sender sender = new LineTcpSender(channel, 1000);
+        sender.table("mytable");
+        sender.close();
+
+        try {
+            sender.longColumn("col", 42);
+            fail("use-after-close must throw exception");
+        } catch (LineSenderException e) {
+            assertContains(e.getMessage(), "Sender already closed");
+        }
+    }
+
+    @Test
+    public void testUseAfterClose_atNow() {
+        DummyLineChannel channel = new DummyLineChannel();
+
+        Sender sender = new LineTcpSender(channel, 1000);
+        sender.table("mytable");
+        sender.longColumn("col", 42);
+        sender.close();
+
+        try {
+            sender.atNow();
+            fail("use-after-close must throw exception");
+        } catch (LineSenderException e) {
+            assertContains(e.getMessage(), "Sender already closed");
+        }
+    }
+
+    @Test
+    public void testUseAfterClose_atMicros() {
+        DummyLineChannel channel = new DummyLineChannel();
+
+        Sender sender = new LineTcpSender(channel, 1000);
+        sender.table("mytable");
+        sender.longColumn("col", 42);
+        sender.close();
+
+        try {
+            sender.atMicros(MicrosecondClockImpl.INSTANCE.getTicks());
+            fail("use-after-close must throw exception");
+        } catch (LineSenderException e) {
+            assertContains(e.getMessage(), "Sender already closed");
+        }
+    }
+
+
+    private static class DummyLineChannel implements LineChannel {
+        private boolean closed;
+
+        @Override
+        public void send(long ptr, int len) {
+
+        }
+
+        @Override
+        public int receive(long ptr, int len) {
+            return 0;
+        }
+
+        @Override
+        public int errno() {
+            return 0;
+        }
+
+        @Override
+        public void close() {
+            if (closed) {
+                // currently this is not needed, because LineTcpSender double-close will result in double-free
+                // and this crashes the test anyway. But we don't want to rely on this behaviour.
+                // should LineTcpSender impl change we still want to catch LineChannel double-close
+                throw new IllegalStateException("double close detected");
+            }
+            closed = true;
+        }
     }
 }

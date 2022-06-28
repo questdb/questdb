@@ -38,12 +38,16 @@ import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.net.URL;
+
 public class TestInterop {
 
     @Test
     public void testInterop() throws Exception {
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
-        String pp = TestInterop.class.getResource("/io/questdb/cutlass/line/interop/ilp-client-interop-test.json").getFile();
+        URL testCasesUrl = TestInterop.class.getResource("/io/questdb/cutlass/line/interop/ilp-client-interop-test.json");
+        Assert.assertNotNull("interop test cases missing", testCasesUrl);
+        String pp = testCasesUrl.getFile();
         if (Os.type == Os.WINDOWS) {
             // on Windows Java returns "/C:/dir/file". This leading slash is Java specific and doesn't bode well
             // with OS file open methods.
@@ -94,7 +98,7 @@ public class TestInterop {
         private int columnType = -1;
         private String name;
         private boolean encounteredError;
-        private StringSink stringSink = new StringSink();
+        private final StringSink stringSink = new StringSink();
 
         public JsonTestSuiteParser(Sender sender, StringChannel channel) {
             this.sender = sender;

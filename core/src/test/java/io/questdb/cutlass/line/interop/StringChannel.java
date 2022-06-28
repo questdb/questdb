@@ -33,12 +33,12 @@ import java.nio.charset.StandardCharsets;
 public class StringChannel implements LineChannel {
     private static final int BUFFER_SIZE = 1024;
 
-    private byte[] buffer = new byte[BUFFER_SIZE];
+    private final byte[] buffer = new byte[BUFFER_SIZE];
     private int pos;
 
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         //empty
     }
 

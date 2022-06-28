@@ -79,7 +79,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                     .address(LOCALHOST)
                     .port(bindPort)
                     .enableAuth(AUTH_KEY_ID1)
-                    .token(AUTH_TOKEN_KEY1)
+                    .authToken(AUTH_TOKEN_KEY1)
                     .build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
@@ -150,7 +150,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 builder.build();
                 fail("non existing trustore should throw an exception");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "error while creating openssl engine");
+                TestUtils.assertContains(e.getMessage(), "could not create SSL engine");
             }
         });
     }
@@ -184,7 +184,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             try (Sender sender = builder.build()) {
                 fail("non existing trustore should throw an exception");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "error while creating openssl engine");
+                TestUtils.assertContains(e.getMessage(), "could not create SSL engine");
                 TestUtils.assertContains(e.getCause().getMessage(), "password");
             }
         });
@@ -197,7 +197,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         Sender.LineSenderBuilder builder = Sender.builder()
                 .address(LOCALHOST)
                 .port(TLS_PROXY.getListeningPort())
-                .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
+                .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
                 .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
         runInContext(r -> {
             try (Sender sender = builder.build()) {
@@ -230,17 +230,17 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testAuthWithBadToken() throws Exception {
         Sender.LineSenderBuilder.AuthBuilder builder = Sender.builder().enableAuth("foo");
         try {
-            builder.token("bar token");
+            builder.authToken("bar token");
             fail("bad token should not be imported");
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "cannot import token");
+            TestUtils.assertContains(e.getMessage(), "could not import token");
         }
     }
 
     @Test
     public void testAuthTooSmallBuffer() {
         Sender.LineSenderBuilder builder = Sender.builder()
-                .enableAuth("foo").token(AUTH_TOKEN_KEY1).address(LOCALHOST+":9001")
+                .enableAuth("foo").authToken(AUTH_TOKEN_KEY1).address(LOCALHOST+":9001")
                 .bufferCapacity(1);
         try {
             builder.build();
@@ -253,7 +253,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testPlainAuth_connectionRefused() {
         Sender.LineSenderBuilder builder = Sender.builder()
-                .enableAuth("foo").token(AUTH_TOKEN_KEY1).address(LOCALHOST+":19003");
+                .enableAuth("foo").authToken(AUTH_TOKEN_KEY1).address(LOCALHOST+":19003");
         try {
             builder.build();
             fail("connection refused should fail fast");
@@ -340,7 +340,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testAuthDoubleSet() {
-        Sender.LineSenderBuilder builder = Sender.builder().enableAuth("foo").token(AUTH_TOKEN_KEY1);
+        Sender.LineSenderBuilder builder = Sender.builder().enableAuth("foo").authToken(AUTH_TOKEN_KEY1);
         try {
             builder.enableAuth("bar");
             fail("should not allow double auth set");

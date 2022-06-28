@@ -49,7 +49,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .enableTls()
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
-                    .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
+                    .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
                     .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.table(tableName).longColumn("value", 42).atNow();
@@ -73,7 +73,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .bufferCapacity(hugeBufferSize)
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
-                    .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
+                    .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
                     .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                     .build()) {
                 for (long l = 0; l < rows; l++) {
@@ -95,7 +95,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .enableTls()
                     .address("localhost")
                     .port(tlsProxy.getListeningPort())
-                    .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
+                    .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
                     .advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD)
                     .build()) {
                 sender.table(tableName).longColumn("value", 42).atNow();
@@ -116,7 +116,7 @@ public class LineTlsTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .enableTls()
                         .address("localhost")
                         .port(tlsProxy.getListeningPort())
-                        .enableAuth(AUTH_KEY_ID1).token(AUTH_TOKEN_KEY1)
+                        .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
                         .advancedTls().customTrustStore("classpath:" + TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
                         .build()) {
 

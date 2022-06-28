@@ -133,7 +133,7 @@ public interface Sender extends Closeable {
     Sender symbol(CharSequence name, CharSequence value);
 
     /**
-     * Finalize the current row and let QuestDB server to assign a timestamp. If you need to set timestamp
+     * Finalize the current row and let QuestDB server assign a timestamp. If you need to set timestamp
      * explicitly then see {@link #atMicros(long)}.
      * <br>
      * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
@@ -145,20 +145,34 @@ public interface Sender extends Closeable {
      *  Finalize the current row and assign an explicit timestamp in microseconds since Epoch.
      *  After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
      *
-     * @param timestamp timestamp in Epoch nanoseconds.
+     * @param timestamp timestamp in Epoch microseconds.
      */
     void atMicros(long timestamp);
 
 
     /**
-     * Force sending internal buffers to a server.
+     * Force flushing internal buffers to a server.
      * <br>
-     * This is an optional method, it's not strictly necessary to call it. Normally, messages are accumulated in
-     * internal buffers and Sender itself is flushing them automatically as it sees fit. This method is useful when you
-     * need a fine control over this behaviour.
+     * You should also call this method when you expect a period of quiescence during which no data will be written.
+     * Otherwise, previously buffered data would not be sent to a server.
+     * <br>
+     * This method is also useful when you need a fine control over Sender batching behaviour. Buffer flushing reduces
+     * the batching effect. This means it can lower the overall throughput, as each batch has a certain fixed cost
+     * component, but it can decrease maximum latency as messages spend less time waiting in buffers and waiting for
+     * automatic flush.
+     *
+     * @see LineSenderBuilder#bufferCapacity(int)
      *
      */
     void flush();
+
+    /**
+     * TODO
+     *
+     *
+     */
+    @Override
+    void close();
 
     /**
      * Construct a Builder object to create a new Sender instance.
@@ -183,9 +197,9 @@ public interface Sender extends Closeable {
      *
      */
     final class LineSenderBuilder {
-        // indicates buffer capacity was not set explicitly
+        // indicates that buffer capacity was not set explicitly
         private static final byte BUFFER_CAPACITY_DEFAULT = 0;
-        // indicate port was not set explicitly
+        // indicate that port was not set explicitly
         private static final byte PORT_DEFAULT = 0;
 
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
@@ -226,8 +240,8 @@ public interface Sender extends Closeable {
             if (this.address != null) {
                 throw new LineSenderException("server address is already configured to " + this.address);
             }
-            if (address.length() == 0) {
-                throw new LineSenderException("address cannot be empty");
+            if (address == null || address.length() == 0) {
+                throw new LineSenderException("address cannot be empty nor null");
             }
             int portIndex = Chars.indexOf(address, ':');
             if (portIndex + 1 == address.length()) {
@@ -293,6 +307,9 @@ public interface Sender extends Closeable {
 
         /**
          * Configure capacity of an internal buffer.
+         * Bigger buffer increase batching effect.
+         *
+         * @see Sender#flush()
          *
          * @param bufferCapacity buffer capacity in bytes.
          * @return this instance for method chaining
@@ -329,7 +346,6 @@ public interface Sender extends Closeable {
             configureDefaults();
             validateParameters();
 
-
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             CharSequence host = address.subSequence(0, addressLimit);
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
@@ -338,9 +354,9 @@ public interface Sender extends Closeable {
                 assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                 DelegatingTlsChannel tlsChannel;
                 try {
-                    tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword, tlsValidationMode, host);
+                    tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword, tlsValidationMode, host.toString());
                 } catch (Throwable t) {
-                    closeSilently(channel);
+                    channel.close();
                     throw rethrow(t);
                 }
                 channel = tlsChannel;
@@ -348,14 +364,14 @@ public interface Sender extends Closeable {
             try {
                 sender = new LineTcpSender(channel, bufferCapacity);
             } catch (Throwable t) {
-                closeSilently(channel);
+                channel.close();
                 throw rethrow(t);
             }
             if (privateKey != null) {
                 try {
                     sender.authenticate(keyId, privateKey);
                 } catch (Throwable t) {
-                    closeSilently(sender);
+                    channel.close();
                     throw rethrow(t);
                 } finally {
                     if (shouldDestroyPrivKey) {
@@ -394,14 +410,6 @@ public interface Sender extends Closeable {
             }
         }
 
-        private static void closeSilently(Closeable resource) {
-            try {
-                resource.close();
-            } catch (IOException e) {
-                // not much we can do
-            }
-        }
-
         private static RuntimeException rethrow(Throwable t) {
             if (t instanceof LineSenderException) {
                 throw (LineSenderException)t;
@@ -429,16 +437,16 @@ public interface Sender extends Closeable {
             }
 
             /**
-             * Create a private key out of a base64 encoded token
+             * Authenticate by using a token.
              *
-             * @param token base64 encoded private key
+             * @param token authentication token
              * @return an instance of LineSenderBuilder for further configuration
              */
-            public LineSenderBuilder token(String token) {
+            public LineSenderBuilder authToken(String token) {
                 try {
                     LineSenderBuilder.this.privateKey = AuthDb.importPrivateKey(token);
                 } catch (IllegalArgumentException e) {
-                    throw new LineSenderException("cannot import token", e);
+                    throw new LineSenderException("could not import token", e);
                 }
                 LineSenderBuilder.this.shouldDestroyPrivKey = true;
                 return LineSenderBuilder.this;
@@ -452,7 +460,6 @@ public interface Sender extends Closeable {
              * <br>
              * The path can be either a path on a local filesystem. Or you can prefix it with "classpath:" to instruct
              * the Sender to load a trust store from a classpath.
-             *
              *
              * @param trustStorePath a path to a trust store.
              * @param trustStorePassword a password to for the trustore

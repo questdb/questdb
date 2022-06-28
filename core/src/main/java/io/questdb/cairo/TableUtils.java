@@ -461,7 +461,7 @@ public final class TableUtils {
                 case '*':
                 case '%':
                 case '~':
-                case '\u0000':
+                case '\u0000': // Control characters
                 case '\u0001':
                 case '\u0002':
                 case '\u0003':
@@ -520,7 +520,7 @@ public final class TableUtils {
                 case '*':
                 case '%':
                 case '~':
-                case '\u0000':
+                case '\u0000':  // Control characters
                 case '\u0001':
                 case '\u0002':
                 case '\u0003':

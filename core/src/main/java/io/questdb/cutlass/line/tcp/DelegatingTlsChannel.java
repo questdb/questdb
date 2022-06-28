@@ -88,7 +88,7 @@ public final class DelegatingTlsChannel implements LineChannel {
             capacityField = Buffer.class.getDeclaredField("capacity");
         } catch (NoSuchFieldException e) {
             // possible improvement: implement a fallback strategy when reflection is unavailable for any reason.
-            throw new LineSenderException("unexpected buffer");
+            throw new ExceptionInInitializerError(e);
         }
         ADDRESS_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(addressField);
         LIMIT_FIELD_OFFSET = Unsafe.getUnsafe().objectFieldOffset(limitField);
@@ -96,9 +96,9 @@ public final class DelegatingTlsChannel implements LineChannel {
     }
 
     public DelegatingTlsChannel(LineChannel delegate, String trustStorePath, char[] password,
-                                Sender.TlsValidationMode validationMode, CharSequence expectedHostname) {
+                                Sender.TlsValidationMode validationMode, String peerHost) {
         this.delegate = delegate;
-        this.sslEngine = createSslEngine(trustStorePath, password, validationMode, expectedHostname);
+        this.sslEngine = createSslEngine(trustStorePath, password, validationMode, peerHost);
 
         // wrapInputBuffer is just a placeholder, we set the internal address, capacity and limit in send()
         this.wrapInputBuffer = ByteBuffer.allocateDirect(0);
@@ -121,17 +121,13 @@ public final class DelegatingTlsChannel implements LineChannel {
         try {
             handshakeLoop();
         } catch (Throwable e) {
-            try {
-                // do not close the delegate - we don't own it when our own constructors fails
-                close0(false);
-            } catch (IOException ex) {
-                // ignored
-            }
-            throw new LineSenderException("error during TLS handshake", e);
+            // do not close the delegate - we don't own it when our own constructors fails
+            close0(false);
+            throw new LineSenderException("could not perform TLS handshake", e);
         }
     }
 
-    private static SSLEngine createSslEngine(String trustStorePath, char[] trustStorePassword, Sender.TlsValidationMode validationMode, CharSequence expectedHostname) {
+    private static SSLEngine createSslEngine(String trustStorePath, char[] trustStorePassword, Sender.TlsValidationMode validationMode, String peerHost) {
         assert trustStorePath == null || validationMode == Sender.TlsValidationMode.DEFAULT;
         try {
             SSLContext sslContext;
@@ -155,7 +151,7 @@ public final class DelegatingTlsChannel implements LineChannel {
             // SSLEngine needs to know hostname during TLS handshake to validate a server certificate was issued
             // for the server we are connecting to. For details see the comment below.
             // Hostname validation does not use port at all hence we can get away with a dummy value -1
-            SSLEngine sslEngine = sslContext.createSSLEngine(expectedHostname.toString(), -1);
+            SSLEngine sslEngine = sslContext.createSSLEngine(peerHost, -1);
             if (validationMode != Sender.TlsValidationMode.INSECURE) {
                 SSLParameters sslParameters = sslEngine.getSSLParameters();
                 // The https validation algorithm? That looks confusing! After all we are not using any
@@ -174,7 +170,7 @@ public final class DelegatingTlsChannel implements LineChannel {
             if (t instanceof LineSenderException) {
                 throw (LineSenderException)t;
             }
-            throw new LineSenderException("error while creating openssl engine", t);
+            throw new LineSenderException("could not create SSL engine", t);
         }
     }
 
@@ -226,7 +222,7 @@ public final class DelegatingTlsChannel implements LineChannel {
                     unwrapLoop();
                     break;
                 case FINISHED:
-                    throw new LineSenderException("getHandshakeStatus() returns FINISHED. It should not be possible.");
+                    throw new LineSenderException("getHandshakeStatus() returned FINISHED. It should not have been possible.");
                 default:
                     throw new LineSenderException(status + "not supported");
             }
@@ -247,7 +243,7 @@ public final class DelegatingTlsChannel implements LineChannel {
                     break;
                 case CLOSED:
                     if (state != CLOSING) {
-                        throw new LineSenderException("connection closed");
+                        throw new LineSenderException("server closed connection unexpectedly");
                     }
                     return;
             }
@@ -280,7 +276,7 @@ public final class DelegatingTlsChannel implements LineChannel {
                 case OK:
                     return;
                 case CLOSED:
-                    throw new LineSenderException("connection closed");
+                    throw new LineSenderException("server closed connection unexpectedly");
             }
         }
     }
@@ -332,7 +328,7 @@ public final class DelegatingTlsChannel implements LineChannel {
             unwrapOutputBuffer.compact();
             return i;
         } catch (SSLException e) {
-            throw new LineSenderException("error while receiving data from questdb server", e);
+            throw new LineSenderException("could not unwrap SSL packet", e);
         }
     }
 
@@ -386,7 +382,7 @@ public final class DelegatingTlsChannel implements LineChannel {
         return delegate.errno();
     }
 
-    public void close0(boolean closeDelegate) throws IOException {
+    public void close0(boolean closeDelegate) {
         int prevState = state;
         state = CLOSING;
         if (prevState == AFTER_HANDSHAKE) {
@@ -429,7 +425,7 @@ public final class DelegatingTlsChannel implements LineChannel {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         close0(true);
     }
 }

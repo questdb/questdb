@@ -55,8 +55,9 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     private boolean hasTable;
     private boolean hasColumns;
     private boolean hasSymbols;
-    protected final LineChannel lineChannel;
+    protected LineChannel lineChannel;
     private boolean enableValidation;
+    private boolean closed;
 
     public AbstractLineSender(LineChannel lineChannel, int capacity) {
         this.lineChannel = lineChannel;
@@ -102,9 +103,17 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     @Override
     public void close() {
-        Misc.free(lineChannel);
-        Unsafe.free(bufA, capacity, MemoryTag.NATIVE_DEFAULT);
-        Unsafe.free(bufB, capacity, MemoryTag.NATIVE_DEFAULT);
+        if (closed) {
+            return;
+        }
+        try {
+            flush();
+        } finally {
+            closed = true;
+            lineChannel = Misc.free(lineChannel);
+            Unsafe.free(bufA, capacity, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(bufB, capacity, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     public AbstractLineSender field(CharSequence name, long value) {
@@ -164,12 +173,14 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     @Override
     public void flush() {
+        validateNotClosed();
         sendLine();
         ptr = lineStart = lo;
     }
 
     @Override
     public AbstractLineSender put(CharSequence cs) {
+        validateNotClosed();
         int l = cs.length();
         if (ptr + l < hi) {
             Chars.asciiStrCpy(cs, l, ptr);
@@ -187,6 +198,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     @Override
     public AbstractLineSender put(char c) {
+        validateNotClosed();
         if (ptr >= hi) {
             send00();
         }
@@ -196,6 +208,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     @Override
     public CharSink put(char[] chars, int start, int len) {
+        validateNotClosed();
         if (ptr + len < hi) {
             Chars.asciiCopyTo(chars, start, len, ptr);
         } else {
@@ -211,6 +224,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender metric(CharSequence metric) {
+        validateNotClosed();
         validateTableName(metric);
         if (hasTable) {
             throw new LineSenderException("duplicate table");
@@ -222,6 +236,12 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         hasTable = true;
         encodeUtf8(metric);
         return this;
+    }
+
+    protected final void validateNotClosed() {
+        if (closed) {
+            throw new LineSenderException("Sender already closed");
+        }
     }
 
     private void validateColumnName(CharSequence name) {
@@ -275,6 +295,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     private CharSink field(CharSequence name) {
+        validateNotClosed();
         if (hasTable) {
             if (!hasColumns) {
                 put(' ');
@@ -282,7 +303,6 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             } else {
                 put(',');
             }
-
             return encodeUtf8(name).put('=');
         }
         throw new LineSenderException("table expected");
@@ -290,6 +310,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     @Override
     public void putUtf8Special(char c) {
+        validateNotClosed();
         switch (c) {
             case ' ':
             case ',':
@@ -324,6 +345,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     protected void send00() {
+        validateNotClosed();
         int len = (int) (ptr - lineStart);
         if (len == 0) {
             sendLine();
@@ -341,12 +363,13 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public final void authenticate(String keyId, PrivateKey privateKey) {
+        validateNotClosed();
         encodeUtf8(keyId).put('\n');
         sendAll();
 
         byte[] challengeBytes = receiveChallengeBytes();
         byte[] signature = signAndEncode(privateKey, challengeBytes);
-        for (int n = 0; n < signature.length; n++) {
+        for (int n = 0, m = signature.length; n < m; n++) {
             put((char)signature[n]);
         }
         put('\n');
@@ -354,6 +377,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     protected void sendAll() {
+        validateNotClosed();
         if (lo < ptr) {
             int len = (int) (ptr - lo);
             lineChannel.send(lo, len);
