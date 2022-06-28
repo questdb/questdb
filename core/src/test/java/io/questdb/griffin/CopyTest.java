@@ -69,7 +69,7 @@ public class CopyTest extends AbstractGriffinTest {
         assertEquals("y", model.getTableName().token.toString());
         assertEquals("'somefile.csv'", model.getFileName().token.toString());
         assertFalse(model.isHeader());
-        assertTrue(model.isParalell());
+        assertTrue(model.isParallel());
         assertEquals(-1, model.getPartitionBy());
         assertNull(model.getTimestampColumnName());
         assertNull(model.getTimestampFormat());
@@ -90,7 +90,7 @@ public class CopyTest extends AbstractGriffinTest {
                 assertEquals("x", model.getTableName().token.toString());
                 assertEquals("'somefile.csv'", model.getFileName().token.toString());
                 assertTrue(model.isHeader());
-                assertTrue(model.isParalell());
+                assertTrue(model.isParallel());
                 assertEquals(partitionBy[p + 1], model.getPartitionBy());
                 assertEquals("ts1", model.getTimestampColumnName().toString());
                 assertEquals("yyyy-MM-ddTHH:mm:ss", model.getTimestampFormat().toString());
