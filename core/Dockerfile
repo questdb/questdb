@@ -25,22 +25,37 @@ RUN tar xvfz questdb-*-rt-*.tar.gz
 
 RUN rm questdb-*-rt-*.tar.gz
 
+ENV GOSU_VERSION 1.14
+RUN dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
+    wget -O gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch" && \
+    wget -O gosu.asc "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch.asc" && \
+    export GNUPGHOME="$(mktemp -d)" && \
+    gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4 && \
+    gpg --batch --verify gosu.asc gosu && \
+    gpgconf --kill all && \
+    rm -rf "$GNUPGHOME" gosu.asc && \
+    chmod +x gosu && \
+    ./gosu --version && \
+    ./gosu nobody true
+
 FROM debian:bullseye-slim
 
 WORKDIR /app
 
 COPY --from=0 /build/questdb/core/target/questdb-*-rt-* .
+COPY --from=0 /build/questdb/core/target/gosu /usr/local/bin/gosu
 
-WORKDIR /app/bin
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
-# QuestDB root directory
-RUN mkdir -p /root/.questdb
+# Create questdb user and group
+RUN groupadd -g 10001 questdb && \
+    useradd -u 10001 -g 10001 -d /var/lib/questdb -M -s /sbin/nologin questdb && \
+    mkdir -p /var/lib/questdb && \
+    chown -R questdb:questdb /var/lib/questdb
 
 # Make working folder the quest db folder
-WORKDIR /root/.questdb
-
-# bash prompt
-RUN echo "PS1='🐳  \[\033[1;36m\]\h \[\033[1;34m\]\W\[\033[0;35m\] \[\033[1;36m\]# \[\033[0m\]'" > /root/.bashrc
+WORKDIR /var/lib/questdb
 
 # Make port 9000 available to the world outside this container
 EXPOSE 9000/tcp
@@ -54,8 +69,8 @@ EXPOSE 9009/tcp
 # which make logger use default configuration. However, when user configures
 # a volume with something like:
 #
-# docker run -v "$(pwd):/root/.questdb/"  questdb/questdb
+# docker run -v "$(pwd):/var/lib/questdb/"  questdb/questdb
 #
 # then one can create 'log.conf' in the 'conf' dir and override logger fully
 #
-CMD ["/usr/bin/env", "QDB_PACKAGE=docker", "/app/bin/java", "-Dout=conf/log.conf", "-m", "io.questdb/io.questdb.ServerMain", "-d", "/root/.questdb", "-f"]
+ENTRYPOINT ["/docker-entrypoint.sh"]

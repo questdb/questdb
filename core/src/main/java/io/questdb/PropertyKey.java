@@ -66,6 +66,7 @@ public enum PropertyKey {
     CAIRO_LEXER_POOL_CAPACITY("cairo.lexer.pool.capacity"),
     CAIRO_WRITER_APPEND_PAGE_SIZE("cairo.writer.append.page.size"),
     CAIRO_SQL_MAP_KEY_CAPACITY("cairo.sql.map.key.capacity"),
+    CAIRO_SQL_SMALL_MAP_KEY_CAPACITY("cairo.sql.small.map.key.capacity"),
     CAIRO_SQL_MAP_PAGE_SIZE("cairo.sql.map.page.size"),
     CAIRO_SQL_MAP_MAX_PAGES("cairo.sql.map.max.pages"),
     CAIRO_SQL_MAP_MAX_RESIZES("cairo.sql.map.max.resizes"),
@@ -354,7 +355,8 @@ public enum PropertyKey {
     CAIRO_SQL_SYSTEM_TABLE_PREFIX("cairo.system.table.prefix"),
     CAIRO_MAX_FILE_NAME_LENGTH("cairo.max.file.name.length"),
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
-    LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables");
+    LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
+    CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;
