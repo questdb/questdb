@@ -79,9 +79,7 @@ public class WalWriter implements Closeable {
     private WalWriterRollStrategy rollStrategy = new WalWriterRollStrategy() {
     };
 
-    // replace TableReader with some kind of WalMetaData interface
-    // can be backed by TableReader for now
-    public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, Sequencer sequencer, TableReader tableReader) {
+    public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, Sequencer sequencer, TableDescriptor tableDescriptor) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.sequencer = sequencer;
         this.configuration = configuration;
@@ -96,20 +94,20 @@ public class WalWriter implements Closeable {
         try {
             lock();
 
-            columnCount = tableReader.getColumnCount();
+            columnCount = tableDescriptor.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
             symbolMapWriters = new ObjList<>(columnCount);
             denseSymbolMapWriters = new ObjList<>(columnCount);
             nullSetters = new ObjList<>(columnCount);
 
             metadata = new WalWriterMetadata(ff);
-            metadata.of(tableReader);
+            metadata.of(tableDescriptor);
             events = new WalWriterEvents(ff);
             events.of(startSymbolCounts, symbolMapWriters);
 
             configureColumns();
             openNewSegment();
-            configureSymbolTable(tableReader);
+            configureSymbolTable(tableDescriptor);
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -322,10 +320,9 @@ public class WalWriter implements Closeable {
         }
     }
 
-    private void configureSymbolTable(TableReader tableReader) {
-        final BaseRecordMetadata metadata = tableReader.getMetadata();
+    private void configureSymbolTable(TableDescriptor descriptor) {
         for (int i = 0; i < columnCount; i++) {
-            configureSymbolMapWriter(i, metadata.getColumnName(i), metadata.getColumnType(i), tableReader.getSymbolMapReader(i));
+            configureSymbolMapWriter(i, descriptor.getColumnName(i), descriptor.getColumnType(i), descriptor.getSymbolMapReader(i));
         }
     }
 

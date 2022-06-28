@@ -43,15 +43,14 @@ class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
-    void of(TableReader tableReader) {
+    void of(TableDescriptor descriptor) {
         reset();
 
-        final TableReaderMetadata metadata = tableReader.getMetadata();
-        timestampIndex = metadata.getTimestampIndex();
+        timestampIndex = descriptor.getTimestampIndex();
 
-        for (int i = 0; i < metadata.getColumnCount(); i++) {
-            final CharSequence name = metadata.getColumnName(i);
-            final int type = metadata.getColumnType(i);
+        for (int i = 0; i < descriptor.getColumnCount(); i++) {
+            final CharSequence name = descriptor.getColumnName(i);
+            final int type = descriptor.getColumnType(i);
             addColumn(i, name, type);
         }
     }

@@ -42,6 +42,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
@@ -57,6 +58,7 @@ import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
 public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public static final String BUSY_READER = "busyReader";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    private final ThreadLocal<TableDescriptorImpl> tlTableDescriptor = new ThreadLocal<>(TableDescriptorImpl::new);
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
@@ -343,7 +345,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName) {
         securityContext.checkWritePermission();
         try (TableReader reader = getReader(securityContext, tableName)) {
-            return writerPool.getWalWriterFactory(tableName).createWal(reader);
+            final TableDescriptor descriptor = tlTableDescriptor.get().of(reader);
+            return writerPool.getWalWriterFactory(tableName).createWal(descriptor);
         }
     }
 

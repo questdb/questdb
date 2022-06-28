@@ -24,6 +24,41 @@
 
 package io.questdb.cairo;
 
-public interface WalWriterFactory {
-    WalWriter createWal(TableDescriptor descriptor);
+class TableDescriptorImpl implements TableDescriptor {
+    private TableReader reader;
+    private TableReaderMetadata metadata;
+
+    TableDescriptorImpl() {
+    }
+
+    TableDescriptor of(TableReader tableReader) {
+        reader = tableReader;
+        metadata = tableReader.getMetadata();
+        return this;
+    }
+
+    @Override
+    public int getColumnCount() {
+        return metadata.getColumnCount();
+    }
+
+    @Override
+    public int getTimestampIndex() {
+        return metadata.getTimestampIndex();
+    }
+
+    @Override
+    public CharSequence getColumnName(int columnIndex) {
+        return metadata.getColumnName(columnIndex);
+    }
+
+    @Override
+    public int getColumnType(int columnIndex) {
+        return metadata.getColumnType(columnIndex);
+    }
+
+    @Override
+    public SymbolMapReader getSymbolMapReader(int columnIndex) {
+        return reader.getSymbolMapReader(columnIndex);
+    }
 }
