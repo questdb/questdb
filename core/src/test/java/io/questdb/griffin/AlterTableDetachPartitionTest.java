@@ -562,30 +562,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         });
     }
 
-    @Test
-    public void testCannotDetachWhenThereAreReadersForThePartition() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel tab = new TableModel(configuration, "tab", PartitionBy.DAY)) {
-                createPopulateTable(tab
-                                .timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        10,
-                        "2022-06-01",
-                        3
-                );
-
-                try (TableReader dstReader = new TableReader(configuration, "tab")) {
-                    dstReader.openPartition(1);
-                    assertFailure(
-                            "ALTER TABLE tab DETACH PARTITION LIST '2022-06-02'",
-                            "[-100] Detached column [index=1, name=i, attribute=type] does not match current table metadata"
-                    );
-                }
-            }
-        });
-    }
-
     private void swapDetachedMetadataFiles(String tableName, String brokenName, String partitionName) {
         // replace tab.detached/_meta.detached with brokenMeta.detached/_meta.detached
         path.trimTo(pathRootLen)

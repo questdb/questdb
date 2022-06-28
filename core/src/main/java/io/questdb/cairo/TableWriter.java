@@ -1847,7 +1847,7 @@ public class TableWriter implements Closeable {
                 return;
             }
 
-            detached = new TableReaderMetadata(ff).of(path, ColumnType.VERSION);
+            detached = new TableReaderMetadata(ff, path);
             if (metadata.getId() != detached.getId()) {
                 throw CairoException.detachedMetadataMismatch("id");
             }
