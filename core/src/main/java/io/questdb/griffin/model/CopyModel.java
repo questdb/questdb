@@ -125,7 +125,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     public void toSink(CharSink sink) {
     }
 
-    public boolean isParalell() {
+    public boolean isParallel() {
         return parallel;
     }
 }
