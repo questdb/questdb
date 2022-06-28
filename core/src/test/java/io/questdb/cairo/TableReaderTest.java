@@ -1565,13 +1565,16 @@ public class TableReaderTest extends AbstractCairoTest {
 
             writerThread.join();
             readerThread.join();
+
+            if (exceptions.size() != 0) {
+                Throwable ex = exceptions.poll();
+                ex.printStackTrace();
+                throw new Exception(ex);
+            }
+
             Assert.assertTrue(reloadCount.get() > totalColAddCount / 10);
             LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
         });
-
-        if (exceptions.size() != 0) {
-            throw exceptions.poll();
-        }
     }
 
     @Test

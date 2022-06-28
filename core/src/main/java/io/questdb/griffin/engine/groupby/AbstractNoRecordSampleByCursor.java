@@ -112,7 +112,6 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             nextDstUTC = rules.getNextDST(timestamp);
         }
 
-
         if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
             // this is the default path, we align time intervals to the first observation
             timestampSampler.setStart(timestamp);

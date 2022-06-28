@@ -66,7 +66,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
         // sink will be storing record columns to map key
         final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
         // this is the map itself, which we must not forget to free when factory closes
-        this.map = MapFactory.createMap(configuration, keyTypes, valueTypes);
+        this.map = MapFactory.createSmallMap(configuration, keyTypes, valueTypes);
         this.cursor = new SampleByFillNoneRecordCursor(
                 this.map,
                 mapSink,

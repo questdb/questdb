@@ -24,12 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
@@ -46,12 +46,14 @@ public class IndexBuilder extends RebuildColumnBase {
 
     public IndexBuilder() {
         super();
-        columnTypeErrorMsg = "Column is not indexed";
+        unsupportedColumnMessage = "Column is not indexed";
     }
 
     @Override
     public void clear() {
         super.clear();
+        // ddlMem is idempotent, we can call close() as many times as we need,
+        // but we reuse Java object after memory is closed (method of() will reopen memory)
         ddlMem.close();
         indexer.clear();
     }
@@ -63,53 +65,61 @@ public class IndexBuilder extends RebuildColumnBase {
     }
 
     @Override
-    protected boolean checkColumnType(TableReaderMetadata metadata, int rebuildColumnIndex) {
-        return metadata.isColumnIndexed(rebuildColumnIndex);
+    protected boolean isSupportedColumn(RecordMetadata metadata, int columnIndex) {
+        return metadata.isColumnIndexed(columnIndex);
     }
 
-    protected void rebuildColumn(
+    protected void doReindex(
+            ColumnVersionReader columnVersionReader,
+            int columnWriterIndex,
             CharSequence columnName,
             CharSequence partitionName,
-            int indexValueBlockCapacity,
+            long partitionNameTxn,
             long partitionSize,
-            FilesFacade ff,
-            ColumnVersionReader columnVersionReader,
-            int columnIndex,
             long partitionTimestamp,
-            long partitionNameTxn
+            int indexValueBlockCapacity
     ) {
         path.trimTo(rootLen).concat(partitionName);
         TableUtils.txnPartitionConditionally(path, partitionNameTxn);
-        LOG.info().$("testing partition path").$(path).$();
         final int plen = path.length();
 
         if (ff.exists(path.$())) {
             try (final MemoryMR roMem = indexMem) {
-                long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnIndex);
-                removeIndexFiles(columnName, ff, columnNameTxn);
+                long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
+                removeIndexFiles(columnName, columnNameTxn);
                 TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
 
-                if (columnVersionReader.getColumnTopPartitionTimestamp(columnIndex) <= partitionTimestamp) {
-                    LOG.info().$("indexing [path=").utf8(path).I$();
-                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnIndex);
-                    createIndexFiles(columnName, indexValueBlockCapacity, plen, ff, columnNameTxn);
+                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
+                if (columnTop > -1L) {
 
                     if (partitionSize > columnTop) {
+                        LOG.info().$("indexing [path=").utf8(path).I$();
+                        createIndexFiles(columnName, indexValueBlockCapacity, plen, columnNameTxn);
                         TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
-                        final long columnSize = (partitionSize - columnTop) << ColumnType.pow2SizeOf(ColumnType.INT);
-                        roMem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WRITER);
-                        indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);
-                        indexer.index(roMem, columnTop, partitionSize);
-                        indexer.clear();
+                        roMem.of(
+                                ff,
+                                path,
+                                0,
+                                (partitionSize - columnTop) * Integer.BYTES,
+                                MemoryTag.MMAP_TABLE_WRITER
+                        );
+                        try {
+                            indexer.configureWriter(configuration, path.trimTo(plen), columnName, columnNameTxn, columnTop);
+                            indexer.index(roMem, columnTop, partitionSize);
+                        } finally {
+                            indexer.clear();
+                        }
                     }
+                } else {
+                    LOG.info().$("column is empty in partition [path=").$(path).I$();
                 }
             }
         } else {
-            LOG.info().$("partition does not exit ").$(path).$();
+            LOG.info().$("partition does not exist [path=").$(path).I$();
         }
     }
 
-    private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, FilesFacade ff, long columnNameTxn) {
+    private void createIndexFiles(CharSequence columnName, int indexValueBlockCapacity, int plen, long columnNameTxn) {
         try {
             BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
             try {
@@ -131,6 +141,7 @@ public class IndexBuilder extends RebuildColumnBase {
                 }
                 throw e;
             } finally {
+                // this close() closes the underlying file, but ddlMem object remains reusable
                 ddlMem.close();
             }
             if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn))) {
@@ -143,7 +154,7 @@ public class IndexBuilder extends RebuildColumnBase {
         }
     }
 
-    private void removeFile(Path path, FilesFacade ff) {
+    private void removeFile(Path path) {
         LOG.info().$("deleting ").utf8(path).$();
         if (!ff.remove(this.path)) {
             if (!ff.exists(this.path)) {
@@ -155,12 +166,12 @@ public class IndexBuilder extends RebuildColumnBase {
         }
     }
 
-    private void removeIndexFiles(CharSequence columnName, FilesFacade ff, long columnNameTxn) {
+    private void removeIndexFiles(CharSequence columnName, long columnNameTxn) {
         final int plen = path.length();
         BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn);
-        removeFile(path, ff);
+        removeFile(path);
 
         BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn);
-        removeFile(path, ff);
+        removeFile(path);
     }
 }

@@ -283,9 +283,19 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             while (sent != lineDataBytes.length) {
                 int rc = Net.send(socket.fd, bufaddr + sent, lineDataBytes.length - sent);
                 if (rc < 0) {
+                    LOG.error().$("Data sending failed [rc=").$(rc)
+                            .$(", sent=").$(sent)
+                            .$(", bufferSize=").$(lineDataBytes.length)
+                            .I$();
                     throw new RuntimeException("Data sending failed [rc=" + rc + "]");
                 }
                 sent += rc;
+                if (sent != lineDataBytes.length) {
+                    LOG.info().$("Data sending is in progress [rc=").$(rc)
+                            .$(", sent=").$(sent)
+                            .$(", bufferSize=").$(lineDataBytes.length)
+                            .I$();
+                }
             }
         } finally {
             Unsafe.free(bufaddr, lineDataBytes.length, MemoryTag.NATIVE_DEFAULT);

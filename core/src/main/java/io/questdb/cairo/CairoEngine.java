@@ -65,10 +65,8 @@ public class CairoEngine implements Closeable, WriterSource {
     private final RingQueue<TelemetryTask> telemetryQueue;
     private final MPSequence telemetryPubSeq;
     private final SCSequence telemetrySubSeq;
-    private final long tableIdMemSize;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
-    private long tableIdFd = -1;
-    private long tableIdMem = 0;
+    private final IDGenerator tableIdGenerator;
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -93,9 +91,13 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetryPubSeq = null;
             this.telemetrySubSeq = null;
         }
-        this.tableIdMemSize = Files.PAGE_SIZE;
-        // Subscribe to table writer commands to provide cold command handling.
-        openTableId();
+        tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
+        try {
+            tableIdGenerator.open();
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
         // Recover snapshot, if necessary.
         try {
             DatabaseSnapshotAgent.recoverSnapshot(this);
@@ -123,7 +125,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public void close() {
         Misc.free(writerPool);
         Misc.free(readerPool);
-        freeTableId();
+        Misc.free(tableIdGenerator);
         Misc.free(messageBus);
     }
 
@@ -169,19 +171,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 mem,
                 path,
                 struct,
-                (int) getNextTableId()
+                (int) tableIdGenerator.getNextId()
         );
-    }
-
-    public void freeTableId() {
-        if (tableIdMem != 0) {
-            configuration.getFilesFacade().munmap(tableIdMem, tableIdMemSize, MemoryTag.MMAP_DEFAULT);
-            tableIdMem = 0;
-        }
-        if (tableIdFd != -1) {
-            configuration.getFilesFacade().close(tableIdFd);
-            tableIdFd = -1;
-        }
     }
 
     public TableWriter getBackupWriter(
@@ -222,18 +213,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return metrics;
     }
 
-    public long getNextTableId() {
-        long next;
-        long x = Unsafe.getUnsafe().getLong(tableIdMem);
-        do {
-            next = x;
-            x = Os.compareAndSwap(tableIdMem, next, next + 1);
-        } while (next != x);
-        return next + 1;
-    }
-
     public PoolListener getPoolListener() {
         return this.writerPool.getPoolListener();
+    }
+
+    public IDGenerator getTableIdGenerator() {
+        return tableIdGenerator;
     }
 
     public void setPoolListener(PoolListener poolListener) {
@@ -373,19 +358,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.lock(tableName, lockReason);
     }
 
-    public void openTableId() {
-        freeTableId();
-        FilesFacade ff = configuration.getFilesFacade();
-        Path path = Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-        try {
-            tableIdFd = TableUtils.openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
-            this.tableIdMem = TableUtils.mapRW(ff, tableIdFd, tableIdMemSize, MemoryTag.MMAP_DEFAULT);
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-    }
-
     @TestOnly
     public boolean releaseAllReaders() {
         return readerPool.releaseAll();
@@ -455,12 +427,6 @@ public class CairoEngine implements Closeable, WriterSource {
             LOG.error().$("cannot lock and rename [from='").$(tableName).$("', to='").$(newName).$("', reason='").$(lockedReason).$("']").$();
             throw EntryUnavailableException.instance(lockedReason);
         }
-    }
-
-    // This is not thread safe way to reset table ID back to 0
-    // It is useful for testing only
-    public void resetTableId() {
-        Unsafe.getUnsafe().putLong(tableIdMem, 0);
     }
 
     public void unlock(
