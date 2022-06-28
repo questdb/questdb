@@ -692,21 +692,32 @@ public class TableWriter implements Closeable {
                 return statusCode;
             }
 
+            setPathForPartition(path, partitionBy, timestamp, false);
+            if (!ff.exists(path.$())) {
+                LOG.error()
+                        .$("partition folder does not exist [path=")
+                        .$(path)
+                        .$(']')
+                        .$();
+                return StatusCode.PARTITION_FOLDER_DOES_NOT_EXIST;
+            }
+
+            if (inTransaction()) {
+                LOG.info()
+                        .$("committing open transaction before applying detach partition command [table=")
+                        .$(tableName)
+                        .$(", partition=")
+                        .$ts(timestamp)
+                        .I$();
+                commit();
+            }
+
             setPathForPartition(other, partitionBy, timestamp, false);
             other.put(DETACHED_DIR_MARKER);
             int detachedPathLen = other.length();
-            if (ff.exists(other.$())) {
-                LOG.error()
-                        .$("debris folder, manually delete and retry [path=")
-                        .$(other)
-                        .$(']')
-                        .$();
-                return StatusCode.PARTITION_ALREADY_DETACHED;
-            }
 
             // rename partition folder to name.detached
-            setPathForPartition(path, partitionBy, timestamp, false);
-            if (!ff.rename(path.$(), other)) {
+            if (!ff.rename(path.$(), other.$())) {
                 LOG.error()
                         .$("cannot rename [errno=")
                         .$(ff.errno())
@@ -1155,8 +1166,6 @@ public class TableWriter implements Closeable {
             LOG.error().$("partition is already detached [path=").$(path).$(']').$();
             return PARTITION_ALREADY_DETACHED;
         }
-
-
 
         try {
             // when we want to delete first partition we must find out

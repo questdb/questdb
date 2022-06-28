@@ -25,9 +25,11 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -45,6 +47,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     private static Path path;
     private static Path brokenMetaPath;
     private static int pathRootLen;
+    private static SqlExecutionContext sqlExecutionContext2;
+    private static SqlCompiler compiler2;
 
 
     @BeforeClass
@@ -53,6 +57,14 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         path = new Path().of(configuration.getRoot());
         brokenMetaPath = new Path().of(configuration.getRoot());
         pathRootLen = path.length();
+        compiler2 = new SqlCompiler(engine, null, snapshotAgent);
+        sqlExecutionContext2 = new SqlExecutionContextImpl(engine, 1)
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        null,
+                        null,
+                        -1,
+                        null);
     }
 
     @AfterClass
@@ -60,6 +72,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         AbstractGriffinTest.tearDownStatic();
         Misc.free(path);
         Misc.free(brokenMetaPath);
+        Misc.free(compiler2);
+        Misc.free(sqlExecutionContext2);
     }
 
     @Test
@@ -173,6 +187,24 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 ff,
                 "ALTER TABLE tab DETACH PARTITION LIST '2022-06-03'",
                 "could not detach [statusCode=PARTITION_FOLDER_CANNOT_RENAME, table=tab, partition='2022-06-03']"
+        );
+    }
+
+    @Test
+    public void testPartitionFolderDoesNotExist() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.endsWith(path, "2022-06-03")) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+        };
+        assertFailedDetachOperation(
+                ff,
+                "ALTER TABLE tab DETACH PARTITION LIST '2022-06-03'",
+                "could not detach [statusCode=PARTITION_FOLDER_DOES_NOT_EXIST, table=tab, partition='2022-06-03']"
         );
     }
 
@@ -384,6 +416,35 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         "from long_sequence(100))",
                 "[-100] Detached column [index=1, name=i, attribute=type] does not match current table metadata"
         );
+    }
+
+    @Test
+    public void testDetachPartitionsTableInTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel tab = new TableModel(configuration, "tab", PartitionBy.DAY)) {
+                createPopulateTable(tab
+                                .col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        "2022-06-01",
+                        4);
+
+                // Add 1 row without commit
+                long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "tab", "testing")) {
+                    TableWriter.Row row = writer.newRow(timestamp);
+                    row.putLong(0, 1L);
+                    row.putInt(1, 1);
+                    row.append();
+
+                    Assert.assertTrue(writer.inTransaction());
+                    writer.detachPartition(timestamp);
+                    Assert.assertEquals(10, writer.size());
+                    Assert.assertFalse(writer.inTransaction());
+                }
+            }
+        });
     }
 
     private void assertFailedAttachOperationBecauseOfMetadata(
