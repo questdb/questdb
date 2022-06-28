@@ -398,6 +398,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxFileNameLength;
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
+    private final boolean simulateCrashEnabled;
 
     public PropServerConfiguration(
             String root,
@@ -428,6 +429,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
+        this.simulateCrashEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SIMULATE_CRASH_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
@@ -2154,6 +2156,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSampleByIndexSearchPageSize() {
             return sampleByIndexSearchPageSize;
+        }
+
+        @Override
+        public boolean getSimulateCrashEnabled() {
+            return simulateCrashEnabled;
         }
 
         @Override
