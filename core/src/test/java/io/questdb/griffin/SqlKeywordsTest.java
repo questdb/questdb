@@ -31,6 +31,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Map;
 
 import static io.questdb.griffin.SqlKeywords.*;
@@ -61,17 +62,16 @@ public class SqlKeywordsTest {
 
     @Test
     public void testIs() throws Exception {
-        Map<String, String> specialCases = Map.of(
-                "isColonColon", "::",
-                "isConcatOperator", "||",
-                "isMaxIdentifierLength", "max_identifier_length",
-                "isQuote", "'",
-                "isSearchPath", "search_path",
-                "isSemicolon", ";",
-                "isStandardConformingStrings", "standard_conforming_strings",
-                "isTextArray", "text[]",
-                "isTransactionIsolation", "transaction_isolation"
-        );
+        Map<String, String> specialCases = new HashMap<>();
+        specialCases.put("isColonColon", "::");
+        specialCases.put("isConcatOperator", "||");
+        specialCases.put("isMaxIdentifierLength", "max_identifier_length");
+        specialCases.put("isQuote", "'");
+        specialCases.put("isSearchPath", "search_path");
+        specialCases.put("isSemicolon", ";");
+        specialCases.put("isStandardConformingStrings", "standard_conforming_strings");
+        specialCases.put("isTextArray", "text[]");
+        specialCases.put("isTransactionIsolation", "transaction_isolation");
 
         Method[] methods = SqlKeywords.class.getMethods();
         Arrays.sort(methods, (m1, m2) -> m1.getName().compareTo(m2.getName()));
