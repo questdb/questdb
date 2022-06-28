@@ -74,7 +74,7 @@ public class SqlKeywordsTest {
         );
 
         Method[] methods = SqlKeywords.class.getMethods();
-        Arrays.sort(methods, Comparator.comparing(Method::getName));
+        Arrays.sort(methods, (m1, m2) -> m1.getName().compareTo(m2.getName()));
         for (Method method : methods) {
             String name;
             int m = method.getModifiers() & Modifier.methodModifiers();
