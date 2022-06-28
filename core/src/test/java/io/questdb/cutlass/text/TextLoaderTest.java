@@ -1250,7 +1250,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 240_000_000, // 4 minutes, precision is micro
                 3,
                 true,
-                setOf("2021-01-01.2", "2021-01-01", "2021-01-01.4", "2021-01-02")
+                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1")
         );
     }
 
@@ -1260,7 +1260,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 60_000_000, // 1 minute, precision is micro
                 2,
                 false,
-                setOf("2021-01-01.2", "2021-01-01", "2021-01-01.5", "2021-01-02")
+                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.5", "2021-01-02.1")
         );
     }
 
