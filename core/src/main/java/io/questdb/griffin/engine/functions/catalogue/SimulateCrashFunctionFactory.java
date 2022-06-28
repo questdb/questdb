@@ -38,10 +38,11 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
 
     private static final SimulateCrashFunction CrashInstance = new SimulateCrashFunction();
     private static final DoNothingInstance Dummy = new DoNothingInstance();
+    private static final OutOfMemoryFunction OutOfMemoryInstance = new OutOfMemoryFunction();
 
     @Override
     public String getSignature() {
-        return "simulate_crash()";
+        return "simulate_crash(a)";
     }
 
     @Override
@@ -51,8 +52,15 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext
     ) {
+
         if (configuration.getSimulateCrashEnabled())  {
-            return CrashInstance;
+            char killType = args.get(0).getChar(null);
+            switch (killType) {
+                case '0':
+                    return CrashInstance;
+                case 'M':
+                    return OutOfMemoryInstance;
+            }
         }
         return Dummy;
     }
@@ -62,6 +70,13 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             Unsafe.getUnsafe().getLong(0L);
             return true;
+        }
+    }
+
+    private static class OutOfMemoryFunction extends BooleanFunction {
+        @Override
+        public boolean getBool(Record rec) {
+            throw new OutOfMemoryError("simulate_crash('M')");
         }
     }
 

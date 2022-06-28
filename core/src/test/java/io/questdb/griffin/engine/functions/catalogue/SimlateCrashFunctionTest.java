@@ -36,7 +36,16 @@ public class SimlateCrashFunctionTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "select simulate_crash()",
+                "select simulate_crash('0')",
+                sink,
+                "simulate_crash\n" +
+                        "false\n"
+        ));
+
+        assertMemoryLeak(() -> TestUtils.assertSql(
+                compiler,
+                sqlExecutionContext,
+                "select simulate_crash('M')",
                 sink,
                 "simulate_crash\n" +
                         "false\n"
