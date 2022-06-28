@@ -46,7 +46,6 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 
 
@@ -143,6 +142,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private byte phase;
     private CharSequence errorMessage;
     private final SqlExecutionCircuitBreaker circuitBreaker;
+    private long startMs;//start time of current phase (in millis) 
 
     public ParallelCsvFileImporter(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
@@ -234,7 +234,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             throw TextException.$("No partitions to merge and load found");
         }
 
-        LOG.info().$("Started index merge and partition load").$();
+        logStartOf("index merge and partition load");
 
         final int partitionCount = partitionNames.size();
         final int chunkSize = (partitionCount + workerCount - 1) / workerCount;
@@ -271,8 +271,21 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         assert collectedCount == queuedCount;
 
         checkImportStatus();
+        logEndOf("index merge and partition load");
+    }
 
-        LOG.info().$("Finished index merge and partition load").$();
+    private void logStartOf(String phase) {
+        LOG.info().$("Started ").$(phase).$(" of file='").$(inputFilePath).$("'").$();
+        startMs = getCurrentTimeMs();
+    }
+
+    private void logEndOf(String phase) {
+        long endMs = getCurrentTimeMs();
+        LOG.info().$("Finished ").$(phase).$(" of file='").$(inputFilePath).$("' time=").$((endMs - startMs) / 1000).$("s").$();
+    }
+
+    private long getCurrentTimeMs() {
+        return configuration.getMillisecondClock().getTicks();
     }
 
     private int getTmpTablesCount() {
@@ -280,7 +293,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     public void mergeSymbolTables(final TableWriter writer) throws TextException {
-        LOG.info().$("Started symbol table merge").$();
+        logStartOf("symbol table merge");
         final int tmpTableCount = getTmpTablesCount();
 
         int queuedCount = 0;
@@ -311,11 +324,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         collectedCount += collect(queuedCount - collectedCount, this::collectStub);
         assert collectedCount == queuedCount;
         checkImportStatus();
-        LOG.info().$("Finished symbol table merge").$();
+
+        logEndOf("symbol table merge");
     }
 
     public void updateSymbolKeys(final TableWriter writer) throws TextException {
-        LOG.info().$("Started symbol keys update").$();
+        logStartOf("symbol keys update");
 
         final int tmpTableCount = getTmpTablesCount();
         int queuedCount = 0;
@@ -360,12 +374,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
                 }
             }
+
         }
 
         collectedCount += collect(queuedCount - collectedCount, this::collectStub);
         assert collectedCount == queuedCount;
         checkImportStatus();
-        LOG.info().$("Finished symbol keys update").$();
+
+        logEndOf("symbol keys update");
     }
 
     public void of(CharSequence tableName, CharSequence inputFileName, int partitionBy, byte columnDelimiter, CharSequence timestampColumn, CharSequence tsFormat, boolean forceHeader) {
@@ -508,6 +524,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void movePartitions() {
+        logStartOf("moving partitions");
         final int taskCount = getTmpTablesCount();
 
         for (int i = 0; i < taskCount; i++) {
@@ -551,6 +568,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 }
             }
         }
+
+        logEndOf("moving partitions");
     }
 
     @TestOnly
@@ -582,7 +601,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             throw TextException.$("Unable to process, the processing queue is misconfigured");
         }
 
-        long startMs = configuration.getMillisecondClock().getTicks();
+        long startMs = getCurrentTimeMs();
 
         long fd = ff.openRO(inputFilePath);
         if (fd < 0) {
@@ -616,9 +635,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             ff.close(fd);
         }
 
-        long endMs = configuration.getMillisecondClock().getTicks();
-
-        LOG.info().$("Finished importing file='").$(inputFileName).$("' time=").$((endMs - startMs) / 1000).$(" s").$();
+        long endMs = getCurrentTimeMs();
+        LOG.info().$("Finished importing file='").$(inputFileName).$("' time=").$((endMs - startMs) / 1000).$("s").$();
     }
 
     private void cleanUp(TableWriter writer) {
@@ -638,7 +656,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             throw TextException.$("No partitions to attach found");
         }
 
-        LOG.info().$("Started attaching partitions").$();
+        logStartOf("attaching partitions");
 
         for (int i = 0, sz = partitionNames.size(); i < sz; i++) {
             final CharSequence partitionDirName = partitionNames.get(i);
@@ -653,7 +671,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
         }
 
-        LOG.info().$("Finished attaching partitions").$();
+        logEndOf("attaching partitions");
     }
 
     public void setMinChunkSize(int minChunkSize) {
@@ -713,8 +731,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     //returns list with N chunk boundaries
     LongList findChunkBoundaries(long fileLength) throws TextException {
-        LOG.info().$("Started checking boundaries in file=").$(inputFilePath).$();
-
+        logStartOf("checking boundaries");
         assert (workerCount > 0 && minChunkSize > 0);
 
         if (workerCount == 1) {
@@ -725,6 +742,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             indexChunkStats.add(0);
             return indexChunkStats;
         }
+
 
         long chunkSize = fileLength / workerCount;
         chunkSize = Math.max(minChunkSize, chunkSize);
@@ -760,11 +778,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         checkImportStatus();
 
         processChunkStats(fileLength, chunks);
-        LOG.info().$("Finished checking boundaries in file=").$(inputFilePath).$();
+        logEndOf("checking boundaries");
         return indexChunkStats;
     }
 
     void indexChunks() throws TextException {
+        logStartOf("indexing");
+
         int queuedCount = 0;
         int collectedCount = 0;
 
@@ -772,7 +792,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             throw TextException.$("No chunks found for indexing in file=").put(inputFilePath);
         }
 
-        LOG.info().$("Started indexing file=").$(inputFilePath).$();
         createWorkDir();
 
         boolean forceHeader = this.forceHeader;
@@ -807,10 +826,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         checkImportStatus();
         processIndexStats();
 
-        LOG.info().$("Finished indexing file=").$(inputFilePath).$();
+        logEndOf("indexing");
     }
 
     private void buildColumnIndexes(TableWriter writer) throws TextException {
+        logStartOf("building column indexes");
+
         final RecordMetadata metadata = writer.getMetadata();
         final int columnCount = metadata.getColumnCount();
         final int tmpTableCount = getTmpTablesCount();
@@ -821,7 +842,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         if (isAnyIndexed) {
-            LOG.info().$("Started building column indexes").$();
 
             int queuedCount = 0;
             int collectedCount = 0;
@@ -845,8 +865,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             collectedCount += collect(queuedCount - collectedCount, this::collectStub);
             assert collectedCount == queuedCount;
             checkImportStatus();
-            LOG.info().$("Finished building column indexes").$();
         }
+
+        logEndOf("building column indexes");
     }
 
     private void processIndexStats() {

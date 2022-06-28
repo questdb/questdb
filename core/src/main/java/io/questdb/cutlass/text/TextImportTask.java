@@ -606,14 +606,14 @@ public class TextImportTask {
                 long MASK = ~((255L) << 56 | (255L) << 48);
                 final long count = size / (2 * Long.BYTES);
                 long bytesToRead;
-                int linesToRead;
+                int additionalLines;
 
                 for (long i = 0; i < count; i++) {
                     long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
                     long lineLength = lengthAndOffset >>> 48;
                     offset = lengthAndOffset & MASK;
                     bytesToRead = lineLength;
-                    linesToRead = 0;
+                    additionalLines = 0;
 
                     for (long j = i + 1; j < count; j++) {
                         long nextLengthAndOffset = Unsafe.getUnsafe().getLong(address + j * 2L * Long.BYTES + Long.BYTES);
@@ -622,17 +622,19 @@ public class TextImportTask {
 
                         //line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
                         long diff = nextOffset - offset - bytesToRead;
-                        if (diff < 2 && bytesToRead + nextLineLength < bufLength) {
+                        if (diff > -1 && diff < 2 && bytesToRead + nextLineLength < bufLength) {
                             bytesToRead += diff + nextLineLength;
-                            linesToRead++;
+                            additionalLines++;
+                        } else {
+                            break;
                         }
                     }
 
-                    i += linesToRead;
+                    i += additionalLines;
 
                     long n = ff.read(fd, buf, bytesToRead, offset);
                     if (n > 0) {
-                        lexer.parse(buf, buf + n, linesToRead, listener);
+                        lexer.parse(buf, buf + n, Integer.MAX_VALUE, listener);
                     } else {
                         throw TextException.$("Can't read from file path='").put(path).put("', errno=").put(ff.errno()).put(",offset=").put(offset);
                     }
