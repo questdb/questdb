@@ -398,7 +398,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxFileNameLength;
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
-    private boolean simulateCrashEnabled;
+    private final boolean simulateCrashEnabled;
 
     public PropServerConfiguration(
             String root,
