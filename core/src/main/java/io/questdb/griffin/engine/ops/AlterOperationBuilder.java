@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.CairoEngine;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
@@ -116,6 +115,14 @@ public class AlterOperationBuilder {
 
     public AlterOperationBuilder ofDropPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = DROP_PARTITION;
+        this.tableNamePosition = tableNamePosition;
+        this.tableName = tableName;
+        this.tableId = tableId;
+        return this;
+    }
+
+    public AlterOperationBuilder ofDetachPartition(int tableNamePosition, String tableName, int tableId) {
+        this.command = DETACH_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;

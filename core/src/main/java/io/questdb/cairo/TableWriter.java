@@ -194,6 +194,7 @@ public class TableWriter implements Closeable {
     private long commitInterval;
     private UpdateOperator updateOperator;
 
+
     public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
     }
@@ -589,7 +590,7 @@ public class TableWriter implements Closeable {
         metrics.tableWriter().addPhysicallyWrittenRows(rows);
     }
 
-    public int attachPartition(long timestamp) {
+    public StatusCode attachPartition(long timestamp) {
         // Partitioned table must have a timestamp
         // SQL compiler will check that table is partitioned
         assert metadata.getTimestampIndex() > -1;
@@ -612,8 +613,12 @@ public class TableWriter implements Closeable {
                         rollbackRename = true;
                         LOG.info().$("moved partition dir: ").$(other).$(" to ").$(path).$();
                     } else {
-                        throw CairoException.instance(ff.errno()).put("File system error on trying to rename [from=")
-                                .put(other).put(",to=").put(path).put(']');
+                        throw CairoException.instance(ff.errno())
+                                .put("File system error on trying to rename [from=")
+                                .put(other)
+                                .put(", to=")
+                                .put(path)
+                                .put(']');
                     }
                 }
             }
@@ -628,6 +633,7 @@ public class TableWriter implements Closeable {
                         commit();
                     }
 
+                    attachPartitionCheckDetachedMetadata();
                     attachPartitionCheckFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
                     long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
                     long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + 8);
@@ -656,7 +662,7 @@ public class TableWriter implements Closeable {
                 }
             } else {
                 LOG.error().$("cannot attach missing partition [path=").$(path).$(']').$();
-                return CANNOT_ATTACH_MISSING_PARTITION;
+                return PARTITION_CANNOT_ATTACH_MISSING;
             }
         } finally {
             if (rollbackRename) {
@@ -674,6 +680,67 @@ public class TableWriter implements Closeable {
         }
 
         return StatusCode.OK;
+    }
+
+    public StatusCode detachPartition(long timestamp) {
+        // Partitioned table must have a timestamp
+        assert metadata.getTimestampIndex() > -1;
+
+        try {
+            StatusCode statusCode = detachOperationOnPartition(timestamp, false);
+            if (StatusCode.OK != statusCode) {
+                return statusCode;
+            }
+
+            setPathForPartition(other, partitionBy, timestamp, false);
+            other.put(DETACHED_DIR_MARKER);
+            int detachedPathLen = other.length();
+            if (ff.exists(other.$())) {
+                LOG.error()
+                        .$("debris folder, manually delete and retry [path=")
+                        .$(other)
+                        .$(']')
+                        .$();
+                return StatusCode.PARTITION_ALREADY_DETACHED;
+            }
+
+            // rename partition folder to name.detached
+            setPathForPartition(path, partitionBy, timestamp, false);
+            if (!ff.rename(path.$(), other)) {
+                LOG.error()
+                        .$("cannot rename [errno=")
+                        .$(ff.errno())
+                        .$(", from=")
+                        .$(path)
+                        .$(", to=")
+                        .$(other)
+                        .$(']')
+                        .$();
+                return StatusCode.PARTITION_FOLDER_CANNOT_RENAME;
+            }
+
+            // copy metadata file
+            path.trimTo(rootLen).concat(META_FILE_NAME).$();
+            other.trimTo(detachedPathLen).concat(META_FILE_NAME).put(DETACHED_DIR_MARKER).$();
+            if (ff.copy(path, other) < 0) {
+                LOG.error()
+                        .$("cannot copy [errno=")
+                        .$(ff.errno())
+                        .$(", from=")
+                        .$(path)
+                        .$(", to=")
+                        .$(other)
+                        .$(']')
+                        .$();
+                return StatusCode.PARTITION_CANNOT_COPY_META;
+            }
+
+            LOG.info().$("moved partition dir ").$(path).$(" to ").$(other).$();
+            return StatusCode.OK;
+        } finally {
+            path.trimTo(rootLen);
+            other.trimTo(rootLen);
+        }
     }
 
     public void changeCacheFlag(int columnIndex, boolean cache) {
@@ -1065,29 +1132,39 @@ public class TableWriter implements Closeable {
     }
 
     public boolean removePartition(long timestamp) {
-        long minTimestamp = txWriter.getMinTimestamp();
-        long maxTimestamp = txWriter.getMaxTimestamp();
+        return StatusCode.OK == detachOperationOnPartition(timestamp, true);
+    }
 
+    public StatusCode detachOperationOnPartition(long timestamp, boolean dropDirectoryData) {
         if (!PartitionBy.isPartitioned(partitionBy)) {
-            return false;
+            return TABLE_NOT_PARTITIONED;
         }
+
+        final long minTimestamp = txWriter.getMinTimestamp();
+        final long maxTimestamp = txWriter.getMaxTimestamp();
+
         timestamp = getPartitionLo(timestamp);
         if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
-            return false;
+            return PARTITION_EMPTY;
         }
-
         if (timestamp == getPartitionLo(maxTimestamp)) {
             LOG.error()
-                    .$("cannot remove active partition [path=").$(path)
-                    .$(", maxTimestamp=").$ts(maxTimestamp)
+                    .$("cannot ")
+                    .$(dropDirectoryData ? "remove" : "detach")
+                    .$(" active partition [path=")
+                    .$(path)
+                    .$(", maxTimestamp=")
+                    .$ts(maxTimestamp)
                     .$(']').$();
-            return false;
+            return PARTITION_IS_ACTIVE;
         }
 
         if (!txWriter.attachedPartitionsContains(timestamp)) {
             LOG.error().$("partition is already detached [path=").$(path).$(']').$();
-            return false;
+            return PARTITION_ALREADY_DETACHED;
         }
+
+
 
         try {
             // when we want to delete first partition we must find out
@@ -1111,12 +1188,13 @@ public class TableWriter implements Closeable {
             txWriter.bumpTruncateVersion();
             txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
 
-            // Call O3 methods to remove check TxnScoreboard and remove partition directly
-            o3PartitionRemoveCandidates.clear();
-            o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
-            o3ProcessPartitionRemoveCandidates();
-
-            return true;
+            if (dropDirectoryData) {
+                // Call O3 methods to remove check TxnScoreboard and remove partition directly
+                o3PartitionRemoveCandidates.clear();
+                o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
+                o3ProcessPartitionRemoveCandidates();
+            }
+            return StatusCode.OK;
         } finally {
             path.trimTo(rootLen);
         }
@@ -1759,6 +1837,57 @@ public class TableWriter implements Closeable {
             } finally {
                 path.trimTo(rootLen);
             }
+        }
+    }
+
+    private void attachPartitionCheckDetachedMetadata() {
+        int pathLen = path.length();
+        path.trimTo(pathLen).concat(META_FILE_NAME).put(DETACHED_DIR_MARKER).$();
+        TableReaderMetadata detached = null;
+        try {
+            if (!ff.exists(path)) {
+                // Backups and older versions of detached partitions will not have _meta.detached
+                LOG.info()
+                        .$("Partition metadata not found, skipping compatibility check [path=")
+                        .$(path)
+                        .$(']')
+                        .$();
+                return;
+            }
+
+            detached = new TableReaderMetadata(ff).of(path, ColumnType.VERSION);
+            if (metadata.getId() != detached.getId()) {
+                throw CairoException.detachedMetadataMismatch("id");
+            }
+            if (metadata.getStructureVersion() != detached.getStructureVersion()) {
+                throw CairoException.detachedMetadataMismatch("structure_version");
+            }
+            if (metadata.getTimestampIndex() != detached.getTimestampIndex()) {
+                throw CairoException.detachedMetadataMismatch("timestamp_index");
+            }
+            int columnCount = metadata.getColumnCount();
+            if (columnCount != detached.getColumnCount()) {
+                throw CairoException.detachedMetadataMismatch("column_count");
+            }
+            for (int i = 0; i < columnCount; i++) {
+                String name = metadata.getColumnName(i);
+                if (!name.equals(detached.getColumnName(i))) {
+                    throw CairoException.detachedColumnMetadataMismatch(i, name, "name");
+                }
+                if (metadata.getColumnType(i) != detached.getColumnType(i)) {
+                    throw CairoException.detachedColumnMetadataMismatch(i, name, "type");
+                }
+            }
+            if (!ff.remove(path)) {
+                LOG.info()
+                        .$("Please delete this file manually [path=")
+                        .$(path)
+                        .$(']')
+                        .$();
+            }
+        } finally {
+            path.trimTo(pathLen);
+            Misc.free(detached);
         }
     }
 

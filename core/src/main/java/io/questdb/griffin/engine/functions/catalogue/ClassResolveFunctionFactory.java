@@ -82,7 +82,7 @@ public class ClassResolveFunctionFactory implements FunctionFactory {
             return new ToPgDateFunctionFactory.ToPgDateFunction(nameFunction);
         }
 
-        if (SqlKeywords.isTextArrayKeyword(type)) {
+        if (SqlKeywords.isTextArray(type)) {
             return new StringToStringArrayFunction(argPositions.getQuick(0), nameFunction.getStr(null));
         }
 

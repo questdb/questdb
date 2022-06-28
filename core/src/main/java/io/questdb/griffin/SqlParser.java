@@ -131,7 +131,7 @@ public final class SqlParser {
     }
 
     private void addConcatArgs(ObjList<ExpressionNode> args, ExpressionNode leaf) {
-        if (leaf.type != ExpressionNode.FUNCTION || !isConcatFunction(leaf.token)) {
+        if (leaf.type != ExpressionNode.FUNCTION || !isConcatKeyword(leaf.token)) {
             args.add(leaf);
             return;
         }
@@ -530,13 +530,13 @@ public final class SqlParser {
                 ExpressionNode expr;
                 while ((expr = expr(lexer, (QueryModel) null)) != null) {
                     if (Chars.equals(expr.token, '=')) {
-                        if (isMaxUncommittedRowsParam(expr.lhs.token)) {
+                        if (isMaxUncommittedRowsKeyword(expr.lhs.token)) {
                             try {
                                 maxUncommittedRows = Numbers.parseInt(expr.rhs.token);
                             } catch (NumericException e) {
                                 throw SqlException.position(lexer.getPosition()).put(" could not parse maxUncommittedRows value \"").put(expr.rhs.token).put('"');
                             }
-                        } else if (isCommitLag(expr.lhs.token)) {
+                        } else if (isCommitLagKeyword(expr.lhs.token)) {
                             commitLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
                         } else {
                             throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
@@ -1240,7 +1240,7 @@ public final class SqlParser {
 
         final InsertModel model = insertModelPool.next();
         CharSequence tok = tok(lexer, "into or batch");
-        if (SqlKeywords.isBatch(tok)) {
+        if (SqlKeywords.isBatchKeyword(tok)) {
             long val = expectLong(lexer);
             if (val > 0) {
                 model.setBatchSize(val);
@@ -1249,14 +1249,14 @@ public final class SqlParser {
             }
 
             tok = tok(lexer, "into or commitLag");
-            if (SqlKeywords.isCommitLag(tok)) {
+            if (SqlKeywords.isCommitLagKeyword(tok)) {
                 int pos = lexer.getPosition();
                 model.setCommitLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
                 expectTok(lexer, "into");
             }
         }
 
-        if (!SqlKeywords.isInto(tok)) {
+        if (!SqlKeywords.isIntoKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "'into' expected");
         }
 
@@ -1897,7 +1897,7 @@ public final class SqlParser {
      * @param node expression node, provided by tree walking algo
      */
     private void rewriteTypeQualifier0(ExpressionNode node) {
-        if (node.type == ExpressionNode.OPERATION && isColonColonKeyword(node.token)) {
+        if (node.type == ExpressionNode.OPERATION && isColonColon(node.token)) {
             if (node.paramCount == 2) {
                 ExpressionNode that = node.rhs;
                 if (that.type == ExpressionNode.LITERAL) {

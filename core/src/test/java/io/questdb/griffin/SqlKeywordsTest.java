@@ -27,8 +27,13 @@ package io.questdb.griffin;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.griffin.SqlKeywords.isLinearKeyword;
-import static io.questdb.griffin.SqlKeywords.isPrevKeyword;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.Map;
+
+import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlKeywordsTest {
 
@@ -53,4 +58,36 @@ public class SqlKeywordsTest {
         Assert.assertFalse(isLinearKeyword("linea1"));
         Assert.assertTrue(isLinearKeyword("linear"));
     }
+
+    @Test
+    public void testIs() throws Exception {
+        Map<String, String> specialCases = Map.of(
+                "isColonColon", "::",
+                "isConcatOperator", "||",
+                "isMaxIdentifierLength", "max_identifier_length",
+                "isQuote", "'",
+                "isSearchPath", "search_path",
+                "isSemicolon", ";",
+                "isStandardConformingStrings", "standard_conforming_strings",
+                "isTextArray", "text[]",
+                "isTransactionIsolation", "transaction_isolation"
+        );
+
+        Method[] methods = SqlKeywords.class.getMethods();
+        Arrays.sort(methods, Comparator.comparing(Method::getName));
+        for (Method method : methods) {
+            String name;
+            int m = method.getModifiers() & Modifier.methodModifiers();
+            if (Modifier.isPublic(m) && Modifier.isStatic(m) && (name = method.getName()).startsWith("is")) {
+                String keyword;
+                if (name.endsWith("Keyword")) {
+                    keyword = name.substring(2, name.length() - 7).toLowerCase();
+                } else {
+                    keyword = specialCases.get(name);
+                }
+                Assert.assertTrue((boolean) method.invoke(null, keyword));
+            }
+        }
+    }
 }
+

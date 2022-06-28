@@ -200,7 +200,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAttachFailsInvalidSepartorFormat() throws Exception {
+    public void testAttachFailsInvalidSeparatorFormat() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
 

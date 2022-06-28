@@ -24,10 +24,14 @@
 
 package io.questdb.cairo;
 
-public final class StatusCode {
-    public final static int OK = 0;
-    public final static int PARTITION_EMPTY = 1;
-    public final static int TABLE_HAS_SYMBOLS = 2;
-    public final static int CANNOT_ATTACH_MISSING_PARTITION = 4;
-    public final static int PARTITION_ALREADY_ATTACHED = 5;
+public enum StatusCode {
+    OK,
+    TABLE_NOT_PARTITIONED,
+    PARTITION_EMPTY,
+    PARTITION_IS_ACTIVE,
+    PARTITION_ALREADY_ATTACHED,
+    PARTITION_CANNOT_ATTACH_MISSING,
+    PARTITION_ALREADY_DETACHED,
+    PARTITION_FOLDER_CANNOT_RENAME,
+    PARTITION_CANNOT_COPY_META
 }

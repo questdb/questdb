@@ -608,8 +608,17 @@ public final class TestUtils {
             TableModel tableModel,
             int totalRows,
             String startDate,
-            int partitionCount) throws NumericException, SqlException {
-        createPopulateTable(tableModel.getTableName(), compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
+            int partitionCount
+    ) throws NumericException, SqlException {
+        createPopulateTable(
+                tableModel.getTableName(),
+                compiler,
+                sqlExecutionContext,
+                tableModel,
+                totalRows,
+                startDate,
+                partitionCount
+        );
     }
 
     public static void createPopulateTable(
@@ -621,6 +630,25 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException, SqlException {
+        compiler.compile(
+                createPopulateTableStmt(
+                        tableName,
+                        tableModel,
+                        totalRows,
+                        startDate,
+                        partitionCount
+                ),
+                sqlExecutionContext
+        );
+    }
+
+    public static String createPopulateTableStmt(
+            CharSequence tableName,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
+    ) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
 
         long increment = 0;
@@ -698,7 +726,7 @@ public final class TestUtils {
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
             sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
         }
-        compiler.compile(sql.toString(), sqlExecutionContext);
+        return sql.toString();
     }
 
     public static void createTestPath(CharSequence root) {

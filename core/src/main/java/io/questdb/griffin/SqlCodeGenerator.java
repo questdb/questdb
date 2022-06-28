@@ -221,7 +221,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (node.type != ExpressionNode.LITERAL) {
                 ExpressionNode columnAst = column.getAst();
                 CharSequence token = columnAst.token;
-                if (!SqlKeywords.isFirstKeyword(token) && !SqlKeywords.isLastFunction(token)) {
+                if (!SqlKeywords.isFirstKeyword(token) && !SqlKeywords.isLastKeyword(token)) {
                     return false;
                 }
 

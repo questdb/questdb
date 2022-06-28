@@ -40,6 +40,7 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
     public final static short ADD_COLUMN = 3;
     public final static short DROP_PARTITION = 4;
     public final static short ATTACH_PARTITION = 5;
+    public final static short DETACH_PARTITION = 51;
     public final static short ADD_INDEX = 6;
     public final static short ADD_SYMBOL_CACHE = 7;
     public final static short REMOVE_SYMBOL_CACHE = 8;
@@ -77,6 +78,9 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
                     break;
                 case DROP_PARTITION:
                     applyDropPartition(tableWriter);
+                    break;
+                case DETACH_PARTITION:
+                    applyDetachPartition(tableWriter);
                     break;
                 case ATTACH_PARTITION:
                     applyAttachPartition(tableWriter);
@@ -247,25 +251,23 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
         for (int i = 0, n = longList.size(); i < n; i++) {
             long partitionTimestamp = longList.getQuick(i);
             try {
-                int statusCode = tableWriter.attachPartition(partitionTimestamp);
+                StatusCode statusCode = tableWriter.attachPartition(partitionTimestamp);
                 switch (statusCode) {
-                    case StatusCode.OK:
+                    case OK:
                         break;
-                    case StatusCode.CANNOT_ATTACH_MISSING_PARTITION:
+                    case PARTITION_CANNOT_ATTACH_MISSING:
                         throw putPartitionName(
                                 SqlException.$(tableNamePosition, "attach partition failed, folder '"),
                                 tableWriter.getPartitionBy(),
                                 partitionTimestamp)
                                 .put("' does not exist");
-                    case StatusCode.TABLE_HAS_SYMBOLS:
-                        throw SqlException.$(tableNamePosition, "attaching partitions to tables with symbol columns not supported");
-                    case StatusCode.PARTITION_EMPTY:
+                    case PARTITION_EMPTY:
                         throw putPartitionName(
                                 SqlException.$(tableNamePosition, "failed to attach partition '"),
                                 tableWriter.getPartitionBy(),
                                 partitionTimestamp)
                                 .put("', data does not correspond to the partition folder or partition is empty");
-                    case StatusCode.PARTITION_ALREADY_ATTACHED:
+                    case PARTITION_ALREADY_ATTACHED:
                         throw putPartitionName(
                                 SqlException.$(tableNamePosition, "failed to attach partition '"),
                                 tableWriter.getPartitionBy(),
@@ -276,7 +278,7 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
                                 SqlException.$(tableNamePosition, "attach partition  '"),
                                 tableWriter.getPartitionBy(),
                                 partitionTimestamp)
-                                .put(statusCode);
+                                .put(statusCode.name());
                 }
             } catch (CairoException e) {
                 LOG.error().$("failed to drop partition [table=").$(tableName)
@@ -286,6 +288,24 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
                         .I$();
 
                 throw e;
+            }
+        }
+    }
+
+    private void applyDetachPartition(TableWriter tableWriter) throws SqlException {
+        for (int i = 0, n = longList.size(); i < n; i++) {
+            long partitionTimestamp = longList.getQuick(i);
+            StatusCode statusCode = tableWriter.detachPartition(partitionTimestamp);
+            if (StatusCode.OK != statusCode) {
+                throw putPartitionName(
+                        SqlException.$(tableNamePosition, "could not detach [statusCode=")
+                                .put(statusCode.name())
+                                .put(", table=")
+                                .put(tableName)
+                                .put(", partition='"),
+                        tableWriter.getPartitionBy(),
+                        partitionTimestamp
+                ).put("']");
             }
         }
     }

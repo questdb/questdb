@@ -1088,14 +1088,21 @@ public class SqlCompiler implements Closeable {
                     if (SqlKeywords.isColumnKeyword(tok)) {
                         return alterTableDropColumn(tableNamePosition, tableName, tableMetadata);
                     } else if (SqlKeywords.isPartitionKeyword(tok)) {
-                        return alterTableDropOrAttachPartition(reader, PartitionAction.DROP, executionContext);
+                        return alterTableDropDetachOrAttachPartition(reader, PartitionAction.DROP, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                     }
                 } else if (SqlKeywords.isAttachKeyword(tok)) {
                     tok = expectToken(lexer, "'partition'");
                     if (SqlKeywords.isPartitionKeyword(tok)) {
-                        return alterTableDropOrAttachPartition(reader, PartitionAction.ATTACH, executionContext);
+                        return alterTableDropDetachOrAttachPartition(reader, PartitionAction.ATTACH, executionContext);
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                    }
+                } else if (SqlKeywords.isDetachKeyword(tok)) {
+                    tok = expectToken(lexer, "'partition'");
+                    if (SqlKeywords.isPartitionKeyword(tok)) {
+                        return alterTableDropDetachOrAttachPartition(reader, PartitionAction.DETACH, executionContext);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                     }
@@ -1453,8 +1460,11 @@ public class SqlCompiler implements Closeable {
         return compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private CompiledQuery alterTableDropOrAttachPartition(TableReader reader, int action, SqlExecutionContext executionContext)
-            throws SqlException {
+    private CompiledQuery alterTableDropDetachOrAttachPartition(
+            TableReader reader,
+            int action,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         final int pos = lexer.lastTokenPosition();
         TableReaderMetadata readerMetadata = reader.getMetadata();
         if (readerMetadata.getPartitionBy() == PartitionBy.NONE) {
@@ -1464,12 +1474,19 @@ public class SqlCompiler implements Closeable {
         String tableName = reader.getTableName();
         final CharSequence tok = expectToken(lexer, "'list' or 'where'");
         if (SqlKeywords.isListKeyword(tok)) {
-            return alterTableDropOrAttachPartitionByList(reader, pos, action);
+            return alterTableDropDetachOrAttachPartitionByList(reader, pos, action);
         } else if (SqlKeywords.isWhereKeyword(tok)) {
-            if (action != PartitionAction.DROP) {
-                throw SqlException.$(pos, "WHERE clause can only be used with DROP PARTITION command");
+            AlterOperationBuilder alterPartitionStatement;
+            switch (action) {
+                case PartitionAction.DROP:
+                    alterPartitionStatement = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
+                    break;
+                case PartitionAction.DETACH:
+                    alterPartitionStatement = alterOperationBuilder.ofDetachPartition(pos, tableName, reader.getMetadata().getId());
+                    break;
+                default:
+                    throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, or DETACH PARTITION");
             }
-            AlterOperationBuilder alterPartitionStatement = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
             ExpressionNode expr = parser.expr(lexer, (QueryModel) null);
             String designatedTimestampColumnName = null;
             int tsIndex = readerMetadata.getTimestampIndex();
@@ -1495,15 +1512,21 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private CompiledQuery alterTableDropOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
+    private CompiledQuery alterTableDropDetachOrAttachPartitionByList(TableReader reader, int pos, int action) throws SqlException {
         String tableName = reader.getTableName();
         AlterOperationBuilder partitions;
-        if (action == PartitionAction.DROP) {
-            partitions = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
-        } else {
-            partitions = alterOperationBuilder.ofAttachPartition(pos, tableName, reader.getMetadata().getId());
+        switch (action) {
+            case PartitionAction.DROP:
+                partitions = alterOperationBuilder.ofDropPartition(pos, tableName, reader.getMetadata().getId());
+                break;
+            case PartitionAction.DETACH:
+                partitions = alterOperationBuilder.ofDetachPartition(pos, tableName, reader.getMetadata().getId());
+                break;
+            default:
+                // attach
+                partitions = alterOperationBuilder.ofAttachPartition(pos, tableName, reader.getMetadata().getId());
         }
-        assert action == PartitionAction.DROP || action == PartitionAction.ATTACH;
+        assert action == PartitionAction.DROP || action == PartitionAction.ATTACH || action == PartitionAction.DETACH;
         int semicolonPos = -1;
         do {
             CharSequence tok = maybeExpectToken(lexer, "partition name", semicolonPos < 0);
@@ -1596,7 +1619,7 @@ public class SqlCompiler implements Closeable {
     }
 
     private CompiledQuery alterTableSetParam(CharSequence paramName, CharSequence value, int paramNameNamePosition, String tableName, int tableId) throws SqlException {
-        if (isMaxUncommittedRowsParam(paramName)) {
+        if (isMaxUncommittedRowsKeyword(paramName)) {
             int maxUncommittedRows;
             try {
                 maxUncommittedRows = Numbers.parseInt(value);
@@ -1607,7 +1630,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(paramNameNamePosition, "maxUncommittedRows must be non negative");
             }
             return compiledQuery.ofAlter(alterOperationBuilder.ofSetParamUncommittedRows(tableName, tableId, maxUncommittedRows).build());
-        } else if (isCommitLag(paramName)) {
+        } else if (isCommitLagKeyword(paramName)) {
             long commitLag = SqlUtil.expectMicros(value, paramNameNamePosition);
             if (commitLag < 0) {
                 throw SqlException.$(paramNameNamePosition, "commitLag must be non negative");
@@ -2626,15 +2649,15 @@ public class SqlCompiler implements Closeable {
                 return sqlShowTransaction();
             }
 
-            if (isTransactionIsolationKeyword(tok)) {
+            if (isTransactionIsolation(tok)) {
                 return compiledQuery.of(new ShowTransactionIsolationLevelCursorFactory());
             }
 
-            if (isMaxIdentifierLengthKeyword(tok)) {
+            if (isMaxIdentifierLength(tok)) {
                 return compiledQuery.of(new ShowMaxIdentifierLengthCursorFactory());
             }
 
-            if (isStandardConformingStringsKeyword(tok)) {
+            if (isStandardConformingStrings(tok)) {
                 return compiledQuery.of(new ShowStandardConformingStringsCursorFactory());
             }
 
@@ -2965,6 +2988,7 @@ public class SqlCompiler implements Closeable {
     public final static class PartitionAction {
         public static final int DROP = 1;
         public static final int ATTACH = 2;
+        public static final int DETACH = 3;
     }
 
     private static class TableStructureAdapter implements TableStructure {
