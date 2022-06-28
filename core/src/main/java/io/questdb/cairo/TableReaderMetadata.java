@@ -152,6 +152,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     @Override
     public void close() {
+        // TableReaderMetadata is re-usable after close, don't assign nulls
         Misc.free(metaMem);
         Misc.free(path);
         Misc.free(transitionMeta);
