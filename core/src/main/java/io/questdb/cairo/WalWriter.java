@@ -422,7 +422,7 @@ public class WalWriter implements Closeable {
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 Misc.free(denseSymbolMapWriters.getQuick(i));
             }
-            symbolMapWriters.clear();
+            denseSymbolMapWriters.clear();
         }
 
         if (symbolMapWriters != null) {

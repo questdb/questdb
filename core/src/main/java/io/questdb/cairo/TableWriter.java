@@ -2371,7 +2371,7 @@ public class TableWriter implements Closeable, WalWriterFactory {
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 Misc.free(denseSymbolMapWriters.getQuick(i));
             }
-            symbolMapWriters.clear();
+            denseSymbolMapWriters.clear();
         }
 
         if (symbolMapWriters != null) {

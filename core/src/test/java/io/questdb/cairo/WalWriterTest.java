@@ -334,6 +334,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             final String tableName = "testTable";
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                     .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
                     .timestamp("ts")
             ) {
                 createTable(model);
@@ -358,6 +359,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                             for (int n = 0; n < numOfRows; n++) {
                                 row = walWriter.newRow();
                                 row.putInt(0, n);
+                                row.putSym(1, "test" + n);
                                 row.append();
                                 walWriter.rollSegmentIfLimitReached();
                             }
@@ -373,15 +375,17 @@ public class WalWriterTest extends AbstractGriffinTest {
             writeFinished.await();
 
             final IntList symbolCounts = new IntList();
+            symbolCounts.add(numOfRows);
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
                     .col("a", ColumnType.INT)
+                    .col("b", ColumnType.SYMBOL)
                     .timestamp("ts")
             ) {
                 for (int i = 0; i < numOfThreads; i++) {
                     final String walName = WalWriter.WAL_NAME_BASE + (i + 1);
                     for (int j = 0; j < numOfSegments; j++) {
                         try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, j, symbolCounts, maxRowCount)) {
-                            assertEquals(2, reader.getColumnCount());
+                            assertEquals(3, reader.getColumnCount());
                             assertEquals(walName, reader.getWalName());
                             assertEquals(tableName, reader.getTableName());
                             assertEquals(maxRowCount, reader.size());
@@ -391,6 +395,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                             int n = 0;
                             while(cursor.hasNext()) {
                                 assertEquals(j * maxRowCount + n, record.getInt(0));
+                                assertEquals("test" + (j * maxRowCount + n), record.getSym(1));
                                 assertEquals(n, record.getRowId());
                                 n++;
                             }
@@ -409,6 +414,18 @@ public class WalWriterTest extends AbstractGriffinTest {
                             assertEquals(0, dataInfo.getMaxTimestamp());
                             assertFalse(dataInfo.isOutOfOrder());
 
+                            final SymbolMapDiff symbolMapDiff = dataInfo.nextSymbolMapDiff();
+                            assertEquals(1, symbolMapDiff.getColumnIndex());
+                            int expectedKey = 0;
+                            SymbolMapDiff.Entry entry;
+                            while ((entry = symbolMapDiff.nextEntry()) != null) {
+                                assertEquals(j * maxRowCount + expectedKey, entry.getKey());
+                                assertEquals("test" + (j * maxRowCount + expectedKey), entry.getSymbol().toString());
+                                expectedKey++;
+                            }
+                            assertEquals(maxRowCount, expectedKey);
+                            assertNull(dataInfo.nextSymbolMapDiff());
+
                             assertFalse(eventCursor.hasNext());
                         }
 
@@ -416,6 +433,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                             assertWalFileExist(path, tableName, walName, j, "_meta");
                             assertWalFileExist(path, tableName, walName, j, "_event");
                             assertWalFileExist(path, tableName, walName, j, "a.d");
+                            assertWalFileExist(path, tableName, walName, j, "b.d");
                             assertWalFileExist(path, tableName, walName, j, "ts.d");
                         }
                     }
