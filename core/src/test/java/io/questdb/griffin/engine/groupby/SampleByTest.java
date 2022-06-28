@@ -1596,6 +1596,38 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIndexSampleByMonth() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, last(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where s = 'b' " +
+                        "  and k >= cast(1388534400 * 1000000L as timestamp) " +
+                        "  and k <= cast(1655742718 * 1000000L as timestamp)" +
+                        "sample by 1M",
+                "create table xx (k timestamp, s symbol, lat double, lon double)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false,
+                false,
+                true);
+
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "2014-01-01T00:00:00.000000Z\tb\t248.0\t123.7\n",
+                "select k, s, last(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where s = 'b' " +
+                        "  and k >= cast(1388534400 * 1000000L as timestamp) " +
+                        "  and k <= cast(1655742718 * 1000000L as timestamp)" +
+                        "sample by 1M",
+                "insert into xx " +
+                        "values " +
+                        "    ('2014-01-01T00:00:00.000000Z', 'b', 245, 123.4)," +
+                        "    ('2014-01-01T00:05:00.000000Z', 'b', 246, 123.5)," +
+                        "    ('2014-01-01T00:10:00.000000Z', 'b', 247, 123.6)," +
+                        "    ('2014-01-01T00:15:00.000000Z', 'b', 248, 123.7);");
+    }
+
+    @Test
     public void testIndexSampleByMicro() throws Exception {
         sampleByIndexSearchPageSize = 256;
         assertSampleByIndexQuery(
