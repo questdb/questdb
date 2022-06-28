@@ -88,14 +88,15 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
     @Override
     public void clear() {
-        close();
+        mem.close();
+        nextRecordOffset = -1L;
+        varAppendOffset = 0L;
     }
 
     @Override
     public void close() {
-        mem.close();
-        nextRecordOffset = -1L;
-        varAppendOffset = 0L;
+        clear();
+        symbolTableResolver = null;
     }
 
     @Override

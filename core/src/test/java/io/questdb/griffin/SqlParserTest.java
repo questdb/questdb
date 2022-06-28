@@ -2601,6 +2601,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testNonAnalyticFunctionInAnalyticContext() throws Exception {
+        assertFailure(
+                "select avg(price) over (partition by symbol) from trades",
+                "create table trades " +
+                        "(" +
+                        " price double," +
+                        " symbol symbol," +
+                        " ts timestamp" +
+                        ") timestamp(ts) partition by day",
+                7,
+                "non-analytic function called in analytic context"
+        );
+    }
+
+    @Test
     public void testFailureForOrderByOnAliasedColumnNotOnSelect() throws Exception {
         assertFailure(
                 "select y from tab order by tab.x",

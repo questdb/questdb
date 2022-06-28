@@ -2322,7 +2322,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // not main metadata to avoid partitionBy functions accidentally looking up
         // analytic columns recursively
 
-        // todo: these ar transient list, we can cache and reuse
+        // todo: these is a transient list, we can cache and reuse
         final ObjList<TableColumnMetadata> deferredAnalyticMetadata = new ObjList<>();
 
         for (int i = 0; i < columnCount; i++) {
@@ -2331,7 +2331,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final AnalyticColumn ac = (AnalyticColumn) qc;
                 final ExpressionNode ast = qc.getAst();
                 if (ast.paramCount > 1) {
-                    throw SqlException.$(ast.position, "Too many arguments");
+                    throw SqlException.$(ast.position, "too many arguments");
                 }
 
                 ObjList<Function> partitionBy = null;
@@ -2379,9 +2379,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         base.recordCursorSupportsRandomAccess()
                 );
 
-                final Function f = functionParser.parseFunction(ac.getAst(), baseMetadata, executionContext);
-                // todo: throw an error when non-analytic function is called in analytic context
-                assert f instanceof AnalyticFunction;
+                final Function f = functionParser.parseFunction(ast, baseMetadata, executionContext);
+                if (!(f instanceof AnalyticFunction)) {
+                    throw SqlException.$(ast.position, "non-analytic function called in analytic context");
+                }
                 AnalyticFunction analyticFunction = (AnalyticFunction) f;
 
                 // analyze order by clause on the current model and optimise out
