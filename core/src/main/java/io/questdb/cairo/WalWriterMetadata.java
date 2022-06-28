@@ -34,9 +34,11 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 
 class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
+    private final FilesFacade ff;
     private final MemoryMAR metaMem = Vm.getMARInstance();
 
-    WalWriterMetadata() {
+    WalWriterMetadata(FilesFacade ff) {
+        this.ff = ff;
         columnMetadata = new ObjList<>();
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
@@ -79,7 +81,7 @@ class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
         columnNameIndexMap.remove(deletedMeta.getName());
     }
 
-    void openMetaFile(FilesFacade ff, Path path, int pathLen, int liveColumnCount) {
+    void openMetaFile(Path path, int pathLen, int liveColumnCount) {
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
         metaMem.putInt(WalWriter.WAL_FORMAT_VERSION);
         metaMem.putInt(liveColumnCount);

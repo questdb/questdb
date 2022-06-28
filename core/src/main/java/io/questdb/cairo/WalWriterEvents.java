@@ -34,12 +34,14 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.*;
 
 class WalWriterEvents implements Closeable {
+    private final FilesFacade ff;
     private final MemoryMAR eventMem = Vm.getMARInstance();
 
     private IntList startSymbolCounts;
     private ObjList<MapWriter> symbolMapWriters;
 
-    WalWriterEvents() {
+    WalWriterEvents(FilesFacade ff) {
+        this.ff = ff;
     }
 
     void of(IntList startSymbolCounts, ObjList<MapWriter> symbolMapWriters) {
@@ -52,7 +54,7 @@ class WalWriterEvents implements Closeable {
         Misc.free(eventMem);
     }
 
-    void openEventFile(FilesFacade ff, Path path, int pathLen) {
+    void openEventFile(Path path, int pathLen) {
         openSmallFile(ff, path, pathLen, eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
         init();
     }

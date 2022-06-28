@@ -71,10 +71,10 @@ public class WalReader implements Closeable, SymbolTableSource {
         rootLen = path.length();
         try {
             metadata = new WalReaderMetadata(ff);
-            metadata.of(path, segmentId, WalWriter.WAL_FORMAT_VERSION);
+            metadata.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION);
             columnCount = metadata.getColumnCount();
             events = new WalReaderEvents(ff);
-            eventCursor = events.of(path, segmentId, WalWriter.WAL_FORMAT_VERSION);
+            eventCursor = events.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION);
             LOG.debug().$("open [table=").$(tableName).I$();
             openSymbolMaps(walSymbolCounts);
 

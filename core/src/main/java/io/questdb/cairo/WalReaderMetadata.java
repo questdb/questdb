@@ -31,6 +31,8 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
+import static io.questdb.cairo.TableUtils.*;
+
 public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
     private final FilesFacade ff;
     private final MemoryMR metaMem;
@@ -48,20 +50,16 @@ public class WalReaderMetadata extends BaseRecordMetadata implements Closeable {
         Misc.free(metaMem);
     }
 
-    public WalReaderMetadata of(Path path, long segmentId, int expectedVersion) {
-        final int pathLen = path.length();
+    public WalReaderMetadata of(Path path, int pathLen, long segmentId, int expectedVersion) {
         try {
-            path.slash().put(segmentId).concat(TableUtils.META_FILE_NAME).$();
-            metaMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WAL_READER);
+            openSmallFile(ff, path.slash().put(segmentId), pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_READER);
             columnNameIndexMap.clear();
-            TableUtils.loadWalMetadata(metaMem, columnMetadata, columnNameIndexMap, expectedVersion);
+            loadWalMetadata(metaMem, columnMetadata, columnNameIndexMap, expectedVersion);
             columnCount = metaMem.getInt(TableUtils.WAL_META_OFFSET_COLUMN_COUNT);
             timestampIndex = metaMem.getInt(TableUtils.WAL_META_OFFSET_TIMESTAMP_INDEX);
         } catch (Throwable e) {
             close();
             throw e;
-        } finally {
-            path.trimTo(pathLen);
         }
         return this;
     }

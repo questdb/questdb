@@ -60,8 +60,8 @@ public class WalWriter implements Closeable {
     private final int mkDirMode;
     private final String tableName;
     private final String walName;
-    private final WalWriterMetadata metadata = new WalWriterMetadata();
-    private final WalWriterEvents events = new WalWriterEvents();
+    private final WalWriterMetadata metadata;
+    private final WalWriterEvents events;
     private final CairoConfiguration configuration;
     private final ObjList<Runnable> nullSetters;
     private final RowImpl row = new RowImpl();
@@ -79,11 +79,11 @@ public class WalWriter implements Closeable {
     };
 
     // extract this out into a Sequencer
-    // local implemented with idgen for now?
+    // local implementation with idgen for now?
     private long txn = -1;
 
-    // replace TableReader with Sequencer
-    // TableWriter registers metadata with Sequencer?
+    // replace TableReader with Sequencer (TableRegistry?)
+    // TableWriter registers metadata for now?
     public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, TableReader reader) {
         this(configuration, tableName, walName, reader, configuration.getRoot());
     }
@@ -114,7 +114,9 @@ public class WalWriter implements Closeable {
             denseSymbolMapWriters = new ObjList<>(columnCount);
             nullSetters = new ObjList<>(columnCount);
 
+            metadata = new WalWriterMetadata(ff);
             metadata.of(tableReader);
+            events = new WalWriterEvents(ff);
             events.of(startSymbolCounts, symbolMapWriters);
 
             configureColumns();
@@ -535,8 +537,8 @@ public class WalWriter implements Closeable {
                 }
             }
 
-            metadata.openMetaFile(ff, path, segmentPathLen, liveColumnCount);
-            events.openEventFile(ff, path, segmentPathLen);
+            metadata.openMetaFile(path, segmentPathLen, liveColumnCount);
+            events.openEventFile(path, segmentPathLen);
             segmentStartMillis = millisecondClock.getTicks();
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
         } finally {

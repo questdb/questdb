@@ -28,10 +28,12 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -322,6 +324,102 @@ public class WalWriterTest extends AbstractGriffinTest {
                 assertWalFileExist(path, tableName, walName, 1, "a.d");
                 assertWalFileExist(path, tableName, walName, 1, "b.d");
                 assertWalFileExist(path, tableName, walName, 1, "b.i");
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentWals() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTable";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .timestamp("ts")
+            ) {
+                createTable(model);
+            }
+
+            final int numOfRows = 4000;
+            final int maxRowCount = 500;
+            final int numOfSegments = numOfRows / maxRowCount;
+            final int numOfThreads = 10;
+            final SOCountDownLatch writeFinished = new SOCountDownLatch(numOfThreads);
+
+            final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
+            rollStrategy.setMaxRowCount(maxRowCount);
+
+            for (int i = 0; i < numOfThreads; i++) {
+                new Thread(() -> {
+                    try {
+                        TableWriter.Row row;
+                        try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                            walWriter.setRollStrategy(rollStrategy);
+                            assertEquals(0, walWriter.size());
+                            for (int n = 0; n < numOfRows; n++) {
+                                row = walWriter.newRow();
+                                row.putInt(0, n);
+                                row.append();
+                                walWriter.rollSegmentIfLimitReached();
+                            }
+                        }
+                    } catch (Exception e) {
+                        Assert.fail("Write failed [e=" + e + "]");
+                        throw new RuntimeException(e);
+                    } finally {
+                        writeFinished.countDown();
+                    }
+                }).start();
+            }
+            writeFinished.await();
+
+            final IntList symbolCounts = new IntList();
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("a", ColumnType.INT)
+                    .timestamp("ts")
+            ) {
+                for (int i = 0; i < numOfThreads; i++) {
+                    final String walName = WalWriter.WAL_NAME_BASE + (i + 1);
+                    for (int j = 0; j < numOfSegments; j++) {
+                        try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, j, symbolCounts, maxRowCount)) {
+                            assertEquals(2, reader.getColumnCount());
+                            assertEquals(walName, reader.getWalName());
+                            assertEquals(tableName, reader.getTableName());
+                            assertEquals(maxRowCount, reader.size());
+
+                            final RecordCursor cursor = reader.getDataCursor();
+                            final Record record = cursor.getRecord();
+                            int n = 0;
+                            while(cursor.hasNext()) {
+                                assertEquals(j * maxRowCount + n, record.getInt(0));
+                                assertEquals(n, record.getRowId());
+                                n++;
+                            }
+                            assertEquals(maxRowCount, n);
+
+                            assertColumnMetadata(model, reader);
+
+                            final WalEventCursor eventCursor = reader.getEventCursor();
+                            assertTrue(eventCursor.hasNext());
+                            assertEquals(WalTxnType.DATA, eventCursor.getType());
+
+                            final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                            assertEquals(0, dataInfo.getStartRowID());
+                            assertEquals(maxRowCount, dataInfo.getEndRowID());
+                            assertEquals(0, dataInfo.getMinTimestamp());
+                            assertEquals(0, dataInfo.getMaxTimestamp());
+                            assertFalse(dataInfo.isOutOfOrder());
+
+                            assertFalse(eventCursor.hasNext());
+                        }
+
+                        try (Path path = new Path().of(configuration.getRoot())) {
+                            assertWalFileExist(path, tableName, walName, j, "_meta");
+                            assertWalFileExist(path, tableName, walName, j, "_event");
+                            assertWalFileExist(path, tableName, walName, j, "a.d");
+                            assertWalFileExist(path, tableName, walName, j, "ts.d");
+                        }
+                    }
+                }
             }
         });
     }
