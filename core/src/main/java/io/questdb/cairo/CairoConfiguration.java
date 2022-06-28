@@ -225,6 +225,8 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
+    boolean getSimulateCrashEnabled();
+
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
      * on database start the id is compared with the id stored in a snapshot, if any. If the ids
