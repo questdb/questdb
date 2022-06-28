@@ -162,7 +162,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                 final WalEventCursor eventCursor = reader.getEventCursor();
                 assertTrue(eventCursor.hasNext());
-                assertEquals(0, eventCursor.getTxn());
+                assertEquals(1, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                 final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -269,7 +269,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(1, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -299,7 +299,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(1, eventCursor.getTxn());
+                    assertEquals(2, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -344,6 +344,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             final int maxRowCount = 500;
             final int numOfSegments = numOfRows / maxRowCount;
             final int numOfThreads = 10;
+            final int numOfTxn = numOfThreads * numOfSegments;
             final SOCountDownLatch writeFinished = new SOCountDownLatch(numOfThreads);
 
             final WalWriterRollStrategy rollStrategy = new WalWriterRollStrategyImpl();
@@ -374,6 +375,7 @@ public class WalWriterTest extends AbstractGriffinTest {
             }
             writeFinished.await();
 
+            final LongHashSet txnSet = new LongHashSet(numOfTxn);
             final IntList symbolCounts = new IntList();
             symbolCounts.add(numOfRows);
             try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
@@ -406,6 +408,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                             final WalEventCursor eventCursor = reader.getEventCursor();
                             assertTrue(eventCursor.hasNext());
                             assertEquals(WalTxnType.DATA, eventCursor.getType());
+                            txnSet.add(eventCursor.getTxn());
 
                             final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                             assertEquals(0, dataInfo.getStartRowID());
@@ -439,6 +442,12 @@ public class WalWriterTest extends AbstractGriffinTest {
                     }
                 }
             }
+
+            assertEquals(numOfTxn, txnSet.size());
+            for (int i = 1; i <= numOfTxn; i++) {
+                txnSet.remove(i);
+            }
+            assertEquals(0, txnSet.size());
         });
     }
 
@@ -586,7 +595,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(1, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -598,7 +607,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(1, eventCursor.getTxn());
+                    assertEquals(2, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     dataInfo = eventCursor.getDataInfo();
@@ -610,7 +619,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(2, eventCursor.getTxn());
+                    assertEquals(3, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     dataInfo = eventCursor.getDataInfo();
@@ -647,7 +656,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(3, eventCursor.getTxn());
+                    assertEquals(4, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -709,7 +718,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(1, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -721,7 +730,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(1, eventCursor.getTxn());
+                    assertEquals(2, eventCursor.getTxn());
                     assertEquals(WalTxnType.ADD_COLUMN, eventCursor.getType());
 
                     final WalEventCursor.AddColumnInfo addColumnInfo = eventCursor.getAddColumnInfo();
@@ -755,7 +764,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(2, eventCursor.getTxn());
+                    assertEquals(3, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -767,7 +776,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(3, eventCursor.getTxn());
+                    assertEquals(4, eventCursor.getTxn());
                     assertEquals(WalTxnType.ADD_COLUMN, eventCursor.getType());
 
                     final WalEventCursor.AddColumnInfo addColumnInfo = eventCursor.getAddColumnInfo();
@@ -802,7 +811,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(4, eventCursor.getTxn());
+                    assertEquals(5, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -855,7 +864,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(1, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -867,7 +876,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(1, eventCursor.getTxn());
+                    assertEquals(2, eventCursor.getTxn());
                     assertEquals(WalTxnType.REMOVE_COLUMN, eventCursor.getType());
 
                     final WalEventCursor.RemoveColumnInfo removeColumnInfo = eventCursor.getRemoveColumnInfo();
@@ -916,7 +925,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(1, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -928,7 +937,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(1, eventCursor.getTxn());
+                    assertEquals(2, eventCursor.getTxn());
                     assertEquals(WalTxnType.ADD_COLUMN, eventCursor.getType());
 
                     final WalEventCursor.AddColumnInfo addColumnInfo = eventCursor.getAddColumnInfo();
@@ -993,7 +1002,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor eventCursor = reader.getEventCursor();
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(0, eventCursor.getTxn());
+                    assertEquals(1, eventCursor.getTxn());
                     assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                     final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -1016,7 +1025,7 @@ public class WalWriterTest extends AbstractGriffinTest {
                     assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertTrue(eventCursor.hasNext());
-                    assertEquals(1, eventCursor.getTxn());
+                    assertEquals(2, eventCursor.getTxn());
                     assertEquals(WalTxnType.REMOVE_COLUMN, eventCursor.getType());
 
                     final WalEventCursor.RemoveColumnInfo removeColumnInfo = eventCursor.getRemoveColumnInfo();
@@ -1091,7 +1100,7 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                 final WalEventCursor eventCursor = reader.getEventCursor();
                 assertTrue(eventCursor.hasNext());
-                assertEquals(0, eventCursor.getTxn());
+                assertEquals(1, eventCursor.getTxn());
                 assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                 final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();

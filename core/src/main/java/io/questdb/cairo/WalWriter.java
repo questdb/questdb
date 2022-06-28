@@ -62,6 +62,7 @@ public class WalWriter implements Closeable {
     private final String walName;
     private final WalWriterMetadata metadata;
     private final WalWriterEvents events;
+    private final Sequencer sequencer;
     private final CairoConfiguration configuration;
     private final ObjList<Runnable> nullSetters;
     private final RowImpl row = new RowImpl();
@@ -78,31 +79,18 @@ public class WalWriter implements Closeable {
     private WalWriterRollStrategy rollStrategy = new WalWriterRollStrategy() {
     };
 
-    // extract this out into a Sequencer
-    // local implementation with idgen for now?
-    private long txn = -1;
-
-    // replace TableReader with Sequencer (TableRegistry?)
-    // TableWriter registers metadata for now?
-    public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, TableReader reader) {
-        this(configuration, tableName, walName, reader, configuration.getRoot());
-    }
-
-    public WalWriter(
-            CairoConfiguration configuration,
-            CharSequence tableName,
-            CharSequence walName,
-            TableReader tableReader,
-            CharSequence root
-    ) {
+    // replace TableReader with some kind of WalMetaData interface
+    // can be backed by TableReader for now
+    public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, Sequencer sequencer, TableReader tableReader) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
+        this.sequencer = sequencer;
         this.configuration = configuration;
         this.millisecondClock = configuration.getMillisecondClock();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
         this.walName = Chars.toString(walName);
-        this.path = new Path().of(root).concat(tableName).concat(walName);
+        this.path = new Path().of(configuration.getRoot()).concat(tableName).concat(walName);
         this.rootLen = path.length();
 
         try {
@@ -162,7 +150,7 @@ public class WalWriter implements Closeable {
             columnCount++;
             configureSymbolMapWriter(index, name, type, null);
 
-            events.addColumn(nextTxn(), index, name, type);
+            events.addColumn(sequencer.nextTxn(), index, name, type);
             LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
         } catch (Throwable e) {
             throw new CairoError(e);
@@ -228,7 +216,7 @@ public class WalWriter implements Closeable {
             metadata.removeColumn(index);
             removeColumn(index);
 
-            events.removeColumn(nextTxn(), index);
+            events.removeColumn(sequencer.nextTxn(), index);
             LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
         } catch (Throwable e) {
             throw new CairoError(e);
@@ -355,8 +343,8 @@ public class WalWriter implements Closeable {
                 path.trimTo(rootLen),
                 columnName,
                 COLUMN_NAME_TXN_NONE,
-                configuration.getDefaultSymbolCapacity(), // take this from metadata provided by Sequencer !!!
-                configuration.getDefaultSymbolCacheFlag() // take this from metadata provided by Sequencer !!!
+                configuration.getDefaultSymbolCapacity(), // take this from metadata
+                configuration.getDefaultSymbolCacheFlag() // take this from metadata
         );
 
         final SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
@@ -488,11 +476,6 @@ public class WalWriter implements Closeable {
         return rowCount - startRowCount;
     }
 
-    private long nextTxn() {
-        // request next free txn from Sequencer for commit
-        return ++txn;
-    }
-
     public long commit() {
         return commit(false);
     }
@@ -501,7 +484,7 @@ public class WalWriter implements Closeable {
         rollSegmentOnNextRow = rollSegment;
         final long transientRowCount = getTransientRowCount();
         if (transientRowCount != 0) {
-            events.data(nextTxn(), startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+            events.data(sequencer.nextTxn(), startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
             resetDataTxnProperties();
         }
         return transientRowCount;

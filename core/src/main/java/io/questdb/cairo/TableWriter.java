@@ -193,6 +193,7 @@ public class TableWriter implements Closeable, WalWriterFactory {
     private long commitInterval;
     private UpdateOperator updateOperator;
     private final IDGenerator walIdGenerator;
+    private final Sequencer sequencer;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
@@ -256,11 +257,9 @@ public class TableWriter implements Closeable, WalWriterFactory {
                 this.lockFd = -1L;
             }
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
-            try {
-                walIdGenerator.open(path);
-            } finally {
-                path.trimTo(rootLen);
-            }
+            walIdGenerator.open(path);
+            sequencer = new SequencerImpl(configuration);
+            sequencer.open(path);
             long todoCount = openTodoMem();
             int todo;
             if (todoCount > 0) {
@@ -360,7 +359,7 @@ public class TableWriter implements Closeable, WalWriterFactory {
     public WalWriter createWal(TableReader reader) {
         // always create a new wal with an increasing id
         // remove string concat garbage below, we do not know how many wal writers will be created
-        return new WalWriter(configuration, tableName, WalWriter.WAL_NAME_BASE + walIdGenerator.getNextId(), reader);
+        return new WalWriter(configuration, tableName, WalWriter.WAL_NAME_BASE + walIdGenerator.getNextId(), sequencer, reader);
     }
 
     public void addColumn(CharSequence name, int type) {
@@ -2282,6 +2281,7 @@ public class TableWriter implements Closeable, WalWriterFactory {
         freeSymbolMapWriters();
         freeIndexers();
         Misc.free(walIdGenerator);
+        Misc.free(sequencer);
         Misc.free(txWriter);
         Misc.free(metaMem);
         Misc.free(ddlMem);
