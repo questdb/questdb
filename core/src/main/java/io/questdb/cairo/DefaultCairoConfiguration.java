@@ -336,7 +336,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getMaxUncommittedRows() {
-        return 100_000;
+        return 1000;
     }
 
     @Override
