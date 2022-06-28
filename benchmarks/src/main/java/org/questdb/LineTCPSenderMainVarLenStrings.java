@@ -109,7 +109,7 @@ public class LineTCPSenderMainVarLenStrings {
         }
 
         @Override
-        public void close() throws IOException {
+        public void close() {
             delegate.close();
         }
 
