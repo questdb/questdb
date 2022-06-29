@@ -167,8 +167,13 @@ public interface Sender extends Closeable {
     void flush();
 
     /**
-     * TODO
-     *
+     * Close this Sender.
+     * <br>
+     * This must be called before dereferencing Sender, otherwise resources might leak.
+     * Upon returning from this method the Sender is closed and cannot be used anymore.
+     * Close method is idempotent, calling this method multiple times has no effect.
+     * Calling any other on a closed Sender will throw {@link LineSenderException}
+     * <br>
      *
      */
     @Override

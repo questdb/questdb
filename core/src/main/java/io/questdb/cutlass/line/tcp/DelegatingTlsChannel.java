@@ -27,6 +27,8 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.Sender;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -42,6 +44,7 @@ import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 
 public final class DelegatingTlsChannel implements LineChannel {
+    private static final Log LOG = LogFactory.getLog(DelegatingTlsChannel.class);
     private static final int INITIAL_BUFFER_CAPACITY = 64 * 1024;
     private static final long ADDRESS_FIELD_OFFSET;
     private static final long LIMIT_FIELD_OFFSET;
@@ -63,7 +66,7 @@ public final class DelegatingTlsChannel implements LineChannel {
     }};
 
 
-    private final LineChannel delegate;
+    private LineChannel delegate;
     private final SSLEngine sslEngine;
 
     private final ByteBuffer wrapInputBuffer;
@@ -384,6 +387,9 @@ public final class DelegatingTlsChannel implements LineChannel {
 
     public void close0(boolean closeDelegate) {
         int prevState = state;
+        if (prevState == CLOSED) {
+            return;
+        }
         state = CLOSING;
         if (prevState == AFTER_HANDSHAKE) {
             try {
@@ -391,17 +397,13 @@ public final class DelegatingTlsChannel implements LineChannel {
                 wrapLoop(dummyBuffer);
                 writeToUpstreamAndClear();
             } catch (Throwable e) {
-                // best effort TLS close signal
+                LOG.error().$("could not send TLS close_notify alert").$(e).$();
             }
         }
         state = CLOSED;
 
         if (closeDelegate) {
-            try {
-                Misc.free(delegate);
-            } catch (Throwable ignored) {
-                // not much we can do
-            }
+            delegate = Misc.free(delegate);
         }
 
         // a bit of ceremony to make sure there is no point that a buffer or a pointer is referencing unallocated memory

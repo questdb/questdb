@@ -33,6 +33,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 import java.security.InvalidKeyException;
@@ -249,8 +250,11 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             return;
         }
         if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
-            throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
-                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: " + name);
+            StringSink sink = new StringSink();
+            sink.put("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
+                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ");
+            sink.putAsPrintable(name);
+            throw new LineSenderException(sink.toString());
         }
     }
 
@@ -266,8 +270,11 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             return;
         }
         if (!TableUtils.isValidTableName(name, Integer.MAX_VALUE)) {
-            throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
-                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: " + name);
+            StringSink sink = new StringSink();
+            sink.put("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
+                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ");
+            sink.putAsPrintable(name);
+            throw new LineSenderException(sink.toString());
         }
     }
 
