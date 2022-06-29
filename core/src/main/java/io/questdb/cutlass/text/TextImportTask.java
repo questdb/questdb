@@ -545,7 +545,7 @@ public class TextImportTask {
 
                             long imported = atomicity == Atomicity.SKIP_ROW ? lexer.getLineCount() - errors : lexer.getLineCount();
                             importedRows.add(imported);
-                            writer.commit(CommitMode.SYNC);
+
                             LOG.info().$("Imported partition data [partition=").$(name).$(",lines=").$(lexer.getLineCount()).$(",errors=").$(errors).$("]").$();
                         }
                     } finally {

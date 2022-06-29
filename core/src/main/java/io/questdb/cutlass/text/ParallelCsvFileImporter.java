@@ -743,10 +743,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             return indexChunkStats;
         }
 
-
-        long chunkSize = fileLength / workerCount;
-        chunkSize = Math.max(minChunkSize, chunkSize);
-        final int chunks = (int) Math.max(fileLength / chunkSize, 1);
+        long chunkSize = Math.max(minChunkSize, (fileLength + workerCount - 1) / workerCount);
+        final int chunks = (int) Math.max((fileLength + chunkSize - 1) / chunkSize, 1);
 
         int queuedCount = 0;
         int collectedCount = 0;

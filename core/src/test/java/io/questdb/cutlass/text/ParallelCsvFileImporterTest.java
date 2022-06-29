@@ -77,7 +77,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testFindChunkBoundariesForFileWithLongLines() throws Exception {
         executeWithPool(3, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 90, 2, 185, 3, 256, 4), sqlExecutionContext)
+                assertChunkBoundariesFor("test-quotes-small.csv", list(0, 0, 90, 2, 185, 3, 256, 5), sqlExecutionContext)
         );
     }
 
@@ -98,7 +98,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testFindChunkBoundariesInLargerCsv() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                assertChunkBoundariesFor("test-quotes-big.csv", list(0, 0, 16797, 254, 33514, 503, 50216, 752, 66923, 1001), sqlExecutionContext)
+                assertChunkBoundariesFor("test-quotes-big.csv", list(0, 0, 16797, 254, 33514, 503, 50216, 752, 66923, 1002), sqlExecutionContext)
         );
     }
 
