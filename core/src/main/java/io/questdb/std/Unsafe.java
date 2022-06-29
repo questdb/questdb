@@ -52,12 +52,16 @@ public final class Unsafe {
     //#endif
     private static final AnonymousClassDefiner anonymousClassDefiner;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
-    static final AtomicLong OFF_HEAP_ALLOCATED = new AtomicLong(0);
+    private static final AtomicLong OFF_HEAP_ALLOCATED = new AtomicLong(0);
     private final static long HEAP_BREATHING_SPACE = 1L << 29; // 512 GiB
     private final static long REEVALUATE_HEAP_SPACE_INCREMENT = 1L << 26; // 128 MiB
     static volatile long OFF_HEAP_CHECK_THRESHOLD = Long.MAX_VALUE;
-    static long RSS_MEMORY_LIMIT = Long.MAX_VALUE;
+    private static long RSS_MEMORY_LIMIT = Long.MAX_VALUE;
     private static Log LOG;
+
+    public static long getRssMemoryLimit() {
+        return RSS_MEMORY_LIMIT;
+    }
 
 
     public static void setRssMemoryLimit(long rssMemoryLimit) {
@@ -219,6 +223,10 @@ public final class Unsafe {
 
     public static long getMemUsed() {
         return MEM_USED.get();
+    }
+
+    public static long getOffHeapAllocated() {
+        return OFF_HEAP_ALLOCATED.get();
     }
 
     public static long getMemUsedByTag(int memoryTag) {

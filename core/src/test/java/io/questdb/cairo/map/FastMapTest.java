@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 public class FastMapTest extends AbstractCairoTest {
@@ -218,6 +219,12 @@ public class FastMapTest extends AbstractCairoTest {
 
     @Test
     public void testCollisionPerformanceLongKeys() {
+        // This test need around 1.8Gib to run off heap memory.
+        // Check that the conditions are ok to run it
+
+        int gib = 1 << 30;
+        Assume.assumeTrue(Unsafe.getOffHeapAllocated() + Runtime.getRuntime().totalMemory() + 1.8*gib < Unsafe.getRssMemoryLimit());
+
         ArrayColumnTypes keyTypes = new ArrayColumnTypes();
         ArrayColumnTypes valueTypes = new ArrayColumnTypes();
 

@@ -39,7 +39,7 @@ public class MemoryDetectTest {
 
     @BeforeClass
     public static void beforeClass() {
-        RSS_MEMORY_LIMIT = Unsafe.RSS_MEMORY_LIMIT;
+        RSS_MEMORY_LIMIT = Unsafe.getRssMemoryLimit();
     }
 
     @Test
@@ -64,7 +64,7 @@ public class MemoryDetectTest {
     public void testSetsUnsafeRssLimit() {
         try {
             ServerMain.setTotalPhysicalMemorySize(LOG, 0L);
-            Assert.assertTrue("RSS limit evaluated", Unsafe.RSS_MEMORY_LIMIT < (1L << 40));
+            Assert.assertTrue("RSS limit evaluated", Unsafe.getRssMemoryLimit() < (1L << 40));
         } finally {
             resetRssLimit();
         }
@@ -74,7 +74,7 @@ public class MemoryDetectTest {
     public void testResetsUnsafeRssLimit() {
         try {
             ServerMain.setTotalPhysicalMemorySize(LOG, -1L);
-            Assert.assertEquals("RSS limit reset", Long.MAX_VALUE, Unsafe.RSS_MEMORY_LIMIT);
+            Assert.assertEquals("RSS limit reset", Long.MAX_VALUE, Unsafe.getRssMemoryLimit());
             Assert.assertTrue("RSS limit reset", Unsafe.OFF_HEAP_CHECK_THRESHOLD > (1L << 40));
         } finally {
             resetRssLimit();
@@ -85,7 +85,7 @@ public class MemoryDetectTest {
     public void testSetsUnsafeRssLimitToConcreteValue() {
         try {
             ServerMain.setTotalPhysicalMemorySize(LOG, 1 << 30L);
-            Assert.assertEquals("RSS limit reset", 1 << 30L, Unsafe.RSS_MEMORY_LIMIT);
+            Assert.assertEquals("RSS limit reset", 1 << 30L, Unsafe.getRssMemoryLimit());
         } finally {
             resetRssLimit();
         }
@@ -95,14 +95,14 @@ public class MemoryDetectTest {
     public void testOomWhenMemoryExceeded() {
         long gib = 1L << 30;
         Unsafe.setRssMemoryLimit(gib);
-        long offheapAllocated = Unsafe.OFF_HEAP_ALLOCATED.get();
+        long offheapAllocated = Unsafe.getOffHeapAllocated();
 
         try {
             Unsafe.malloc(gib, MemoryTag.NATIVE_DEFAULT);
             Assert.fail();
         } catch (OutOfMemoryError err) {
             TestUtils.assertContains(err.getMessage(), "exceeded configured limit of 1,073,741,824");
-            Assert.assertEquals(offheapAllocated, Unsafe.OFF_HEAP_ALLOCATED.get());
+            Assert.assertEquals(offheapAllocated, Unsafe.getOffHeapAllocated());
         } finally {
             // Restore global limit
             resetRssLimit();
@@ -112,17 +112,18 @@ public class MemoryDetectTest {
     @Test
     public void testReallocOomWhenMemoryExceeded() {
         long gib = 1L << 30;
+        long ptr = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
         Unsafe.setRssMemoryLimit(gib);
-        long offheapAllocated = Unsafe.OFF_HEAP_ALLOCATED.get();
 
+        long offheapAllocated = Unsafe.getOffHeapAllocated();
         try {
-            long ptr = Unsafe.malloc(gib / 100, MemoryTag.NATIVE_DEFAULT);
             Unsafe.realloc(ptr, gib / 100, gib, MemoryTag.NATIVE_DEFAULT);
             Assert.fail();
         } catch (OutOfMemoryError err) {
             TestUtils.assertContains(err.getMessage(), "exceeded configured limit of 1,073,741,824");
-            Assert.assertEquals(offheapAllocated, Unsafe.OFF_HEAP_ALLOCATED.get());
+            Assert.assertEquals(offheapAllocated, Unsafe.getOffHeapAllocated());
         } finally {
+            Unsafe.free(ptr, 1, MemoryTag.NATIVE_DEFAULT);
             // Restore global limit
             resetRssLimit();
         }
@@ -137,17 +138,26 @@ public class MemoryDetectTest {
             ServerMain.setTotalPhysicalMemorySize(LOG, 0L);
             long fiveMib = 5L * (1 << 20);
             long offHeapCheckThreshold = Unsafe.OFF_HEAP_CHECK_THRESHOLD;
-            long offheapAllocated = Unsafe.OFF_HEAP_ALLOCATED.get();
+            long offheapAllocated = Unsafe.getOffHeapAllocated();
             long size = offHeapCheckThreshold - offheapAllocated + fiveMib;
 
+            long ptr = 0L;
             if (size > 0) {
-                long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-                Assert.assertEquals(offheapAllocated + size, Unsafe.OFF_HEAP_ALLOCATED.get());
+                boolean failedToAllocate = false;
+                try {
+                    ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+                    Assert.assertEquals(offheapAllocated + size, Unsafe.getOffHeapAllocated());
+                } catch (OutOfMemoryError err) {
+                    // Nothing we can do OS, cannot allocate single big chunk sometimes
+                    failedToAllocate = true;
+                } finally {
+                    Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+                }
 
-                Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
-                Assert.assertEquals(offheapAllocated, Unsafe.OFF_HEAP_ALLOCATED.get());
-
-                Assert.assertTrue(Unsafe.OFF_HEAP_CHECK_THRESHOLD > offHeapCheckThreshold);
+                if (!failedToAllocate) {
+                    Assert.assertEquals(offheapAllocated, Unsafe.getOffHeapAllocated());
+                    Assert.assertTrue(Unsafe.OFF_HEAP_CHECK_THRESHOLD > offHeapCheckThreshold);
+                }
             }
         } finally {
             // Restore global limit
