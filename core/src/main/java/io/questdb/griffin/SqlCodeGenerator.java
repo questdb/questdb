@@ -2738,10 +2738,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             RecordMetadata metadata = factory.getMetadata();
 
-            // Clear the list of vector aggregate functions since it may contain
-            // functions that belong to a sub-query since this method is reentrant.
-            tempVaf.clear();
-
             // Inspect model for possibility of vector aggregate intrinsics.
             if (pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, !specialCaseKeys)) {
                 // Create metadata from everything we've gathered.
@@ -2829,10 +2825,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             tempSymbolSkewIndexes
                     );
                 }
+                // Free the vector aggregate functions since we didn't use them.
+                Misc.freeObjList(tempVaf);
             }
-
-            // Free the vector aggregate functions since we didn't use them.
-            Misc.freeObjList(tempVaf);
 
             if (specialCaseKeys) {
                 // uh-oh, we had special case keys, but could not find implementation for the functions
