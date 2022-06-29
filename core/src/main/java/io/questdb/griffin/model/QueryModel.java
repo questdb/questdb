@@ -206,7 +206,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void addBottomUpColumn(int position, QueryColumn column, boolean allowDuplicates, CharSequence additionalMessage) throws SqlException {
-        if (!allowDuplicates && containsColumnByName(bottomUpColumns, column)) {
+        if (!allowDuplicates && aliasToColumnMap.contains(column.getName())) {
             throw SqlException.duplicateColumn(position, column.getName(), additionalMessage);
         }
         bottomUpColumns.add(column);
@@ -962,16 +962,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return aliasToColumnNameMap.get(column);
     }
 
-    private static boolean containsColumnByName(ObjList<QueryColumn> columns, QueryColumn col) {
-        CharSequence colName = col.getName();
-        for (int i = 0, limit = columns.size(); i < limit; i++) {
-            if (Chars.equalsIgnoreCase(columns.getQuick(i).getName(), colName)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static void aliasToSink(CharSequence alias, CharSink sink) {
         sink.put(' ');
         boolean quote = Chars.indexOf(alias, ' ') != -1;
@@ -995,8 +985,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             CharSequence name = column.getName();
             CharSequence alias = column.getAlias();
             ExpressionNode ast = column.getAst();
+            ast.toSink(sink);
             if (column instanceof AnalyticColumn || name == null) {
-                ast.toSink(sink);
 
                 if (alias != null) {
                     aliasToSink(alias, sink);
@@ -1036,7 +1026,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     sink.put(')');
                 }
             } else {
-                ast.toSink(sink);
                 // do not repeat alias when it is the same as AST token, provided AST is a literal
                 if (alias != null && (ast.type != ExpressionNode.LITERAL || !ast.token.equals(alias))) {
                     aliasToSink(alias, sink);

@@ -1576,9 +1576,6 @@ public final class SqlParser {
                 tok = optTok(lexer);
 
             } else {
-                if (expr.type == ExpressionNode.QUERY) {
-                    throw SqlException.$(expr.position, "query is not expected, did you mean column?");
-                }
                 col = queryColumnPool.next().of(null, expr);
             }
 
@@ -1598,6 +1595,11 @@ public final class SqlParser {
             }
 
             col.setAlias(alias);
+
+            // correlated sub-queries do not have expr.token values (they are null)
+            if (expr.type == ExpressionNode.QUERY) {
+                expr.token = alias;
+            }
             model.addBottomUpColumn(colPosition, col, false);
 
             if (tok == null || Chars.equals(tok, ';')) {

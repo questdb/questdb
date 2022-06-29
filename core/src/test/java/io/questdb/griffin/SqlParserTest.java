@@ -5563,8 +5563,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testRedundantSelect() throws Exception {
         assertSyntaxError(
                 "select x from select (select x from a) timestamp(x)",
-                22,
-                "query is not expected",
+                48,
+                "found [tok='(', len=1] ',', 'from' or 'over' expected",
+                modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testCorrelatedSubQueryCross() throws Exception {
+        assertQuery(
+                "select-virtual (select-choose x from (select [x] from a)) y, x from (select [x] from a)",
+                "select (select x from a) y, x from a",
                 modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT)
         );
     }

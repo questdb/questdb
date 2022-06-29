@@ -566,6 +566,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgDescriptionFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgInheritsFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PrefixedPgInheritsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.SessionUserFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetPartKeyDefFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSITExprFunctionFactory,
