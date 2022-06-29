@@ -585,6 +585,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedTxIDCurrentFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgDatabaseFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgShDescriptionFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.SimulateCrashFunctionFactory,
 
 //            PostgreSQL advisory locks functions
             io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll,
