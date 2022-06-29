@@ -2284,7 +2284,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // set of column indexes in the base metadata that has already been added to the main
         // metadata instance
         // todo: reuse this set
-        IntHashSet columnSet = new IntHashSet();
+        final IntHashSet columnSet = new IntHashSet();
+        final IntList columnIndexes = new IntList();
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn qc = columns.getQuick(i);
             if (!(qc instanceof AnalyticColumn)) {
@@ -2296,6 +2297,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 listColumnFilterA.extendAndSet(i, i + 1);
                 listColumnFilterB.extendAndSet(i, columnIndex);
                 columnSet.add(columnIndex);
+                columnIndexes.extendAndSet(i, columnIndex);
             }
         }
 
@@ -2314,6 +2316,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 chainTypes.add(addAt, m.getType());
                 listColumnFilterA.extendAndSet(addAt, addAt + 1);
                 listColumnFilterB.extendAndSet(addAt, i);
+                columnIndexes.extendAndSet(addAt, i);
                 addAt++;
             }
         }
@@ -2465,7 +2468,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 chainTypes,
                 analyticComparators,
                 functionGroups,
-                naturalOrderFunctions
+                naturalOrderFunctions,
+                columnIndexes
         );
     }
 

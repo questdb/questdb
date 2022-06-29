@@ -312,7 +312,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAnalyticLiteralAfterFunction() throws Exception {
         assertQuery(
-                "select-analytic a, b1, f(c) f over (partition by b11 order by ts), b from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts, b1 b] a, concat(b,'abc') b1, c, b1 b11, ts, b1 b from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
+                "select-analytic a, b1, f(c) f over (partition by b11 order by ts), b from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts, b] a, concat(b,'abc') b1, c, b, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
                 "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts), b from xyz k",
                 modelOf("xyz")
                         .col("c", ColumnType.INT)
