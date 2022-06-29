@@ -34,10 +34,7 @@ import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Rnd;
-import io.questdb.std.RostiAllocFacade;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -105,6 +102,11 @@ public class AbstractCairoTest {
     protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
     protected static int dataAppendPageSize = -1;
+
+    static {
+        // Set memory limit for all tests to 3GiB
+        Unsafe.setRssMemoryLimit(3L * (1 << 30L));
+    }
 
     @Rule
     public Timeout timeout = Timeout.builder()

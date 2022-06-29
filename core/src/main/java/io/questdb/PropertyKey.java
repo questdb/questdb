@@ -354,7 +354,7 @@ public enum PropertyKey {
     CAIRO_SQL_COLUMN_PURGE_RETRY_LIMIT_DAYS("cairo.sql.column.purge.retry.limit.days"),
     CAIRO_SQL_SYSTEM_TABLE_PREFIX("cairo.system.table.prefix"),
     CAIRO_MAX_FILE_NAME_LENGTH("cairo.max.file.name.length"),
-    CAIRO_OUT_OF_HEAP_MEMORY_ALLOC_LIMIT("cairo.out.of.heap.memory.alloc.limit.gib"),
+    CAIRO_RSS_MEMORY_LIMIT("cairo.rss.memory.limit.gib"),
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
     CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation");

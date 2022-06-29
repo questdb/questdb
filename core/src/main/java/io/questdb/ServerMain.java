@@ -115,7 +115,7 @@ public class ServerMain {
             throw sce;
         }
 
-        setTotalPhysicalMemorySize(log, configuration);
+        setTotalPhysicalMemorySize(log, configuration.getCairoConfiguration().getRssMemoryLimit());
 
         final CairoConfiguration cairoConfiguration = configuration.getCairoConfiguration();
 
@@ -296,35 +296,39 @@ public class ServerMain {
         }
     }
 
-    private static void setTotalPhysicalMemorySize(Log log, ServerConfiguration configuration) {
+    public static void setTotalPhysicalMemorySize(Log log, long rssMemoryLimit) {
         try {
             MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
 
-            log.info().$("Java max memory: ").$(Runtime.getRuntime().maxMemory()).$();
+            log.advisory().$("Java max memory: ").$(Runtime.getRuntime().maxMemory()).$();
 
-            long configuredMaxMalloc = configuration.getCairoConfiguration().getOutOfHeapMallocMemoryLimit();
-            if (configuredMaxMalloc == 0) {
+            if (rssMemoryLimit == 0) {
 
-                Object memSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "TotalPhysicalMemorySize");
-                long memSize = Numbers.parseLong(memSizeAttribute.toString());
-                log.info().$("physical memory: ").$(memSize).$();
+                Object freeMemSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "FreePhysicalMemorySize");
+                long freePhysicalMemorySize = (Long)freeMemSizeAttribute;
+                log.advisory().$("physical memory: ").$(freePhysicalMemorySize).$();
 
-                Object swapSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "TotalSwapSpaceSize");
-                long swapSize = Numbers.parseLong(swapSizeAttribute.toString());
-                log.info().$("swap memory: ").$(swapSize).$();
+                Object freeSwapSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "FreeSwapSpaceSize");
+                long freeSwapSize = (Long)freeSwapSizeAttribute;
+                log.advisory().$("swap memory: ").$(freeSwapSize).$();
 
-                // Leave at least 2GB for OS
-                long gb = 2 * 1024L * 1024L * 1024L;
+                // On Windows swapSize already includes physical memory. On Mac, Linux swap and physical are independent numbers
+                final long totalRssMemory = Os.type == Os.WINDOWS ? freeSwapSize : freeSwapSize + freePhysicalMemorySize;
 
-                long maxMallocMemory = Math.min((long) ((memSize + swapSize) * 0.9), memSize + swapSize - 2 * gb - Runtime.getRuntime().maxMemory());
-                log.info().$("Setting malloc memory limit: ").$(maxMallocMemory).$();
+                // Leave at least 2GiB for OS
+                long gib = 1L << 30;
 
-                Unsafe.setMallocMemoryLimit(maxMallocMemory);
-            } else if (configuredMaxMalloc > 0) {
-                Unsafe.setMallocMemoryLimit(configuredMaxMalloc);
+                rssMemoryLimit = Math.min((long) (totalRssMemory * 0.9), totalRssMemory - 2 * gib);
+                log.advisory().$("RSS memory limit: ").$(rssMemoryLimit).$();
+
+                Unsafe.setRssMemoryLimit(rssMemoryLimit);
+            } else if (rssMemoryLimit > 0) {
+                Unsafe.setRssMemoryLimit(rssMemoryLimit);
+            } else {
+                Unsafe.setRssMemoryLimit(Long.MAX_VALUE);
             }
         } catch (Throwable e) {
-            log.info().$("Will not set malloc memory limit, unable to detect runtime memory limits").$();
+            log.advisory().$("Will not set malloc memory limit, unable to detect runtime memory limits").$();
         }
     }
 

@@ -180,7 +180,7 @@ public interface CairoConfiguration {
 
     int getO3PurgeDiscoveryQueueCapacity();
 
-    long getOutOfHeapMallocMemoryLimit();
+    long getRssMemoryLimit();
 
     int getPageFrameReduceColumnListCapacity();
 

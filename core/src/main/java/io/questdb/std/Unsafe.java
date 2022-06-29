@@ -40,7 +40,7 @@ public final class Unsafe {
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
     static final AtomicLong MEM_USED = new AtomicLong(0);
-    static final AtomicLong RAM_USED = new AtomicLong(0);
+    static final AtomicLong OFF_HEAP_ALLOCATED = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
     private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
@@ -51,10 +51,15 @@ public final class Unsafe {
     //#endif
     private static final AnonymousClassDefiner anonymousClassDefiner;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
-    private static long MAX_MEM = Long.MAX_VALUE;
+    private final static long HEAP_BREATHING_SPACE = 1L << 29; // 512 GiB
+    private final static long REEVALUATE_HEAP_SPACE_INCREMENT = 1L << 26; // 128 MiB
+    static volatile long OFF_HEAP_CHECK_THRESHOLD = Long.MAX_VALUE;
+    static long RSS_MEMORY_LIMIT = Long.MAX_VALUE;
 
-    public static void setMallocMemoryLimit(long maxMallocMemory) {
-        MAX_MEM = maxMallocMemory;
+
+    public static void setRssMemoryLimit(long rssMemoryLimit) {
+        RSS_MEMORY_LIMIT = rssMemoryLimit;
+        OFF_HEAP_CHECK_THRESHOLD = Math.max(0, rssMemoryLimit - Runtime.getRuntime().maxMemory() + Runtime.getRuntime().totalMemory()); // Start checking Java heap limit when Malloc exceeds rssMemoryLimit - (java heap max size)
     }
 
     static {
@@ -178,7 +183,7 @@ public final class Unsafe {
         getUnsafe().freeMemory(ptr);
         FREE_COUNT.incrementAndGet();
         recordMemAlloc(-size, memoryTag);
-        RAM_USED.addAndGet(-size);
+        OFF_HEAP_ALLOCATED.addAndGet(-size);
     }
 
     public static boolean getBool(long address) {
@@ -220,29 +225,32 @@ public final class Unsafe {
 
     public static long malloc(long size, int memoryTag) {
         try {
-            long ram = RAM_USED.addAndGet(size);
-            if (ram > MAX_MEM) {
-                RAM_USED.addAndGet(-size);
-                throw new OutOfMemoryError(String.format("Total mallocated %,d exceeded configured limit of %,d", ram, MAX_MEM));
+            long newOffHeapAllocated = OFF_HEAP_ALLOCATED.addAndGet(size);
+            if (newOffHeapAllocated > OFF_HEAP_CHECK_THRESHOLD) {
+                if (maximumOffHeapLimitReached(newOffHeapAllocated)) {
+                    throw new OutOfMemoryError(String.format("Total mallocated %,d exceeded configured limit of %,d", newOffHeapAllocated, RSS_MEMORY_LIMIT));
+                }
             }
-            long ptr = getUnsafe().allocateMemory(size);
+            final long ptr = getUnsafe().allocateMemory(size);
             recordMemAlloc(size, memoryTag);
             MALLOC_COUNT.incrementAndGet();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            System.err.println("Unsafe.malloc() OutOfMemoryError, ram_used=" + RAM_USED.get()
+            long offHeapAllocated = OFF_HEAP_ALLOCATED.addAndGet(-size);
+            System.err.println("Unsafe.malloc() OutOfMemoryError, off_heap_used=" + offHeapAllocated
                     + ", size=" + size + ", memoryTag=" + memoryTag);
             throw oom;
         }
     }
 
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
+        long size = -oldSize + newSize;
         try {
-            long size = -oldSize + newSize;
-            long ram = RAM_USED.addAndGet(size);
-            if (ram > MAX_MEM) {
-                RAM_USED.addAndGet(-size);
-                throw new OutOfMemoryError(String.format("Total mallocated %,d exceeded configured limit of %,d", ram, MAX_MEM));
+            long newOffHeapAllocated = OFF_HEAP_ALLOCATED.addAndGet(size);
+            if (newOffHeapAllocated > OFF_HEAP_CHECK_THRESHOLD) {
+                if (maximumOffHeapLimitReached(newOffHeapAllocated)) {
+                    throw new OutOfMemoryError(String.format("Total mallocated %,d exceeded configured limit of %,d", newOffHeapAllocated, RSS_MEMORY_LIMIT));
+                }
             }
 
             long ptr = getUnsafe().reallocateMemory(address, newSize);
@@ -250,7 +258,8 @@ public final class Unsafe {
             REALLOC_COUNT.incrementAndGet();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            System.err.println("Unsafe.realloc() OutOfMemoryError, ram_used=" + RAM_USED.get()
+            long offHeapAllocated = OFF_HEAP_ALLOCATED.addAndGet(-size);
+            System.err.println("Unsafe.realloc() OutOfMemoryError, off_heap_used=" + offHeapAllocated
                     + ", old_size=" + oldSize + ", new_size=" + newSize + ", memoryTag=" + memoryTag);
             throw oom;
         }
@@ -299,6 +308,22 @@ public final class Unsafe {
         } catch (ReflectiveOperationException e) {
             e.printStackTrace();
         }
+    }
+
+    private static boolean maximumOffHeapLimitReached(long newOffHeapSize) {
+        final long heapMemory = Runtime.getRuntime().totalMemory();
+        if (newOffHeapSize + heapMemory + HEAP_BREATHING_SPACE > RSS_MEMORY_LIMIT) {
+            // Heap + off heap come close to MAX_RSS_MEM, 1 GiB left.
+            // Don't allow to allocate off heap any more it may result in process crash.
+            return true;
+        }
+
+        // Call to Runtime.getRuntime().totalMemory() costs about 50ns, optimise to avoid doing it every malloc
+        // Allow to allocate off heap 128MB more from this point, re-examine when offHeapMemory exceeds the new threshold
+        // Next line will have thread race. We are fine to take best effort max, lower max will cause more checks
+        //noinspection NonAtomicOperationOnVolatileField
+        OFF_HEAP_CHECK_THRESHOLD = Math.max(newOffHeapSize + REEVALUATE_HEAP_SPACE_INCREMENT, OFF_HEAP_CHECK_THRESHOLD);
+        return false;
     }
 
     public static final Module JAVA_BASE_MODULE = System.class.getModule();

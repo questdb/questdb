@@ -399,7 +399,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
     private final boolean simulateCrashEnabled;
-    private final long outOfHeapMemoryAllocationLimit;
+    private final long rssMemoryLimit;
 
     public PropServerConfiguration(
             String root,
@@ -431,7 +431,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
         this.simulateCrashEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SIMULATE_CRASH_ENABLED, false);
-        this.outOfHeapMemoryAllocationLimit = (long)(getDouble(properties, env, PropertyKey.CAIRO_OUT_OF_HEAP_MEMORY_ALLOC_LIMIT, 0) * 1024L * 1024L * 1024L);
+        this.rssMemoryLimit = (long)(getDouble(properties, env, PropertyKey.CAIRO_RSS_MEMORY_LIMIT, 0) * 1024L * 1024L * 1024L);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
@@ -1791,8 +1791,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
-        public long getOutOfHeapMallocMemoryLimit() {
-            return outOfHeapMemoryAllocationLimit;
+        public long getRssMemoryLimit() {
+            return rssMemoryLimit;
         }
 
         @Override

@@ -64,9 +64,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getOutOfHeapMallocMemoryLimit() {
-        // For test, limit memory allocated by malloc to 2 GB
-        return 2 * 1024L * 1024 * 1024;
+    public long getRssMemoryLimit() {
+        // For test, limit memory allocated to 3 GB
+        return 3 * 1024L * 1024 * 1024;
     }
 
     @Override
