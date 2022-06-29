@@ -126,6 +126,7 @@ public class TableListFunctionFactory implements FunctionFactory {
             @Override
             public void close() {
                 findPtr = ff.findClose(findPtr);
+                metaReader.clear();//release FD of last table on the list
             }
 
             @Override
