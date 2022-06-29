@@ -55,7 +55,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     public TableReaderMetadata(FilesFacade ff, Path path) {
         this(ff);
-        of(path, ColumnType.VERSION);
+        deferredInit(path, ColumnType.VERSION);
     }
 
     public void applyTransitionIndex() {
@@ -158,6 +158,10 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         Misc.free(transitionMeta);
     }
 
+    public void clear() {
+        Misc.free(metaMem);
+    }
+
     public long createTransitionIndex(long txnStructureVersion) {
         if (transitionMeta == null) {
             transitionMeta = Vm.getMRInstance();
@@ -204,7 +208,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         return version;
     }
 
-    public TableReaderMetadata of(Path path, int expectedVersion) {
+    public TableReaderMetadata deferredInit(Path path, int expectedVersion) {
         this.path.of(path).$();
         try {
             this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);

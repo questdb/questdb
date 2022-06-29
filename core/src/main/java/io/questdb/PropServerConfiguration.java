@@ -106,6 +106,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlJoinContextPoolCapacity;
     private final int sqlLexerPoolCapacity;
     private final int sqlMapKeyCapacity;
+    private final int sqlSmallMapKeyCapacity;
     private final int sqlMapPageSize;
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
@@ -401,6 +402,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxFileNameLength;
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
+    private final boolean simulateCrashEnabled;
 
     public PropServerConfiguration(
             String root,
@@ -431,6 +433,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
+        this.simulateCrashEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SIMULATE_CRASH_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
@@ -686,6 +689,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJoinContextPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY, 64);
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
             this.sqlMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_MAP_KEY_CAPACITY, 2048 * 1024);
+            this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 1024);
             this.sqlMapPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_PAGE_SIZE, 4 * 1024 * 1024);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
@@ -2179,6 +2183,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean getSimulateCrashEnabled() {
+            return simulateCrashEnabled;
+        }
+
+        @Override
         public int getRndFunctionMemoryPageSize() {
             return rndFunctionMemoryPageSize;
         }
@@ -2351,6 +2360,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlMapKeyCapacity() {
             return sqlMapKeyCapacity;
+        }
+
+        @Override
+        public int getSqlSmallMapKeyCapacity() {
+            return sqlSmallMapKeyCapacity;
         }
 
         @Override
