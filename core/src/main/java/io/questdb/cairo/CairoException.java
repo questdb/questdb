@@ -47,14 +47,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException duplicateColumn(CharSequence columnName, CharSequence columnAlias) {
-        CairoException exception = metadataValidation("Duplicate column", columnName);
+        CairoException exception = invalidMetadata("Duplicate column", columnName);
         if (columnAlias != null) {
             exception.put(", [alias=").put(columnAlias).put(']');
         }
         return exception;
     }
 
-    public static CairoException metadataValidation(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
+    public static CairoException invalidMetadata(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
         return instance(METADATA_VALIDATION).put(msg).put(" [name=").put(columnName).put(']');
     }
 

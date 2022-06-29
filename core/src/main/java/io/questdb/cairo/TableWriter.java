@@ -565,11 +565,11 @@ public class TableWriter implements Closeable {
 
         final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
         if (columnIndex == -1) {
-            throw CairoException.metadataValidation("Column does not exist", columnName);
+            throw CairoException.invalidMetadata("Column does not exist", columnName);
         }
         if (!isColumnIndexed(metaMem, columnIndex)) {
             // if a column is indexed, it is al so of type SYMBOL
-            throw CairoException.metadataValidation("Column is not indexed", columnName);
+            throw CairoException.invalidMetadata("Column is not indexed", columnName);
         }
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
