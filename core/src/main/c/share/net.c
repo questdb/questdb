@@ -69,7 +69,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_socketUdp0
     return fd;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_sockaddr
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_sockaddr0
         (JNIEnv *e, jclass cl, jint address, jint port) {
     struct sockaddr_in *addr = calloc(1, sizeof(struct sockaddr_in));
     addr->sin_family = AF_INET;
@@ -78,7 +78,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_sockaddr
     return (jlong) addr;
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeSockAddr
+JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeSockAddr0
         (JNIEnv *e, jclass cl, jlong address) {
     if (address != 0) {
         free((void *) address);
@@ -330,14 +330,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connectAddrInfo
     return connect((int) fd, addr->ai_addr, (int) addr->ai_addrlen);
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeAddrInfo
+JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeAddrInfo0
         (JNIEnv *e, jclass cl, jlong address) {
     if (address != 0) {
         freeaddrinfo((void *) address);
     }
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getAddrInfo
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_getAddrInfo0
         (JNIEnv *e, jclass cl, jlong host, jint port) {
     struct addrinfo hints;
     memset(&hints, 0, sizeof(hints));
