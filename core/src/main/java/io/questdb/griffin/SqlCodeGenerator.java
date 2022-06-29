@@ -2322,7 +2322,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // not main metadata to avoid partitionBy functions accidentally looking up
         // analytic columns recursively
 
-        // todo: these is a transient list, we can cache and reuse
+        // todo: this is a transient list, we can cache and reuse
         final ObjList<TableColumnMetadata> deferredAnalyticMetadata = new ObjList<>();
 
         for (int i = 0; i < columnCount; i++) {
