@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
@@ -42,7 +43,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class NetTest {
+import static org.junit.Assert.fail;
+
+public class NetTest extends AbstractCairoTest {
     private int port = 9992;
 
     @Test
@@ -50,7 +53,7 @@ public class NetTest {
         long fd = Net.socketTcp(false);
         try {
             if (!Net.bindTcp(fd, "127.0.0.1", 9005)) {
-                Assert.fail("Failed to bind tcp socket to localhost. Errno=" + Os.errno());
+                fail("Failed to bind tcp socket to localhost. Errno=" + Os.errno());
             } else {
                 Net.listen(fd, 100);
             }
@@ -64,12 +67,58 @@ public class NetTest {
         long fd = Net.socketUdp();
         try {
             if (!Net.bindUdp(fd, Net.parseIPv4("127.0.0.1"), 9005)) {
-                Assert.fail("Failed to bind udp socket to localhost. Errno=" + Os.errno());
+                fail("Failed to bind udp socket to localhost. Errno=" + Os.errno());
             } else {
                 Net.listen(fd, 100);
             }
         } finally {
             Net.close(fd);
+        }
+    }
+
+    @Test
+    public void testLeakyAddrInfo() throws Exception {
+        NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+        boolean leakDetected = false;
+        long addrInfo[] = new long[1];
+        try {
+            assertMemoryLeak(() -> addrInfo[0] = nf.getAddrInfo("localhost", 443));
+        } catch (AssertionError e) {
+            if (e.getMessage().contains("AddrInfo allocation count")) {
+                leakDetected = true;
+            }
+        } finally {
+            long ptr = addrInfo[0];
+            if (ptr == -1) {
+                fail("localhost could not be resolved. something is wrong.");
+            }
+            nf.freeAddrInfo(ptr);
+            if (!leakDetected) {
+                fail("AddrInfo leak should have been detected");
+            }
+        }
+    }
+
+    @Test
+    public void testLeakySockAddr() throws Exception {
+        NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+        boolean leakDetected = false;
+        long sockAddr[] = new long[1];
+        try {
+            assertMemoryLeak(() -> sockAddr[0] = nf.sockaddr("127.0.0.1", 443));
+        } catch (AssertionError e) {
+            if (e.getMessage().contains("SockAddr allocation count")) {
+                leakDetected = true;
+            }
+        } finally {
+            long ptr = sockAddr[0];
+            if (ptr == 0) {
+                fail("SockAddr could no be allocated. something is wrong.");
+            }
+            nf.freeSockAddr(ptr);
+            if (!leakDetected) {
+                fail("SockAddr leak should have been detected");
+            }
         }
     }
 
