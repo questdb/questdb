@@ -45,7 +45,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.Assert.fail;
 
-public class NetTest extends AbstractCairoTest {
+public class NetTest {
     private int port = 9992;
 
     @Test
@@ -82,7 +82,7 @@ public class NetTest extends AbstractCairoTest {
         boolean leakDetected = false;
         long addrInfo[] = new long[1];
         try {
-            assertMemoryLeak(() -> addrInfo[0] = nf.getAddrInfo("localhost", 443));
+            TestUtils.assertMemoryLeak(() -> addrInfo[0] = nf.getAddrInfo("localhost", 443));
         } catch (AssertionError e) {
             if (e.getMessage().contains("AddrInfo allocation count")) {
                 leakDetected = true;
@@ -105,7 +105,7 @@ public class NetTest extends AbstractCairoTest {
         boolean leakDetected = false;
         long sockAddr[] = new long[1];
         try {
-            assertMemoryLeak(() -> sockAddr[0] = nf.sockaddr("127.0.0.1", 443));
+            TestUtils.assertMemoryLeak(() -> sockAddr[0] = nf.sockaddr("127.0.0.1", 443));
         } catch (AssertionError e) {
             if (e.getMessage().contains("SockAddr allocation count")) {
                 leakDetected = true;
