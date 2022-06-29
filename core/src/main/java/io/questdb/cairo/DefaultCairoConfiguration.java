@@ -439,6 +439,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getSimulateCrashEnabled() {
+        return false;
+    }
+
+    @Override
     public int getRndFunctionMemoryPageSize() {
         return 8192;
     }
@@ -613,6 +618,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlMapKeyCapacity() {
         return 128;
+    }
+
+    @Override
+    public int getSqlSmallMapKeyCapacity() {
+        return 64;
     }
 
     @Override
