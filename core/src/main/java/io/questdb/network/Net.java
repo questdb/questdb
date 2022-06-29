@@ -30,6 +30,8 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StdoutSink;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public final class Net {
 
     public static final long MMSGHDR_SIZE;
@@ -44,6 +46,9 @@ public final class Net {
     @SuppressWarnings("unused")
     public static final int EOTHERDISCONNECT = -2;
     public static final int SHUT_WR = 1;
+
+    private static final AtomicInteger ADDR_INFO_COUNTER = new AtomicInteger();
+    private static final AtomicInteger SOCK_ADDR_COUNTER = new AtomicInteger();
 
     private Net() {
     }
@@ -107,11 +112,24 @@ public final class Net {
         }
     }
 
-    public static native long freeAddrInfo(long pAddrInfo);
+    private static native void freeAddrInfo0(long pAddrInfo);
+
+    public static void freeAddrInfo(long pAddrInfo) {
+        if (pAddrInfo != 0) {
+            ADDR_INFO_COUNTER.decrementAndGet();
+        }
+        freeAddrInfo0(pAddrInfo);
+    }
 
     public static native void freeMsgHeaders(long msgHeaders);
 
-    public native static void freeSockAddr(long sockaddr);
+    private static native void freeSockAddr0(long sockaddr);
+    public static void freeSockAddr(long sockaddr) {
+        if (sockaddr != 0) {
+            SOCK_ADDR_COUNTER.decrementAndGet();
+        }
+        freeSockAddr0(sockaddr);
+    }
 
     public static long getAddrInfo(LPSZ host, int port) {
         return getAddrInfo(host.address(), port);
@@ -123,7 +141,23 @@ public final class Net {
         }
     }
 
-    public static native long getAddrInfo(long lpszHost, int port);
+    private static native long getAddrInfo0(long lpszHost, int port);
+
+    public static long getAddrInfo(long lpszHost, int port) {
+        long addrInfo = getAddrInfo0(lpszHost, port);
+        if (addrInfo != -1) {
+            ADDR_INFO_COUNTER.incrementAndGet();
+        }
+        return addrInfo;
+    }
+
+    public static int getAllocatedAddrInfoCount() {
+        return ADDR_INFO_COUNTER.get();
+    }
+
+    public static int getAllocatedSockAddrCount() {
+        return SOCK_ADDR_COUNTER.get();
+    }
 
     public static long getMMsgBuf(long msgPtr) {
         return Unsafe.getUnsafe().getLong(Unsafe.getUnsafe().getLong(msgPtr + MMSGHDR_BUFFER_ADDRESS_OFFSET));
@@ -218,7 +252,12 @@ public final class Net {
         return sockaddr(parseIPv4(ipv4address), port);
     }
 
-    public native static long sockaddr(int ipv4address, int port);
+    public static long sockaddr(int ipv4address, int port) {
+        SOCK_ADDR_COUNTER.incrementAndGet();
+        return sockaddr0(ipv4address, port);
+    }
+
+    private native static long sockaddr0(int ipv4address, int port);
 
     public static long socketTcp(boolean blocking) {
         return Files.bumpFileCount(socketTcp0(blocking));
