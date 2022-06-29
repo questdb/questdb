@@ -202,12 +202,13 @@ public class WalWriter implements Closeable {
     }
 
     public void removeColumn(CharSequence name) {
+        final int index = metadata.getColumnIndex(name);
+        final int type = metadata.getColumnType(index);
+
         try {
             LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
             commit(true);
 
-            final int index = metadata.getColumnIndex(name);
-            final int type = metadata.getColumnType(index);
             if (ColumnType.isSymbol(type)) {
                 removeSymbolMapWriter(index);
             }

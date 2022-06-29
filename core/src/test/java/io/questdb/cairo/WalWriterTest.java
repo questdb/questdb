@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.NullMapWriter;
@@ -37,6 +38,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.function.Consumer;
 
 import static org.junit.Assert.*;
@@ -829,6 +831,135 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAddingDuplicateColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTableAddDuplicateCol";
+            createTable(tableName);
+
+            final String walName;
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                walName = walWriter.getWalName();
+                TableWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.append();
+                walWriter.addColumn("c", ColumnType.INT);
+                row = walWriter.newRow();
+                row.putByte(0, (byte) 10);
+                row.append();
+                try {
+                    walWriter.addColumn("c", ColumnType.SHORT);
+                    fail("Should not be able to add duplicate column");
+                } catch (CairoException e) {
+                    assertEquals("[0] Duplicate column name: c", e.getMessage());
+                }
+                row = walWriter.newRow();
+                row.putByte(0, (byte) 100);
+                row.append();
+                walWriter.commit();
+            }
+
+            try (TableModel model = defaultModel(tableName)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), 1)) {
+                    assertEquals(2, reader.getColumnCount());
+                    assertEquals(walName, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(1, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    final Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    assertEquals(1, record.getByte(0));
+                    assertNull(record.getStr(1));
+                    assertEquals(0, record.getRowId());
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    assertNull(reader.getSymbolMapReader(0));
+                    assertNull(reader.getSymbolMapReader(1));
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(1, eventCursor.getTxn());
+                    assertEquals(WalTxnType.DATA, eventCursor.getType());
+
+                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    assertEquals(0, dataInfo.getStartRowID());
+                    assertEquals(1, dataInfo.getEndRowID());
+                    assertEquals(0, dataInfo.getMinTimestamp());
+                    assertEquals(0, dataInfo.getMaxTimestamp());
+                    assertFalse(dataInfo.isOutOfOrder());
+                    assertNull(dataInfo.nextSymbolMapDiff());
+
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(2, eventCursor.getTxn());
+                    assertEquals(WalTxnType.ADD_COLUMN, eventCursor.getType());
+
+                    final WalEventCursor.AddColumnInfo addColumnInfo = eventCursor.getAddColumnInfo();
+                    assertEquals(2, addColumnInfo.getColumnIndex());
+                    assertEquals("c", addColumnInfo.getColumnName().toString());
+                    assertEquals(ColumnType.INT, addColumnInfo.getColumnType());
+
+                    assertFalse(eventCursor.hasNext());
+                }
+                model.col("c", ColumnType.INT);
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 1, new IntList(), 2)) {
+                    assertEquals(3, reader.getColumnCount());
+                    assertEquals(walName, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(2, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    final Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    assertEquals(10, record.getByte(0));
+                    assertNull(record.getStr(1));
+                    assertEquals(Integer.MIN_VALUE, record.getInt(2));
+                    assertEquals(0, record.getRowId());
+                    assertTrue(cursor.hasNext());
+                    assertEquals(100, record.getByte(0));
+                    assertNull(record.getStr(1));
+                    assertEquals(Integer.MIN_VALUE, record.getInt(2));
+                    assertEquals(1, record.getRowId());
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    assertNull(reader.getSymbolMapReader(0));
+                    assertNull(reader.getSymbolMapReader(1));
+                    assertNull(reader.getSymbolMapReader(2));
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(3, eventCursor.getTxn());
+                    assertEquals(WalTxnType.DATA, eventCursor.getType());
+
+                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    assertEquals(0, dataInfo.getStartRowID());
+                    assertEquals(2, dataInfo.getEndRowID());
+                    assertEquals(0, dataInfo.getMinTimestamp());
+                    assertEquals(0, dataInfo.getMaxTimestamp());
+                    assertFalse(dataInfo.isOutOfOrder());
+                    assertNull(dataInfo.nextSymbolMapDiff());
+
+                    assertFalse(eventCursor.hasNext());
+                }
+
+                try {
+                    engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 2, new IntList(), 1);
+                    fail("Segment 2 should not exist");
+                } catch (CairoException e) {
+                    assertEquals(e.getMessage(), "[2] could not open read-only [file=" + engine.getConfiguration().getRoot() +
+                            File.separatorChar + tableName +
+                            File.separatorChar + walName +
+                            File.separatorChar + "2" +
+                            File.separatorChar + TableUtils.META_FILE_NAME +"]");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRemovingColumnStartsNewSegment() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTableRemoveCol";
@@ -881,6 +1012,71 @@ public class WalWriterTest extends AbstractGriffinTest {
 
                     final WalEventCursor.RemoveColumnInfo removeColumnInfo = eventCursor.getRemoveColumnInfo();
                     assertEquals(0, removeColumnInfo.getColumnIndex());
+
+                    assertFalse(eventCursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRemovingNonExistentColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTableRemoveNonExistentCol";
+            createTable(tableName);
+
+            final String walName;
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                walName = walWriter.getWalName();
+                TableWriter.Row row = walWriter.newRow();
+                row.putByte(0, (byte) 1);
+                row.append();
+                try {
+                    walWriter.removeColumn("noColLikeThis");
+                    fail("Should not be able to remove non existent column");
+                } catch (InvalidColumnException e) {
+                    assertNull(e.getMessage());
+                }
+                row = walWriter.newRow();
+                row.putByte(0, (byte) 10);
+                row.append();
+            }
+
+            try (TableModel model = defaultModel(tableName)) {
+                try (WalReader reader = engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 0, new IntList(), 2)) {
+                    assertEquals(2, reader.getColumnCount());
+                    assertEquals(walName, reader.getWalName());
+                    assertEquals(tableName, reader.getTableName());
+                    assertEquals(2, reader.size());
+
+                    final RecordCursor cursor = reader.getDataCursor();
+                    final Record record = cursor.getRecord();
+                    assertTrue(cursor.hasNext());
+                    assertEquals(1, record.getByte(0));
+                    assertNull(record.getStr(1));
+                    assertEquals(0, record.getRowId());
+                    assertTrue(cursor.hasNext());
+                    assertEquals(10, record.getByte(0));
+                    assertNull(record.getStr(1));
+                    assertEquals(1, record.getRowId());
+                    assertFalse(cursor.hasNext());
+
+                    assertColumnMetadata(model, reader);
+
+                    assertNull(reader.getSymbolMapReader(0));
+
+                    final WalEventCursor eventCursor = reader.getEventCursor();
+                    assertTrue(eventCursor.hasNext());
+                    assertEquals(1, eventCursor.getTxn());
+                    assertEquals(WalTxnType.DATA, eventCursor.getType());
+
+                    final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    assertEquals(0, dataInfo.getStartRowID());
+                    assertEquals(2, dataInfo.getEndRowID());
+                    assertEquals(0, dataInfo.getMinTimestamp());
+                    assertEquals(0, dataInfo.getMaxTimestamp());
+                    assertFalse(dataInfo.isOutOfOrder());
+                    assertNull(dataInfo.nextSymbolMapDiff());
 
                     assertFalse(eventCursor.hasNext());
                 }

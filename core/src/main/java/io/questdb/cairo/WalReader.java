@@ -69,6 +69,7 @@ public class WalReader implements Closeable, SymbolTableSource {
         path = new Path();
         path.of(configuration.getRoot()).concat(tableName).concat(walName);
         rootLen = path.length();
+
         try {
             metadata = new WalReaderMetadata(ff);
             metadata.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION);

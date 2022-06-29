@@ -30,24 +30,24 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.*;
 
 public class SequencerImpl implements Sequencer {
-    private final IDGenerator tnxGenerator;
+    private final IDGenerator txnGenerator;
 
     SequencerImpl(CairoConfiguration configuration) {
-        tnxGenerator = new IDGenerator(configuration, SEQ_INDEX_FILE_NAME);
+        txnGenerator = new IDGenerator(configuration, SEQ_TXN_FILE_NAME);
     }
 
     @Override
     public void open(Path path) {
-        tnxGenerator.open(path);
+        txnGenerator.open(path);
     }
 
     @Override
     public long nextTxn() {
-        return tnxGenerator.getNextId();
+        return txnGenerator.getNextId();
     }
 
     @Override
     public void close() {
-        Misc.free(tnxGenerator);
+        Misc.free(txnGenerator);
     }
 }
