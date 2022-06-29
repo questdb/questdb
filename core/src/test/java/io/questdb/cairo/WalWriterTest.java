@@ -949,11 +949,11 @@ public class WalWriterTest extends AbstractGriffinTest {
                     engine.getWalReader(sqlExecutionContext.getCairoSecurityContext(), tableName, walName, 2, new IntList(), 1);
                     fail("Segment 2 should not exist");
                 } catch (CairoException e) {
-                    assertEquals(e.getMessage(), "[2] could not open read-only [file=" + engine.getConfiguration().getRoot() +
+                    assertTrue(e.getMessage().endsWith("could not open read-only [file=" + engine.getConfiguration().getRoot() +
                             File.separatorChar + tableName +
                             File.separatorChar + walName +
                             File.separatorChar + "2" +
-                            File.separatorChar + TableUtils.META_FILE_NAME +"]");
+                            File.separatorChar + TableUtils.META_FILE_NAME +"]"));
                 }
             }
         });
