@@ -2601,6 +2601,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testTooManyArgumentsInAnalyticFunction() throws Exception {
+        assertFailure(
+                "select row_number(1,2,3) over (partition by symbol) from trades",
+                "create table trades " +
+                        "(" +
+                        " price double," +
+                        " symbol symbol," +
+                        " ts timestamp" +
+                        ") timestamp(ts) partition by day",
+                7,
+                "too many arguments"
+        );
+    }
+
+    @Test
     public void testNonAnalyticFunctionInAnalyticContext() throws Exception {
         assertFailure(
                 "select avg(price) over (partition by symbol) from trades",
