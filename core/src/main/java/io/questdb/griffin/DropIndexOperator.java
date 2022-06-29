@@ -69,12 +69,9 @@ public class DropIndexOperator implements Closeable {
         try {
             if (tableWriter.inTransaction()) {
                 LOG.info()
-                        .$("committing current transaction before DROP INDEX execution [txn=")
-                        .$(tableWriter.getTxn())
-                        .$(", table=")
-                        .$(tableName)
-                        .$(", column=")
-                        .$(columnName)
+                        .$("committing current transaction before DROP INDEX execution [txn=").$(tableWriter.getTxn())
+                        .$(", table=").$(tableName)
+                        .$(", column=").$(columnName)
                         .I$();
                 tableWriter.commit();
             }
@@ -122,10 +119,8 @@ public class DropIndexOperator implements Closeable {
 
                     if (errno < 0) {
                         throw CairoException.instance(errno)
-                                .put("Cannot hardLink [src=")
-                                .put(path)
-                                .put(", hardLink=")
-                                .put(auxPath)
+                                .put("Cannot hardLink [src=").put(path)
+                                .put(", hardLink=").put(auxPath)
                                 .put(']');
                     }
                 } finally {
@@ -155,12 +150,9 @@ public class DropIndexOperator implements Closeable {
 
             if (tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn()) {
                 LOG.info()
-                        .$("there are readers of the index, Please run 'VACUUM TABLE \"")
-                        .$(tableName)
-                        .$("\"' [columnName=")
-                        .$(columnName)
-                        .$(", dropIndexTxn=")
-                        .$(dropIndexTxn)
+                        .$("there are readers of the index, Please run 'VACUUM TABLE \"").$(tableName)
+                        .$("\"' [columnName=").$(columnName)
+                        .$(", dropIndexTxn=").$(dropIndexTxn)
                         .I$();
                 return;
             }
@@ -188,12 +180,9 @@ public class DropIndexOperator implements Closeable {
                 } else if (cursor == -1L) {
                     // Queue overflow
                     LOG.error()
-                            .$("purge queue is full, Please run 'VACUUM TABLE \"")
-                            .$(tableName)
-                            .$("\"' [columnName=")
-                            .$(columnName)
-                            .$(", dropIndexTxn=")
-                            .$(dropIndexTxn)
+                            .$("purge queue is full, Please run 'VACUUM TABLE \"").$(tableName)
+                            .$("\"' [columnName=").$(columnName)
+                            .$(", dropIndexTxn=").$(dropIndexTxn)
                             .I$();
                     return;
                 }

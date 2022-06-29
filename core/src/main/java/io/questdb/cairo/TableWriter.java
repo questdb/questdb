@@ -574,12 +574,9 @@ public class TableWriter implements Closeable {
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
         try {
-            LOG.info().$("BEGIN DROP INDEX [txn=")
-                    .$(txWriter.getTxn())
-                    .$(", table=")
-                    .$(tableName)
-                    .$(", column=")
-                    .$(columnName)
+            LOG.info().$("BEGIN DROP INDEX [txn=").$(txWriter.getTxn())
+                    .$(", table=").$(tableName)
+                    .$(", column=").$(columnName)
                     .I$();
             // drop index
             if (dropIndexOperator == null) {
@@ -604,23 +601,16 @@ public class TableWriter implements Closeable {
 
             // remove old column versions, we assume the purge will fail if there are readers and will retry again
             dropIndexOperator.purgeOldColumnIndexVersions();
-            LOG.info().$("END DROP INDEX [txn=")
-                    .$(txWriter.getTxn())
-                    .$(", table=")
-                    .$(tableName)
-                    .$(", column=")
-                    .$(columnName)
+            LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
+                    .$(", table=").$(tableName)
+                    .$(", column=").$(columnName)
                     .I$();
         } catch (Throwable e) {
             throw CairoException.instance(0)
-                    .put("Cannot DROP INDEX for [txn=")
-                    .put(txWriter.getTxn())
-                    .put(", table=")
-                    .put(tableName)
-                    .put(", column=")
-                    .put(columnName)
-                    .put("]: ")
-                    .put(e.getMessage());
+                    .put("Cannot DROP INDEX for [txn=").put(txWriter.getTxn())
+                    .put(", table=").put(tableName)
+                    .put(", column=").put(columnName)
+                    .put("]: ").put(e.getMessage());
         }
     }
 
