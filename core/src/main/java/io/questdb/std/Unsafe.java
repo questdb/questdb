@@ -319,13 +319,13 @@ public final class Unsafe {
     private static boolean maximumOffHeapLimitReached(long newOffHeapSize) {
         final long heapMemory = Runtime.getRuntime().totalMemory();
         if (newOffHeapSize + heapMemory + HEAP_BREATHING_SPACE > RSS_MEMORY_LIMIT) {
-            // Heap + off heap come close to MAX_RSS_MEM, 1 GiB left.
+            // Heap + off heap come close to MAX_RSS_MEM, 512 MiB left.
             // Don't allow to allocate off heap any more it may result in process crash.
             return true;
         }
 
         // Call to Runtime.getRuntime().totalMemory() costs about 50ns, optimise to avoid doing it every malloc
-        // Allow to allocate off heap 128MB more from this point, re-examine when offHeapMemory exceeds the new threshold
+        // Allow to allocate off heap 64MiB more from this point, re-examine when offHeapMemory exceeds the new threshold
         // Next line will have thread race. We are fine to take best effort max, lower max will cause more checks
         //noinspection NonAtomicOperationOnVolatileField
         OFF_HEAP_CHECK_THRESHOLD = Math.max(newOffHeapSize + REEVALUATE_HEAP_SPACE_INCREMENT, OFF_HEAP_CHECK_THRESHOLD);
