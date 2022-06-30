@@ -63,7 +63,7 @@ public class MemoryDetectTest {
     @Test
     public void testSetsUnsafeRssLimit() {
         try {
-            ServerMain.setTotalPhysicalMemorySize(LOG, 0L);
+            ServerMain.setRssMemoryLimit(LOG, 0L);
             Assert.assertTrue("RSS limit evaluated", Unsafe.getRssMemoryLimit() < (1L << 40));
         } finally {
             resetRssLimit();
@@ -73,7 +73,7 @@ public class MemoryDetectTest {
     @Test
     public void testResetsUnsafeRssLimit() {
         try {
-            ServerMain.setTotalPhysicalMemorySize(LOG, -1L);
+            ServerMain.setRssMemoryLimit(LOG, -1L);
             Assert.assertEquals("RSS limit reset", Long.MAX_VALUE, Unsafe.getRssMemoryLimit());
             Assert.assertTrue("RSS limit reset", Unsafe.OFF_HEAP_CHECK_THRESHOLD > (1L << 40));
         } finally {
@@ -84,7 +84,7 @@ public class MemoryDetectTest {
     @Test
     public void testSetsUnsafeRssLimitToConcreteValue() {
         try {
-            ServerMain.setTotalPhysicalMemorySize(LOG, 1 << 30L);
+            ServerMain.setRssMemoryLimit(LOG, 1 << 30L);
             Assert.assertEquals("RSS limit reset", 1 << 30L, Unsafe.getRssMemoryLimit());
         } finally {
             resetRssLimit();
@@ -135,7 +135,7 @@ public class MemoryDetectTest {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         try {
-            ServerMain.setTotalPhysicalMemorySize(LOG, 0L);
+            ServerMain.setRssMemoryLimit(LOG, 0L);
             long fiveMib = 5L * (1 << 20);
             long offHeapCheckThreshold = Unsafe.OFF_HEAP_CHECK_THRESHOLD;
             long offheapAllocated = Unsafe.getOffHeapAllocated();

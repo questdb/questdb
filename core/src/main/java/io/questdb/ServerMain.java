@@ -116,7 +116,7 @@ public class ServerMain {
             throw sce;
         }
 
-        setTotalPhysicalMemorySize(log, configuration.getCairoConfiguration().getRssMemoryLimit());
+        setRssMemoryLimit(log, configuration.getCairoConfiguration().getRssMemoryLimit());
 
         final CairoConfiguration cairoConfiguration = configuration.getCairoConfiguration();
 
@@ -297,7 +297,7 @@ public class ServerMain {
         }
     }
 
-    public static void setTotalPhysicalMemorySize(Log log, long rssMemoryLimit) {
+    public static void setRssMemoryLimit(Log log, long rssMemoryLimit) {
         try {
             MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
 
