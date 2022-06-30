@@ -39,25 +39,42 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     private static final String LOCALHOST = "localhost";
 
     @Test
-    public void testHostNorAddressSet() {
-        Sender.LineSenderBuilder builder = Sender.builder();
-        try {
-            builder.build();
-            fail("not host should fail");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "server address not set");
-        }
+    public void testHostNorAddressSet() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder();
+            try {
+                builder.build();
+                fail("not host should fail");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "server address not set");
+            }
+        });
     }
 
     @Test
-    public void testAddressEmpty() {
-        Sender.LineSenderBuilder builder = Sender.builder();
-        try {
-            builder.address("");
-            fail("empty host should fail");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "address cannot be empty");
-        }
+    public void testAddressEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder();
+            try {
+                builder.address("");
+                fail("empty address should fail");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "address cannot be empty");
+            }
+        });
+    }
+
+    @Test
+    public void testAddressNull() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder();
+            try {
+                builder.address(null);
+                fail("null address should fail");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "null");
+            }
+        });
     }
 
     @Test
@@ -139,13 +156,12 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testConnectTls_NonExistingTrustoreFile() throws Exception {
-        String truststore = "/foo/whatever/non-existing";
-        Sender.LineSenderBuilder builder = Sender.builder()
-                .address(LOCALHOST)
-                .port(TLS_PROXY.getListeningPort())
-                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
-
         runInContext(r -> {
+            String truststore = "/foo/whatever/non-existing";
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .address(LOCALHOST)
+                    .port(TLS_PROXY.getListeningPort())
+                    .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
             try {
                 builder.build();
                 fail("non existing trustore should throw an exception");
@@ -158,12 +174,11 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testConnectTls_NonExistingTrustoreClaspath() throws Exception {
         String truststore = "classpath:/foo/whatever/non-existing";
-        Sender.LineSenderBuilder builder = Sender.builder()
-                .address(LOCALHOST)
-                .port(TLS_PROXY.getListeningPort())
-                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
-
         runInContext(r -> {
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .address(LOCALHOST)
+                    .port(TLS_PROXY.getListeningPort())
+                    .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
             try {
                 builder.build();
                 fail("non existing trustore should throw an exception");
@@ -176,11 +191,11 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testConnectTls_WrongTruststorePassword() throws Exception {
         String truststore = "classpath:" + TRUSTSTORE_PATH;
-        Sender.LineSenderBuilder builder = Sender.builder()
-                .address(LOCALHOST)
-                .port(TLS_PROXY.getListeningPort())
-                .enableTls().advancedTls().customTrustStore(truststore, "wrong password".toCharArray());
         runInContext(r -> {
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .address(LOCALHOST)
+                    .port(TLS_PROXY.getListeningPort())
+                    .enableTls().advancedTls().customTrustStore(truststore, "wrong password".toCharArray());
             try (Sender sender = builder.build()) {
                 fail("non existing trustore should throw an exception");
             } catch (LineSenderException e) {
@@ -194,12 +209,12 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testConnectTlsAuthWithTokenSuccess() throws Exception {
         authKeyId = AUTH_KEY_ID1;
         String truststore = "classpath:" + TRUSTSTORE_PATH;
-        Sender.LineSenderBuilder builder = Sender.builder()
-                .address(LOCALHOST)
-                .port(TLS_PROXY.getListeningPort())
-                .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
-                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
         runInContext(r -> {
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .address(LOCALHOST)
+                    .port(TLS_PROXY.getListeningPort())
+                    .enableAuth(AUTH_KEY_ID1).authToken(AUTH_TOKEN_KEY1)
+                    .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
             try (Sender sender = builder.build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
@@ -212,12 +227,12 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testConnectTlsAuthWithPrivKeySuccess() throws Exception {
         authKeyId = AUTH_KEY_ID1;
         String truststore = "classpath:" + TRUSTSTORE_PATH;
-        Sender.LineSenderBuilder builder = Sender.builder()
-                .address(LOCALHOST)
-                .port(TLS_PROXY.getListeningPort())
-                .enableAuth(AUTH_KEY_ID1).privateKey(AUTH_PRIVATE_KEY1)
-                .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
         runInContext(r -> {
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .address(LOCALHOST)
+                    .port(TLS_PROXY.getListeningPort())
+                    .enableAuth(AUTH_KEY_ID1).privateKey(AUTH_PRIVATE_KEY1)
+                    .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
             try (Sender sender = builder.build()) {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
@@ -228,229 +243,269 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testAuthWithBadToken() throws Exception {
-        Sender.LineSenderBuilder.AuthBuilder builder = Sender.builder().enableAuth("foo");
-        try {
-            builder.authToken("bar token");
-            fail("bad token should not be imported");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "could not import token");
-        }
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder.AuthBuilder builder = Sender.builder().enableAuth("foo");
+            try {
+                builder.authToken("bar token");
+                fail("bad token should not be imported");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "could not import token");
+            }
+        });
     }
 
     @Test
-    public void testAuthTooSmallBuffer() {
-        Sender.LineSenderBuilder builder = Sender.builder()
-                .enableAuth("foo").authToken(AUTH_TOKEN_KEY1).address(LOCALHOST+":9001")
-                .bufferCapacity(1);
-        try {
-            builder.build();
-            fail("tiny buffer should be be allowed as it wont fit auth challenge");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "capacity");
-        }
+    public void testAuthTooSmallBuffer() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .enableAuth("foo").authToken(AUTH_TOKEN_KEY1).address(LOCALHOST + ":9001")
+                    .bufferCapacity(1);
+            try {
+                builder.build();
+                fail("tiny buffer should be be allowed as it wont fit auth challenge");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "capacity");
+            }
+        });
     }
 
     @Test
-    public void testPlainAuth_connectionRefused() {
-        Sender.LineSenderBuilder builder = Sender.builder()
-                .enableAuth("foo").authToken(AUTH_TOKEN_KEY1).address(LOCALHOST+":19003");
-        try {
-            builder.build();
-            fail("connection refused should fail fast");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "could not connect");
-        }
+    public void testPlainAuth_connectionRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .enableAuth("foo").authToken(AUTH_TOKEN_KEY1).address(LOCALHOST + ":19003");
+            try {
+                builder.build();
+                fail("connection refused should fail fast");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "could not connect");
+            }
+        });
     }
 
     @Test
-    public void testPlain_connectionRefused() {
-        Sender.LineSenderBuilder builder = Sender.builder().address(LOCALHOST+":19003");
-        try {
-            builder.build();
-            fail("connection refused should fail fast");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "could not connect");
-        }
+    public void testPlain_connectionRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder().address(LOCALHOST + ":19003");
+            try {
+                builder.build();
+                fail("connection refused should fail fast");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "could not connect");
+            }
+        });
     }
 
     @Test
-    public void testTls_connectionRefused() {
-        Sender.LineSenderBuilder builder = Sender.builder().enableTls().address(LOCALHOST+":19003");
-        try {
-            builder.build();
-            fail("connection refused should fail fast");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "could not connect");
-        }
+    public void testTls_connectionRefused() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder().enableTls().address(LOCALHOST + ":19003");
+            try {
+                builder.build();
+                fail("connection refused should fail fast");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "could not connect");
+            }
+        });
     }
 
     @Test
-    public void testDnsResolutionFail() {
-        try {
-            Sender.builder().address("this-domain-does-not-exist-i-hope-better-to-use-a-silly-tld.silly-tld").build();
-            fail("dns resolution errors should fail fast");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "could not resolve");
-        }
+    public void testDnsResolutionFail() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                Sender.builder().address("this-domain-does-not-exist-i-hope-better-to-use-a-silly-tld.silly-tld").build();
+                fail("dns resolution errors should fail fast");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "could not resolve");
+            }
+        });
     }
 
     @Test
-    public void testAddressDoubleSet_firstAddressThenAddress() {
-        Sender.LineSenderBuilder builder = Sender.builder().address(LOCALHOST);
-        try {
-            builder.address("127.0.0.1");
-            fail("should not allow double host set");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "already configured");
-        }
+    public void testAddressDoubleSet_firstAddressThenAddress() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder().address(LOCALHOST);
+            try {
+                builder.address("127.0.0.1");
+                fail("should not allow double host set");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "already configured");
+            }
+        });
     }
 
     @Test
-    public void testPortDoubleSet_firstPortThenPort() {
-        Sender.LineSenderBuilder builder = Sender.builder().port(9000);
-        try {
-            builder.port(9000);
-            fail("should not allow double port set");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "already configured");
-        }
+    public void testPortDoubleSet_firstPortThenPort() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder().port(9000);
+            try {
+                builder.port(9000);
+                fail("should not allow double port set");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "already configured");
+            }
+        });
     }
 
     @Test
-    public void testPortDoubleSet_firstAddressThenPort() {
-        Sender.LineSenderBuilder builder = Sender.builder().address(LOCALHOST+":9000");
-        try {
-            builder.port(9000);
-            fail("should not allow double port set");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "already configured");
-        }
+    public void testPortDoubleSet_firstAddressThenPort() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder().address(LOCALHOST + ":9000");
+            try {
+                builder.port(9000);
+                fail("should not allow double port set");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "already configured");
+            }
+        });
     }
 
     @Test
-    public void testPortDoubleSet_firstPortThenAddress() {
-        Sender.LineSenderBuilder builder = Sender.builder().port(9000);
-        try {
-            builder.address(LOCALHOST + ":9000");
-            fail("should not allow double port set");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "already configured");
-        }
+    public void testPortDoubleSet_firstPortThenAddress() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder().port(9000);
+            try {
+                builder.address(LOCALHOST + ":9000");
+                fail("should not allow double port set");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "already configured");
+            }
+        });
     }
 
     @Test
-    public void testAuthDoubleSet() {
-        Sender.LineSenderBuilder builder = Sender.builder().enableAuth("foo").authToken(AUTH_TOKEN_KEY1);
-        try {
-            builder.enableAuth("bar");
-            fail("should not allow double auth set");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "already configured");
-        }
+    public void testAuthDoubleSet() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder().enableAuth("foo").authToken(AUTH_TOKEN_KEY1);
+            try {
+                builder.enableAuth("bar");
+                fail("should not allow double auth set");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "already configured");
+            }
+        });
     }
 
     @Test
-    public void testTlsDoubleSet() {
-        Sender.LineSenderBuilder builder = Sender.builder().enableTls();
-        try {
-            builder.enableTls();
-            fail("should not allow double tls set");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "already configured");
-        }
+    public void testTlsDoubleSet() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder().enableTls();
+            try {
+                builder.enableTls();
+                fail("should not allow double tls set");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "already configured");
+            }
+        });
     }
 
     @Test
-    public void testBufferSizeDoubleSet() {
-        Sender.LineSenderBuilder builder = Sender.builder().bufferCapacity(1024);
-        try {
-            builder.bufferCapacity(1024);
-            fail("should not allow double buffer capacity set");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "already configured");
-        }
+    public void testBufferSizeDoubleSet() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder().bufferCapacity(1024);
+            try {
+                builder.bufferCapacity(1024);
+                fail("should not allow double buffer capacity set");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "already configured");
+            }
+        });
     }
 
     @Test
-    public void testCustomTruststoreDoubleSet() {
-        Sender.LineSenderBuilder builder = Sender.builder().advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
-        try {
-            builder.advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
-            fail("should not allow double custom trust store set");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "already configured");
-        }
+    public void testCustomTruststoreDoubleSet() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder().advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+            try {
+                builder.advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+                fail("should not allow double custom trust store set");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "already configured");
+            }
+        });
     }
 
     @Test
-    public void testCustomTruststoreButTlsNotEnabled() {
-        Sender.LineSenderBuilder builder = Sender.builder()
-                .advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
-                .address(LOCALHOST);
-        try {
-            builder.build();
-            fail("should fail when custom trust store configured, but TLS not enabled");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "TLS was not enabled");
-        }
+    public void testCustomTruststoreButTlsNotEnabled() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD)
+                    .address(LOCALHOST);
+            try {
+                builder.build();
+                fail("should fail when custom trust store configured, but TLS not enabled");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "TLS was not enabled");
+            }
+        });
     }
 
     @Test
-    public void testTlsValidationDisabledButTlsNotEnabled() {
-        Sender.LineSenderBuilder builder = Sender.builder()
-                .advancedTls().disableCertificateValidation()
-                .address(LOCALHOST);
-        try {
-            builder.build();
-            fail("should fail when TLS validation is disabled, but TLS not enabled");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "TLS was not enabled");
-        }
+    public void testTlsValidationDisabledButTlsNotEnabled() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .advancedTls().disableCertificateValidation()
+                    .address(LOCALHOST);
+            try {
+                builder.build();
+                fail("should fail when TLS validation is disabled, but TLS not enabled");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "TLS was not enabled");
+            }
+        });
     }
 
     @Test
-    public void testTlsValidationDisabledDoubleSet() {
-        Sender.LineSenderBuilder builder = Sender.builder()
-                .advancedTls().disableCertificateValidation();
-        try {
-            builder.advancedTls().disableCertificateValidation();
-            fail("should not allow double TLS validation disabled");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "TLS validation was already disabled");
-        }
+    public void testTlsValidationDisabledDoubleSet() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .advancedTls().disableCertificateValidation();
+            try {
+                builder.advancedTls().disableCertificateValidation();
+                fail("should not allow double TLS validation disabled");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "TLS validation was already disabled");
+            }
+        });
     }
 
     @Test
-    public void testFirstTlsValidationDisabledThenCustomTruststore() {
-        Sender.LineSenderBuilder builder = Sender.builder()
-                .advancedTls().disableCertificateValidation();
-        try {
-            builder.advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
-            fail("should not allow custom truststore when TLS validation was disabled disabled");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "TLS validation was already disabled");
-        }
+    public void testFirstTlsValidationDisabledThenCustomTruststore() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder()
+                    .advancedTls().disableCertificateValidation();
+            try {
+                builder.advancedTls().customTrustStore(TRUSTSTORE_PATH, TRUSTSTORE_PASSWORD);
+                fail("should not allow custom truststore when TLS validation was disabled disabled");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "TLS validation was already disabled");
+            }
+        });
     }
 
     @Test
-    public void testMalformedPortInAddress() {
-        Sender.LineSenderBuilder builder = Sender.builder();
-        try {
-            builder.address("foo:nonsense12334");
-            fail("should fail with malformated port");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "cannot parse port");
-        }
+    public void testMalformedPortInAddress() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder();
+            try {
+                builder.address("foo:nonsense12334");
+                fail("should fail with malformated port");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "cannot parse port");
+            }
+        });
     }
 
     @Test
-    public void testAddressEndsWithColon() {
-        Sender.LineSenderBuilder builder = Sender.builder();
-        try {
-            builder.address("foo:");
-            fail("should fail when address ends with colon");
-        } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "cannot parse address");
-        }
+    public void testAddressEndsWithColon() throws Exception {
+        assertMemoryLeak(() -> {
+            Sender.LineSenderBuilder builder = Sender.builder();
+            try {
+                builder.address("foo:");
+                fail("should fail when address ends with colon");
+            } catch (LineSenderException e) {
+                TestUtils.assertContains(e.getMessage(), "cannot parse address");
+            }
+        });
     }
 }

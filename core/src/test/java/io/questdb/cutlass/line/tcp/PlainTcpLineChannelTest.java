@@ -24,9 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.Sender;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.test.tools.TestUtils;
