@@ -34,7 +34,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
 
-import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.dFile;
 
