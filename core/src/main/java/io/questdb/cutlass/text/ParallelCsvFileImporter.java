@@ -248,7 +248,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     final TextImportTask task = queue.get(seq);
                     task.setTaskId(i);
                     task.setCancellationToken(cancellationToken);
-                    task.ofImportPartitionDataStage(cairoEngine, targetTableStructure, textMetadataDetector.getColumnTypes(), atomicity, columnDelimiter, importRoot, inputFileName, i, lo, hi, partitionNames, maxLineLength);
+                    task.ofImportPartitionDataStage(cairoEngine, targetTableStructure, textMetadataDetector.getColumnTypes(), atomicity, columnDelimiter, importRoot, inputFileName, i, lo, hi, partitionNames);
                     pubSeq.done(seq);
                     queuedCount++;
                     break;
