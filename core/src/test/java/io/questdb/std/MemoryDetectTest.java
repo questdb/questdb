@@ -151,7 +151,9 @@ public class MemoryDetectTest {
                     // Nothing we can do OS, cannot allocate single big chunk sometimes
                     failedToAllocate = true;
                 } finally {
-                    Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+                    if (ptr != 0) {
+                        Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+                    }
                 }
 
                 if (!failedToAllocate) {

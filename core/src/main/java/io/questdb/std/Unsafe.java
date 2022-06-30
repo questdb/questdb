@@ -316,6 +316,22 @@ public final class Unsafe {
         return anonymousClassDefiner.define(hostClass, data);
     }
 
+    private static boolean maximumOffHeapLimitReached(long newOffHeapSize) {
+        final long heapMemory = Runtime.getRuntime().totalMemory();
+        if (newOffHeapSize + heapMemory + HEAP_BREATHING_SPACE > RSS_MEMORY_LIMIT) {
+            // Heap + off heap come close to MAX_RSS_MEM, 1 GiB left.
+            // Don't allow to allocate off heap any more it may result in process crash.
+            return true;
+        }
+
+        // Call to Runtime.getRuntime().totalMemory() costs about 50ns, optimise to avoid doing it every malloc
+        // Allow to allocate off heap 128MB more from this point, re-examine when offHeapMemory exceeds the new threshold
+        // Next line will have thread race. We are fine to take best effort max, lower max will cause more checks
+        //noinspection NonAtomicOperationOnVolatileField
+        OFF_HEAP_CHECK_THRESHOLD = Math.max(newOffHeapSize + REEVALUATE_HEAP_SPACE_INCREMENT, OFF_HEAP_CHECK_THRESHOLD);
+        return false;
+    }
+
     //#if jdk.version!=8
     /**
      * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
@@ -333,22 +349,6 @@ public final class Unsafe {
         } catch (ReflectiveOperationException e) {
             e.printStackTrace();
         }
-    }
-
-    private static boolean maximumOffHeapLimitReached(long newOffHeapSize) {
-        final long heapMemory = Runtime.getRuntime().totalMemory();
-        if (newOffHeapSize + heapMemory + HEAP_BREATHING_SPACE > RSS_MEMORY_LIMIT) {
-            // Heap + off heap come close to MAX_RSS_MEM, 1 GiB left.
-            // Don't allow to allocate off heap any more it may result in process crash.
-            return true;
-        }
-
-        // Call to Runtime.getRuntime().totalMemory() costs about 50ns, optimise to avoid doing it every malloc
-        // Allow to allocate off heap 128MB more from this point, re-examine when offHeapMemory exceeds the new threshold
-        // Next line will have thread race. We are fine to take best effort max, lower max will cause more checks
-        //noinspection NonAtomicOperationOnVolatileField
-        OFF_HEAP_CHECK_THRESHOLD = Math.max(newOffHeapSize + REEVALUATE_HEAP_SPACE_INCREMENT, OFF_HEAP_CHECK_THRESHOLD);
-        return false;
     }
 
     public static final Module JAVA_BASE_MODULE = System.class.getModule();
