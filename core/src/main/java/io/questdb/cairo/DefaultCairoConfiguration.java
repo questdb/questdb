@@ -64,6 +64,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean checkOsProcessLimits() {
+        return true;
+    }
+
+    @Override
     public boolean enableTestFactories() {
         return true;
     }
@@ -106,6 +111,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public BuildInformation getBuildInformation() {
         return buildInformation;
+    }
+
+    @Override
+    public long getCheckOsProcessLimitFiles() {
+        return 64 * (1 << 10);
+    }
+
+    @Override
+    public long getCheckOsProcessLimitMaps() {
+        return 64 * (1 << 10);
     }
 
     @Override

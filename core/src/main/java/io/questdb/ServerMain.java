@@ -113,7 +113,13 @@ public class ServerMain {
             throw sce;
         }
 
-        final CairoConfiguration cairoConfiguration = configuration.getCairoConfiguration();
+        CairoConfiguration cairoConfiguration = configuration.getCairoConfiguration();
+        if (!checkOsProcessLimits(log, cairoConfiguration, cairoConfiguration.getCheckOsProcessLimitMaps(), cairoConfiguration.getCheckOsProcessLimitFiles())) {
+            String errorMessage = "FATAL: OS configuration will make QuestDB unstable. To disable OS configuration check set environment variable QDB_CHECK_OS_PROCESS_LIMITS to false";
+            log.errorW().$(errorMessage).$();
+            throw new ServerConfigurationException(errorMessage);
+        }
+
 
         final boolean httpEnabled = configuration.getHttpServerConfiguration().isEnabled();
         final boolean httpReadOnly = configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext();
@@ -284,12 +290,50 @@ public class ServerMain {
                 System.err.println(new Date() + " QuestDB is shutting down");
                 shutdownQuestDb(workerPool, instancesToClean);
                 System.err.println(new Date() + " QuestDB is down");
+                LogFactory.INSTANCE.waitClose();
             }));
         } catch (NetworkError e) {
             log.errorW().$((Sinkable) e).$();
             LockSupport.parkNanos(10000000L);
             System.exit(55);
         }
+    }
+
+    public static boolean checkOsProcessLimits(Log log, CairoConfiguration cairoConfiguration, long mapMinCount, long fileMinCount) {
+        if (!cairoConfiguration.checkOsProcessLimits()) {
+            log.advisoryW().$("os file limit checks disabled in configuration.");
+            return true;
+        }
+
+        boolean success = true;
+        FilesFacade ff = cairoConfiguration.getFilesFacade();
+        long mapCount = OsUtils.getMaxMapCount(log, ff);
+        if (mapCount < 0) {
+            log.advisoryW().$("cannot detect OS vm.max_map_count parameter, verification not performed");
+        } else {
+            log.advisoryW().$("vm.max_map_count=").$(mapCount).$();
+            if (mapCount < mapMinCount) {
+                // This is recommended setting in the configuration
+                log.errorW().$("FATAL: vm.max_map_count of [").$(mapCount).$("] is too low, check documentation and increase to at least [").$(mapMinCount).I$();
+                success = false;
+            }
+            ff.setMapLimit(mapCount);
+        }
+
+        long fileLimit = ff.getFileLimit();
+        if (fileLimit < 0) {
+            log.advisoryW().$("cannot detect OS file-max parameter for the process, verification not performed");
+        } else {
+            log.advisoryW().$("file-max=").$(fileLimit).$();
+            if (fileLimit < fileMinCount) {
+                // This is recommended setting in the configuration
+                log.errorW().$("FATAL: process file-max of [").$(fileLimit).$("] is too low, check documentation and increase to at least [").$(fileMinCount).I$();
+                success = false;
+            }
+            ff.setOpenFileLimit(fileLimit);
+        }
+
+        return success;
     }
 
     public static void deleteOrException(File file) {
@@ -315,6 +359,7 @@ public class ServerMain {
             new ServerMain(args);
         } catch (ServerConfigurationException sce) {
             System.err.println(sce.getMessage());
+            LogFactory.INSTANCE.waitClose();
             System.exit(1);
         }
     }

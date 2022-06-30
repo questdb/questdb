@@ -47,12 +47,14 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
     }
 
     protected TableReader getReader(CairoSecurityContext sqlContext) {
-        return engine.getReader(
+        TableReader reader = engine.getReader(
                 sqlContext,
                 tableName,
                 tableId,
                 tableVersion
         );
+        reader.checkOsLimitsCapacity();
+        return reader;
     }
 
     @Override

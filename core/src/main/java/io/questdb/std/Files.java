@@ -158,6 +158,8 @@ public final class Files {
         return OPEN_FILE_COUNT.get();
     }
 
+    public native static long getFileLimit();
+
     public native static long getStdOutFd();
 
     public static boolean isDir(long pUtf8NameZ, long type, StringSink nameSink) {

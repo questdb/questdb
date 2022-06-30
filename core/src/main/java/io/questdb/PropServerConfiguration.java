@@ -399,6 +399,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
     private final boolean simulateCrashEnabled;
+    private final boolean checkOsProcessLimits;
+    private final long checkOsProcessLimitFiles;
+    private final long checkOsProcessLimitMaps;
 
     public PropServerConfiguration(
             String root,
@@ -430,6 +433,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
         this.simulateCrashEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SIMULATE_CRASH_ENABLED, false);
+        this.checkOsProcessLimits = getBoolean(properties, env, PropertyKey.CAIRO_CHECK_OS_PROCESS_LIMITS, true);
+        this.checkOsProcessLimitFiles = getLong(properties, env, PropertyKey.CAIRO_CHECK_OS_PROCESS_FILES_LIMIT, 100_000);
+        this.checkOsProcessLimitMaps = getLong(properties, env, PropertyKey.CAIRO_CHECK_OS_PROCESS_MAPS_LIMIT, 262_144);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
@@ -1789,6 +1795,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
+        public boolean checkOsProcessLimits() {
+            return checkOsProcessLimits;
+        }
+
+        @Override
         public boolean enableTestFactories() {
             return false;
         }
@@ -1831,6 +1842,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public BuildInformation getBuildInformation() {
             return buildInformation;
+        }
+
+        @Override
+        public long getCheckOsProcessLimitFiles() {
+            return checkOsProcessLimitFiles;
+        }
+
+        @Override
+        public long getCheckOsProcessLimitMaps() {
+            return checkOsProcessLimitMaps;
         }
 
         @Override

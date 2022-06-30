@@ -28,11 +28,16 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 public class FilesFacadeImpl implements FilesFacade {
 
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
     private long mapPageSize = 0;
+    private final AtomicLong mapCount = new AtomicLong();
+    private long openFileLimit = Integer.MAX_VALUE;
+    private long mapLimit = Integer.MAX_VALUE;
 
     @Override
     public long append(long fd, long buf, int len) {
@@ -106,6 +111,24 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long getFileLimit() {
+        if (Os.type != Os.WINDOWS) {
+            return Files.getFileLimit();
+        }
+        return -1L;
+    }
+
+    @Override
+    public long getMapCapacity() {
+        return mapLimit - mapCount.get();
+    }
+
+    @Override
+    public long getOpenFileCapacity() {
+        return openFileLimit - Files.getOpenFileCount();
+    }
+
+    @Override
     public int msync(long addr, long len, boolean async) {
         return Files.msync(addr, len, async);
     }
@@ -113,6 +136,16 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int fsync(long fd) {
         return Files.fsync(fd);
+    }
+
+    @Override
+    public void setMapLimit(long mapLimit) {
+        this.mapLimit = mapLimit;
+    }
+
+    @Override
+    public void setOpenFileLimit(long fileLimit) {
+        openFileLimit = fileLimit;
     }
 
     @Override
@@ -188,12 +221,20 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-        return Files.mmap(fd, len, offset, flags, memoryTag);
+        final long address = Files.mmap(fd, len, offset, flags, memoryTag);
+        if (address > -1L) {
+            mapCount.incrementAndGet();
+        }
+        return address;
     }
 
     @Override
     public long mmap(long fd, long len, long flags, int mode, long baseAddress, int memoryTag) {
-        return Files.mmap(fd, len, flags, mode, memoryTag);
+        final long address = Files.mmap(fd, len, flags, mode, memoryTag);
+        if (address > -1L) {
+            mapCount.incrementAndGet();
+        }
+        return address;
     }
 
     @Override
@@ -204,6 +245,7 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public void munmap(long address, long size, int memoryTag) {
         Files.munmap(address, size, memoryTag);
+        mapCount.decrementAndGet();
     }
 
     @Override

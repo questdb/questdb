@@ -76,6 +76,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private boolean txnAcquired = false;
+    private int filePerPartitionCount;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null);
@@ -92,6 +93,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         path.trimTo(rootLen);
         try {
             this.metadata = openMetaFile();
+            filePerPartitionCount = calculateFilesPerPartition();
             this.columnCount = this.metadata.getColumnCount();
             this.columnCountShl = getColumnBits(columnCount);
             this.partitionBy = this.metadata.getPartitionBy();
@@ -139,6 +141,33 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public static int getPrimaryColumnIndex(int base, int index) {
         return 2 + base + index * 2;
+    }
+
+    /**
+     * Estimate if it's possible to do open all the files using this reader.
+     * Check that there is still enough of Open File Limits and Map limits left to open all partitions.
+     * If capacity is estimated to be not enough, CairoException will the thrown.
+     */
+    public void checkOsLimitsCapacity() {
+        int partitionCount = txFile.getPartitionCount();
+        int partitions = partitionCount;
+        // Some partitions already opened, substruct the number of opened from total file count
+        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+            long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
+            if (partitionRowCount > -1L) {
+                // Already opened
+                partitions--;
+            }
+        }
+
+        int columnFilesToMap = partitions * filePerPartitionCount;
+        if (ff.getMapCapacity() < columnFilesToMap) {
+            throw CairoException.instance(0).put("OS vm.max_map_count set too low to map all files of the table ").put(tableName);
+        }
+
+        if (ff.getOpenFileCapacity() < columnFilesToMap) {
+            throw CairoException.instance(0).put("OS file limit set too low to open all files on table ").put(tableName);
+        }
     }
 
     @Override
@@ -762,30 +791,20 @@ public class TableReader implements Closeable, SymbolTableSource {
         );
     }
 
-    private TableReaderMetadata openMetaFile() {
-        long deadline = this.configuration.getMicrosecondClock().getTicks() + this.configuration.getSpinLockTimeoutUs();
-        TableReaderMetadata metadata = new TableReaderMetadata(ff);
-        path.concat(TableUtils.META_FILE_NAME).$();
-        try {
-            boolean existanceChecked = false;
-            while (true) {
-                try {
-                    return metadata.deferredInit(path, ColumnType.VERSION);
-                } catch (CairoException ex) {
-                    if (!existanceChecked) {
-                        path.trimTo(rootLen).put(Files.SEPARATOR).$();
-                        if (!ff.exists(path)) {
-                            throw CairoException.instance(2).put("table does not exist [table=").put(tableName).put(']');
-                        }
-                        path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
-                    }
-                    existanceChecked = true;
-                    handleMetadataLoadException(deadline, ex);
-                }
+    private int calculateFilesPerPartition() {
+        int fileCount = 0;
+        for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+            int type = metadata.getColumnType(columnIndex);
+            fileCount++;
+            if (ColumnType.isVariableLength(type)) {
+                fileCount++;
             }
-        } finally {
-            path.trimTo(rootLen);
+
+            if (metadata.isColumnIndexed(columnIndex)) {
+                fileCount += 2;
+            }
         }
+        return fileCount;
     }
 
     @NotNull
@@ -1091,6 +1110,32 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader.getVersion() == columnVersion;
     }
 
+    private TableReaderMetadata openMetaFile() {
+        long deadline = this.configuration.getMicrosecondClock().getTicks() + this.configuration.getSpinLockTimeoutUs();
+        TableReaderMetadata metadata = new TableReaderMetadata(ff);
+        path.concat(TableUtils.META_FILE_NAME).$();
+        try {
+            boolean existenceChecked = false;
+            while (true) {
+                try {
+                    return metadata.deferredInit(path, ColumnType.VERSION);
+                } catch (CairoException ex) {
+                    if (!existenceChecked) {
+                        path.trimTo(rootLen).put(Files.SEPARATOR).$();
+                        if (!ff.exists(path)) {
+                            throw CairoException.instance(2).put("table does not exist [table=").put(tableName).put(']');
+                        }
+                        path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
+                    }
+                    existenceChecked = true;
+                    handleMetadataLoadException(deadline, ex);
+                }
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     private boolean reloadMetadata(long txnStructureVersion, long deadline, boolean reshuffleColumns) {
         // create transition index, which will help us reuse already open resources
         if (txnStructureVersion == metadata.getStructureVersion()) {
@@ -1134,6 +1179,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     this.columnCount = columnCount;
                     reloadSymbolMapCounts();
                 }
+                filePerPartitionCount = calculateFilesPerPartition();
                 return true;
             } finally {
                 TableUtils.freeTransitionIndex(pTransitionIndex);

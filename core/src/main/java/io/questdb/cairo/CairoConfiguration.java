@@ -45,6 +45,8 @@ public interface CairoConfiguration {
 
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
+    boolean checkOsProcessLimits();
+
     boolean enableTestFactories();
 
     int getAnalyticColumnPoolCapacity();
@@ -63,6 +65,10 @@ public interface CairoConfiguration {
     int getBindVariablePoolSize();
 
     BuildInformation getBuildInformation();
+
+    long getCheckOsProcessLimitFiles();
+
+    long getCheckOsProcessLimitMaps();
 
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 

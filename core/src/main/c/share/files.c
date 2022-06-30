@@ -43,6 +43,7 @@
 #include <sys/errno.h>
 #include <sys/time.h>
 #include "files.h"
+#include <sys/resource.h>
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
         (JNIEnv *e, jclass cl,
@@ -68,6 +69,15 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0
         (JNIEnv *cl, jclass e, jlong address, jlong len) {
     return munmap((void *) address, (size_t) len);
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
+        (JNIEnv *e, jclass cl) {
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_NOFILE, &limit) == 0) {
+        return (jlong)limit.rlim_cur;
+    }
+    return -1;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_append

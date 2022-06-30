@@ -264,7 +264,27 @@ public class LogFactory implements Closeable {
     public void close() {
         haltThread();
         for (int i = 0, n = jobs.size(); i < n; i++) {
-            Misc.free(jobs.get(i));
+            LogWriter job = jobs.get(i);
+            if (job != null) {
+                Misc.free(job);
+            }
+        }
+        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+            Misc.free(scopeConfigs.getQuick(i));
+        }
+    }
+
+    /**
+     * Flushes remaining log lines before closing
+     */
+    public void waitClose() {
+        haltThread();
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            LogWriter job = jobs.get(i);
+            if (job != null) {
+                job.run(0);
+                Misc.free(job);
+            }
         }
         for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
             Misc.free(scopeConfigs.getQuick(i));

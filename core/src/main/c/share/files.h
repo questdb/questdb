@@ -127,6 +127,14 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readULong
 
 /*
  * Class:     com_questdb_std_Files
+ * Method:    getFileLimit
+ * Signature: ()J
+ */
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
+        (JNIEnv *, jclass);
+
+/*
+ * Class:     com_questdb_std_Files
  * Method:    truncate
  * Signature: (JJ)Z
  */
