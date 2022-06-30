@@ -39,6 +39,17 @@ public class OsUtilsTest {
     static final Log LOG = LogFactory.getLog(OsUtils.class);
 
     @Test
+    public void testFileLimitNonLinux() {
+        Assume.assumeFalse(Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64);
+
+        long fileLimit = FilesFacadeImpl.INSTANCE.getFileLimit();
+        Assert.assertEquals(-1L, fileLimit);
+
+        System.out.println(fileLimit);
+    }
+
+
+    @Test
     public void testFileLimitLinux() {
         Assume.assumeTrue(Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64);
 
@@ -49,13 +60,13 @@ public class OsUtilsTest {
     }
 
     @Test
-    public void testFileLimitNonLinux() {
+    public void testMapLimitNonLinux() {
         Assume.assumeFalse(Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64);
 
-        long fileLimit = FilesFacadeImpl.INSTANCE.getFileLimit();
-        Assert.assertEquals(-1L, fileLimit);
+        long mapCount = OsUtils.getMaxMapCount(LOG, FilesFacadeImpl.INSTANCE);
+        Assert.assertEquals(-1L, mapCount);
 
-        System.out.println(fileLimit);
+        System.out.println(mapCount);
     }
 
     @Test
@@ -83,16 +94,6 @@ public class OsUtilsTest {
             long mapCount = OsUtils.getMaxMapCount(LOG, ff);
             Assert.assertEquals(-1, mapCount);
         });
-    }
-
-    @Test
-    public void testMapLimitNonLinux() {
-        Assume.assumeFalse(Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64);
-
-        long mapCount = OsUtils.getMaxMapCount(LOG, FilesFacadeImpl.INSTANCE);
-        Assert.assertEquals(-1L, mapCount);
-
-        System.out.println(mapCount);
     }
 
     @Test

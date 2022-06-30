@@ -112,7 +112,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public long getFileLimit() {
-        if (Os.type != Os.WINDOWS) {
+        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             return Files.getFileLimit();
         }
         return -1L;
