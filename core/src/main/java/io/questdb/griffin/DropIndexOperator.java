@@ -97,9 +97,9 @@ public class DropIndexOperator {
             int limit = rollbackColumnVersions.size();
             if (limit / 4 < partitionCount) {
                 for (int i = 0; i < limit; i += 4) {
-                    final long columnDropIndexVersion = rollbackColumnVersions.getQuick(0);
-                    final long pTimestamp = rollbackColumnVersions.getQuick(1);
-                    final long partitionNameTxn = rollbackColumnVersions.getQuick(2);
+                    final long columnDropIndexVersion = rollbackColumnVersions.getQuick(i);
+                    final long pTimestamp = rollbackColumnVersions.getQuick(i + 1);
+                    final long partitionNameTxn = rollbackColumnVersions.getQuick(i + 2);
                     partitionDFile(other, rootLen, partitionBy, pTimestamp, partitionNameTxn, columnName, columnDropIndexVersion);
                     if (!ff.remove(other)) {
                         LOG.info().$("Please remove this file \"").$(other).$('"').I$();
