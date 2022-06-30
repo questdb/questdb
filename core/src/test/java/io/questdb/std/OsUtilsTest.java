@@ -101,7 +101,7 @@ public class OsUtilsTest {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64);
 
-            var configuraton = new DefaultServerConfiguration("");
+            DefaultServerConfiguration configuraton = new DefaultServerConfiguration("");
             FilesFacade ff = configuraton.getCairoConfiguration().getFilesFacade();
             boolean success = ServerMain.checkOsProcessLimits(LOG, configuraton.getCairoConfiguration(), Integer.MAX_VALUE, Integer.MAX_VALUE);
 
@@ -116,7 +116,7 @@ public class OsUtilsTest {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64);
 
-            var configuraton = new DefaultServerConfiguration("");
+            DefaultServerConfiguration configuraton = new DefaultServerConfiguration("");
             boolean success = ServerMain.checkOsProcessLimits(LOG, configuraton.getCairoConfiguration(), 10, 10);
             Assert.assertTrue(success);
 
