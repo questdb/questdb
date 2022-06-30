@@ -63,10 +63,9 @@ public final class Unsafe {
         return RSS_MEMORY_LIMIT;
     }
 
-
     public static void setRssMemoryLimit(long rssMemoryLimit) {
         RSS_MEMORY_LIMIT = rssMemoryLimit;
-        OFF_HEAP_CHECK_THRESHOLD = Math.max(0, rssMemoryLimit - Runtime.getRuntime().maxMemory() + Runtime.getRuntime().totalMemory()); // Start checking Java heap limit when Malloc exceeds rssMemoryLimit - (java heap max size)
+        OFF_HEAP_CHECK_THRESHOLD = Math.max(0, rssMemoryLimit - Runtime.getRuntime().maxMemory()); // Start checking Java heap limit when Malloc exceeds rssMemoryLimit - (java heap max size)
     }
 
     static {
