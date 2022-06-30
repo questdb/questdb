@@ -3028,23 +3028,9 @@ class SqlOptimiser {
                 // we can add it to group-by model right away
                 if (qc.getAst().type == ExpressionNode.FUNCTION) {
                     if (analytic) {
-
-                        // Analytic model can be after either translation model directly
-                        // or after inner virtual model, which can be sandwiched between
-                        // translation model and analytic model.
-                        // To make sure columns, referenced by the analytic model
-                        // are rendered correctly we will emit them into a dedicated
-                        // translation model for the analytic model.
-                        // When we are able to determine which combination of models precedes the
-                        // analytic model, we can copy columns from analytic_translation model to
-                        // either only to translation model or both translation model and the
-                        // inner virtual models
                         analyticModel.addBottomUpColumn(qc);
                         // ensure literals referenced by analytic column are present in nested models
                         emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, true);
-                        final AnalyticColumn ac = (AnalyticColumn) qc;
-                        replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
-                        replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
                         continue;
                     } else if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                         qc = ensureAliasUniqueness(groupByModel, qc);
@@ -3107,7 +3093,8 @@ class SqlOptimiser {
                             analyticModel,
                             groupByModel,
                             outerVirtualModel,
-                            distinctModel);
+                            distinctModel
+                    );
                 }
             }
         }
@@ -3115,6 +3102,32 @@ class SqlOptimiser {
         // fail if we have both analytic and group-by models
         if (useAnalyticModel && useGroupByModel) {
             throw SqlException.$(0, "Analytic function is not allowed in context of aggregation. Use sub-query.");
+        }
+
+        if (useAnalyticModel) {
+            // We need one more pass for analytic model to emit potentially missing columns.
+            // For example, 'SELECT row_number() over (partition by col_c order by col_c), col_a, col_b FROM tab'
+            // needs col_c to be emitted.
+            for (int i = 0, k = columns.size(); i < k; i++) {
+                QueryColumn qc = columns.getQuick(i);
+                final boolean analytic = qc instanceof AnalyticColumn;
+
+                if (analytic & qc.getAst().type == ExpressionNode.FUNCTION) {
+                    // Analytic model can be after either translation model directly
+                    // or after inner virtual model, which can be sandwiched between
+                    // translation model and analytic model.
+                    // To make sure columns, referenced by the analytic model
+                    // are rendered correctly we will emit them into a dedicated
+                    // translation model for the analytic model.
+                    // When we're able to determine which combination of models precedes the
+                    // analytic model, we can copy columns from analytic_translation model to
+                    // either only to translation model or both translation model and the
+                    // inner virtual models.
+                    final AnalyticColumn ac = (AnalyticColumn) qc;
+                    replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getPartitionBy());
+                    replaceLiteralList(innerVirtualModel, translatingModel, baseModel, ac.getOrderBy());
+                }
+            }
         }
 
         if (sampleBy != null && baseModel.getTimestamp() != null && innerVirtualModel.getColumnNameToAliasMap().excludes(baseModel.getTimestamp().token)) {
