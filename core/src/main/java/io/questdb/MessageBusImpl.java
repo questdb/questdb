@@ -26,15 +26,13 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cutlass.text.TextImportRequestTask;
 import io.questdb.cutlass.text.TextImportTask;
 import io.questdb.mp.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
-
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 public class MessageBusImpl implements MessageBus {
     private final CairoConfiguration configuration;
@@ -91,7 +89,15 @@ public class MessageBusImpl implements MessageBus {
     private final SPSequence textImportPubSeq;
     private final MCSequence textImportSubSeq;
     private final SCSequence textImportColSeq;
-    private final Lock textImportQueueLock;
+
+    private final RingQueue<TextImportRequestTask> textImportRequestQueue;
+    private final MPSequence textImportRequestPubSeq;
+    private final SCSequence textImportRequestSubSeq;
+
+    private final RingQueue<TextImportRequestTask> textImportRequestProcessQueue;
+    private final SPSequence textImportRequestProcessPubSeq;
+    private final SCSequence textImportRequestProcessSubSeq;
+    private final SCSequence textImportRequestProcessStatusSeq;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -184,8 +190,21 @@ public class MessageBusImpl implements MessageBus {
         this.textImportPubSeq = new SPSequence(textImportQueue.getCycle());
         this.textImportSubSeq = new MCSequence(textImportQueue.getCycle());
         this.textImportColSeq = new SCSequence();
-        this.textImportQueueLock = new ReentrantLock();
         textImportPubSeq.then(textImportSubSeq).then(textImportColSeq).then(textImportPubSeq);
+
+        this.textImportRequestQueue = new RingQueue<>(TextImportRequestTask::new, configuration.getParallelImportQueueCapacity());
+        this.textImportRequestPubSeq = new MPSequence(textImportRequestQueue.getCycle());
+        this.textImportRequestSubSeq = new SCSequence();
+        textImportRequestPubSeq.then(textImportRequestSubSeq).then(textImportRequestPubSeq);
+
+        this.textImportRequestProcessQueue = new RingQueue<>(TextImportRequestTask::new, configuration.getParallelImportQueueCapacity());
+        this.textImportRequestProcessPubSeq = new SPSequence((textImportRequestProcessQueue.getCycle()));
+        this.textImportRequestProcessSubSeq = new SCSequence();
+        this.textImportRequestProcessStatusSeq = new SCSequence();
+        textImportRequestProcessPubSeq
+                .then(textImportRequestProcessSubSeq)
+                .then(textImportRequestProcessStatusSeq)
+                .then(textImportRequestProcessPubSeq);
     }
 
     @Override
@@ -406,7 +425,38 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Lock getTextImportQueueLock() {
-        return textImportQueueLock;
+    public RingQueue<TextImportRequestTask> getTextImportRequestCollectingQueue() {
+        return textImportRequestQueue;
     }
+
+    @Override
+    public Sequence getTextImportRequestCollectingPubSeq() {
+        return textImportRequestPubSeq;
+    }
+
+    @Override
+    public Sequence getTextImportRequestCollectingSubSeq() {
+        return textImportRequestSubSeq;
+    }
+
+    @Override
+    public RingQueue<TextImportRequestTask> getTextImportRequestProcessingQueue() {
+        return textImportRequestProcessQueue;
+    }
+
+    @Override
+    public Sequence getTextImportRequestProcessingPubSeq() {
+        return textImportRequestProcessPubSeq;
+    }
+
+    @Override
+    public Sequence getTextImportRequestProcessingSubSeq() {
+        return textImportRequestProcessSubSeq;
+    }
+
+    @Override
+    public Sequence getTextImportRequestProcessingStatusSeq() {
+        return textImportRequestProcessStatusSeq;
+    }
+
 }

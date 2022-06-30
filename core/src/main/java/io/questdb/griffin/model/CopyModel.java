@@ -36,6 +36,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private boolean header;
 
     private boolean parallel;
+    private boolean cancel;
     private CharSequence timestampFormat;
     private CharSequence timestampColumnName;
     private int partitionBy;
@@ -51,6 +52,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         fileName = null;
         header = false;
         parallel = false;
+        cancel = false;
         timestampFormat = null;
         timestampColumnName = null;
         partitionBy = -1;
@@ -123,6 +125,10 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.parallel = parallel;
     }
 
+    public void setCancel(boolean cancel) {
+        this.cancel = cancel;
+    }
+
     public void setTimestampColumnName(CharSequence timestampColumn) {
         this.timestampColumnName = timestampColumn;
     }
@@ -137,5 +143,9 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     public boolean isParallel() {
         return parallel;
+    }
+
+    public boolean isCancel() {
+        return cancel;
     }
 }

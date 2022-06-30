@@ -26,7 +26,6 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cutlass.text.types.TimestampAdapter;
@@ -52,8 +51,15 @@ public class TextImportTask {
     public static final byte PHASE_SYMBOL_TABLE_MERGE = 4;
     public static final byte PHASE_UPDATE_SYMBOL_KEYS = 5;
     public static final byte PHASE_BUILD_INDEX = 6;
+    public static final byte PHASE_MOVE_PARTITONS = 7;
+    public static final byte PHASE_ATTACH_PARTITIONS = 8;
 
     private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();
+    private static final IntObjHashMap<String> STATUS_NAME_MAP = new IntObjHashMap<>();
+
+    public static final byte STATUS_OK = 0;
+    public static final byte STATUS_ERROR = 1;
+    public static final byte STATUS_CANCEL = 2;
 
     static {
         PHASE_NAME_MAP.put(PHASE_BOUNDARY_CHECK, "BOUNDARY_CHECK");
@@ -62,15 +68,18 @@ public class TextImportTask {
         PHASE_NAME_MAP.put(PHASE_SYMBOL_TABLE_MERGE, "SYMBOL_TABLE_MERGE");
         PHASE_NAME_MAP.put(PHASE_UPDATE_SYMBOL_KEYS, "UPDATE_SYMBOL_KEYS");
         PHASE_NAME_MAP.put(PHASE_BUILD_INDEX, "BUILD_INDEX");
+
+        STATUS_NAME_MAP.put(STATUS_OK, "OK");
+        STATUS_NAME_MAP.put(STATUS_ERROR, "ERROR");
+        STATUS_NAME_MAP.put(STATUS_CANCEL, "CANCEL");
     }
 
-    public static final byte STATUS_OK = 0;
-    public static final byte STATUS_ERROR = 1;
-    public static final byte STATUS_CANCEL = 2;
-
     private byte phase;
-    private int index;
-    private SqlExecutionCircuitBreaker circuitBreaker;
+    private int taskId;
+    private CancellationToken cancellationToken;
+
+    private byte status;
+    private CharSequence errorMessage;
 
     private final CountQuotesStage countQuotesStage = new CountQuotesStage();
     private final BuildPartitionIndexStage buildPartitionIndexStage = new BuildPartitionIndexStage();
@@ -79,11 +88,12 @@ public class TextImportTask {
     private final UpdateSymbolColumnKeysStage updateSymbolColumnKeysStage = new UpdateSymbolColumnKeysStage();
     private final BuildSymbolColumnIndexStage buildSymbolColumnIndexStage = new BuildSymbolColumnIndexStage();
 
-    private byte status;
-    private CharSequence errorMessage;
-
     public static String getPhaseName(byte phase) {
         return PHASE_NAME_MAP.get(phase);
+    }
+
+    public static String getStatusName(byte status) {
+        return STATUS_NAME_MAP.get(status);
     }
 
     public BuildPartitionIndexStage getBuildPartitionIndexStage() {
@@ -102,8 +112,8 @@ public class TextImportTask {
         return errorMessage;
     }
 
-    public int getIndex() {
-        return index;
+    public int getTaskId() {
+        return taskId;
     }
 
     public byte getPhase() {
@@ -118,12 +128,16 @@ public class TextImportTask {
         return this.status == STATUS_CANCEL;
     }
 
-    public void setIndex(int index) {
-        this.index = index;
+    public byte getStatus() {
+        return status;
     }
 
-    public void setCircuitBreaker(SqlExecutionCircuitBreaker circuitBreaker) {
-        this.circuitBreaker = circuitBreaker;
+    public void setTaskId(int taskId) {
+        this.taskId = taskId;
+    }
+
+    public void setCancellationToken(CancellationToken cancellationToken) {
+        this.cancellationToken = cancellationToken;
     }
 
     public void ofBuildPartitionIndexStage(long chunkStart,
@@ -212,9 +226,9 @@ public class TextImportTask {
 
     public boolean run() {
         try {
-            status = STATUS_OK;
-            if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
-                status = STATUS_CANCEL;
+            this.status = STATUS_OK;
+            if (cancellationToken != null && cancellationToken.isCanceled()) {
+                this.status = STATUS_CANCEL;
                 this.errorMessage = "Task is cancelled";
                 return false;
             }

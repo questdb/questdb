@@ -1893,6 +1893,20 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'h';
     }
 
+    public static boolean isCancelKeyword(CharSequence tok) {
+        if (tok.length() != 6) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'a'
+                && (tok.charAt(i++) | 32) == 'n'
+                && (tok.charAt(i++) | 32) == 'c'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i) | 32) == 'l';
+    }
+
     static {
         TIMESTAMP_PART_SET.add("microseconds");
         TIMESTAMP_PART_SET.add("milliseconds");

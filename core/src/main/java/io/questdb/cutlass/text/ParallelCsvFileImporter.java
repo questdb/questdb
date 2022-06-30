@@ -26,13 +26,11 @@ package io.questdb.cutlass.text;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.text.types.*;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
@@ -47,7 +45,6 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
-import java.util.concurrent.locks.Lock;
 import java.util.function.Consumer;
 
 
@@ -90,7 +87,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final Sequence pubSeq;
     private final Sequence subSeq;
     private final Sequence collectSeq;
-    private final Lock lock;
     private final int workerCount;
     private final CharSequence inputRoot;
     private final CharSequence inputWorkRoot;
@@ -100,11 +96,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final TypeManager typeManager;
     private final TextDelimiterScanner textDelimiterScanner;
     private final TextMetadataDetector textMetadataDetector;
-    private final SqlExecutionContext sqlExecutionContext;
     private final CairoEngine cairoEngine;
     private final CairoConfiguration configuration;
     private final TableStructureAdapter targetTableStructure;
-    private final SqlExecutionCircuitBreaker circuitBreaker;
     int taskCount;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
     //input params end
@@ -128,28 +122,29 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private int bufferLength;
 
     //import status variables 
-    private boolean isSuccess;
-    private byte phase;
+    private byte status = TextImportTask.STATUS_OK;
+    private byte phase = TextImportTask.PHASE_BOUNDARY_CHECK;
     private CharSequence errorMessage;
     private long startMs;//start time of current phase (in millis)
     private boolean createdWorkDir;
+    private final CancellationToken cancellationToken;
 
-    public ParallelCsvFileImporter(SqlExecutionContext sqlExecutionContext) {
-        this.sqlExecutionContext = sqlExecutionContext;
-        this.cairoEngine = sqlExecutionContext.getCairoEngine();
-        this.securityContext = sqlExecutionContext.getCairoSecurityContext();
-        this.configuration = cairoEngine.getConfiguration();
-        this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+    public ParallelCsvFileImporter(CairoEngine cairoEngine, int workerCount, CancellationToken token) {
+        this.cairoEngine = cairoEngine;
+        this.workerCount = workerCount;
+        this.cancellationToken = token;
 
-        MessageBus bus = sqlExecutionContext.getMessageBus();
+        this.securityContext = AllowAllCairoSecurityContext.INSTANCE;
+        this.configuration = this.cairoEngine.getConfiguration();
+
+        MessageBus bus = this.cairoEngine.getMessageBus();
+
         this.queue = bus.getTextImportQueue();
         this.pubSeq = bus.getTextImportPubSeq();
         this.subSeq = bus.getTextImportSubSeq();
         this.collectSeq = bus.getTextImportColSeq();
-        this.lock = bus.getTextImportQueueLock();
 
-        CairoConfiguration cfg = sqlExecutionContext.getCairoEngine().getConfiguration();
-        this.workerCount = sqlExecutionContext.getWorkerCount();
+        CairoConfiguration cfg = this.cairoEngine.getConfiguration();
 
         this.ff = cfg.getFilesFacade();
 
@@ -231,8 +226,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         timestampAdapter = null;
         forceHeader = false;
 
-        isSuccess = true;
-        phase = 0;
+        status = TextImportTask.STATUS_OK;
+        phase = TextImportTask.PHASE_BOUNDARY_CHECK;
         errorMessage = null;
         targetTableStatus = -1;
         targetTableCreated = false;
@@ -276,7 +271,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
         this.forceHeader = forceHeader;
         this.timestampIndex = -1;
-        this.isSuccess = true;
+        this.status = TextImportTask.STATUS_OK;
         this.phase = 0;
         this.targetTableStatus = -1;
         this.targetTableCreated = false;
@@ -287,17 +282,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     public void of(CharSequence tableName, CharSequence inputFileName, int partitionBy, byte columnDelimiter, CharSequence timestampColumn, CharSequence tsFormat, boolean forceHeader) {
         of(tableName, inputFileName, partitionBy, columnDelimiter, timestampColumn, tsFormat, forceHeader, Atomicity.SKIP_COL);
-    }
-
-    public void process() throws SqlException, TextException {
-        if (!lock.tryLock()) {
-            throw SqlException.position(0).put("Another parallel copy command in progress");
-        }
-        try {
-            processInner();
-        } finally {
-            lock.unlock();
-        }
     }
 
     public void setMinChunkSize(int minChunkSize) {
@@ -381,6 +365,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void buildColumnIndexes(TableWriter writer) throws TextException {
+        checkCancelled(TextImportTask.PHASE_BUILD_INDEX);
         logStartOf("building column indexes");
 
         final RecordMetadata metadata = writer.getMetadata();
@@ -401,8 +386,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     final long seq = pubSeq.next();
                     if (seq > -1) {
                         final TextImportTask task = queue.get(seq);
-                        task.setIndex(t);
-                        task.setCircuitBreaker(circuitBreaker);
+                        task.setTaskId(t);
+                        task.setCancellationToken(cancellationToken);
                         task.ofBuildSymbolColumnIndexStage(cairoEngine, targetTableStructure, importRoot, t, metadata);
                         pubSeq.done(seq);
                         queuedCount++;
@@ -415,24 +400,43 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
             collectedCount += collect(queuedCount - collectedCount, this::collectStub);
             assert collectedCount == queuedCount;
-            checkImportStatus();
         }
 
         logEndOf("building column indexes");
     }
 
-    private void checkImportStatus() throws TextException {
-        if (!isSuccess) {
+    private void checkCancelled(byte phase) {
+        this.phase = phase;
+        if (cancellationToken != null && cancellationToken.isCanceled()) {
+            setStatus(TextImportTask.STATUS_CANCEL);
+            errorMessage = "Cancelled";
+        }
+        throwErrorIfNotOk();
+    }
+
+    private void checkStatus(final TextImportTask task) {
+        if (status == TextImportTask.STATUS_OK && task.getStatus() != TextImportTask.STATUS_OK) {
+            setStatus(task.getStatus());
+            phase = task.getPhase();
+            errorMessage = task.getErrorMessage();
+        }
+        throwErrorIfNotOk();
+        checkCancelled(task.getPhase());
+    }
+
+    private void throwErrorIfNotOk() {
+        if (getStatus() != TextImportTask.STATUS_OK) {
             throw TextException.$("Import terminated at ").put(TextImportTask.getPhaseName(phase)).put(" phase. ").put(errorMessage);
         }
     }
 
-    private void checkStatus(final TextImportTask task) {
-        if (isSuccess && (task.isFailed() || task.isCancelled())) {
-            isSuccess = false;
-            phase = task.getPhase();
-            errorMessage = task.getErrorMessage();
-        }
+
+    public byte getStatus() {
+        return status;
+    }
+
+    private void setStatus(byte status) {
+        this.status = status;
     }
 
     private void cleanUp(TableWriter writer) {
@@ -467,7 +471,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void collectChunkStats(final TextImportTask task) {
         checkStatus(task);
         final TextImportTask.CountQuotesStage countQuotesStage = task.getCountQuotesStage();
-        final int chunkIndex = task.getIndex();
+        final int chunkIndex = task.getTaskId();
         chunkStats.set(chunkIndex, countQuotesStage.getQuoteCount());
         chunkStats.set(chunkIndex + 1, countQuotesStage.getNewLineCountEven());
         chunkStats.set(chunkIndex + 2, countQuotesStage.getNewLineCountOdd());
@@ -512,6 +516,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     //returns list with N chunk boundaries
     LongList findChunkBoundaries(long fileLength) throws TextException {
+        checkCancelled(TextImportTask.PHASE_BOUNDARY_CHECK);
         logStartOf("checking boundaries");
         assert (workerCount > 0 && minChunkSize > 0);
 
@@ -540,8 +545,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 final long seq = pubSeq.next();
                 if (seq > -1) {
                     final TextImportTask task = queue.get(seq);
-                    task.setIndex(5 * i);
-                    task.setCircuitBreaker(circuitBreaker);
+                    task.setTaskId(5 * i);
+                    task.setCancellationToken(cancellationToken);
                     task.ofCountQuotesStage(ff, inputFilePath, chunkLo, chunkHi, bufferLength);
                     pubSeq.done(seq);
                     queuedCount++;
@@ -554,7 +559,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         collectedCount += collect(queuedCount - collectedCount, this::collectChunkStats);
         assert collectedCount == queuedCount;
-        checkImportStatus();
 
         processChunkStats(fileLength, chunks);
         logEndOf("checking boundaries");
@@ -570,6 +574,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void importPartitions() throws TextException {
+        checkCancelled(TextImportTask.PHASE_PARTITION_IMPORT);
         if (partitions.size() == 0) {
             throw TextException.$("No partitions to merge and load found");
         }
@@ -595,8 +600,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 final long seq = pubSeq.next();
                 if (seq > -1) {
                     final TextImportTask task = queue.get(seq);
-                    task.setIndex(i);
-                    task.setCircuitBreaker(circuitBreaker);
+                    task.setTaskId(i);
+                    task.setCancellationToken(cancellationToken);
                     task.ofImportPartitionDataStage(cairoEngine, targetTableStructure, textMetadataDetector.getColumnTypes(), atomicity, columnDelimiter, importRoot, inputFileName, i, lo, hi, partitions);
                     pubSeq.done(seq);
                     queuedCount++;
@@ -614,11 +619,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         collectedCount += collect(queuedCount - collectedCount, this::collectDataImportStats);
         assert collectedCount == queuedCount;
 
-        checkImportStatus();
         logEndOf("index merge and partition load");
     }
 
     void indexChunks() throws TextException {
+        checkCancelled(TextImportTask.PHASE_INDEXING);
         logStartOf("indexing");
 
         int queuedCount = 0;
@@ -642,8 +647,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 final long seq = pubSeq.next();
                 if (seq > -1) {
                     final TextImportTask task = queue.get(seq);
-                    task.setIndex(colIdx);
-                    task.setCircuitBreaker(circuitBreaker);
+                    task.setTaskId(colIdx);
+                    task.setCancellationToken(cancellationToken);
                     task.ofBuildPartitionIndexStage(chunkLo, chunkHi, lineNumber, colIdx, configuration, inputFileName, importRoot, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader, bufferLength, atomicity);
                     if (forceHeader) {
                         forceHeader = false;
@@ -659,7 +664,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         collectedCount += collect(queuedCount - collectedCount, this::collectIndexStats);
         assert collectedCount == queuedCount;
-        checkImportStatus();
         processIndexStats();
 
         logEndOf("indexing");
@@ -684,6 +688,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void mergeSymbolTables(final TableWriter writer) throws TextException {
+        checkCancelled(TextImportTask.PHASE_SYMBOL_TABLE_MERGE);
         logStartOf("symbol table merge");
         final int tmpTableCount = getTaskCount();
 
@@ -700,7 +705,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     final long seq = pubSeq.next();
                     if (seq > -1) {
                         final TextImportTask task = queue.get(seq);
-                        task.setIndex(columnIndex);
+                        task.setTaskId(columnIndex);
                         task.ofMergeSymbolTablesStage(configuration, importRoot, writer, tableName, symbolColumnName, columnIndex, tmpTableSymbolColumnIndex, tmpTableCount, partitionBy);
                         pubSeq.done(seq);
                         queuedCount++;
@@ -714,7 +719,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         collectedCount += collect(queuedCount - collectedCount, this::collectStub);
         assert collectedCount == queuedCount;
-        checkImportStatus();
 
         logEndOf("symbol table merge");
     }
@@ -856,7 +860,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     TableWriter parseStructure(long fd) throws TextException {
-        final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
+        final CairoConfiguration configuration = cairoEngine.getConfiguration();
 
         final int textAnalysisMaxLines = configuration.getTextConfiguration().getTextAnalysisMaxLines();
         int len = configuration.getSqlCopyBufferSize();
@@ -1065,7 +1069,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    private void processInner() throws TextException {
+    public void process() throws TextException {
         if (this.queue.getCycle() <= 0) {
             throw TextException.$("Unable to process, the processing queue is misconfigured");
         }
@@ -1107,19 +1111,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         long endMs = getCurrentTimeMs();
         LOG.info().$("Finished importing file='").$(inputFileName).$("' time=").$((endMs - startMs) / 1000).$("s").$();
-    }
-
-    @TestOnly
-    void processTest(Runnable callback) throws SqlException, TextException {
-        if (!lock.tryLock()) {
-            throw SqlException.position(0).put("Another parallel copy command in progress");
-        }
-        try {
-            callback.run();
-            processInner();
-        } finally {
-            lock.unlock();
-        }
     }
 
     private void removeWorkDir() {
@@ -1179,6 +1170,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void updateSymbolKeys(final TableWriter writer) throws TextException {
+        checkCancelled(TextImportTask.PHASE_UPDATE_SYMBOL_KEYS);
         logStartOf("symbol keys update");
 
         final int tmpTableCount = getTaskCount();
@@ -1210,8 +1202,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 final long seq = pubSeq.next();
                                 if (seq > -1) {
                                     final TextImportTask task = queue.get(seq);
-                                    task.setIndex(t);
-                                    task.setCircuitBreaker(circuitBreaker);
+                                    task.setTaskId(t);
+                                    task.setCancellationToken(cancellationToken);
                                     task.ofUpdateSymbolColumnKeysStage(cairoEngine, targetTableStructure, t, partitionSize, partitionTimestamp, importRoot, symbolColumnName, symbolCount);
                                     pubSeq.done(seq);
                                     queuedCount++;
@@ -1229,7 +1221,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         collectedCount += collect(queuedCount - collectedCount, this::collectStub);
         assert collectedCount == queuedCount;
-        checkImportStatus();
 
         logEndOf("symbol keys update");
     }
