@@ -80,11 +80,53 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     //holds input for second phase - indexing: offset and start line number for each chunk
     private final LongList indexChunkStats = new LongList();
 
-    //stores timestamp values of indexed partitions 
-    private final LongList partitionKeys = new LongList();
+    private final LongList partitionKeysAndSizes = new LongList();
     private final StringSink partitionNameSink = new StringSink();
-    //stores directory names of imported partitions
-    private final ObjList<CharSequence> partitionNames = new ObjList<>();
+
+    static class PartitionInfo {
+        long key;
+        CharSequence name;
+        long bytes;
+
+        int taskId;//assigned worker/task id
+        long importedRows;//used to detect partitions that need skipping (because e.g. no data was imported for them) 
+
+        PartitionInfo(long key, CharSequence name, long bytes) {
+            this.key = key;
+            this.name = name;
+            this.bytes = bytes;
+        }
+
+        PartitionInfo(long key, CharSequence name, long bytes, int taskId) {
+            this.key = key;
+            this.name = name;
+            this.bytes = bytes;
+            this.taskId = taskId;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            PartitionInfo that = (PartitionInfo) o;
+            return key == that.key && bytes == that.bytes && taskId == that.taskId && importedRows == that.importedRows && name.equals(that.name);
+        }
+
+        @Override
+        public String toString() {
+            return "PartitionInfo{" +
+                    "key=" + key +
+                    ", name=" + name +
+                    ", bytes=" + bytes +
+                    ", taskId=" + taskId +
+                    ", importedRows=" + importedRows +
+                    '}';
+        }
+    }
+
+    private final ObjList<PartitionInfo> partitions = new ObjList<>();
+    int taskCount;
+
     //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
     private final IntList taskDistribution = new IntList();
 
@@ -230,22 +272,26 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     public void importPartitions() throws TextException {
-        if (partitionNames.size() == 0) {
+        if (partitions.size() == 0) {
             throw TextException.$("No partitions to merge and load found");
         }
 
         logStartOf("index merge and partition load");
-
-        final int partitionCount = partitionNames.size();
-        final int chunkSize = (partitionCount + workerCount - 1) / workerCount;
-        final int taskCount = (partitionCount + chunkSize - 1) / chunkSize;
+        this.taskCount = assignPartitions(partitions, workerCount);
 
         int queuedCount = 0;
         int collectedCount = 0;
         taskDistribution.clear();
+
         for (int i = 0; i < taskCount; ++i) {
-            final int lo = i * chunkSize;
-            final int hi = Integer.min(lo + chunkSize, partitionCount);
+            int lo = 0;
+            while (lo < partitions.size() && partitions.getQuick(lo).taskId != i) {
+                lo++;
+            }
+            int hi = lo + 1;
+            while (hi < partitions.size() && partitions.getQuick(hi).taskId == i) {
+                hi++;
+            }
 
             while (true) {
                 final long seq = pubSeq.next();
@@ -253,7 +299,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     final TextImportTask task = queue.get(seq);
                     task.setIndex(i);
                     task.setCircuitBreaker(circuitBreaker);
-                    task.ofImportPartitionDataStage(cairoEngine, targetTableStructure, textMetadataDetector.getColumnTypes(), atomicity, columnDelimiter, importRoot, inputFileName, i, lo, hi, partitionNames);
+                    task.ofImportPartitionDataStage(cairoEngine, targetTableStructure, textMetadataDetector.getColumnTypes(), atomicity, columnDelimiter, importRoot, inputFileName, i, lo, hi, partitions);
                     pubSeq.done(seq);
                     queuedCount++;
                     break;
@@ -274,6 +320,49 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         logEndOf("index merge and partition load");
     }
 
+    //load balances existing partitions between given number of workers using partition sizes
+    //returns number of tasks 
+    static int assignPartitions(ObjList<PartitionInfo> partitions, int workerCount) {
+        partitions.sort((p1, p2) -> Long.compare(p2.bytes, p1.bytes));
+        long[] workerSums = new long[workerCount];
+
+        for (int i = 0, n = partitions.size(); i < n; i++) {
+            int minIdx = -1;
+            long minSum = Long.MAX_VALUE;
+
+            for (int j = 0; j < workerCount; j++) {
+                if (workerSums[j] == 0) {
+                    minIdx = j;
+                    break;
+                } else if (workerSums[j] < minSum) {
+                    minSum = workerSums[j];
+                    minIdx = j;
+                }
+            }
+
+            workerSums[minIdx] += partitions.getQuick(i).bytes;
+            partitions.getQuick(i).taskId = minIdx;
+        }
+
+        partitions.sort((p1, p2) -> {
+            long workerIdDiff = p1.taskId - p2.taskId;
+            if (workerIdDiff != 0) {
+                return (int) workerIdDiff;
+            }
+
+            return Long.compare(p1.key, p2.key);
+        });
+
+        int taskIds = 0;
+        for (int i = 0; i < workerSums.length; i++) {
+            if (workerSums[i] != 0) {
+                taskIds++;
+            }
+        }
+
+        return taskIds;
+    }
+
     private void logStartOf(String phase) {
         LOG.info().$("Started ").$(phase).$(" of file='").$(inputFilePath).$("'").$();
         startMs = getCurrentTimeMs();
@@ -288,13 +377,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         return configuration.getMillisecondClock().getTicks();
     }
 
-    private int getTmpTablesCount() {
+    private int getTaskCount() {
         return taskDistribution.size() / 3;
     }
 
     public void mergeSymbolTables(final TableWriter writer) throws TextException {
         logStartOf("symbol table merge");
-        final int tmpTableCount = getTmpTablesCount();
+        final int tmpTableCount = getTaskCount();
 
         int queuedCount = 0;
         int collectedCount = 0;
@@ -331,7 +420,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void updateSymbolKeys(final TableWriter writer) throws TextException {
         logStartOf("symbol keys update");
 
-        final int tmpTableCount = getTmpTablesCount();
+        final int tmpTableCount = getTaskCount();
         int queuedCount = 0;
         int collectedCount = 0;
         for (int t = 0; t < tmpTableCount; ++t) {
@@ -417,8 +506,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void clear() {
         chunkStats.clear();
         indexChunkStats.clear();
-        partitionKeys.clear();
-        partitionNames.clear();
+        partitionKeysAndSizes.clear();
         partitionNameSink.clear();
         taskDistribution.clear();
         utf8Sink.clear();
@@ -441,6 +529,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         targetTableStatus = -1;
         targetTableCreated = false;
         atomicity = Atomicity.SKIP_COL;
+        taskCount = -1;
     }
 
     private void removeWorkDir() {
@@ -525,7 +614,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void movePartitions() {
         logStartOf("moving partitions");
-        final int taskCount = getTmpTablesCount();
+        final int taskCount = getTaskCount();
 
         for (int i = 0; i < taskCount; i++) {
             int index = taskDistribution.getQuick(i * 3);
@@ -537,10 +626,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final int dstPlen = dstPath.length();
 
             for (int j = lo; j < hi; j++) {
-                final CharSequence partitionName = partitionNames.get(j);
-                if (partitionName == null) {
+                PartitionInfo partition = partitions.get(j);
+                if (partition.importedRows == 0 || partition.name == null) {
                     continue;
                 }
+                final CharSequence partitionName = partition.name;
 
                 srcPath.trimTo(srcPlen).concat(partitionName).slash$();
                 dstPath.trimTo(dstPlen).concat(partitionName).slash$();
@@ -652,17 +742,19 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void attachPartitions(TableWriter writer) throws TextException {
-        if (partitionNames.size() == 0) {
+        if (partitions.size() == 0) {
             throw TextException.$("No partitions to attach found");
         }
 
         logStartOf("attaching partitions");
 
-        for (int i = 0, sz = partitionNames.size(); i < sz; i++) {
-            final CharSequence partitionDirName = partitionNames.get(i);
-            if (partitionDirName == null) {
+        for (int i = 0, sz = partitions.size(); i < sz; i++) {
+            PartitionInfo partition = partitions.get(i);
+            if (partition.importedRows == 0 || partition.name == null) {
                 continue;
             }
+
+            final CharSequence partitionDirName = partition.name;
             final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
             try {
                 writer.attachPartition(timestamp, false);
@@ -693,8 +785,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         checkStatus(task);
         final TextImportTask.BuildPartitionIndexStage buildPartitionIndexStage = task.getBuildPartitionIndexStage();
         final int chunkIndex = task.getIndex();
-        final LongList keys = buildPartitionIndexStage.getPartitionKeys();
-        this.partitionKeys.add(keys);
+        final LongList keys = buildPartitionIndexStage.getPartitionKeysAndSizes();
+        this.partitionKeysAndSizes.add(keys);
     }
 
     private void collectDataImportStats(final TextImportTask task) {
@@ -702,12 +794,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         final TextImportTask.ImportPartitionDataStage stage = task.getImportPartitionDataStage();
         LongList rows = stage.getImportedRows();
-        int offset = (int) stage.getLo();
 
-        for (int i = 0, n = rows.size(); i < n; i++) {
-            if (rows.get(i) == 0) {
-                partitionNames.set(i + offset, null);//partition will be ignored in later stages 
-            }
+        for (int i = 0, n = rows.size(); i < n; i += 2) {
+            partitions.get((int) rows.get(i)).importedRows = rows.get(i + 1);//partition will be ignored in later stages
         }
     }
 
@@ -832,7 +921,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         final RecordMetadata metadata = writer.getMetadata();
         final int columnCount = metadata.getColumnCount();
-        final int tmpTableCount = getTmpTablesCount();
+        final int tmpTableCount = getTaskCount();
 
         boolean isAnyIndexed = false;
         for (int i = 0; i < columnCount; i++) {
@@ -870,24 +959,41 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void processIndexStats() {
         LongHashSet set = new LongHashSet();
-        for (int i = 0, n = partitionKeys.size(); i < n; i++) {
-            set.add(partitionKeys.get(i));
+        for (int i = 0, n = partitionKeysAndSizes.size(); i < n; i += 2) {
+            set.add(partitionKeysAndSizes.get(i));
         }
 
-        LongList uniquePartitionKeys = new LongList();
+        LongList distinctKeys = new LongList();
         for (int i = 0, n = set.size(); i < n; i++) {
-            uniquePartitionKeys.add(set.get(i));
+            distinctKeys.add(set.get(i));
         }
-        uniquePartitionKeys.sort();
+        distinctKeys.sort();
+
+        LongList totalSizes = new LongList();
+        for (int i = 0, n = distinctKeys.size(); i < n; i++) {
+            long key = distinctKeys.getQuick(i);
+            long size = 0;
+
+            for (int j = 0, m = partitionKeysAndSizes.size(); j < m; j += 2) {
+                if (partitionKeysAndSizes.getQuick(j) == key) {
+                    size += partitionKeysAndSizes.get(j + 1);
+                }
+            }
+
+            totalSizes.add(size);
+        }
 
         DateFormat dirFormat = PartitionBy.getPartitionDirFormatMethod(partitionBy);
 
-        partitionNames.clear();
-        tmpPath.of(importRoot).slash$();
-        for (int i = 0, n = uniquePartitionKeys.size(); i < n; i++) {
+        for (int i = 0, n = distinctKeys.size(); i < n; i++) {
+            long key = distinctKeys.getQuick(i);
+            long size = totalSizes.getQuick(i);
+
             partitionNameSink.clear();
-            dirFormat.format(uniquePartitionKeys.get(i), null, null, partitionNameSink);
-            partitionNames.add(partitionNameSink.toString());
+            dirFormat.format(distinctKeys.get(i), null, null, partitionNameSink);
+            String dirName = partitionNameSink.toString();
+
+            partitions.add(new PartitionInfo(key, dirName, size));
         }
     }
 

@@ -175,12 +175,12 @@ public class TextImportTask {
                                            CharSequence importRoot,
                                            CharSequence inputFileName,
                                            int index,
-                                           long lo,
-                                           long hi,
-                                           final ObjList<CharSequence> partitionNames
+                                           int lo,
+                                           int hi,
+                                           final ObjList<ParallelCsvFileImporter.PartitionInfo> partitions
     ) {
         this.phase = PHASE_PARTITION_IMPORT;
-        this.importPartitionDataStage.of(cairoEngine, targetTableStructure, types, atomicity, columnDelimiter, importRoot, inputFileName, index, lo, hi, partitionNames);
+        this.importPartitionDataStage.of(cairoEngine, targetTableStructure, types, atomicity, columnDelimiter, importRoot, inputFileName, index, lo, hi, partitions);
     }
 
     public void ofMergeSymbolTablesStage(CairoConfiguration cfg,
@@ -378,7 +378,7 @@ public class TextImportTask {
     }
 
     public static class BuildPartitionIndexStage {
-        private final LongList partitionKeys = new LongList();
+        private final LongList partitionKeysAndSizes = new LongList();//stores partition key and size for all indexed partitions
         private long chunkStart;
         private long chunkEnd;
         private long lineNumber;
@@ -394,8 +394,8 @@ public class TextImportTask {
         private int bufferLen;
         private int atomicity;
 
-        public LongList getPartitionKeys() {
-            return partitionKeys;
+        public LongList getPartitionKeysAndSizes() {
+            return partitionKeysAndSizes;
         }
 
         public void of(long chunkStart,
@@ -436,7 +436,7 @@ public class TextImportTask {
             try (CsvFileIndexer splitter = new CsvFileIndexer(configuration)) {
                 splitter.setBufferLength(bufferLen);
                 splitter.of(inputFileName, importRoot, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader, atomicity);
-                splitter.index(chunkStart, chunkEnd, lineNumber, partitionKeys);
+                splitter.index(chunkStart, chunkEnd, lineNumber, partitionKeysAndSizes);
             }
         }
 
@@ -469,10 +469,11 @@ public class TextImportTask {
         private byte columnDelimiter;
         private CharSequence importRoot;
         private CharSequence inputFileName;
+
         private int index;
-        private long lo;
-        private long hi;
-        private ObjList<CharSequence> partitionNames;
+        private int lo;
+        private int hi;
+        private ObjList<ParallelCsvFileImporter.PartitionInfo> partitions;
 
         private TableWriter tableWriterRef;
         private int timestampIndex;
@@ -490,9 +491,9 @@ public class TextImportTask {
                        CharSequence importRoot,
                        CharSequence inputFileName,
                        int index,
-                       long lo,
-                       long hi,
-                       final ObjList<CharSequence> partitionNames
+                       int lo,
+                       int hi,
+                       final ObjList<ParallelCsvFileImporter.PartitionInfo> partitions
         ) {
             this.cairoEngine = cairoEngine;
             this.targetTableStructure = targetTableStructure;
@@ -504,10 +505,9 @@ public class TextImportTask {
             this.index = index;
             this.lo = lo;
             this.hi = hi;
-            this.partitionNames = partitionNames;
+            this.partitions = partitions;
             this.timestampIndex = targetTableStructure.getTimestampIndex();
             this.timestampAdapter = (timestampIndex > -1 && timestampIndex < types.size()) ? (TimestampAdapter) types.getQuick(timestampIndex) : null;
-
             this.errors = 0;
             this.importedRows.clear();
         }
@@ -536,17 +536,18 @@ public class TextImportTask {
                     lexer.of(columnDelimiter);
                     lexer.setSkipLinesWithExtraValues(false);
                     try {
-                        for (int i = (int) lo; i < hi; i++) {
+                        for (int i = lo; i < hi; i++) {
                             lexer.clear();
                             errors = 0;
-                            final CharSequence name = partitionNames.get(i);
+                            final CharSequence name = partitions.get(i).name;
                             path.of(importRoot).concat(name);
                             mergePartitionIndexAndImportData(ff, path, lexer);
 
                             long imported = atomicity == Atomicity.SKIP_ROW ? lexer.getLineCount() - errors : lexer.getLineCount();
+                            importedRows.add(i);
                             importedRows.add(imported);
 
-                            LOG.info().$("Imported partition data [partition=").$(name).$(",lines=").$(lexer.getLineCount()).$(",errors=").$(errors).$("]").$();
+                            LOG.info().$("Imported data [partition=").$(name).$(",lines=").$(lexer.getLineCount()).$(",errors=").$(errors).$("]").$();
                         }
                     } finally {
                         writer.commit(CommitMode.SYNC);
@@ -559,10 +560,6 @@ public class TextImportTask {
             return importedRows;
         }
 
-        public long getLo() {
-            return lo;
-        }
-
         public void clear() {
             this.cairoEngine = null;
             this.targetTableStructure = null;
@@ -572,9 +569,7 @@ public class TextImportTask {
             this.importRoot = null;
             this.inputFileName = null;
             this.index = -1;
-            this.lo = -1;
-            this.hi = -1;
-            this.partitionNames = null;
+            this.partitions = null;
             this.timestampIndex = -1;
             this.timestampAdapter = null;
 

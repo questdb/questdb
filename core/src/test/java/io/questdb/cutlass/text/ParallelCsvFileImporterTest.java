@@ -28,6 +28,7 @@ import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
 import io.questdb.griffin.*;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
@@ -38,7 +39,6 @@ import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -46,8 +46,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 
-import static org.hamcrest.CoreMatchers.containsString;
-import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.CoreMatchers.*;
 
 public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
@@ -1810,6 +1809,26 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             importer.join();
         });
+    }
+
+    @Test
+    public void testAssignPartitionsToWorkers() {
+        ObjList<PartitionInfo> partitions = new ObjList<>();
+
+        partitions.add(new PartitionInfo(1, "A", 10));
+        partitions.add(new PartitionInfo(2, "B", 70));
+        partitions.add(new PartitionInfo(3, "C", 50));
+        partitions.add(new PartitionInfo(4, "D", 100));
+        partitions.add(new PartitionInfo(5, "E", 5));
+
+        int tasks = ParallelCsvFileImporter.assignPartitions(partitions, 2);
+
+        MatcherAssert.assertThat(partitions, equalTo(new ObjList<PartitionInfo>(new PartitionInfo(1, "A", 10, 0),
+                new PartitionInfo(4, "D", 100, 0),
+                new PartitionInfo(5, "E", 5, 0),
+                new PartitionInfo(2, "B", 70, 1),
+                new PartitionInfo(3, "C", 50, 1))));
+        MatcherAssert.assertThat(tasks, equalTo(2));
     }
 
     static ObjList<IndexChunk> list(IndexChunk... chunks) {

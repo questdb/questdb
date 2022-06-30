@@ -203,9 +203,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
             outputFiles.put(mapKey, target);
         }
 
-        target.putEntry(timestampValue, lengthAndOffset);
+        target.putEntry(timestampValue, lengthAndOffset, length);
 
-        if (target.size == maxIndexChunkSize) {
+        if (target.indexChunkSize == maxIndexChunkSize) {
             target.nextChunk(ff, getPartitionIndexPrefix(partitionKey));
         }
     }
@@ -225,14 +225,16 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     static class IndexOutputFile {
         MemoryPMARImpl memory;
-        long size;
+        long indexChunkSize;
+        long dataSize;//partition data size in bytes 
         int chunkNumber;
         long partitionKey;
 
         IndexOutputFile(FilesFacade ff, Path path, long partitionKey) {
             this.partitionKey = partitionKey;
-            this.size = 0;
+            this.indexChunkSize = 0;
             this.chunkNumber = 0;
+            this.dataSize = 0;
 
             nextChunk(ff, path);
         }
@@ -244,7 +246,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
             //start with file name like $workerIndex_$chunkIndex, e.g. 1_1
             chunkNumber++;
-            size = 0;
+            indexChunkSize = 0;
 
             path.put('_').put(chunkNumber).$();
 
@@ -261,15 +263,16 @@ public class CsvFileIndexer implements Closeable, Mutable {
             }
         }
 
-        void putEntry(long timestamp, long offset) {
+        void putEntry(long timestamp, long offset, long length) {
             memory.putLong(timestamp);
             memory.putLong(offset);
-            size += INDEX_ENTRY_SIZE;
+            indexChunkSize += INDEX_ENTRY_SIZE;
+            dataSize += length;
         }
 
         private void sortAndClose(FilesFacade ff) {
             if (memory != null) {
-                sort(ff, memory.getFd(), size);
+                sort(ff, memory.getFd(), indexChunkSize);
 
                 memory.close(true, Vm.TRUNCATE_TO_POINTER);
             }
@@ -577,7 +580,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.lastLineStart = this.offset + (this.fieldLo - lo);
     }
 
-    public void index(long chunkLo, long chunkHi, long lineNumber, LongList partitionKeys) {
+    public void index(long chunkLo, long chunkHi, long lineNumber, LongList partitionKeysAndSizes) {
         assert chunkHi > 0;
         assert chunkLo >= 0 && chunkLo < chunkHi;
 
@@ -607,7 +610,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
                 parseLast();
             }
 
-            collectPartitionKeys(partitionKeys);
+            collectPartitionStats(partitionKeysAndSizes);
         } finally {
             closeOutputFiles();
         }
@@ -616,9 +619,12 @@ public class CsvFileIndexer implements Closeable, Mutable {
                 .$(",lines=").$(lineCount - lineNumber).$(",errors=").$(errorCount).$(']').$();
     }
 
-    private void collectPartitionKeys(LongList partitionKeys) {
-        partitionKeys.setPos(0);
-        outputFiles.forEach((key, value) -> partitionKeys.add(value.partitionKey));
+    private void collectPartitionStats(LongList partitionKeysAndSizes) {
+        partitionKeysAndSizes.setPos(0);
+        outputFiles.forEach((key, value) -> {
+            partitionKeysAndSizes.add(value.partitionKey);
+            partitionKeysAndSizes.add(value.dataSize);
+        });
     }
 
     void openInputFile() {
