@@ -103,11 +103,17 @@ public class OsUtilsTest {
 
             DefaultServerConfiguration configuraton = new DefaultServerConfiguration("");
             FilesFacade ff = configuraton.getCairoConfiguration().getFilesFacade();
-            boolean success = ServerMain.checkOsProcessLimits(LOG, configuraton.getCairoConfiguration(), Integer.MAX_VALUE, Integer.MAX_VALUE);
 
-            Assert.assertFalse(success);
-            Assert.assertEquals(ff.getFileLimit(), ff.getOpenFileCapacity() + ff.getOpenFileCount());
-            Assert.assertEquals(OsUtils.getMaxMapCount(LOG, ff), ff.getMapCapacity());
+            try {
+                boolean success = ServerMain.checkOsProcessLimits(LOG, configuraton.getCairoConfiguration(), Integer.MAX_VALUE, Integer.MAX_VALUE);
+
+                Assert.assertFalse(success);
+                Assert.assertEquals(ff.getFileLimit(), ff.getOpenFileCapacity() + ff.getOpenFileCount());
+                Assert.assertEquals(OsUtils.getMaxMapCount(LOG, ff), ff.getMapCapacity());
+            } finally {
+                configuraton.getCairoConfiguration().getFilesFacade().setMapLimit(Long.MAX_VALUE);
+                configuraton.getCairoConfiguration().getFilesFacade().setOpenFileLimit(Long.MAX_VALUE);
+            }
         });
     }
 
@@ -117,12 +123,18 @@ public class OsUtilsTest {
             Assume.assumeTrue(Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64);
 
             DefaultServerConfiguration configuraton = new DefaultServerConfiguration("");
-            boolean success = ServerMain.checkOsProcessLimits(LOG, configuraton.getCairoConfiguration(), 10, 10);
-            Assert.assertTrue(success);
 
-            FilesFacade ff = configuraton.getCairoConfiguration().getFilesFacade();
-            Assert.assertEquals(ff.getFileLimit(), ff.getOpenFileCapacity() + ff.getOpenFileCount());
-            Assert.assertEquals(OsUtils.getMaxMapCount(LOG, ff), ff.getMapCapacity());
+            try {
+                boolean success = ServerMain.checkOsProcessLimits(LOG, configuraton.getCairoConfiguration(), 10, 10);
+                Assert.assertTrue(success);
+
+                FilesFacade ff = configuraton.getCairoConfiguration().getFilesFacade();
+                Assert.assertEquals(ff.getFileLimit(), ff.getOpenFileCapacity() + ff.getOpenFileCount());
+                Assert.assertEquals(OsUtils.getMaxMapCount(LOG, ff), ff.getMapCapacity());
+            } finally {
+                configuraton.getCairoConfiguration().getFilesFacade().setMapLimit(Long.MAX_VALUE);
+                configuraton.getCairoConfiguration().getFilesFacade().setOpenFileLimit(Long.MAX_VALUE);
+            }
         });
     }
 }
