@@ -32,10 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.ParallelCsvFileImporter;
-import io.questdb.cutlass.text.TextException;
-import io.questdb.cutlass.text.TextLoader;
+import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.*;
@@ -47,6 +44,8 @@ import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
@@ -1858,12 +1857,18 @@ public class SqlCompiler implements Closeable {
 
     private void copyTable(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
         try {
+            if (model.isCancel()) {
+                addTextImportRequest(model, null);
+                return;
+            }
+
             int len = configuration.getSqlCopyBufferSize();
             long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             try {
-                final CharSequence name = GenericLexer.assertNoDots(GenericLexer.unquote(model.getFileName().token), model.getFileName().position);
+                final CharSequence fileName = GenericLexer.assertNoDots(GenericLexer.unquote(model.getFileName().token), model.getFileName().position);
 
-                if (model.isParalell()) {
+                setupTextLoaderFromModel(model);
+                if (model.isParallel()) {
                     if (model.getTimestampFormat() == null) {
                         model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
                     }
@@ -1871,15 +1876,11 @@ public class SqlCompiler implements Closeable {
                         model.setDelimiter((byte) ',');
                     }
 
-                    try (ParallelCsvFileImporter loader = new ParallelCsvFileImporter(executionContext)) {
-                        loader.of(model.getTableName().token, name, model.getPartitionBy(), model.getDelimiter(), model.getTimestampColumnName(), model.getTimestampFormat(), model.isHeader());
-                        loader.process();
-                    }
-
+                    addTextImportRequest(model, fileName);
                     return;
                 }
 
-                path.of(configuration.getInputRoot()).concat(name).$();
+                path.of(configuration.getInputRoot()).concat(fileName).$();
                 long fd = ff.openRO(path);
                 try {
                     if (fd == -1) {
@@ -1915,6 +1916,42 @@ public class SqlCompiler implements Closeable {
             LOG.error().$((Throwable) e).$();
         } finally {
             LOG.info().$("copied").$();
+        }
+    }
+
+    private void addTextImportRequest(CopyModel model, @Nullable CharSequence fileName) {
+        Sequence textImportPubSeq = messageBus.getTextImportRequestCollectingPubSeq();
+        RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestCollectingQueue();
+        while (true) {
+            long cursor = textImportPubSeq.next();
+
+            if (cursor < -1) {
+                Os.pause();
+                continue;
+            }
+
+            if (cursor < 0) {
+                LOG.error().$("Text import request queue is full.").$();
+                return;
+            }
+
+            TextImportRequestTask task = textImportRequestQueue.get(cursor);
+            CharSequence tableName = GenericLexer.unquote(model.getTableName().token);
+            if (model.isCancel()) {
+                task.of(tableName.toString());
+            } else {
+                assert fileName != null;
+                task.of(tableName.toString(),
+                        fileName.toString(),
+                        model.isHeader(),
+                        model.getTimestampColumnName().toString(),
+                        model.getDelimiter(),
+                        model.getTimestampFormat().toString(),
+                        model.getPartitionBy());
+            }
+
+            textImportPubSeq.done(cursor);
+            return;
         }
     }
 
@@ -2105,8 +2142,8 @@ public class SqlCompiler implements Closeable {
 
     @NotNull
     private CompiledQuery executeCopy(SqlExecutionContext executionContext, CopyModel executionModel) throws SqlException {
-        setupTextLoaderFromModel(executionModel);
-        if (Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
+        if (!executionModel.isCancel() && Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
+            setupTextLoaderFromModel(executionModel);
             return compiledQuery.ofCopyRemote(textLoader);
         }
         copyTable(executionContext, executionModel);

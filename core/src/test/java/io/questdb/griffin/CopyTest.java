@@ -318,7 +318,6 @@ public class CopyTest extends AbstractGriffinTest {
     public void testParallelCopyIntoNewTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH; ", sqlExecutionContext);
-
             assertQuotesTableContent();
         });
     }
