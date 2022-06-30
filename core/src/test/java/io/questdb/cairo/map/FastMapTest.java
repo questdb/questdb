@@ -219,30 +219,38 @@ public class FastMapTest extends AbstractCairoTest {
 
     @Test
     public void testCollisionPerformanceLongKeys() {
+        int gib = 1 << 30;
+        long rssLimit = Unsafe.getRssMemoryLimit();
+
         // This test need around 1.8Gib to run off heap memory.
         // Check that the conditions are ok to run it
+        Assume.assumeTrue(Unsafe.getOffHeapAllocated() + Runtime.getRuntime().totalMemory() + 1.8 * gib < rssLimit);
 
-        int gib = 1 << 30;
-        Assume.assumeTrue(Unsafe.getOffHeapAllocated() + Runtime.getRuntime().totalMemory() + 1.8*gib < Unsafe.getRssMemoryLimit());
+        // We won't allocate on heap here, tell it to Unsafe
+        Unsafe.setRssMemoryLimit((long) (Unsafe.getOffHeapAllocated() + Runtime.getRuntime().totalMemory() + 1.8 * gib + Unsafe.HEAP_BREATHING_SPACE));
+        try {
 
-        ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-        ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
 
-        keyTypes.add(ColumnType.LONG);
-        keyTypes.add(ColumnType.INT);
+            keyTypes.add(ColumnType.LONG);
+            keyTypes.add(ColumnType.INT);
 
-        valueTypes.add(ColumnType.LONG);
+            valueTypes.add(ColumnType.LONG);
 
-        // These are default FastMap configuration for a join
-        try (FastMap map = new FastMap(4194304, keyTypes, valueTypes, 2097152, 0.5, 10000)) {
-            for (int i = 0; i < 30_000_000; i++) {
-                MapKey key = map.withKey();
-                key.putLong(i / 151);
-                key.putInt((i + 15) % 269);
+            // These are default FastMap configuration for a join
+            try (FastMap map = new FastMap(4194304, keyTypes, valueTypes, 2097152, 0.5, 10000)) {
+                for (int i = 0; i < 30_000_000; i++) {
+                    MapKey key = map.withKey();
+                    key.putLong(i / 151);
+                    key.putInt((i + 15) % 269);
 
-                MapValue value = key.createValue();
-                value.putLong(0, i);
+                    MapValue value = key.createValue();
+                    value.putLong(0, i);
+                }
             }
+        } finally {
+            Unsafe.setRssMemoryLimit(rssLimit);
         }
     }
 

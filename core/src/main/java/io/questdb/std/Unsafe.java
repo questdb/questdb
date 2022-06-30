@@ -53,7 +53,7 @@ public final class Unsafe {
     private static final AnonymousClassDefiner anonymousClassDefiner;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final AtomicLong OFF_HEAP_ALLOCATED = new AtomicLong(0);
-    private final static long HEAP_BREATHING_SPACE = 1L << 29; // 512 MiB
+    public final static long HEAP_BREATHING_SPACE = 1L << 29; // 512 MiB
     private final static long REEVALUATE_HEAP_SPACE_INCREMENT = 1L << 26; // 64 MiB
     static volatile long OFF_HEAP_CHECK_THRESHOLD = Long.MAX_VALUE;
     private static long RSS_MEMORY_LIMIT = Long.MAX_VALUE;
