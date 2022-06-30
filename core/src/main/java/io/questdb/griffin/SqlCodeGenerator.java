@@ -123,6 +123,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final LongList prefixes = new LongList();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final WeakClosableObjectPool<PageFrameReduceTask> reduceTaskPool;
+    private final ObjList<TableColumnMetadata> deferredAnalyticMetadata = new ObjList<>();
+    private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
 
@@ -152,6 +154,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     @Override
     public void clear() {
         whereClauseParser.clear();
+        intListPool.clear();
     }
 
     @Override
@@ -2283,8 +2286,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         // set of column indexes in the base metadata that has already been added to the main
         // metadata instance
-        // todo: reuse this set
-        final IntHashSet columnSet = new IntHashSet();
+        intHashSet.clear();
         final IntList columnIndexes = new IntList();
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn qc = columns.getQuick(i);
@@ -2296,12 +2298,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 chainTypes.add(i, m.getType());
                 listColumnFilterA.extendAndSet(i, i + 1);
                 listColumnFilterB.extendAndSet(i, columnIndex);
-                columnSet.add(columnIndex);
+                intHashSet.add(columnIndex);
                 columnIndexes.extendAndSet(i, columnIndex);
             }
         }
 
-        // pass #2 - add remaining base metadata column that are not in columnSet already
+        // pass #2 - add remaining base metadata column that are not in intHashSet already
         // we need to pay attention to stepping over analytic column slots
         // Chain metadata is assembled in such way that all columns the factory
         // needs to provide are at the beginning of the metadata so the record the factory cursor
@@ -2310,7 +2312,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         int addAt = columnCount;
         for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
-            if (columnSet.excludes(i)) {
+            if (intHashSet.excludes(i)) {
                 final TableColumnMetadata m = BaseRecordMetadata.copyOf(baseMetadata, i);
                 chainMetadata.add(addAt, m);
                 chainTypes.add(addAt, m.getType());
@@ -2325,9 +2327,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // not main metadata to avoid partitionBy functions accidentally looking up
         // analytic columns recursively
 
-        // todo: this is a transient list, we can cache and reuse
-        final ObjList<TableColumnMetadata> deferredAnalyticMetadata = new ObjList<>();
-
+        deferredAnalyticMetadata.clear();
         for (int i = 0; i < columnCount; i++) {
             final QueryColumn qc = columns.getQuick(i);
             if (qc instanceof AnalyticColumn) {
@@ -3932,8 +3932,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
-        // todo: pool
-        final IntList indices = new IntList();
+        final IntList indices = intListPool.next();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
             ExpressionNode tok = orderBy.getQuick(i);
             int index = m.getColumnIndexQuiet(tok.token);
