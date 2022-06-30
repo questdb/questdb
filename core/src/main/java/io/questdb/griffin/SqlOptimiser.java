@@ -195,7 +195,7 @@ class SqlOptimiser {
             final QueryModel cross = queryModelPool.next();
             cross.setJoinType(QueryModel.JOIN_CROSS);
             cross.setSelectModelType(QueryModel.SELECT_MODEL_CURSOR);
-            cross.setAlias(makeJoinAlias(defaultAliasCount++));
+            cross.setAlias(makeJoinAlias());
 
             final QueryModel crossInner = queryModelPool.next();
             crossInner.setTableName(node);
@@ -1065,50 +1065,6 @@ class SqlOptimiser {
         }
     }
 
-    private void createSelectColumnsForWildcardFromQueryColumns(
-            QueryModel srcModel,
-            boolean hasJoins,
-            int wildcardPosition,
-            QueryModel translatingModel,
-            QueryModel innerModel,
-            QueryModel analyticModel,
-            QueryModel groupByModel,
-            QueryModel outerModel,
-            QueryModel distinctModel
-    ) throws SqlException {
-        // this method works based on QueryColumn list provided by the srcModel. It is
-        // not always the case this list in non-empty. But this is preferred when
-        // query columns are available
-        final ObjList<QueryColumn> columns = srcModel.getBottomUpColumns();
-        for (int j = 0, z = columns.size(); j < z; j++) {
-            QueryColumn qc = columns.getQuick(j);
-            if (qc.isIncludeIntoWildcard()) {
-                CharSequence token;
-                if (hasJoins) {
-                    CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-                    characterStoreEntry.put(srcModel.getName());
-                    characterStoreEntry.put('.');
-                    characterStoreEntry.put(qc.getName());
-                    token = characterStoreEntry.toImmutable();
-                } else {
-                    token = qc.getName();
-                }
-                createSelectColumn(
-                        qc.getName(),
-                        nextLiteral(token, wildcardPosition),
-                        true,
-                        null, // do not validate
-                        translatingModel,
-                        innerModel,
-                        analyticModel,
-                        groupByModel,
-                        outerModel,
-                        distinctModel
-                );
-            }
-        }
-    }
-
     private int doReorderTables(QueryModel parent, IntList ordered) {
         tempCrossIndexes.clear();
         ordered.clear();
@@ -1554,21 +1510,53 @@ class SqlOptimiser {
     }
 
     private void extractCorrelatedQueriesAsJoins(QueryModel model) throws SqlException {
-        System.out.println("ok");
         final ObjList<QueryColumn> columns = model.getColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             QueryColumn qc = columns.getQuick(i);
-            traversalAlgo.traverse(qc.getAst(), node -> {
-                QueryModel qm = node.queryModel;
-                if (qm != null) {
-                    qm.setJoinType(QueryModel.JOIN_ONE);
-                    model.addJoinModel(qm);
-                    ExpressionNode where = qm.getWhereClause();
-                    if (where != null) {
-                        model.setWhereClause(concatFilters(model.getWhereClause(), where));
-                        qm.setWhereClause(null);
-                    }
+            traversalAlgo.traverse(qc.getAst(), new PostOrderTreeTraversalAlgo.Visitor() {
+                @Override
+                public void visit(ExpressionNode node) throws SqlException {
+                    QueryModel qm = node.queryModel;
+                    if (qm != null) {
+                        // validate correlated sub-query, we expect single column
 
+                        ObjList<QueryColumn> correlatedColumns = qm.getColumns();
+                        if (correlatedColumns.size() != 1) {
+                            throw SqlException.$(node.position, "only one column expected in correlated sub-query");
+                        }
+
+                        final QueryColumn refCol = correlatedColumns.getQuick(0);
+
+                        // The correlated sub-query is not initially aliased
+                        // as the sub-query. Single selected column is probably aliased.
+                        // The latter alias we can use when constructing new column reference
+                        final ExpressionNode qmAlias = makeJoinAlias();
+
+                        // rewrite column to alias the joined column
+                        // todo: this has to be GC-free
+                        node.token = qmAlias.token + "." + refCol.getName();
+                        // clear query model from the column
+                        node.queryModel = null;
+                        node.type = LITERAL;
+
+                        qm.setJoinType(QueryModel.JOIN_ONE);
+                        qm.setAlias(qmAlias);
+                        model.getNestedModel().addJoinModel(qm);
+                        ExpressionNode where = qm.getWhereClause();
+                        if (where != null) {
+                            model.setWhereClause(concatFilters(model.getWhereClause(), where));
+                            qm.setWhereClause(null);
+                        }
+                    }
+                }
+
+                @Override
+                public boolean descend(ExpressionNode node) {
+                    // do not descend functions, such as `touch(select ...)`
+                    // what is allowed for correlated sub-queries - arithmetic
+                    // (select a from tab) + 1 alias
+                    // is a valid syntax
+                    return node.type != FUNCTION;
                 }
             });
         }
@@ -1670,9 +1658,9 @@ class SqlOptimiser {
         return true;
     }
 
-    private ExpressionNode makeJoinAlias(int index) {
+    private ExpressionNode makeJoinAlias() {
         CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-        characterStoreEntry.put(QueryModel.SUB_QUERY_ALIAS_PREFIX).put(index);
+        characterStoreEntry.put(QueryModel.SUB_QUERY_ALIAS_PREFIX).put(defaultAliasCount++);
         return nextLiteral(characterStoreEntry.toImmutable());
     }
 
@@ -2121,10 +2109,10 @@ class SqlOptimiser {
         QueryModel rewrittenModel = model;
         try {
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
+            extractCorrelatedQueriesAsJoins(rewrittenModel);
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
-//            extractCorrelatedQueriesAsJoins(model);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
@@ -2258,10 +2246,13 @@ class SqlOptimiser {
         if (n > 0) {
             for (int i = 0; i < n; i++) {
                 final ExpressionNode node = expressionModels.getQuick(i);
-                assert node.queryModel != null;
-                QueryModel optimised = optimise(node.queryModel, executionContext);
-                if (optimised != node.queryModel) {
-                    node.queryModel = optimised;
+                // for expression models that have been converted to
+                // the joins, the query model will be set to null.
+                if (node.queryModel != null) {
+                    QueryModel optimised = optimise(node.queryModel, executionContext);
+                    if (optimised != node.queryModel) {
+                        node.queryModel = optimised;
+                    }
                 }
             }
         }
@@ -2455,11 +2446,6 @@ class SqlOptimiser {
                         }
                         n = n.lhs;
                         break;
-//                    case JOIN_OP_OR:
-//                        // stub: use filter
-//                        parent.addParsedWhereNode(n, innerPredicate);
-//                        n = null;
-//                        break;
                     case JOIN_OP_REGEX:
                         analyseRegex(parent, n);
                         // intentional fallthrough
@@ -3465,7 +3451,7 @@ class SqlOptimiser {
         if (name != null) {
             return name;
         }
-        ExpressionNode alias = makeJoinAlias(defaultAliasCount++);
+        ExpressionNode alias = makeJoinAlias();
         model.setAlias(alias);
         return alias.token;
     }
