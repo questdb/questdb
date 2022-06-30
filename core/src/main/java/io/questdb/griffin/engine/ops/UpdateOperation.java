@@ -34,7 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -46,9 +45,9 @@ public class UpdateOperation extends AbstractOperation {
     public static final int FULLY_CLOSED_STATE = WRITER_CLOSED_INCREMENT + SENDER_CLOSED_INCREMENT;
     private final AtomicInteger closeState = new AtomicInteger();
     private RecordCursorFactory factory;
-    private volatile boolean requesterTimeout = false;
+    private volatile boolean requesterTimeout;
     private boolean executingAsync;
-    private @Nullable SqlExecutionCircuitBreaker circuitBreaker;
+    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
 
     public UpdateOperation(
             String tableName,
@@ -102,10 +101,10 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     public void forceTestTimeout() {
-        if (requesterTimeout || (circuitBreaker != null && circuitBreaker.checkIfTripped())) {
+        if (requesterTimeout || circuitBreaker.checkIfTripped()) {
             throw CairoException.instance(0)
                     .put("timeout, query aborted [fd=")
-                    .put(circuitBreaker != null ? circuitBreaker.getFd() : -1L)
+                    .put(circuitBreaker.getFd())
                     .put(']')
                     .setInterruption(true);
         }
@@ -115,14 +114,12 @@ public class UpdateOperation extends AbstractOperation {
         if (requesterTimeout) {
             throw CairoException.instance(0)
                     .put("timeout, query aborted [fd=")
-                    .put(circuitBreaker != null ? circuitBreaker.getFd() : -1L)
+                    .put(circuitBreaker.getFd())
                     .put(']')
                     .setInterruption(true);
         }
 
-        if (circuitBreaker != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-        }
+        circuitBreaker.statefulThrowExceptionIfTripped();
     }
 
     public RecordCursorFactory getFactory() {
