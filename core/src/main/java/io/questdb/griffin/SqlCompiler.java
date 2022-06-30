@@ -1857,7 +1857,8 @@ public class SqlCompiler implements Closeable {
 
     private void copyTable(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
         try {
-            if (model.isCancel()) {
+            int workerCount = executionContext.getWorkerCount();
+            if (workerCount > 1 && model.isCancel()) {
                 addTextImportRequest(model, null);
                 return;
             }
@@ -1875,13 +1876,15 @@ public class SqlCompiler implements Closeable {
                     if (model.getDelimiter() < 0) {
                         model.setDelimiter((byte) ',');
                     }
-
-                    addTextImportRequest(model, fileName);
-//                    try (ParallelCsvFileImporter loader = new ParallelCsvFileImporter(executionContext.getCairoEngine(), executionContext.getWorkerCount(), null)) {
-//                        loader.of(model.getTableName().token, fileName, model.getPartitionBy(), model.getDelimiter(), model.getTimestampColumnName(), model.getTimestampFormat(), model.isHeader(), model.getAtomicity());
-//                        loader.process();
-//                    }
-
+                    //todo: how to make this interactive with the only one thread available?
+                    if (workerCount > 1) {
+                        addTextImportRequest(model, fileName);
+                    } else {
+                        try (ParallelCsvFileImporter loader = new ParallelCsvFileImporter(executionContext.getCairoEngine(), workerCount, null)) {
+                            loader.of(model.getTableName().token, fileName, model.getPartitionBy(), model.getDelimiter(), model.getTimestampColumnName(), model.getTimestampFormat(), model.isHeader(), model.getAtomicity());
+                            loader.process();
+                        }
+                    }
                     return;
                 }
 
