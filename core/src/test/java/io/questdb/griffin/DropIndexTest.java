@@ -164,6 +164,11 @@ public class DropIndexTest extends AbstractGriffinTest {
                 // always fails
                 return -1;
             }
+
+            @Override
+            public int errno() {
+                return -1;
+            }
         };
 
         assertMemoryLeak(noHardLinksFF, () -> {
@@ -185,7 +190,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                 Assert.fail();
             } catch (SqlException expected) {
                 TestUtils.assertContains(expected.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
-                TestUtils.assertContains(expected.getFlyweightMessage(), "[-1] Cannot hardLink ");
+                TestUtils.assertContains(expected.getFlyweightMessage(), "[-1] cannot hardLink ");
                 path.trimTo(tablePathLen);
                 checkMetadataAndTxn(
                         path,

@@ -573,6 +573,15 @@ public class TableWriter implements Closeable {
         }
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
+        if (inTransaction()) {
+            LOG.info()
+                    .$("committing current transaction before DROP INDEX execution [txn=").$(txWriter.getTxn())
+                    .$(", table=").$(tableName)
+                    .$(", column=").$(columnName)
+                    .I$();
+            commit();
+        }
+
         try {
             LOG.info().$("BEGIN DROP INDEX [txn=").$(txWriter.getTxn())
                     .$(", table=").$(tableName)
@@ -580,9 +589,9 @@ public class TableWriter implements Closeable {
                     .I$();
             // drop index
             if (dropIndexOperator == null) {
-                dropIndexOperator = new DropIndexOperator(configuration, messageBus, this);
+                dropIndexOperator = new DropIndexOperator(ff, messageBus, this, path, other, rootLen);
             }
-            dropIndexOperator.executeDropIndex(tableName, columnName, columnIndex); // upserts column version in partitions
+            dropIndexOperator.executeDropIndex(columnName, columnIndex); // upserts column version in partitions
             // swap meta commit
             metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, META_FLAG_BIT_NOT_INDEXED, defaultIndexValueBlockSize);
             swapMetaFile(columnName); // bumps structure version, this is in effect a commit
