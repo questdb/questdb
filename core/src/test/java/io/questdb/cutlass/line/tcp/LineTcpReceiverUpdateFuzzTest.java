@@ -54,7 +54,7 @@ import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 
 public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverUpdateFuzzTest.class);
-    private final ConcurrentLinkedQueue<TableSql> updatesSql = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<String> updatesQueue = new ConcurrentLinkedQueue<>();
     private int numOfUpdates;
     private SOCountDownLatch updatesDone;
     private int numOfUpdateThreads;
@@ -98,21 +98,11 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         runTest();
     }
 
-    private boolean checkTableAllRowsReceived(TableData table) {
-        CharSequence tableName = table.getName();
-        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-            getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName).$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
-            return table.size() == reader.size();
-
-        }
-    }
-
-    private void executeUpdate(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String sql, SCSequence waitSequence) throws SqlException {
+    private void executeUpdate(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String sql, SCSequence waitSequence) {
         while (true) {
             try {
-                CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
-
                 LOG.info().$(sql).$();
+                final CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
                 try (
                         QuietClosable op = cc.getOperation();
                         OperationFuture fut = cc.getDispatcher().execute(op, sqlExecutionContext, waitSequence)
@@ -128,7 +118,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 if (Chars.contains(ex.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed")) {
                     continue;
                 }
-                throw ex;
+                throw new RuntimeException(ex);
             }
         }
     }
@@ -153,57 +143,47 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
 
     @Override
     protected void waitDone() {
+        // wait for update threads to finish
         updatesDone.await();
 
-        SqlCompiler compiler = compilers[0];
-        SqlExecutionContext executionContext = executionContexts[0];
-        HashSet<CharSequence> doneTables = new HashSet<>();
+        // Repeat all updates after all lines are guaranteed to be landed in the tables
+        super.waitDone();
 
-        // Repeat all updates when all lines are guaranteed to be landed in the tables
-        for (TableSql tableSql : updatesSql) {
-            try {
-                if (!doneTables.contains(tableSql.tableName)) {
-                    final TableData table = tables.get(tableSql.tableName);
-                    do {
-                        table.await();
-                    } while (!checkTableAllRowsReceived(table));
-                    doneTables.add(tableSql.tableName);
-                }
-
-                executeUpdate(compiler, executionContext, tableSql.sql, null);
-            } catch (SqlException e) {
-                LOG.error().$("update failed").$((Throwable) e).$();
-            }
+        final SqlCompiler compiler = compilers[0];
+        final SqlExecutionContext executionContext = executionContexts[0];
+        for (String sql: updatesQueue) {
+            executeUpdate(compiler, executionContext, sql, null);
         }
     }
 
-    private List<ColumnNameType> getMetaData(Hashtable<CharSequence, ArrayList<ColumnNameType>> readerColumns, CharSequence tableName) {
-        if (readerColumns.contains(tableName)) {
-            return readerColumns.get(tableName);
+    private List<ColumnNameType> getMetaData(Map<CharSequence, ArrayList<ColumnNameType>> columnsCache, CharSequence tableName) {
+        if (columnsCache.containsKey(tableName)) {
+            return columnsCache.get(tableName);
         }
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
-            TableReaderMetadata metadata = reader.getMetadata();
-            ArrayList<ColumnNameType> columns = new ArrayList<>();
+            final TableReaderMetadata metadata = reader.getMetadata();
+            final ArrayList<ColumnNameType> columns = new ArrayList<>();
             for (int i = metadata.getColumnCount() - 1; i > -1L; i--) {
                 if (i != metadata.getTimestampIndex()) {
                     columns.add(new ColumnNameType(metadata.getColumnName(i), metadata.getColumnType(i)));
                 }
             }
-            readerColumns.put(tableName, columns);
+            columnsCache.put(tableName, columns);
             return columns;
         }
     }
 
-    private void initUpdateParameters(int numOfUpdates, int numOfThreads) {
+    private void initUpdateParameters(int numOfUpdates, int numOfUpdateThreads) {
         this.numOfUpdates = numOfUpdates;
-        this.updatesSql.clear();
-        this.updatesDone = new SOCountDownLatch(numOfThreads);
-        this.numOfUpdateThreads = numOfThreads;
-        compilers = new SqlCompiler[numOfThreads];
-        executionContexts = new SqlExecutionContext[numOfThreads];
-        for (int i = 0; i < numOfThreads; i++) {
+        this.updatesQueue.clear();
+        this.updatesDone = new SOCountDownLatch(numOfUpdateThreads);
+        this.numOfUpdateThreads = numOfUpdateThreads;
+
+        compilers = new SqlCompiler[numOfUpdateThreads];
+        executionContexts = new SqlExecutionContext[numOfUpdateThreads];
+        for (int i = 0; i < numOfUpdateThreads; i++) {
             compilers[i] = new SqlCompiler(engine, null, null);
-            executionContexts[i] = new SqlExecutionContextImpl(engine, numOfThreads);
+            executionContexts[i] = new SqlExecutionContextImpl(engine, numOfUpdateThreads);
         }
     }
 
@@ -218,45 +198,35 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     }
 
     private void startUpdateThread(final int threadId, SOCountDownLatch updatesDone) {
-        Rnd rnd = TestUtils.generateRandom();
+        final Rnd rnd = TestUtils.generateRandom();
         new Thread(() -> {
             String sql = "";
             try {
-                Hashtable<CharSequence, ArrayList<ColumnNameType>> readers = new Hashtable<>();
-                SCSequence waitSequence = new SCSequence();
-                SqlCompiler compiler = compilers[threadId];
-                SqlExecutionContext executionContext = executionContexts[threadId];
+                final Map<CharSequence, ArrayList<ColumnNameType>> columnsCache = new HashMap<>();
+                final SCSequence waitSequence = new SCSequence();
+                final SqlCompiler compiler = compilers[threadId];
+                final SqlExecutionContext executionContext = executionContexts[threadId];
                 while (tableNames.size() == 0) {
                     Os.pause();
                 }
 
                 for (int j = 0; j < numOfUpdates; j++) {
                     final CharSequence tableName = pickCreatedTableName(rnd);
-                    List<ColumnNameType> metadata = getMetaData(readers, tableName);
+                    final List<ColumnNameType> columns = getMetaData(columnsCache, tableName);
                     final TableData table = tables.get(tableName);
-                    LineData line = table.getRandomValidLine(rnd);
+                    final LineData line = table.getRandomValidLine(rnd);
 
-                    Collections.shuffle(metadata);
-                    sql = line.generateRandomUpdate(tableName, metadata, rnd);
+                    Collections.shuffle(columns);
+                    sql = line.generateRandomUpdate(tableName, columns, rnd);
                     executeUpdate(compiler, executionContext, sql, waitSequence);
-                    this.updatesSql.add(new TableSql(tableName, sql));
+                    updatesQueue.add(sql);
                 }
             } catch (Exception e) {
-                Assert.fail("Data sending failed [e=" + e + ", sql=" + sql + "]");
+                Assert.fail("Update failed [e=" + e + ", sql=" + sql + "]");
                 throw new RuntimeException(e);
             } finally {
                 updatesDone.countDown();
             }
         }).start();
-    }
-
-    private static class TableSql {
-        CharSequence tableName;
-        String sql;
-
-        TableSql(CharSequence tableName, String sql) {
-            this.tableName = tableName;
-            this.sql = sql;
-        }
     }
 }

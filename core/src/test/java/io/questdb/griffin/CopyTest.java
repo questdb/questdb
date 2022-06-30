@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.model.CopyModel;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -75,16 +76,26 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testSetAllParallelCopyOptions() throws SqlException {
-        CopyModel model = (CopyModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true parallel partition by HOUR timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' ;", sqlExecutionContext);
+        Object[] partitionBy = new Object[]{"HOUR", PartitionBy.HOUR, "DAY", PartitionBy.DAY, "MONTH", PartitionBy.MONTH, "YEAR", PartitionBy.YEAR};
+        Object[] onError = new Object[]{"SKIP_COLUMN", Atomicity.SKIP_COL, "SKIP_ROW", Atomicity.SKIP_ROW, "ABORT", Atomicity.SKIP_ALL};
 
-        assertEquals("x", model.getTableName().token.toString());
-        assertEquals("'somefile.csv'", model.getFileName().token.toString());
-        assertTrue(model.isHeader());
-        assertTrue(model.isParallel());
-        assertEquals(PartitionBy.HOUR, model.getPartitionBy());
-        assertEquals("ts1", model.getTimestampColumnName().toString());
-        assertEquals("yyyy-MM-ddTHH:mm:ss", model.getTimestampFormat().toString());
-        assertEquals(';', model.getDelimiter());
+        for (int p = 0; p < partitionBy.length / 2; p += 2) {
+            for (int o = 0; o < onError.length / 2; o += 2) {
+
+                CopyModel model = (CopyModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true parallel " +
+                        "partition by " + partitionBy[p] + " timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' on error " + onError[o] + ";'", sqlExecutionContext);
+
+                assertEquals("x", model.getTableName().token.toString());
+                assertEquals("'somefile.csv'", model.getFileName().token.toString());
+                assertTrue(model.isHeader());
+                assertTrue(model.isParallel());
+                assertEquals(partitionBy[p + 1], model.getPartitionBy());
+                assertEquals("ts1", model.getTimestampColumnName().toString());
+                assertEquals("yyyy-MM-ddTHH:mm:ss", model.getTimestampFormat().toString());
+                assertEquals(';', model.getDelimiter());
+                assertEquals(onError[o + 1], model.getAtomicity());
+            }
+        }
     }
 
     @Test
@@ -308,7 +319,8 @@ public class CopyTest extends AbstractGriffinTest {
     public void testParallelCopyIntoExistingTable() throws Exception {
         assertMemoryLeak(() -> {
             compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
-            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH; ", sqlExecutionContext);
+            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW; ", sqlExecutionContext);
 
             assertQuotesTableContent();
         });
@@ -317,7 +329,9 @@ public class CopyTest extends AbstractGriffinTest {
     @Test
     public void testParallelCopyIntoNewTable() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH; ", sqlExecutionContext);
+            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+
             assertQuotesTableContent();
         });
     }

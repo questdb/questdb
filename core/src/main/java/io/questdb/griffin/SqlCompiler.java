@@ -32,7 +32,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.*;
+import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.ParallelCsvFileImporter;
+import io.questdb.cutlass.text.TextException;
+import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.*;
@@ -1877,6 +1880,11 @@ public class SqlCompiler implements Closeable {
                     }
 
                     addTextImportRequest(model, fileName);
+                    try (ParallelCsvFileImporter loader = new ParallelCsvFileImporter(executionContext)) {
+                        loader.of(model.getTableName().token, name, model.getPartitionBy(), model.getDelimiter(), model.getTimestampColumnName(), model.getTimestampFormat(), model.isHeader(), model.getAtomicity());
+                        loader.process();
+                    }
+
                     return;
                 }
 
@@ -2588,7 +2596,7 @@ public class SqlCompiler implements Closeable {
             throw SqlException.$(lexer.getPosition(), "EOF expected");
         }
 
-        rebuildIndex.rebuildPartitionColumn(partition, columnName);
+        rebuildIndex.reindex(partition, columnName);
         return compiledQuery.ofRepair();
     }
 

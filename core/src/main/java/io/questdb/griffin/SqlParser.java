@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -480,6 +481,19 @@ public final class SqlParser {
                         tok = tok(lexer, "timestamp format expected");
                         CharSequence format = GenericLexer.immutableOf(GenericLexer.unquote(tok));
                         model.setTimestampFormat(format);
+                        tok = optTok(lexer);
+                    } else if (isOnKeyword(tok)) {
+                        expectTok(lexer, "error");
+                        tok = tok(lexer, "skip_column skip_row abort");
+                        if (Chars.equalsIgnoreCase(tok, "skip_column")) {
+                            model.setAtomicity(Atomicity.SKIP_COL);
+                        } else if (Chars.equalsIgnoreCase(tok, "skip_row")) {
+                            model.setAtomicity(Atomicity.SKIP_ROW);
+                        } else if (Chars.equalsIgnoreCase(tok, "abort")) {
+                            model.setAtomicity(Atomicity.SKIP_ALL);
+                        } else {
+                            throw SqlException.$(lexer.getPosition(), "invalid 'on error' copy option found");
+                        }
                         tok = optTok(lexer);
                     } else if (isDelimiterKeyword(tok)) {
                         tok = tok(lexer, "timestamp character expected");

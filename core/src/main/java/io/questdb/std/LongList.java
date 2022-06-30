@@ -31,7 +31,7 @@ import java.util.Arrays;
 
 public class LongList implements Mutable, LongVec {
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final long DEFAULT_NO_ENTRY_VALUE = -1;
+    private static final long DEFAULT_NO_ENTRY_VALUE = -1L;
     private final long noEntryValue;
     private long[] data;
     private int pos = 0;
@@ -54,6 +54,13 @@ public class LongList implements Mutable, LongVec {
         setPos(other.size());
         System.arraycopy(other.data, 0, this.data, 0, pos);
         this.noEntryValue = other.noEntryValue;
+    }
+
+    public LongList(long[] other) {
+        this.data = new long[other.length];
+        setPos(other.length);
+        System.arraycopy(other, 0, this.data, 0, pos);
+        this.noEntryValue = DEFAULT_NO_ENTRY_VALUE;
     }
 
     public void add(long value) {
@@ -267,7 +274,9 @@ public class LongList implements Mutable, LongVec {
 
     @Override
     public LongVec newInstance() {
-        return new LongList(size());
+        LongList newList = new LongList(size());
+        newList.setPos(pos);
+        return newList;
     }
 
     /**
@@ -406,21 +415,18 @@ public class LongList implements Mutable, LongVec {
     }
 
     private boolean equals(LongList that) {
-        if (this.pos == that.pos) {
-            for (int i = 0, n = pos; i < n; i++) {
-                long lhs = this.getQuick(i);
-                if (lhs == noEntryValue) {
-                    if (that.getQuick(i) != noEntryValue) {
-                        return false;
-                    }
-                } else if (lhs != that.getQuick(i)) {
-                    return false;
-                }
-            }
-
-            return true;
+        if (this.pos != that.pos) {
+            return false;
         }
-        return false;
+        if (this.noEntryValue != that.noEntryValue) {
+            return false;
+        }
+        for (int i = 0, n = pos; i < n; i++) {
+            if (this.getQuick(i) != that.getQuick(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public int indexOf(long o) {

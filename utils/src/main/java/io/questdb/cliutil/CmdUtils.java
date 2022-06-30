@@ -56,7 +56,7 @@ public class CmdUtils {
 
         ri.of(params.tablePath, configuration.getCairoConfiguration());
         try {
-            ri.rebuildPartitionColumn(params.partition, params.column);
+            ri.reindex(params.partition, params.column);
         } catch (CairoException ex) {
             log.error().$(ex.getFlyweightMessage()).$();
         }
