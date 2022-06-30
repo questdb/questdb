@@ -2743,12 +2743,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             RecordMetadata metadata = factory.getMetadata();
 
-            // inspect model for possibility of vector aggregate intrinsics
+            // Inspect model for possibility of vector aggregate intrinsics.
             if (pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, !specialCaseKeys)) {
-                // create metadata from everything we've gathered
+                // Create metadata from everything we've gathered.
                 GenericRecordMetadata meta = new GenericRecordMetadata();
 
-                // start with keys
+                // Start with keys.
                 for (int i = 0, n = tempKeyIndex.size(); i < n; i++) {
                     final int indexInThis = tempKeyIndex.getQuick(i);
                     final int indexInBase = tempKeyIndexesInBase.getQuick(i);
@@ -2780,7 +2780,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                // add aggregates
+                // Add the aggregate functions.
                 for (int i = 0, n = tempVecConstructors.size(); i < n; i++) {
                     VectorAggregateFunctionConstructor constructor = tempVecConstructors.getQuick(i);
                     int indexInBase = tempVecConstructorArgIndexes.getQuick(i);
@@ -2830,9 +2830,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             tempSymbolSkewIndexes
                     );
                 }
-            }
 
-            Misc.freeObjList(tempVaf);
+                // Free the vector aggregate functions since we didn't use them.
+                Misc.freeObjList(tempVaf);
+            }
 
             if (specialCaseKeys) {
                 // uh-oh, we had special case keys, but could not find implementation for the functions
@@ -2843,7 +2844,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 factory = generateSubQuery(model, executionContext);
                 // and reset metadata
                 metadata = factory.getMetadata();
-
             }
 
             final int timestampIndex = getTimestampIndex(model, factory);

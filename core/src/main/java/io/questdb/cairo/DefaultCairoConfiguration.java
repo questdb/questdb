@@ -439,6 +439,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getSimulateCrashEnabled() {
+        return false;
+    }
+
+    @Override
     public int getRndFunctionMemoryPageSize() {
         return 8192;
     }

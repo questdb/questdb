@@ -158,6 +158,10 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         Misc.free(transitionMeta);
     }
 
+    public void clear() {
+        Misc.free(metaMem);
+    }
+
     public long createTransitionIndex(long txnStructureVersion) {
         if (transitionMeta == null) {
             transitionMeta = Vm.getMRInstance();
