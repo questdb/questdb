@@ -290,7 +290,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             Sender.builder().address("this-domain-does-not-exist-i-hope-better-to-use-a-silly-tld.silly-tld").build();
             fail("dns resolution errors should fail fast");
         } catch (LineSenderException e) {
-            TestUtils.assertContains(e.getMessage(), "cannot resolve");
+            TestUtils.assertContains(e.getMessage(), "could not resolve");
         }
     }
 

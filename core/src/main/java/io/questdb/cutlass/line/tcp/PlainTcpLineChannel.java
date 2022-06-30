@@ -42,9 +42,14 @@ public final class PlainTcpLineChannel implements LineChannel {
 
     public PlainTcpLineChannel(NetworkFacade nf, int address, int port, int sndBufferSize) {
         this.nf = nf;
-        this.sockaddr = nf.sockaddr(address, port);
         this.fd = nf.socketTcp(true);
+        if (fd < 0) {
+            throw new LineSenderException("could not allocate a file descriptor");
+        }
+        this.sockaddr = nf.sockaddr(address, port);
         if (nf.connect(fd, sockaddr) != 0) {
+            nf.close(fd, LOG);
+            nf.freeSockAddr(sockaddr);
             CharSink stringSink = new StringSink().put("could not connect to ");
             Net.appendIP4(stringSink, address);
             stringSink.put(", [errno=").put(nf.errno()).put("]");
@@ -57,11 +62,17 @@ public final class PlainTcpLineChannel implements LineChannel {
         this.nf = nf;
         this.sockaddr = -1;
         this.fd = nf.socketTcp(true);
+        if (fd < 0) {
+            throw new LineSenderException("could not allocate a file descriptor");
+        }
         long addrInfo = nf.getAddrInfo(host, port);
         if (addrInfo == -1) {
-            throw new LineSenderException("cannot resolve " + host + " to IP address");
+            nf.close(fd, LOG);
+            throw new LineSenderException("could not resolve " + host + " to IP address");
         }
         if (nf.connectAddrInfo(fd, addrInfo) != 0) {
+            nf.close(fd, LOG);
+            nf.freeAddrInfo(addrInfo);
             throw new LineSenderException("could not connect to " + host + " [errno=" + nf.errno() + "]");
         }
         nf.freeAddrInfo(addrInfo);
@@ -77,9 +88,7 @@ public final class PlainTcpLineChannel implements LineChannel {
 
     @Override
     public void close() {
-        if (nf.close(fd) != 0) {
-            LOG.error().$("could not close network socket [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
-        }
+        nf.close(fd, LOG);
         if (sockaddr != -1) {
             nf.freeSockAddr(sockaddr);
         }

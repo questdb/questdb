@@ -43,16 +43,13 @@ public final class UdpLineChannel implements LineChannel {
     public UdpLineChannel(NetworkFacade nf, int interfaceIPv4Address, int sendToAddress, int port, int ttl) {
         this.nf = nf;
         this.fd = nf.socketUdp();
-        this.sockaddr = nf.sockaddr(sendToAddress, port);
-
         if (fd == -1) {
             throw new LineSenderException("could not create UDP socket [errno=" + nf.errno() + "]");
         }
-
+        this.sockaddr = nf.sockaddr(sendToAddress, port);
         if (nf.setMulticastInterface(fd, interfaceIPv4Address) != 0) {
             final int errno = nf.errno();
-            nf.close(fd, LOG);
-
+            close();
             CharSink stringSink = new StringSink().put("could not bind to ");
             Net.appendIP4(stringSink, interfaceIPv4Address);
             stringSink.put(" [errno=").put(errno).put("]");
@@ -61,7 +58,7 @@ public final class UdpLineChannel implements LineChannel {
 
         if (nf.setMulticastTtl(fd, ttl) != 0) {
             final int errno = nf.errno();
-            nf.close(fd, LOG);
+            close();
             throw new LineSenderException("could not set ttl [fd=" + fd + " , ttl=" + ttl + ", errno=" + errno + "]");
         }
     }
