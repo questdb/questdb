@@ -241,23 +241,24 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_length0(JNIEnv *e, jclass cl, 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_hardLink(JNIEnv *e, jclass cl, jlong lpszSrc, jlong lpszHardLink) {
 
     size_t lenSrc = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, NULL, 0);
-    if (lenSrc > 0) {
-        wchar_t bufSrc[lenSrc];
-        MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, bufSrc, (int) lenSrc);
-
-        size_t lenHardLink = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszHardLink, -1, NULL, 0);
-        if (lenHardLink > 0) {
-            wchar_t bufHardLink[lenHardLink];
-            MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszHardLink, -1, bufHardLink, (int) lenHardLink);
-
-            if (CreateHardLinkA(lpszHardLink, lpszSrc, NULL)) {
-                return 0;
-            }
-            SaveLastError();
-            return -1;
-        }
+    if (lenSrc < 1) {
+        return -1;
     }
-    return -2;
+    wchar_t bufSrc[lenSrc];
+    MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszSrc, -1, bufSrc, (int) lenSrc);
+
+    size_t lenHardLink = MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszHardLink, -1, NULL, 0);
+    if (lenHardLink < 1) {
+        return -1;
+    }
+    wchar_t bufHardLink[lenHardLink];
+    MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszHardLink, -1, bufHardLink, (int) lenHardLink);
+
+    if (CreateHardLinkW(bufHardLink, bufSrc, NULL)) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir(JNIEnv *e, jclass cl, jlong lpszName, jint mode) {

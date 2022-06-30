@@ -247,7 +247,16 @@ public class FilesTest {
     }
 
     @Test
-    public void testHardLink() throws Exception {
+    public void testHardLinkAsciiName() throws Exception {
+        assertHardLinkPreservesFileContent("some_column.d");
+    }
+
+    @Test
+    public void testHardLinkNonAsciiName() throws Exception {
+        assertHardLinkPreservesFileContent("いくつかの列.d");
+    }
+
+    private void assertHardLinkPreservesFileContent(String fileName) throws Exception {
         assertMemoryLeak(() -> {
             File dbRoot = temporaryFolder.newFolder("dbRoot");
             dbRoot.mkdirs();
@@ -273,7 +282,7 @@ public class FilesTest {
                         "communication signal to the noise and interference at the receiver (expressed as a linear" + EOL +
                         "power ratio, not aslogarithmic decibels)." + EOL;
 
-                createTempFile(srcFilePath, "some_column.d", fileContent);
+                createTempFile(srcFilePath, fileName, fileContent);
 
                 // perform the hard link
                 hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
@@ -309,7 +318,7 @@ public class FilesTest {
             try {
                 srcFilePath = new Path().of(dbRoot.getAbsolutePath()).concat("some_column.d").$();
                 hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
-                Assert.assertTrue(Files.hardLink(srcFilePath, hardLinkFilePath) < 0);
+                Assert.assertEquals(-1, Files.hardLink(srcFilePath, hardLinkFilePath));
             } finally {
                 Misc.free(srcFilePath);
                 Misc.free(hardLinkFilePath);

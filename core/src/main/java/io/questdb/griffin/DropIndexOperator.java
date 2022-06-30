@@ -94,7 +94,7 @@ public class DropIndexOperator implements Closeable {
                     final long columnDropIndexTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
 
                     // create hard link to column data
-                    final int errno = ff.hardLink(
+                    int linkStatus = ff.hardLink(
                             partitionDFile( // src
                                     path,
                                     rootLen,
@@ -116,9 +116,8 @@ public class DropIndexOperator implements Closeable {
                                     columnDropIndexTxn
                             )
                     );
-
-                    if (errno < 0) {
-                        throw CairoException.instance(errno)
+                    if (linkStatus == -1) {
+                        throw CairoException.instance(ff.errno())
                                 .put("Cannot hardLink [src=").put(path)
                                 .put(", hardLink=").put(auxPath)
                                 .put(']');
