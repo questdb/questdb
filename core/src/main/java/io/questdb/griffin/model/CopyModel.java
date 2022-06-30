@@ -40,6 +40,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     private CharSequence timestampColumnName;
     private int partitionBy;
     private byte delimiter;
+    private int atomicity;
 
     public CopyModel() {
     }
@@ -54,6 +55,11 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         timestampColumnName = null;
         partitionBy = -1;
         delimiter = -1;
+        atomicity = -1;
+    }
+
+    public int getAtomicity() {
+        return atomicity;
     }
 
     public byte getDelimiter() {
@@ -74,6 +80,10 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     public CharSequence getTimestampFormat() {
         return timestampFormat;
+    }
+
+    public void setAtomicity(int atomicity) {
+        this.atomicity = atomicity;
     }
 
     public void setDelimiter(byte delimiter) {

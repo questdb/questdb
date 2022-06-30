@@ -56,6 +56,13 @@ public class LongList implements Mutable, LongVec {
         this.noEntryValue = other.noEntryValue;
     }
 
+    public LongList(long[] other) {
+        this.data = new long[other.length];
+        setPos(other.length);
+        System.arraycopy(other, 0, this.data, 0, pos);
+        this.noEntryValue = DEFAULT_NO_ENTRY_VALUE;
+    }
+
     public void add(long value) {
         ensureCapacity(pos + 1);
         data[pos++] = value;
@@ -267,7 +274,9 @@ public class LongList implements Mutable, LongVec {
 
     @Override
     public LongVec newInstance() {
-        return new LongList(size());
+        LongList newList = new LongList(size());
+        newList.setPos(pos);
+        return newList;
     }
 
     /**

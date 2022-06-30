@@ -1872,7 +1872,7 @@ public class SqlCompiler implements Closeable {
                     }
 
                     try (ParallelCsvFileImporter loader = new ParallelCsvFileImporter(executionContext)) {
-                        loader.of(model.getTableName().token, name, model.getPartitionBy(), model.getDelimiter(), model.getTimestampColumnName(), model.getTimestampFormat(), model.isHeader());
+                        loader.of(model.getTableName().token, name, model.getPartitionBy(), model.getDelimiter(), model.getTimestampColumnName(), model.getTimestampFormat(), model.isHeader(), model.getAtomicity());
                         loader.process();
                     }
 
