@@ -76,7 +76,7 @@ public class RecordComparatorCompiler {
         // elements for setLeft() method
         int setLeftNameIndex = asm.poolUtf8("setLeft");
         int setLeftDescIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;)V");
-        //
+
         asm.finishPool();
         asm.defineClass(thisClassIndex);
         asm.interfaceCount(1);
