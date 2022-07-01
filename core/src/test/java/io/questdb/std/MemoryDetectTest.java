@@ -43,6 +43,15 @@ public class MemoryDetectTest {
     }
 
     @Test
+    public void testTotalPhysical() throws MalformedObjectNameException, ReflectionException, AttributeNotFoundException, InstanceNotFoundException, MBeanException {
+        MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
+        Object attribute = mBeanServer.getAttribute(new ObjectName("java.lang","type","OperatingSystem"), "TotalPhysicalMemorySize");
+        long mem = (Long)attribute;
+        Assert.assertTrue(mem > 0);
+        System.out.printf("%,d%n", mem);
+    }
+
+    @Test
     public void testFreePhysical() throws MalformedObjectNameException, ReflectionException, AttributeNotFoundException, InstanceNotFoundException, MBeanException {
         MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
         Object attribute = mBeanServer.getAttribute(new ObjectName("java.lang","type","OperatingSystem"), "FreePhysicalMemorySize");

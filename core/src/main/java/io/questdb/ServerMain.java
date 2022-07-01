@@ -300,21 +300,27 @@ public class ServerMain {
     public static void setRssMemoryLimit(Log log, long rssMemoryLimit) {
         try {
             MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
-
             log.advisory().$("Java max memory: ").$size(Runtime.getRuntime().maxMemory()).$();
 
+            Object totalMemSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "TotalPhysicalMemorySize");
+            long totalPhysicalMemorySize = (Long)totalMemSizeAttribute;
+            log.advisory().$("total physical memory: ").$size(totalPhysicalMemorySize).$();
+
+            Object freeMemSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "FreePhysicalMemorySize");
+            long freePhysicalMemorySize = (Long)freeMemSizeAttribute;
+            log.advisory().$("free physical memory : ").$size(freePhysicalMemorySize).$();
+
+            Object totalSwapSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "TotalSwapSpaceSize");
+            long totalSwapSize = (Long)totalSwapSizeAttribute;
+            log.advisory().$("total swap memory    : ").$size(totalSwapSize).$();
+
+            Object freeSwapSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "FreeSwapSpaceSize");
+            long freeSwapSize = (Long)freeSwapSizeAttribute;
+            log.advisory().$("free swap memory     : ").$size(freeSwapSize).$();
+
             if (rssMemoryLimit == 0) {
-
-                Object freeMemSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "FreePhysicalMemorySize");
-                long freePhysicalMemorySize = (Long)freeMemSizeAttribute;
-                log.advisory().$("physical memory: ").$size(freePhysicalMemorySize).$();
-
-                Object freeSwapSizeAttribute = mBeanServer.getAttribute(new ObjectName("java.lang", "type", "OperatingSystem"), "FreeSwapSpaceSize");
-                long freeSwapSize = (Long)freeSwapSizeAttribute;
-                log.advisory().$("swap memory    : ").$size(freeSwapSize).$();
-
                 // On Windows swapSize already includes physical memory. On Mac, Linux swap and physical are independent numbers
-                final long totalRssMemory = Os.type == Os.WINDOWS ? freeSwapSize : freeSwapSize + freePhysicalMemorySize;
+                final long totalRssMemory = Os.type == Os.WINDOWS ? totalSwapSize : freeSwapSize + totalPhysicalMemorySize;
 
                 // Leave at least 2GiB for OS
                 long gib = 1L << 30;
