@@ -320,7 +320,7 @@ public class ServerMain {
             ff.setMapLimit(mapCount);
         }
 
-        long fileLimit = ff.getFileLimit();
+        long fileLimit = ff.getOsFileLimit();
         if (fileLimit < 0) {
             log.advisoryW().$("cannot detect OS file-max parameter for the process, verification not performed");
         } else {

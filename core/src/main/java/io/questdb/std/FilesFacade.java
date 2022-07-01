@@ -56,7 +56,7 @@ public interface FilesFacade {
 
     long getOpenFileLimit();
 
-    long getFileLimit();
+    long getOsFileLimit();
 
     long getMapCapacity();
 
