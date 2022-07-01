@@ -301,7 +301,7 @@ public class ServerMain {
 
     public static boolean checkOsProcessLimits(Log log, CairoConfiguration cairoConfiguration, long mapMinCount, long fileMinCount) {
         if (!cairoConfiguration.checkOsProcessLimits()) {
-            log.advisoryW().$("os file limit checks disabled in configuration.");
+            log.advisoryW().$("os file limit checks disabled in configuration.").$();
             return true;
         }
 
@@ -309,7 +309,7 @@ public class ServerMain {
         FilesFacade ff = cairoConfiguration.getFilesFacade();
         long mapCount = OsUtils.getMaxMapCount(log, ff);
         if (mapCount < 0) {
-            log.advisoryW().$("cannot detect OS vm.max_map_count parameter, verification not performed");
+            log.advisoryW().$("cannot detect OS vm.max_map_count parameter, verification not performed").$();
         } else {
             log.advisoryW().$("vm.max_map_count=").$(mapCount).$();
             if (mapCount < mapMinCount) {
@@ -322,7 +322,7 @@ public class ServerMain {
 
         long fileLimit = ff.getOsFileLimit();
         if (fileLimit < 0) {
-            log.advisoryW().$("cannot detect OS file-max parameter for the process, verification not performed");
+            log.advisoryW().$("cannot detect OS file-max parameter for the process, verification not performed").$();
         } else {
             log.advisoryW().$("file-max=").$(fileLimit).$();
             if (fileLimit < fileMinCount) {
