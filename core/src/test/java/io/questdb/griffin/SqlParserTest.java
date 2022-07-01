@@ -312,7 +312,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAnalyticLiteralAfterFunction() throws Exception {
         assertQuery(
-                "select-analytic a, b1, f(c) f over (partition by b11 order by ts), b from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts, b1 b] a, concat(b,'abc') b1, c, b1 b11, ts, b1 b from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
+                "select-analytic a, b1, f(c) f over (partition by b11 order by ts), b from (select-virtual [a, concat(b,'abc') b1, c, b1 b11, ts, b] a, concat(b,'abc') b1, c, b, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
                 "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts), b from xyz k",
                 modelOf("xyz")
                         .col("c", ColumnType.INT)
@@ -2598,6 +2598,36 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testExtraCommaPartitionByInAnalyticFunction() throws Exception {
         assertSyntaxError("select a,b, f(c) over (partition by b, order by ts) from xyz", 45, "')' expected");
+    }
+
+    @Test
+    public void testTooManyArgumentsInAnalyticFunction() throws Exception {
+        assertFailure(
+                "select row_number(1,2,3) over (partition by symbol) from trades",
+                "create table trades " +
+                        "(" +
+                        " price double," +
+                        " symbol symbol," +
+                        " ts timestamp" +
+                        ") timestamp(ts) partition by day",
+                7,
+                "too many arguments"
+        );
+    }
+
+    @Test
+    public void testNonAnalyticFunctionInAnalyticContext() throws Exception {
+        assertFailure(
+                "select avg(price) over (partition by symbol) from trades",
+                "create table trades " +
+                        "(" +
+                        " price double," +
+                        " symbol symbol," +
+                        " ts timestamp" +
+                        ") timestamp(ts) partition by day",
+                7,
+                "non-analytic function called in analytic context"
+        );
     }
 
     @Test
