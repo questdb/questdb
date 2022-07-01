@@ -339,6 +339,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         return LOG.error().$('[').$(state.getFd()).$("] ");
     }
 
+    private LogRecord critical(TextQueryProcessorState state) {
+        return LOG.critical().$('[').$(state.getFd()).$("] ");
+    }
+
     protected void header(HttpChunkedResponseSocket socket, TextQueryProcessorState state, int status_code) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.status(status_code, "text/csv; charset=utf-8");
         if (state.fileName != null && state.fileName.length() > 0) {
@@ -366,7 +370,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             Throwable e,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        error(state).$("Server error executing query ").utf8(state.query).$(e).$();
+        critical(state).$("Server error executing query ").utf8(state.query).$(e).$();
         // This is a critical error, so we treat it as an unhandled one.
         metrics.healthCheck().incrementUnhandledErrors();
         sendException(socket, 0, e.getMessage(), state);

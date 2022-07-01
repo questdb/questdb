@@ -482,13 +482,13 @@ public final class TestUtils {
         int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();
         Assert.assertTrue(addrInfoCountAfter > -1);
         if (addrInfoCount != addrInfoCountAfter) {
-            Assert.fail("AddrInfo allocation count before the test: " + addrInfoCount +", after the test: " + addrInfoCountAfter);
+            Assert.fail("AddrInfo allocation count before the test: " + addrInfoCount + ", after the test: " + addrInfoCountAfter);
         }
 
         int sockAddrCountAfter = Net.getAllocatedSockAddrCount();
         Assert.assertTrue(sockAddrCountAfter > -1);
         if (sockAddrCount != sockAddrCountAfter) {
-            Assert.fail("SockAddr allocation count before the test: " + sockAddrCount +", after the test: " + sockAddrCountAfter);
+            Assert.fail("SockAddr allocation count before the test: " + sockAddrCount + ", after the test: " + sockAddrCountAfter);
         }
     }
 

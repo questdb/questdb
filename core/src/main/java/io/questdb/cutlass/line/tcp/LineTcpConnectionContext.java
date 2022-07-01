@@ -229,8 +229,8 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                     }
                 }
             } catch (CairoException ex) {
-                LOG.error().
-                        $('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                LOG.error()
+                        .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
                         .$(", msg=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
@@ -240,9 +240,9 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 }
                 goodMeasurement = false;
             } catch (Throwable ex) {
-                LOG.error().
-                        $('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName()).
-                        $(", ex=").$(ex)
+                LOG.critical()
+                        .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
+                        .$(", ex=").$(ex)
                         .I$();
                 // This is a critical error, so we treat it as an unhandled one.
                 metrics.healthCheck().incrementUnhandledErrors();
