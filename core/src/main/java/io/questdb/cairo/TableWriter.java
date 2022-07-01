@@ -2752,13 +2752,15 @@ public class TableWriter implements Closeable, WalWriterFactory {
     }
     public void processWalCommit(
             Path walPath,
+            CharSequence segment,
             boolean inOrder,
             long rowLo,
             long rowHi,
             long o3TimestampMin,
-            long o3TimestampMax
+            long o3TimestampMax,
+            LongList symbolCounts
     ) {
-        if (processO3Append(walPath, 0, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax)) {
+        if (processO3Append(walPath, segment, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, symbolCounts)) {
             return;
         }
 
@@ -2778,19 +2780,77 @@ public class TableWriter implements Closeable, WalWriterFactory {
         metrics.tableWriter().addCommittedRows(rowsAdded);
     }
 
+    private IntList[] addSymbolsFromWal(Path walPath, LongList symbolCounts) {
+        int n = metadata.getColumnCount();
+        SymbolMapReaderImpl symbolMapReader = null;
+        int symbol = 0;
+        boolean symbolChanged = false;
+        IntList[] remapList = new IntList[denseSymbolMapWriters.size()];
+        IntList tempRemapList = null;
+
+        for(int i = 0; i < n; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (columnType == ColumnType.SYMBOL) {
+                int symbolIndex = symbol++;
+                long symLoHi = symbolCounts.get(symbolIndex);
+                int lo = Numbers.decodeLowInt(symLoHi);
+                int hi = Numbers.decodeHighInt(symLoHi);
+
+                if (hi > lo) {
+                    if (symbolMapReader == null) {
+                        symbolMapReader = new SymbolMapReaderImpl();
+                    }
+                    symbolMapReader.of(configuration, walPath, metadata.getColumnName(i), -1, hi);
+                    MapWriter mapWriter = denseSymbolMapWriters.get(symbolIndex);
+                    IntList remap = remapList[symbolIndex] = tempRemapList == null ? new IntList() : tempRemapList;
+
+                    boolean identical = true;
+                    for(int sym = lo; sym < hi; sym++) {
+                        CharSequence symbolValue = symbolMapReader.valueOf(sym);
+                        int newKey = mapWriter.put(symbolValue);
+                        identical &= newKey == sym;
+                        remap.add(newKey);
+                    }
+
+                    if (identical) {
+                        remapList[symbolIndex] = null;
+                        // Reuse IntList for next symbol
+                        tempRemapList = remap;
+                        tempRemapList.clear();
+                    } else {
+                        symbolChanged = true;
+                        tempRemapList = null;
+                    }
+                }
+            }
+        }
+
+        if (symbolMapReader != null) {
+            symbolMapReader.close();
+        }
+
+        if (!symbolChanged) {
+            return null;
+        }
+        return remapList;
+    }
+
     public boolean processO3Append(
             Path walPath,
-            long o3LagRowCount,
+            CharSequence segment,
             int timestampIndex,
             boolean ordered,
             long rowLo,
             long rowHi,
             long o3TimestampMin,
-            long o3TimestampMax
+            long o3TimestampMax,
+            LongList symbolCounts
     ) {
         long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
         final int columnCount = metadata.getColumnCount();
         ObjList<MemoryCR> mappedColumns = new ObjList<>(columnCount * 2);
+        int walRootPathLen = walPath.length();
+        walPath.concat(segment);
         int walPathLen = walPath.length();
 
         for(int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -2884,14 +2944,48 @@ public class TableWriter implements Closeable, WalWriterFactory {
             } else {
                 timestampAddr = walTimestampColumn.addressOf(0);
             }
-            processO3Append(o3LagRowCount, timestampIndex, timestampAddr, o3Hi, o3TimestampMin, o3TimestampMax, !ordered, o3Lo);
+
+            walPath.trimTo(walRootPathLen);
+            IntList[] symbolMappings = addSymbolsFromWal(walPath, symbolCounts);
+            if (symbolMappings != null) {
+                remapWalSymbols(symbolMappings, o3Lo, o3Hi);
+            }
+
+            processO3Append(0L, timestampIndex, timestampAddr, o3Hi, o3TimestampMin, o3TimestampMax, !ordered, o3Lo);
         } finally {
-            finishO3Append(o3LagRowCount);
+            finishO3Append(0L);
             o3ColumnSources = o3Columns;
             Misc.freeObjList(mappedColumns);
         }
 
         return finishO3Commit(partitionTimestampHiLimit);
+    }
+
+    private void remapWalSymbols(IntList[] symbolMappings, long rowLo, long rowHi) {
+        int n = metadata.getColumnCount();
+
+        int sym = 0;
+        for(int i = 0; i < n; i++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
+                MemoryCR symbolColumn = o3ColumnSources.getQuick(getPrimaryColumnIndex(i));
+                IntList mapping = symbolMappings[sym++];
+
+                if (symbolColumn instanceof MemoryCARW) {
+                    MemoryCARW symbolColumnImpl = (MemoryCARW) symbolColumn;
+                    for(long rowId = rowLo; rowId < rowHi; rowId++) {
+                        long offset = rowId << 2;
+                        int symKey = symbolColumnImpl.getInt(offset);
+                        if (symKey > -1L) {
+                            int newSymKey = mapping.getQuick(symKey);
+                            symbolColumnImpl.putInt(offset, newSymKey);
+                        }
+                        // Null values is negative, no need to map
+                    }
+                } else {
+                    throw new UnsupportedOperationException("TODO");
+                }
+            }
+        }
     }
 
     private void processO3Append(

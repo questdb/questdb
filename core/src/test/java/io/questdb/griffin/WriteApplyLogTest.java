@@ -195,6 +195,6 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
     }
 
     private void applyWal(TableWriter writer, Path walPath, int rowLo, int count1, boolean inOrder, long timestampLo, long timestampHi) {
-        writer.processWalCommit(walPath, inOrder, rowLo, count1, timestampLo, timestampHi);
+        writer.processWalCommit(walPath, "", inOrder, rowLo, count1, timestampLo, timestampHi, null);
     }
 }
