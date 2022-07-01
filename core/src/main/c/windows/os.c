@@ -81,7 +81,6 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Os_translateSysErrno
         case ERROR_INSUFFICIENT_BUFFER:         return EINVAL;
         case ERROR_INVALID_DATA:                return EINVAL;
         case ERROR_INVALID_PARAMETER:           return EINVAL;
-        case ERROR_SYMLINK_NOT_SUPPORTED:       return EINVAL;
         case WSAEINVAL:                         return EINVAL;
         case WSAEPFNOSUPPORT:                   return EINVAL;
         case ERROR_BEGINNING_OF_MEDIA:          return EIO;
