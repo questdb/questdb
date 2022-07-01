@@ -5002,8 +5002,8 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void throwDistressException(Throwable cause) {
-        LOG.critical().$("writer error [table=").$(tableName).$(", ex=").$(cause).I$();
+    private void throwDistressException(CairoException cause) {
+        LOG.critical().$("writer error [table=").$(tableName).$(", e=").$((Sinkable) cause).I$();
         this.distressed = true;
         throw new CairoError(cause);
     }
