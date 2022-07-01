@@ -28,46 +28,42 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.Sequence;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.tasks.ColumnPurgeTask;
 
 
 import static io.questdb.cairo.TableUtils.dFile;
 
-public class DropIndexOperator {
+public class DropIndexOperator extends PurgingOperator {
     private static final Log LOG = LogFactory.getLog(DropIndexOperator.class);
-    private final LongList cleanupColumnVersions = new LongList();
     private final LongList rollbackColumnVersions = new LongList();
-    private final MessageBus messageBus;
-    private final FilesFacade ff;
-    private final TableWriter tableWriter;
-    private final Path path;
     private final Path other;
-    private final int rootLen;
 
-    public DropIndexOperator(FilesFacade ff, MessageBus messageBus, TableWriter tableWriter, Path path, Path other, int rootLen) {
-        this.tableWriter = tableWriter;
-        this.ff = ff;
-        this.messageBus = messageBus;
-        this.path = path;
+    public DropIndexOperator(
+            CairoConfiguration configuration,
+            MessageBus messageBus,
+            TableWriter tableWriter,
+            Path path,
+            Path other,
+            int rootLen
+    ) {
+        super(LOG, configuration, messageBus, tableWriter, path, rootLen);
         this.other = other;
-        this.rootLen = rootLen;
     }
 
     public void executeDropIndex(CharSequence columnName, int columnIndex) {
-        final int partitionBy = tableWriter.getPartitionBy();
-        final int partitionCount = tableWriter.getPartitionCount();
+        int partitionBy = tableWriter.getPartitionBy();
+        int partitionCount = tableWriter.getPartitionCount();
         try {
+            updateColumnIndexes.clear();
             cleanupColumnVersions.clear();
             rollbackColumnVersions.clear();
             for (int pIndex = 0; pIndex < partitionCount; pIndex++) {
-                final long pTimestamp = tableWriter.getPartitionTimestamp(pIndex);
-                final long pVersion = tableWriter.getPartitionNameTxn(pIndex);
-                final long columnVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
-                final long columnTop = tableWriter.getColumnTop(pTimestamp, columnIndex, -1L);
+                long pTimestamp = tableWriter.getPartitionTimestamp(pIndex);
+                long pVersion = tableWriter.getPartitionNameTxn(pIndex);
+                long columnVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
+                long columnTop = tableWriter.getColumnTop(pTimestamp, columnIndex, -1L);
 
                 // bump up column version, metadata will be updated later
                 tableWriter.upsertColumnVersion(pTimestamp, columnIndex, columnTop);
@@ -86,20 +82,21 @@ public class DropIndexOperator {
                 }
 
                 // add to cleanup tasks, the index will be removed in due time
-                cleanupColumnVersions.add(columnVersion, pTimestamp, pVersion, columnIndex);
-                rollbackColumnVersions.add(columnDropIndexVersion, pTimestamp, pVersion, columnIndex);
+                updateColumnIndexes.add(columnIndex);
+                cleanupColumnVersions.add(columnIndex, columnVersion, pTimestamp, pVersion);
+                rollbackColumnVersions.add(columnIndex, columnDropIndexVersion, pTimestamp, pVersion);
             }
         } catch (Throwable th) {
             LOG.error().$("Could not DROP INDEX: ").$(th.getMessage()).$();
             tableWriter.rollbackUpdate();
 
-            // cleanup successful links
+            // cleanup successful links prior to the failed link operation
             int limit = rollbackColumnVersions.size();
             if (limit / 4 < partitionCount) {
                 for (int i = 0; i < limit; i += 4) {
-                    final long columnDropIndexVersion = rollbackColumnVersions.getQuick(i);
-                    final long pTimestamp = rollbackColumnVersions.getQuick(i + 1);
-                    final long partitionNameTxn = rollbackColumnVersions.getQuick(i + 2);
+                    final long columnDropIndexVersion = rollbackColumnVersions.getQuick(i + 1);
+                    final long pTimestamp = rollbackColumnVersions.getQuick(i + 2);
+                    final long partitionNameTxn = rollbackColumnVersions.getQuick(i + 3);
                     partitionDFile(other, rootLen, partitionBy, pTimestamp, partitionNameTxn, columnName, columnDropIndexVersion);
                     if (!ff.remove(other)) {
                         LOG.info().$("Please remove this file \"").$(other).$('"').I$();
@@ -110,66 +107,6 @@ public class DropIndexOperator {
         } finally {
             path.trimTo(rootLen);
             other.trimTo(rootLen);
-        }
-    }
-
-    public void purgeOldColumnIndexVersions() {
-        try {
-            if (cleanupColumnVersions.size() < 4) {
-                return;
-            }
-
-            final int columnIndex = (int) cleanupColumnVersions.getQuick(3);
-
-            final TableWriterMetadata writerMetadata = tableWriter.getMetadata();
-            final String tableName = tableWriter.getTableName();
-            final CharSequence columnName = writerMetadata.getColumnName(columnIndex);
-            final long dropIndexTxn = tableWriter.getTxn();
-
-            if (tableWriter.checkScoreboardHasReadersBeforeLastCommittedTxn()) {
-                LOG.info()
-                        .$("there are readers of the index, Please run 'VACUUM TABLE \"").$(tableName)
-                        .$("\"' [columnName=").$(columnName)
-                        .$(", dropIndexTxn=").$(dropIndexTxn)
-                        .I$();
-                return;
-            }
-
-            // submit async
-            final Sequence pubSeq = messageBus.getColumnPurgePubSeq();
-            while (true) {
-                long cursor = pubSeq.next();
-                if (cursor > -1L) {
-                    // columnVersion, partitionTimestamp, partitionNameTxn, columnIndex
-                    cleanupColumnVersions.getAndSetQuick(3, 0L); // becomes rowIndex
-                    ColumnPurgeTask task = messageBus.getColumnPurgeQueue().get(cursor);
-                    task.of(
-                            tableName,
-                            columnName,
-                            writerMetadata.getId(),
-                            (int) tableWriter.getTruncateVersion(),
-                            writerMetadata.getColumnType(columnIndex),
-                            tableWriter.getPartitionBy(),
-                            dropIndexTxn,
-                            cleanupColumnVersions
-                    );
-                    pubSeq.done(cursor);
-                    return;
-                } else if (cursor == -1L) {
-
-                    // TODO: check there are no readers and delete synchronously
-
-                    // Queue overflow
-                    LOG.error()
-                            .$("purge queue is full, Please run 'VACUUM TABLE \"").$(tableName)
-                            .$("\"' [columnName=").$(columnName)
-                            .$(", dropIndexTxn=").$(dropIndexTxn)
-                            .I$();
-                    return;
-                }
-            }
-        } finally {
-            cleanupColumnVersions.clear();
         }
     }
 

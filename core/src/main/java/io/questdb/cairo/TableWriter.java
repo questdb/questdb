@@ -589,7 +589,7 @@ public class TableWriter implements Closeable {
                     .I$();
             // drop index
             if (dropIndexOperator == null) {
-                dropIndexOperator = new DropIndexOperator(ff, messageBus, this, path, other, rootLen);
+                dropIndexOperator = new DropIndexOperator(configuration, messageBus, this, path, other, rootLen);
             }
             dropIndexOperator.executeDropIndex(columnName, columnIndex); // upserts column version in partitions
             // swap meta commit
@@ -608,8 +608,7 @@ public class TableWriter implements Closeable {
                 populateDenseIndexerList();
             }
 
-            // remove old column versions, we assume the purge will fail if there are readers and will retry again
-            dropIndexOperator.purgeOldColumnIndexVersions();
+            dropIndexOperator.purgeOldColumnVersions();
             LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
                     .$(", table=").$(tableName)
                     .$(", column=").$(columnName)
@@ -895,7 +894,7 @@ public class TableWriter implements Closeable {
 
     public UpdateOperator getUpdateOperator() {
         if (updateOperator == null) {
-            updateOperator = new UpdateOperator(configuration, messageBus, this);
+            updateOperator = new UpdateOperator(configuration, messageBus, this, path, rootLen);
         }
         return updateOperator;
     }

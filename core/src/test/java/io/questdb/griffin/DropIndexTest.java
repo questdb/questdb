@@ -162,6 +162,7 @@ public class DropIndexTest extends AbstractGriffinTest {
         final FilesFacade noHardLinksFF = new FilesFacadeImpl() {
 
             int numberOfCalls = 0;
+
             @Override
             public int hardLink(LPSZ src, LPSZ hardLink) {
                 ++numberOfCalls;
@@ -210,6 +211,9 @@ public class DropIndexTest extends AbstractGriffinTest {
                         indexBlockValueSize,
                         10
                 );
+
+                // check there are no leftover link files
+                Assert.assertEquals(0, countDFiles(configuration, tableName, 1L));
             }
         });
     }
@@ -258,7 +262,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                     0,
                     true,
                     indexBlockValueSize,
-                    4);
+                    4
+            );
             assertSql(tableName, expected);
 
             executeOperation(
@@ -279,6 +284,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                     configuration.getIndexValueBlockSize(),
                     0);
             assertSql(tableName, expected);
+            Assert.assertEquals(2, countDFiles(configuration, tableName, 1L));
         });
     }
 
@@ -460,17 +466,21 @@ public class DropIndexTest extends AbstractGriffinTest {
         });
     }
 
-    private void dropIndexOfIndexedColumn(int partitionedBy, boolean isIndexed, int indexValueBockSize, int numIndexFiles ) throws Exception {
+    private void dropIndexOfIndexedColumn(int partitionedBy, boolean isIndexed, int indexValueBockSize, int numIndexFiles) throws Exception {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
             String createStatement = CREATE_TABLE_STMT;
+            int expectedDFiles = -1;
             switch (partitionedBy) {
                 case PartitionBy.NONE:
+                    expectedDFiles = 1;
                     break;
                 case PartitionBy.HOUR:
                     createStatement = CREATE_TABLE_STMT + " PARTITION BY HOUR";
+                    expectedDFiles = 5;
                     break;
                 case PartitionBy.DAY:
                     createStatement = CREATE_TABLE_STMT + " PARTITION BY DAY";
+                    expectedDFiles = 2;
                     break;
                 default:
                     Assert.fail("unsupported partitionBy type");
@@ -505,6 +515,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                     configuration.getIndexValueBlockSize(),
                     0
             );
+            // check links have been created
+            Assert.assertEquals(expectedDFiles, countDFiles(configuration, tableName, 1L));
         });
     }
 
@@ -539,27 +551,55 @@ public class DropIndexTest extends AbstractGriffinTest {
                 Assert.assertEquals(isColumnIndexed, metadata.isColumnIndexed(columnIndex));
                 Assert.assertEquals(indexValueBlockSize, metadata.getIndexValueBlockCapacity(columnIndex));
             }
-        }
-        if (isColumnIndexed) {
-            try {
-                Assert.assertEquals(expectedIndexFiles, countIndexFiles(configuration, tableName));
-            } catch (IOException e) {
-                Assert.fail("could not count index files");
+            if (isColumnIndexed) {
+                try {
+                    Assert.assertEquals(expectedIndexFiles, countIndexFiles(configuration, tableName, expectedColumnVersion));
+                } catch (IOException e) {
+                    Assert.fail("could not count index files");
+                }
             }
         }
     }
 
-    private static long countIndexFiles(CairoConfiguration config, String tableName) throws IOException {
+    private static long countIndexFiles(CairoConfiguration config, String tableName, long txn) throws IOException {
         final java.nio.file.Path tablePath = FileSystems.getDefault().getPath((String) config.getRoot(), tableName);
         return Files.find(
                 tablePath,
                 Integer.MAX_VALUE,
-                (filePath, _attrs) -> isIndexRelatedFile(tablePath, filePath)
+                (filePath, _attrs) -> isIndexFile(tablePath, filePath, txn)
         ).count();
     }
 
-    private static boolean isIndexRelatedFile(java.nio.file.Path tablePath, java.nio.file.Path filePath) {
+    private static long countDFiles(CairoConfiguration config, String tableName, long txn) throws IOException {
+        final java.nio.file.Path tablePath = FileSystems.getDefault().getPath((String) config.getRoot(), tableName);
+        return Files.find(
+                tablePath,
+                Integer.MAX_VALUE,
+                (filePath, _attrs) -> isDFile(tablePath, filePath, txn)
+        ).count();
+    }
+
+    private static boolean isIndexFile(java.nio.file.Path tablePath, java.nio.file.Path filePath, long txn) {
         final String fn = filePath.getFileName().toString();
-        return !filePath.getParent().equals(tablePath) && (fn.endsWith(".k") || fn.endsWith(".v"));
+        boolean isIndexFile = !filePath.getParent().equals(tablePath);
+        if (!isIndexFile) {
+            return false;
+        }
+        String K = ".k";
+        String V = ".v";
+        if (txn > 0) {
+            K = K + "." + txn;
+            V = V + "." + txn;
+        }
+        return fn.endsWith(K) || fn.endsWith(V);
+    }
+
+    private static boolean isDFile(java.nio.file.Path tablePath, java.nio.file.Path filePath, long txn) {
+        final String fn = filePath.getFileName().toString();
+        boolean isDFile = !filePath.getParent().equals(tablePath);
+        if (!isDFile) {
+            return false;
+        }
+        return fn.endsWith(txn < 1 ? ".d" : ".d." + txn);
     }
 }
