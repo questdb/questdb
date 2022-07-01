@@ -2238,7 +2238,7 @@ public class TableWriter implements Closeable {
                         .$(", errno=").$(e.getErrno())
                         .$(']').$();
                 if (!ff.remove(path)) {
-                    LOG.error()
+                    LOG.critical()
                             .$("could not remove '").utf8(path).$("'. Please remove MANUALLY.")
                             .$("[errno=").$(ff.errno())
                             .$(']').$();
