@@ -3091,10 +3091,10 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean rename(LPSZ name, LPSZ to) {
+                public int rename(LPSZ name, LPSZ to) {
                     if (Chars.endsWith(name, "b.i") || Chars.endsWith(name, "b.d")) {
                         counter++;
-                        return false;
+                        return Files.FILES_RENAME_ERR_OTHER;
                     }
                     return super.rename(name, to);
                 }

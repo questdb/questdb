@@ -46,6 +46,10 @@ public final class Files {
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
     private static LongHashSet openFds;
 
+    public static final int FILES_RENAME_ERR_OK = 0;
+    public static final int FILES_RENAME_ERR_EXDEV = 1;
+    public static final int FILES_RENAME_ERR_OTHER = 2;
+
     private Files() {
     } // Prevent construction.
 
@@ -296,7 +300,7 @@ public final class Files {
         return remove(lpsz.address());
     }
 
-    public static boolean rename(LPSZ oldName, LPSZ newName) {
+    public static int rename(LPSZ oldName, LPSZ newName) {
         return rename(oldName.address(), newName.address());
     }
 
@@ -405,7 +409,7 @@ public final class Files {
 
     private native static boolean setLastModified(long lpszName, long millis);
 
-    private static native boolean rename(long lpszOld, long lpszNew);
+    private static native int rename(long lpszOld, long lpszNew);
 
     static {
         Os.init();

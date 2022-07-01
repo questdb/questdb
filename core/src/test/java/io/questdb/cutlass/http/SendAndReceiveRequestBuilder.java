@@ -412,4 +412,8 @@ public class SendAndReceiveRequestBuilder {
                 String response
         ) throws InterruptedException;
     }
+
+    public static String responseWithCode(String code) {
+        return ResponseHeaders.replace("200 OK", code);
+    }
 }

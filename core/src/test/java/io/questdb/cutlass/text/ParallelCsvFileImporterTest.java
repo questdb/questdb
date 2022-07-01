@@ -28,6 +28,7 @@ import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
+import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
 import io.questdb.griffin.*;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
@@ -38,7 +39,6 @@ import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -46,8 +46,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 
-import static org.hamcrest.CoreMatchers.containsString;
-import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.CoreMatchers.*;
 
 public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
@@ -1017,9 +1016,9 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testWhenImportFailsWhenMovingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
+            public int rename(LPSZ from, LPSZ to) {
                 if (from.toString().endsWith("1972-09" + File.separator)) {
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
             }
@@ -1082,9 +1081,9 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testWhenImportFailsWhenMovingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
+            public int rename(LPSZ from, LPSZ to) {
                 if (from.toString().endsWith("1972-09" + File.separator)) {
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
             }
@@ -1610,13 +1609,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testWhenRenameIsBrokenImportStillWorks() throws Exception {
         FilesFacade brokenRename = new FilesFacadeImpl() {
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return false;
-            }
-
-            @Override
-            public int errno() {
-                return (Os.type == Os.WINDOWS ? Os.WinErrno.ERROR_NOT_SAME_DEVICE : Os.Errno.EXDEV);
+            public int rename(LPSZ from, LPSZ to) {
+                return Files.FILES_RENAME_ERR_EXDEV;
             }
         };
         executeWithPool(4, 8, brokenRename, this::importAllIntoNew);
@@ -1667,12 +1661,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportAllTypesIntoExistingTableBrokenRename() throws Exception {
         FilesFacade brokenRename = new FilesFacadeImpl() {
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return false;
-            }
-            @Override
-            public int errno() {
-                return (Os.type == Os.WINDOWS ? Os.WinErrno.ERROR_NOT_SAME_DEVICE : Os.Errno.EXDEV);
+            public int rename(LPSZ from, LPSZ to) {
+                return Files.FILES_RENAME_ERR_EXDEV;
             }
         };
         executeWithPool(4, 8, brokenRename, this::importAllIntoExisting);
@@ -1775,6 +1765,26 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     "select line, ts, d, description from " + tableName + " limit -10",
                     "ts", true, false, true);
         });
+    }
+
+    @Test
+    public void testAssignPartitionsToWorkers() {
+        ObjList<PartitionInfo> partitions = new ObjList<>();
+
+        partitions.add(new PartitionInfo(1, "A", 10));
+        partitions.add(new PartitionInfo(2, "B", 70));
+        partitions.add(new PartitionInfo(3, "C", 50));
+        partitions.add(new PartitionInfo(4, "D", 100));
+        partitions.add(new PartitionInfo(5, "E", 5));
+
+        int tasks = ParallelCsvFileImporter.assignPartitions(partitions, 2);
+
+        MatcherAssert.assertThat(partitions, equalTo(new ObjList<PartitionInfo>(new PartitionInfo(1, "A", 10, 0),
+                new PartitionInfo(4, "D", 100, 0),
+                new PartitionInfo(5, "E", 5, 0),
+                new PartitionInfo(2, "B", 70, 1),
+                new PartitionInfo(3, "C", 50, 1))));
+        MatcherAssert.assertThat(tasks, equalTo(2));
     }
 
     static ObjList<IndexChunk> list(IndexChunk... chunks) {

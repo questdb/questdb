@@ -96,11 +96,11 @@ public class TableBackupTest {
             }
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
+            public int rename(LPSZ from, LPSZ to) {
                 if (renameErrno != -1) {
                     nextErrno = renameErrno;
                     renameErrno = -1;
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
             }

@@ -246,7 +246,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean rename(LPSZ from, LPSZ to) {
+    public int rename(LPSZ from, LPSZ to) {
         return Files.rename(from, to);
     }
 

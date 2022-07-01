@@ -476,7 +476,7 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.instance(0).put("Rename target exists");
         }
 
-        if (!ff.rename(path, otherPath)) {
+        if (ff.rename(path, otherPath) != Files.FILES_RENAME_ERR_OK) {
             int error = ff.errno();
             LOG.error().$("rename failed [from='").$(path).$("', to='").$(otherPath).$("', error=").$(error).$(']').$();
             throw CairoException.instance(error).put("Rename failed");

@@ -1920,10 +1920,11 @@ public class SqlCompiler implements Closeable {
                 textLoader.clear();
                 Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
             }
+
+            LOG.info().$("copied").$();
         } catch (TextException e) {
             LOG.error().$((Throwable) e).$();
-        } finally {
-            LOG.info().$("copied").$();
+            throw SqlException.$(0, e.getMessage());
         }
     }
 

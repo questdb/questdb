@@ -102,7 +102,7 @@ public interface FilesFacade {
 
     boolean remove(LPSZ name);
 
-    boolean rename(LPSZ from, LPSZ to);
+    int rename(LPSZ from, LPSZ to);
 
     int rmdir(Path name);
 
