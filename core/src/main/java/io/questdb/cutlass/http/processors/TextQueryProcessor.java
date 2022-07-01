@@ -335,10 +335,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
     }
 
-    private LogRecord error(TextQueryProcessorState state) {
-        return LOG.error().$('[').$(state.getFd()).$("] ");
-    }
-
     private LogRecord critical(TextQueryProcessorState state) {
         return LOG.critical().$('[').$(state.getFd()).$("] ");
     }
