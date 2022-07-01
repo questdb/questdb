@@ -89,18 +89,4 @@ public class UdpLineChannelTest {
             }
         });
     }
-
-    @Test
-    public void testDoubleClose() throws Exception {
-        NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-        TestUtils.assertMemoryLeak(() -> {
-            try {
-                new UdpLineChannel(nf, 1, 1, 9000, 10);
-                fail("the channel should fail to instantiate when NetworkFacade fails to create a new socket");
-            } catch (LineSenderException ignored) {
-                // expected
-            }
-        });
-    }
-
 }
