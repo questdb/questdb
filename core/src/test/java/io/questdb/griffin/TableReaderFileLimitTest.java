@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -34,12 +35,22 @@ public class TableReaderFileLimitTest extends AbstractGriffinTest {
 
     @Test
     public void testFileLimitExceeded() throws Exception {
-        testLimitExceeded(150, Integer.MAX_VALUE, "OS file limit set too low to open all files on table");
+        try {
+            testLimitExceeded(150, Integer.MAX_VALUE, "OS file limit set too low to open all files on table");
+        } finally {
+            FilesFacadeImpl.INSTANCE.setOpenFileLimit(defaultOpenFileLimit);
+            FilesFacadeImpl.INSTANCE.setMapLimit(defaultMapLimit);
+        }
     }
 
     @Test
     public void testMapLimitExceeded() throws Exception {
-        testLimitExceeded(Integer.MAX_VALUE, 150, "OS vm.max_map_count set too low to map all files of the table");
+        try {
+            testLimitExceeded(Integer.MAX_VALUE, 150, "OS vm.max_map_count set too low to map all files of the table");
+        } finally {
+            FilesFacadeImpl.INSTANCE.setOpenFileLimit(defaultOpenFileLimit);
+            FilesFacadeImpl.INSTANCE.setMapLimit(defaultMapLimit);
+        }
     }
 
     private void testLimitExceeded(int fileLimit, int mapLimit, String errorMessage) throws Exception {

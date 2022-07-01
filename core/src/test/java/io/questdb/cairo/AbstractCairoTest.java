@@ -101,6 +101,8 @@ public class AbstractCairoTest {
     protected static double columnPurgeRetryDelayMultiplier = -1;
     protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
+    protected static long defaultOpenFileLimit = 64 * (1L << 10);
+    protected static long defaultMapLimit = 64 * (1L << 10);
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -337,8 +339,8 @@ public class AbstractCairoTest {
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
         SharedRandom.RANDOM.set(new Rnd());
-        FilesFacadeImpl.INSTANCE.setOpenFileLimit(64 * (1L << 10));
-        FilesFacadeImpl.INSTANCE.setMapLimit(64 * (1L << 10));
+        FilesFacadeImpl.INSTANCE.setOpenFileLimit(defaultOpenFileLimit);
+        FilesFacadeImpl.INSTANCE.setMapLimit(defaultMapLimit);
     }
 
     @After
