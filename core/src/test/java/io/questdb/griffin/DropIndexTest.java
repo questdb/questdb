@@ -590,24 +590,35 @@ public class DropIndexTest extends AbstractGriffinTest {
     }
 
     private long countDFiles(String tableName, String columnName, long txn) throws IOException {
-        return countFiles((String) configuration.getRoot(), tableName, columnName, txn, DropIndexTest::isDFile);
+        return countFiles((String) configuration.getRoot(), tableName, columnName, txn, DropIndexTest::isDataFile);
     }
 
     @FunctionalInterface
     public interface FileChecker {
-        boolean isTargetFile(java.nio.file.Path tablePath, java.nio.file.Path filePath, String columnName, long txn);
+        boolean accepts(java.nio.file.Path tablePath, java.nio.file.Path filePath, String columnName, long txn);
     }
 
-    private static long countFiles(String rootPath, String tableName, String columnName, long txn, FileChecker fileChecker) throws IOException {
+    private static long countFiles(
+            String rootPath,
+            String tableName,
+            String columnName,
+            long txn,
+            FileChecker fileChecker
+    ) throws IOException {
         final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(rootPath, tableName);
         return Files.find(
                 tablePath,
                 Integer.MAX_VALUE,
-                (filePath, _attrs) -> fileChecker.isTargetFile(tablePath, filePath, columnName, txn)
+                (filePath, _attrs) -> fileChecker.accepts(tablePath, filePath, columnName, txn)
         ).count();
     }
 
-    private static boolean isIndexFile(java.nio.file.Path tablePath, java.nio.file.Path filePath, String columnName, long txn) {
+    private static boolean isIndexFile(
+            java.nio.file.Path tablePath,
+            java.nio.file.Path filePath,
+            String columnName,
+            long txn
+    ) {
         final String fn = filePath.getFileName().toString();
         boolean isIndexFile = !filePath.getParent().equals(tablePath);
         if (!isIndexFile) {
@@ -622,7 +633,12 @@ public class DropIndexTest extends AbstractGriffinTest {
         return fn.endsWith(K) || fn.endsWith(V);
     }
 
-    private static boolean isDFile(java.nio.file.Path tablePath, java.nio.file.Path filePath, String columnName, long txn) {
+    private static boolean isDataFile(
+            java.nio.file.Path tablePath,
+            java.nio.file.Path filePath,
+            String columnName,
+            long txn
+    ) {
         final String fn = filePath.getFileName().toString();
         boolean isDFile = !filePath.getParent().equals(tablePath);
         if (!isDFile) {
