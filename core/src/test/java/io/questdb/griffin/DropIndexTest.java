@@ -364,6 +364,9 @@ public class DropIndexTest extends AbstractGriffinTest {
                 Assert.fail(fail.getMessage());
             }
 
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
             // no more readers from this point
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
@@ -457,6 +460,9 @@ public class DropIndexTest extends AbstractGriffinTest {
                 endLatch.await();
             }
 
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
                     path,
@@ -506,8 +512,6 @@ public class DropIndexTest extends AbstractGriffinTest {
                     isIndexed,
                     indexValueBockSize
             );
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
 
             compile(dropIndexStatement(tableName, columnName), sqlExecutionContext);
             path.trimTo(tablePathLen);
