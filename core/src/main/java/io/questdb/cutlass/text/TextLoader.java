@@ -172,12 +172,23 @@ public class TextLoader extends TextLoaderBase {
             setDelimiter(textDelimiterScanner.scan(lo, hi));
         }
 
-        textMetadataDetector.of(textMetadataParser.getColumnNames(), textMetadataParser.getColumnTypes(), forceHeaders);
+        textMetadataDetector.of(
+                getTableName(),
+                textMetadataParser.getColumnNames(),
+                textMetadataParser.getColumnTypes(),
+                forceHeaders
+        );
         parse(lo, hi, textAnalysisMaxLines, textMetadataDetector);
         textMetadataDetector.evaluateResults(getParsedLineCount(), getErrorLineCount());
         restart(textMetadataDetector.isHeader());
 
-        prepareTable(cairoSecurityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), path, typeManager);
+        prepareTable(
+                cairoSecurityContext,
+                textMetadataDetector.getColumnNames(),
+                textMetadataDetector.getColumnTypes(),
+                path,
+                typeManager
+        );
         parse(lo, hi, Integer.MAX_VALUE);
         state = LOAD_DATA;
     }

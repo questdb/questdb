@@ -78,7 +78,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
     }
 
     public void evaluateResults(long lineCount, long errorCount) {
-        // try calculate types counting all rows
+        // try to calculate types counting all rows
         // if all types come up as strings, reduce lineCount by one and retry
         // if some fields come up as non-string after subtracting row - we have a header
         if ((calcTypes(lineCount - errorCount, true) && !calcTypes(lineCount - errorCount - 1, false)) || forceHeader) {
@@ -117,7 +117,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
         return header;
     }
 
-    public void of(ObjList<CharSequence> names, ObjList<TypeAdapter> types, boolean forceHeader) {
+    public void of(CharSequence tableName, ObjList<CharSequence> names, ObjList<TypeAdapter> types, boolean forceHeader) {
         clear();
         if (names != null && types != null) {
             final int n = names.size();
@@ -127,6 +127,7 @@ public class TextMetadataDetector implements TextLexer.Listener, Mutable, Closea
             }
         }
         this.forceHeader = forceHeader;
+        this.tableName = tableName;
     }
 
     @Override

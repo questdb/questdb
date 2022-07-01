@@ -197,10 +197,13 @@ public class CsvFileIndexer implements Closeable, Mutable {
         long partitionKey = partitionFloorMethod.floor(timestampValue);
         long mapKey = partitionKey / Timestamps.HOUR_MICROS; //remove trailing zeros to avoid excessive collisions in hashmap 
 
-        IndexOutputFile target = outputFiles.get(mapKey);
-        if (target == null) {
+        final IndexOutputFile target;
+        int keyIndex = outputFiles.keyIndex(mapKey);
+        if (keyIndex > -1) {
             target = prepareTargetFile(partitionKey);
-            outputFiles.put(mapKey, target);
+            outputFiles.putAt(keyIndex, mapKey, target);
+        } else {
+            target = outputFiles.valueAt(keyIndex);
         }
 
         target.putEntry(timestampValue, lengthAndOffset, length);
@@ -224,7 +227,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     static class IndexOutputFile {
-        MemoryPMARImpl memory;
+        final MemoryPMARImpl memory = new MemoryPMARImpl();
         long indexChunkSize;
         long dataSize;//partition data size in bytes 
         int chunkNumber;
@@ -240,7 +243,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
 
         public void nextChunk(FilesFacade ff, Path path) {
-            if (memory != null) {
+            if (memory.isOpen()) {
                 sortAndClose(ff);
             }
 
@@ -256,31 +259,24 @@ public class CsvFileIndexer implements Closeable, Mutable {
                 LOG.debug().$("created import index file ").$(path).$();
             }
 
-            if (this.memory == null) {
-                this.memory = new MemoryPMARImpl(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-            } else {
-                this.memory.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
-            }
+            this.memory.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
         }
 
         void putEntry(long timestamp, long offset, long length) {
-            memory.putLong(timestamp);
-            memory.putLong(offset);
+            memory.putLong128(timestamp, offset);
             indexChunkSize += INDEX_ENTRY_SIZE;
             dataSize += length;
         }
 
         private void sortAndClose(FilesFacade ff) {
-            if (memory != null) {
+            if (memory.isOpen()) {
                 sort(ff, memory.getFd(), indexChunkSize);
-
                 memory.close(true, Vm.TRUNCATE_TO_POINTER);
             }
         }
 
         public void close(FilesFacade ff) {
             sortAndClose(ff);
-            memory = null;
         }
     }
 
@@ -502,7 +498,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         if (eol) {
             this.fieldLo = 0;
         } else if (fieldIndex == timestampIndex) {
-            rollField(lo, hi);
+            rollField(hi);
             useFieldRollBuf = true;
         }
     }
@@ -518,7 +514,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     //roll timestamp field if it's split over  read buffer boundaries  
-    private void rollField(long lo, long hi) {
+    private void rollField(long hi) {
         // lastLineStart is an offset from 'lo'
         // 'lo' is the address of incoming buffer
         int length = (int) (hi - fieldLo);
@@ -615,8 +611,12 @@ public class CsvFileIndexer implements Closeable, Mutable {
             closeOutputFiles();
         }
 
-        LOG.info().$("Finished indexing chunk [start=").$(chunkLo).$(",end=").$(chunkHi)
-                .$(",lines=").$(lineCount - lineNumber).$(",errors=").$(errorCount).$(']').$();
+        LOG.info()
+                .$("finished chunk [chunkLo=").$(chunkLo)
+                .$(", chunkHi=").$(chunkHi)
+                .$(", lines=").$(lineCount - lineNumber)
+                .$(", errors=").$(errorCount)
+                .I$();
     }
 
     private void collectPartitionStats(LongList partitionKeysAndSizes) {
@@ -645,58 +645,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
         if (fileBufferPtr < 0) {
             fileBufferPtr = Unsafe.malloc(bufferLength, MemoryTag.NATIVE_DEFAULT);
         }
-    }
-
-    public void countQuotes(long chunkStart, long chunkEnd, LongList chunkStats, int chunkIndex) throws TextException {
-        long offset = chunkStart;
-
-        //output vars
-        long quotes = 0;
-        long[] nlCount = new long[2];
-        long[] nlFirst = new long[]{-1, -1};
-
-        long read;
-        long ptr;
-        long hi;
-
-        openInputFile();
-        prepareBuffer();
-
-        do {
-            long leftToRead = Math.min(chunkEnd - offset, bufferLength);
-            read = (int) ff.read(fd, fileBufferPtr, leftToRead, offset);
-            if (read < 1) {
-                break;
-            }
-            hi = fileBufferPtr + read;
-            ptr = fileBufferPtr;
-
-            while (ptr < hi) {
-                final byte c = Unsafe.getUnsafe().getByte(ptr++);
-                if (c == '"') {
-                    quotes++;
-                } else if (c == '\n') {
-                    nlCount[(int) (quotes & 1)]++;
-                    if (nlFirst[(int) (quotes & 1)] == -1) {
-                        nlFirst[(int) (quotes & 1)] = offset + (ptr - fileBufferPtr);
-                    }
-                }
-            }
-
-            offset += read;
-        } while (offset < chunkEnd);
-
-        if (read < 0 || offset < chunkEnd) {
-            throw TextException.$("could not read import file [errno=").put(ff.errno()).put(']');
-        }
-
-        chunkStats.set(chunkIndex, quotes);
-        chunkStats.set(chunkIndex + 1, nlCount[0]);
-        chunkStats.set(chunkIndex + 2, nlCount[1]);
-        chunkStats.set(chunkIndex + 3, nlFirst[0]);
-        chunkStats.set(chunkIndex + 4, nlFirst[1]);
-
-        LOG.info().$("Finished checking boundaries in chunk [no=").$(chunkIndex / 5).$(']').$();
     }
 
     public static void sort(FilesFacade ff, final long srcFd, long srcSize) {
