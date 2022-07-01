@@ -50,34 +50,8 @@ public interface CharSink extends CharSinkBase {
         return this;
     }
 
-    default CharSink encodeUtf8ForJson(CharSequence cs) {
-        return encodeUtf8ForJson(cs, 0, cs.length());
-    }
-
-    default CharSink encodeUtf8ForJson(CharSequence cs, int lo, int hi) {
-        int i = lo;
-        while (i < hi) {
-            char c = cs.charAt(i++);
-            if (c < 32) {
-                put("\\u00");
-                put(c >> 4);
-                put(Numbers.hexDigits[c & 15]);
-            } else if (c < 128) {
-                putUtf8Special(c);
-            } else {
-                i = putUtf8Internal(cs, hi, i, c);
-            }
-        }
-        return this;
-    }
-
     default CharSink encodeUtf8AndQuote(CharSequence cs) {
         put('\"').encodeUtf8(cs).put('\"');
-        return this;
-    }
-
-    default CharSink encodeUtf8AndQuoteForJson(CharSequence cs) {
-        put('\"').encodeUtf8ForJson(cs).put('\"');
         return this;
     }
 

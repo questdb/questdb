@@ -275,8 +275,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     static void prepareExceptionJson(HttpChunkedResponseSocket socket, int position, CharSequence message, CharSequence query) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.put('{').
-                putQuoted("query").put(':').encodeUtf8AndQuoteForJson(query == null ? "" : query).put(',').
-                putQuoted("error").put(':').encodeUtf8AndQuoteForJson(message).put(',').
+                putQuoted("query").put(':').encodeUtf8AndQuote(query == null ? "" : query).put(',').
+                putQuoted("error").put(':').encodeUtf8AndQuote(message).put(',').
                 putQuoted("position").put(':').put(position);
         socket.put('}');
         socket.sendChunk(true);
@@ -286,7 +286,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (str == null) {
             r.put("null");
         } else {
-            r.encodeUtf8AndQuoteForJson(str);
+            r.encodeUtf8AndQuote(str);
         }
     }
 
@@ -408,7 +408,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponseSocket socket = getHttpConnectionContext().getChunkedResponseSocket();
             JsonQueryProcessor.header(socket, "", 400);
             socket.put('{').
-                    putQuoted("query").put(':').encodeUtf8AndQuoteForJson(query).put(',').
+                    putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',').
                     putQuoted("error").put(':').putQuoted("empty column in list");
             socket.put('}');
             socket.sendChunk(true);
@@ -472,7 +472,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
             int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
             socket.put('{').
-                    putQuoted("name").put(':').encodeUtf8AndQuoteForJson(columnNames.getQuick(columnIndex)).
+                    putQuoted("name").put(':').encodeUtf8AndQuote(columnNames.getQuick(columnIndex)).
                     put(',').
                     putQuoted("type").put(':').putQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType));
             socket.put('}');
@@ -503,7 +503,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             return false;
         }
         socket.bookmark();
-        socket.put('{').putQuoted("query").put(':').encodeUtf8AndQuoteForJson(query);
+        socket.put('{').putQuoted("query").put(':').encodeUtf8AndQuote(query);
         socket.put(',').putQuoted("columns").put(':').put('[');
         columnIndex = 0;
         return true;

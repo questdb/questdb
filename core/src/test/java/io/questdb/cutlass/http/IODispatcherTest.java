@@ -3134,7 +3134,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testJsonQueryJsonReplaceZero() throws Exception {
+    public void testJsonQueryJsonEncodeZeroCharacter() throws Exception {
         testJsonQuery0(2, engine -> {
             // create table with all column types
             createTestTable(
@@ -3160,8 +3160,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0101\r\n" +
-                            "{\"query\":\"y\",\"columns\":[{\"name\":\"j\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"]],\"count\":20}\r\n" +
+                            "0179\r\n" +
+                            "{\"query\":\"y\",\"columns\":[{\"name\":\"j\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"]],\"count\":20}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     100,
