@@ -595,7 +595,6 @@ public class TableWriter implements Closeable {
             // swap meta commit
             metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, META_FLAG_BIT_NOT_INDEXED, defaultIndexValueBlockSize);
             swapMetaFile(columnName); // bumps structure version, this is in effect a commit
-
             // refresh metadata
             TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
             columnMetadata.setIndexed(false);
@@ -607,7 +606,7 @@ public class TableWriter implements Closeable {
                 Misc.free(columnIndexer);
                 populateDenseIndexerList();
             }
-
+            // purge old column versions
             dropIndexOperator.purgeOldColumnVersions();
             LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
                     .$(", table=").$(tableName)

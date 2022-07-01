@@ -268,7 +268,6 @@ public class DropIndexTest extends AbstractGriffinTest {
                     indexBlockValueSize
             );
             assertSql(tableName, expected);
-
             executeOperation(
                     dropIndexStatement(tableName, columnName),
                     CompiledQuery.ALTER,
@@ -579,21 +578,6 @@ public class DropIndexTest extends AbstractGriffinTest {
                 Assert.assertEquals(isColumnIndexed, metadata.isColumnIndexed(columnIndex));
                 Assert.assertEquals(indexValueBlockSize, metadata.getIndexValueBlockCapacity(columnIndex));
             }
-        }
-    }
-
-    private void checkFiles(
-            String tableName,
-            String columnName,
-            long expectedIndexVersion,
-            int expectedIndexFiles
-    ) {
-        try {
-            Assert.assertEquals(expectedIndexFiles, countIndexFiles(tableName, columnName, expectedIndexVersion));
-            // check links have been created
-            Assert.assertEquals(expectedIndexFiles / 2, countDFiles(tableName, columnName, expectedIndexVersion));
-        } catch (IOException e) {
-            Assert.fail("could not count index files");
         }
     }
 

@@ -89,6 +89,8 @@ public class DropIndexOperator extends PurgingOperator {
         } catch (Throwable th) {
             LOG.error().$("Could not DROP INDEX: ").$(th.getMessage()).$();
             tableWriter.rollbackUpdate();
+            updateColumnIndexes.clear();
+            cleanupColumnVersions.clear();
 
             // cleanup successful links prior to the failed link operation
             int limit = rollbackColumnVersions.size();
