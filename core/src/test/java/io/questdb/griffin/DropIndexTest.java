@@ -52,18 +52,21 @@ public class DropIndexTest extends AbstractGriffinTest {
     private static final String CREATE_TABLE_STMT = "CREATE TABLE " + tableName + " AS (" +
             "    SELECT" +
             "        rnd_symbol('ALPHA', 'OMEGA', 'THETA') " + columnName + "," +
-            "        rnd_int() temperature," +
+            "        rnd_symbol('HOT', 'COLD') temperature," +
+            "        rnd_int() degrees," +
             "        timestamp_sequence(0, 21600000000) ts" + // 6h
             "    FROM long_sequence(5)" +
-            "), INDEX(" + columnName + " CAPACITY " + indexBlockValueSize + ") TIMESTAMP(ts)"; // 5 partitions by hour, 2 partitions by day
+            "), INDEX(" + columnName + " CAPACITY " + indexBlockValueSize + ")" +
+            ", INDEX(temperature CAPACITY 4) " +
+            "TIMESTAMP(ts)"; // 5 partitions by hour, 2 partitions by day
 
 
-    private static final String expected = "sensor_id\ttemperature\tts\n" +
-            "ALPHA\t315515118\t1970-01-01T00:00:00.000000Z\n" +
-            "OMEGA\t-727724771\t1970-01-01T06:00:00.000000Z\n" +
-            "THETA\t-948263339\t1970-01-01T12:00:00.000000Z\n" +
-            "THETA\t592859671\t1970-01-01T18:00:00.000000Z\n" +
-            "ALPHA\t-847531048\t1970-01-02T00:00:00.000000Z\n";
+    private static final String expected = "sensor_id\ttemperature\tdegrees\tts\n" +
+            "ALPHA\tHOT\t1548800833\t1970-01-01T00:00:00.000000Z\n" +
+            "THETA\tCOLD\t-948263339\t1970-01-01T06:00:00.000000Z\n" +
+            "THETA\tCOLD\t1868723706\t1970-01-01T12:00:00.000000Z\n" +
+            "OMEGA\tHOT\t-2041844972\t1970-01-01T18:00:00.000000Z\n" +
+            "OMEGA\tCOLD\t806715481\t1970-01-02T00:00:00.000000Z\n";
 
 
     protected static SqlExecutionContext sqlExecutionContext2;
@@ -160,7 +163,6 @@ public class DropIndexTest extends AbstractGriffinTest {
     @Test
     public void testDropIndexFailsWhenHardLinkFails() throws Exception {
         final FilesFacade noHardLinksFF = new FilesFacadeImpl() {
-
             int numberOfCalls = 0;
 
             @Override
@@ -189,8 +191,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                     0,
                     0,
                     true,
-                    indexBlockValueSize,
-                    10
+                    indexBlockValueSize
             );
             try {
                 compile(dropIndexStatement(tableName, columnName), sqlExecutionContext);
@@ -208,12 +209,15 @@ public class DropIndexTest extends AbstractGriffinTest {
                         0,
                         0,
                         true,
-                        indexBlockValueSize,
-                        10
+                        indexBlockValueSize
                 );
 
+                // check the original files exist
+                Assert.assertEquals(5, countDFiles(tableName, columnName, 0L));
+                Assert.assertEquals(10, countIndexFiles(tableName, columnName, 0L));
+
                 // check there are no leftover link files
-                Assert.assertEquals(0, countDFiles(configuration, tableName, 1L));
+                Assert.assertEquals(0, countDFiles(tableName, columnName, 1L));
             }
         });
     }
@@ -261,8 +265,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                     0,
                     0,
                     true,
-                    indexBlockValueSize,
-                    4
+                    indexBlockValueSize
             );
             assertSql(tableName, expected);
 
@@ -281,10 +284,11 @@ public class DropIndexTest extends AbstractGriffinTest {
                     1,
                     1,
                     false,
-                    configuration.getIndexValueBlockSize(),
-                    0);
+                    configuration.getIndexValueBlockSize()
+            );
             assertSql(tableName, expected);
-            Assert.assertEquals(2, countDFiles(configuration, tableName, 1L));
+            Assert.assertEquals(2, countDFiles(tableName, columnName, 1L));
+            Assert.assertEquals(0, countIndexFiles(tableName, columnName, 1L));
         });
     }
 
@@ -301,8 +305,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                     0,
                     0,
                     true,
-                    indexBlockValueSize,
-                    10);
+                    indexBlockValueSize
+            );
 
             final CyclicBarrier startBarrier = new CyclicBarrier(2);
             final SOCountDownLatch endLatch = new SOCountDownLatch(1);
@@ -327,13 +331,14 @@ public class DropIndexTest extends AbstractGriffinTest {
                                         "sensors",
                                         "sensor_id",
                                         PartitionBy.HOUR,
-                                        isIndexed ? 1 : 2,
-                                        isIndexed ? 0 : 1,
-                                        isIndexed ? 0 : 1,
+                                        isIndexed ? 1L : 2L,
+                                        isIndexed ? 0L : 1L,
+                                        isIndexed ? 0L : 1L,
                                         isIndexed,
-                                        isIndexed ? 32 : defaultIndexValueBlockSize,
-                                        10 // while there is a reader they cannot be deleted
+                                        isIndexed ? 32 : defaultIndexValueBlockSize
                                 );
+                                Assert.assertEquals(5, countDFiles(tableName, columnName, isIndexed ? 0L : 1L));
+                                Assert.assertEquals(isIndexed ? 10 : 0, countIndexFiles(tableName, columnName, isIndexed ? 0L : 1L));
                                 if (isIndexed) {
                                     startBarrier.await(); // release writer
                                 }
@@ -367,13 +372,16 @@ public class DropIndexTest extends AbstractGriffinTest {
                     "sensors",
                     "sensor_id",
                     PartitionBy.HOUR,
-                    2,
-                    1,
-                    1,
+                    2L,
+                    1L,
+                    1L,
                     false,
-                    defaultIndexValueBlockSize,
-                    10 // a reader prevented these files from being removed right away
+                    defaultIndexValueBlockSize
             );
+            Assert.assertEquals(5, countDFiles(tableName, columnName, 0L));
+            Assert.assertEquals(10, countIndexFiles(tableName, columnName, 0L));
+            Assert.assertEquals(5, countDFiles(tableName, columnName, 1L));
+            Assert.assertEquals(0, countIndexFiles(tableName, columnName, 1L));
 
             // clean after
             compile("VACUUM TABLE sensors", sqlExecutionContext);
@@ -387,10 +395,11 @@ public class DropIndexTest extends AbstractGriffinTest {
                     1,
                     1,
                     false,
-                    defaultIndexValueBlockSize,
-                    0 // index files are gone
+                    defaultIndexValueBlockSize
             );
             assertSql(tableName, expected); // content is not gone
+            Assert.assertEquals(0, countDFiles(tableName, columnName, 0L));
+            Assert.assertEquals(0, countIndexFiles(tableName, columnName, 0L));
         });
     }
 
@@ -407,8 +416,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                     0,
                     0,
                     true,
-                    indexBlockValueSize,
-                    10);
+                    indexBlockValueSize
+            );
 
             final CyclicBarrier startBarrier = new CyclicBarrier(2);
             final SOCountDownLatch endLatch = new SOCountDownLatch(1);
@@ -459,10 +468,11 @@ public class DropIndexTest extends AbstractGriffinTest {
                     1,
                     1,
                     false,
-                    defaultIndexValueBlockSize,
-                    0
+                    defaultIndexValueBlockSize
             );
             assertSql(tableName, expected); // content is not gone
+            Assert.assertEquals(5, countDFiles(tableName, columnName, 1L));
+            Assert.assertEquals(0, countIndexFiles(tableName, columnName, 1L));
         });
     }
 
@@ -495,8 +505,7 @@ public class DropIndexTest extends AbstractGriffinTest {
                     0,
                     0,
                     isIndexed,
-                    indexValueBockSize,
-                    numIndexFiles
+                    indexValueBockSize
             );
             engine.releaseAllWriters();
             engine.releaseAllReaders();
@@ -512,11 +521,31 @@ public class DropIndexTest extends AbstractGriffinTest {
                     1,
                     1,
                     false,
-                    configuration.getIndexValueBlockSize(),
-                    0
+                    configuration.getIndexValueBlockSize()
             );
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
             // check links have been created
-            Assert.assertEquals(expectedDFiles, countDFiles(configuration, tableName, 1L));
+            Assert.assertEquals(expectedDFiles, countDFiles(tableName, columnName, 1L));
+            // check index files have been dropped
+            Assert.assertEquals(0, countIndexFiles(tableName, columnName, 1L));
+
+            checkMetadataAndTxn(
+                    path,
+                    tableName,
+                    "temperature",
+                    partitionedBy,
+                    2,
+                    1,
+                    1,
+                    true,
+                    4
+            );
+            // other indexed column remains intact
+            Assert.assertEquals(expectedDFiles, countDFiles(tableName, "temperature", 0L));
+            // check index files have been dropped
+            Assert.assertEquals(expectedDFiles * 2, countIndexFiles(tableName, "temperature", 0L));
         });
     }
 
@@ -533,8 +562,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             long expectedStructureVersion,
             long expectedColumnVersion,
             boolean isColumnIndexed,
-            int indexValueBlockSize,
-            int expectedIndexFiles
+            int indexValueBlockSize
     ) {
         try (TxReader txReader = new TxReader(ff)) {
             txReader.ofRO(path, partitionedBy);
@@ -551,42 +579,54 @@ public class DropIndexTest extends AbstractGriffinTest {
                 Assert.assertEquals(isColumnIndexed, metadata.isColumnIndexed(columnIndex));
                 Assert.assertEquals(indexValueBlockSize, metadata.getIndexValueBlockCapacity(columnIndex));
             }
-            if (isColumnIndexed) {
-                try {
-                    Assert.assertEquals(expectedIndexFiles, countIndexFiles(configuration, tableName, expectedColumnVersion));
-                } catch (IOException e) {
-                    Assert.fail("could not count index files");
-                }
-            }
         }
     }
 
-    private static long countIndexFiles(CairoConfiguration config, String tableName, long txn) throws IOException {
-        final java.nio.file.Path tablePath = FileSystems.getDefault().getPath((String) config.getRoot(), tableName);
+    private void checkFiles(
+            String tableName,
+            String columnName,
+            long expectedIndexVersion,
+            int expectedIndexFiles
+    ) {
+        try {
+            Assert.assertEquals(expectedIndexFiles, countIndexFiles(tableName, columnName, expectedIndexVersion));
+            // check links have been created
+            Assert.assertEquals(expectedIndexFiles / 2, countDFiles(tableName, columnName, expectedIndexVersion));
+        } catch (IOException e) {
+            Assert.fail("could not count index files");
+        }
+    }
+
+    private long countIndexFiles(String tableName, String columnName, long txn) throws IOException {
+        return countFiles((String) configuration.getRoot(), tableName, columnName, txn, DropIndexTest::isIndexFile);
+    }
+
+    private long countDFiles(String tableName, String columnName, long txn) throws IOException {
+        return countFiles((String) configuration.getRoot(), tableName, columnName, txn, DropIndexTest::isDFile);
+    }
+
+    @FunctionalInterface
+    public interface FileChecker {
+        boolean isTargetFile(java.nio.file.Path tablePath, java.nio.file.Path filePath, String columnName, long txn);
+    }
+
+    private static long countFiles(String rootPath, String tableName, String columnName, long txn, FileChecker fileChecker) throws IOException {
+        final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(rootPath, tableName);
         return Files.find(
                 tablePath,
                 Integer.MAX_VALUE,
-                (filePath, _attrs) -> isIndexFile(tablePath, filePath, txn)
+                (filePath, _attrs) -> fileChecker.isTargetFile(tablePath, filePath, columnName, txn)
         ).count();
     }
 
-    private static long countDFiles(CairoConfiguration config, String tableName, long txn) throws IOException {
-        final java.nio.file.Path tablePath = FileSystems.getDefault().getPath((String) config.getRoot(), tableName);
-        return Files.find(
-                tablePath,
-                Integer.MAX_VALUE,
-                (filePath, _attrs) -> isDFile(tablePath, filePath, txn)
-        ).count();
-    }
-
-    private static boolean isIndexFile(java.nio.file.Path tablePath, java.nio.file.Path filePath, long txn) {
+    private static boolean isIndexFile(java.nio.file.Path tablePath, java.nio.file.Path filePath, String columnName, long txn) {
         final String fn = filePath.getFileName().toString();
         boolean isIndexFile = !filePath.getParent().equals(tablePath);
         if (!isIndexFile) {
             return false;
         }
-        String K = ".k";
-        String V = ".v";
+        String K = columnName + ".k";
+        String V = columnName + ".v";
         if (txn > 0) {
             K = K + "." + txn;
             V = V + "." + txn;
@@ -594,12 +634,12 @@ public class DropIndexTest extends AbstractGriffinTest {
         return fn.endsWith(K) || fn.endsWith(V);
     }
 
-    private static boolean isDFile(java.nio.file.Path tablePath, java.nio.file.Path filePath, long txn) {
+    private static boolean isDFile(java.nio.file.Path tablePath, java.nio.file.Path filePath, String columnName, long txn) {
         final String fn = filePath.getFileName().toString();
         boolean isDFile = !filePath.getParent().equals(tablePath);
         if (!isDFile) {
             return false;
         }
-        return fn.endsWith(txn < 1 ? ".d" : ".d." + txn);
+        return fn.endsWith(columnName + (txn < 1 ? ".d" : ".d." + txn));
     }
 }

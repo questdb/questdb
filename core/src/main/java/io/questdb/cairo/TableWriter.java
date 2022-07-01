@@ -603,7 +603,7 @@ public class TableWriter implements Closeable {
             // remove indexer
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
             if (columnIndexer != null) {
-                indexers.remove(columnIndex);
+                indexers.setQuick(columnIndex, null);
                 Misc.free(columnIndexer);
                 populateDenseIndexerList();
             }
