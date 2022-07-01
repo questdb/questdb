@@ -635,8 +635,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 srcPath.trimTo(srcPlen).concat(partitionName).slash$();
                 dstPath.trimTo(dstPlen).concat(partitionName).slash$();
 
-                if (!ff.rename(srcPath, dstPath)) {
-                    if (Os.translateSysErrno(ff.errno()) == Os.Errno.EXDEV) {
+                int res = ff.rename(srcPath, dstPath);
+                if (res != Files.FILES_RENAME_ERR_OK) {
+                    if (res == Files.FILES_RENAME_ERR_EXDEV) {
                         LOG.info().$(srcPath).$(" and ").$(dstPath).$(" are not on the same mounted filesystem. Partitions will be copied.").$();
 
                         if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {

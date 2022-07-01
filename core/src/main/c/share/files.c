@@ -407,9 +407,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_openCleanRW
     return -1;
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename
         (JNIEnv *e, jclass cls, jlong lpszOld, jlong lpszNew) {
-    return (jboolean) (rename((const char *) lpszOld, (const char *) lpszNew) == 0);
+    int err = rename((const char *) lpszOld, (const char *) lpszNew);
+    if (err != 0) {
+        return errno == EXDEV ? FILES_RENAME_ERR_EXDEV : FILES_RENAME_ERR_OTHER;
+    }
+    return FILES_RENAME_ERR_OK;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_exists0

@@ -866,9 +866,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
+            public int rename(LPSZ from, LPSZ to) {
                 if (Chars.endsWith(to, "2020-01-01") && counter.decrementAndGet() == 0) {
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
             }

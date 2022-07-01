@@ -51,6 +51,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -229,8 +230,10 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 5;
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --count <= 0) && super.rename(from, to);
+            public int rename(LPSZ from, LPSZ to) {
+                return (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
+                        && super.rename(from, to) == Files.FILES_RENAME_ERR_OK ? Files.FILES_RENAME_ERR_OK
+                        : Files.FILES_RENAME_ERR_OTHER;
             }
         };
         testAddColumnRecoverableFault(ff);
@@ -348,8 +351,10 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return !(Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME) && --count == 0) && super.rename(from, to);
+            public int rename(LPSZ from, LPSZ to) {
+                return !(Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME) && --count == 0)
+                        && super.rename(from, to) == Files.FILES_RENAME_ERR_OK ? Files.FILES_RENAME_ERR_OK
+                        : Files.FILES_RENAME_ERR_OTHER;
             }
         });
     }
@@ -384,8 +389,11 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return (!Chars.contains(from, TableUtils.META_PREV_FILE_NAME) || --count <= 0) && (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --toCount <= 0) && super.rename(from, to);
+            public int rename(LPSZ from, LPSZ to) {
+                return (!Chars.contains(from, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
+                        && (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --toCount <= 0)
+                        && super.rename(from, to) == Files.FILES_RENAME_ERR_OK ? Files.FILES_RENAME_ERR_OK
+                        : Files.FILES_RENAME_ERR_OTHER;
             }
         });
     }
@@ -508,8 +516,10 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return !Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME) && super.rename(from, to);
+            public int rename(LPSZ from, LPSZ to) {
+                return !Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME)
+                        && super.rename(from, to) == Files.FILES_RENAME_ERR_OK ? Files.FILES_RENAME_ERR_OK
+                        : Files.FILES_RENAME_ERR_OTHER;
             }
         }
         testAddColumnErrorFollowedByRepairFail(new X());
@@ -2226,9 +2236,9 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 2;
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
+            public int rename(LPSZ from, LPSZ to) {
                 if (Chars.endsWith(to, TableUtils.META_FILE_NAME) && count-- > 0) {
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
             }
@@ -2380,10 +2390,10 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            public boolean rename(LPSZ name, LPSZ to) {
+            public int rename(LPSZ name, LPSZ to) {
                 if (Chars.endsWith(name, "supplier.d")) {
                     count++;
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(name, to);
             }
@@ -2463,9 +2473,9 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 2;
 
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
+            public int rename(LPSZ from, LPSZ to) {
                 if (Chars.endsWith(to, TableUtils.META_FILE_NAME) && count-- > 0) {
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
             }
@@ -4243,10 +4253,10 @@ public class TableWriterTest extends AbstractCairoTest {
         boolean hit = false;
 
         @Override
-        public boolean rename(LPSZ from, LPSZ to) {
+        public int rename(LPSZ from, LPSZ to) {
             if (Chars.endsWith(from, TableUtils.META_SWAP_FILE_NAME)) {
                 hit = true;
-                return false;
+                return Files.FILES_RENAME_ERR_OTHER;
             }
             return super.rename(from, to);
         }
@@ -4261,10 +4271,10 @@ public class TableWriterTest extends AbstractCairoTest {
         boolean hit = false;
 
         @Override
-        public boolean rename(LPSZ from, LPSZ to) {
+        public int rename(LPSZ from, LPSZ to) {
             if (Chars.contains(to, TableUtils.META_PREV_FILE_NAME)) {
                 hit = true;
-                return false;
+                return Files.FILES_RENAME_ERR_OTHER;
             }
             return super.rename(from, to);
         }

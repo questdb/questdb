@@ -1016,9 +1016,9 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testWhenImportFailsWhenMovingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
+            public int rename(LPSZ from, LPSZ to) {
                 if (from.toString().endsWith("1972-09" + File.separator)) {
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
             }
@@ -1081,9 +1081,9 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testWhenImportFailsWhenMovingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
+            public int rename(LPSZ from, LPSZ to) {
                 if (from.toString().endsWith("1972-09" + File.separator)) {
-                    return false;
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
             }
@@ -1609,13 +1609,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testWhenRenameIsBrokenImportStillWorks() throws Exception {
         FilesFacade brokenRename = new FilesFacadeImpl() {
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return false;
-            }
-
-            @Override
-            public int errno() {
-                return (Os.type == Os.WINDOWS ? Os.WinErrno.ERROR_NOT_SAME_DEVICE : Os.Errno.EXDEV);
+            public int rename(LPSZ from, LPSZ to) {
+                return Files.FILES_RENAME_ERR_EXDEV;
             }
         };
         executeWithPool(4, 8, brokenRename, this::importAllIntoNew);
@@ -1666,12 +1661,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testImportAllTypesIntoExistingTableBrokenRename() throws Exception {
         FilesFacade brokenRename = new FilesFacadeImpl() {
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                return false;
-            }
-            @Override
-            public int errno() {
-                return (Os.type == Os.WINDOWS ? Os.WinErrno.ERROR_NOT_SAME_DEVICE : Os.Errno.EXDEV);
+            public int rename(LPSZ from, LPSZ to) {
+                return Files.FILES_RENAME_ERR_EXDEV;
             }
         };
         executeWithPool(4, 8, brokenRename, this::importAllIntoExisting);

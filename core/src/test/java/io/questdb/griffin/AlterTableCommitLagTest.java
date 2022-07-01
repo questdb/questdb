@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
@@ -210,9 +211,9 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                     int attempt = 0;
 
                     @Override
-                    public boolean rename(LPSZ from, LPSZ to) {
+                    public int rename(LPSZ from, LPSZ to) {
                         if (Chars.endsWith(to, TableUtils.META_FILE_NAME) && attempt++ == 0) {
-                            return false;
+                            return Files.FILES_RENAME_ERR_OTHER;
                         }
                         return super.rename(from, to);
                     }
@@ -249,9 +250,9 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
 
                 ff = new FilesFacadeImpl() {
                     @Override
-                    public boolean rename(LPSZ from, LPSZ to) {
+                    public int rename(LPSZ from, LPSZ to) {
                         if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
-                            return false;
+                            return Files.FILES_RENAME_ERR_OTHER;
                         }
                         return super.rename(from, to);
                     }
@@ -291,9 +292,9 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
 
                 ff = new FilesFacadeImpl() {
                     @Override
-                    public boolean rename(LPSZ from, LPSZ to) {
+                    public int rename(LPSZ from, LPSZ to) {
                         if (Chars.endsWith(to, TableUtils.META_FILE_NAME)) {
-                            return false;
+                            return Files.FILES_RENAME_ERR_OTHER;
                         }
                         return super.rename(from, to);
                     }
