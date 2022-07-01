@@ -34,10 +34,7 @@ import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Rnd;
-import io.questdb.std.RostiAllocFacade;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -340,6 +337,8 @@ public class AbstractCairoTest {
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
         SharedRandom.RANDOM.set(new Rnd());
+        FilesFacadeImpl.INSTANCE.setOpenFileLimit(64 * (1L << 10));
+        FilesFacadeImpl.INSTANCE.setMapLimit(64 * (1L << 10));
     }
 
     @After

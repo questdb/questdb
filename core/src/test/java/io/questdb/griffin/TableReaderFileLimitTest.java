@@ -34,12 +34,12 @@ public class TableReaderFileLimitTest extends AbstractGriffinTest {
 
     @Test
     public void testFileLimitExceeded() throws Exception {
-        testLimitExceeded(150, Integer.MAX_VALUE, "OS file limit set too low to open all files on table x");
+        testLimitExceeded(150, Integer.MAX_VALUE, "OS file limit set too low to open all files on table");
     }
 
     @Test
     public void testMapLimitExceeded() throws Exception {
-        testLimitExceeded(Integer.MAX_VALUE, 150, "OS vm.max_map_count set too low to map all files of the table x");
+        testLimitExceeded(Integer.MAX_VALUE, 150, "OS vm.max_map_count set too low to map all files of the table");
     }
 
     private void testLimitExceeded(int fileLimit, int mapLimit, String errorMessage) throws Exception {
@@ -59,6 +59,7 @@ public class TableReaderFileLimitTest extends AbstractGriffinTest {
             ) {
                 TestUtils.createPopulateTable(tableName, compiler, sqlExecutionContext, model, 20, "2022-02-24", 10);
             }
+            engine.releaseInactive();
 
             // 10 files x 10 partitions = 100 files to open / map estimation
             FilesFacade ff = configuration.getFilesFacade();
@@ -74,7 +75,7 @@ public class TableReaderFileLimitTest extends AbstractGriffinTest {
                     reader2.checkOsLimitsCapacity();
                     Assert.fail();
                 } catch (CairoException ex) {
-                    TestUtils.assertEquals(ex.getFlyweightMessage(), errorMessage);
+                    TestUtils.assertContains(ex.getFlyweightMessage(), errorMessage);
                 }
 
                 // reader1 has all files open, should be good to re-check

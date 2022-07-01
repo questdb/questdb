@@ -54,9 +54,15 @@ public interface FilesFacade {
 
     long getLastModified(LPSZ path);
 
+    long getOpenFileLimit();
+
     long getFileLimit();
 
     long getMapCapacity();
+
+    long getMapCount();
+
+    long getMapLimit();
 
     long getOpenFileCapacity();
 

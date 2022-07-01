@@ -44,6 +44,7 @@ public final class Files {
     public static final char SEPARATOR;
 
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
+    private static final AtomicLong MAP_COUNT = new AtomicLong();
     private static LongHashSet openFds;
 
     private Files() {
@@ -147,6 +148,10 @@ public final class Files {
         return getLastModified(lpsz.address());
     }
 
+    public static long getMapCount() {
+        return MAP_COUNT.get();
+    }
+
     public static String getOpenFdDebugInfo() {
         if (openFds != null) {
             return openFds.toString();
@@ -225,6 +230,7 @@ public final class Files {
         long address = mmap0(fd, len, offset, flags, baseAddress);
         if (address != -1) {
             Unsafe.recordMemAlloc(len, memoryTag);
+            MAP_COUNT.incrementAndGet();
         }
         return address;
     }
@@ -243,6 +249,7 @@ public final class Files {
     public static void munmap(long address, long len, int memoryTag) {
         if (address != 0 && munmap0(address, len) != -1) {
             Unsafe.recordMemAlloc(-len, memoryTag);
+            MAP_COUNT.decrementAndGet();
         }
     }
 

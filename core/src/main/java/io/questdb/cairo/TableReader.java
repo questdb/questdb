@@ -161,12 +161,20 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         int columnFilesToMap = partitions * filePerPartitionCount;
-        if (ff.getMapCapacity() < columnFilesToMap) {
-            throw CairoException.instance(0).put("OS vm.max_map_count set too low to map all files of the table ").put(tableName);
-        }
+        if (columnFilesToMap > 0) {
+            if (ff.getMapCapacity() < columnFilesToMap) {
+                throw CairoException.instance(0).put("OS vm.max_map_count set too low to map all files of the table [table=").put(tableName)
+                        .put(", limit=").put(ff.getMapLimit())
+                        .put(", used=").put(ff.getMapCount())
+                        .put(']');
+            }
 
-        if (ff.getOpenFileCapacity() < columnFilesToMap) {
-            throw CairoException.instance(0).put("OS file limit set too low to open all files on table ").put(tableName);
+            if (ff.getOpenFileCapacity() < columnFilesToMap) {
+                throw CairoException.instance(0).put("OS file limit set too low to open all files on table [table=").put(tableName)
+                        .put(", limit=").put(ff.getOpenFileLimit())
+                        .put(", opened=").put(ff.getOpenFileCount())
+                        .put(']');
+            }
         }
     }
 
