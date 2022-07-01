@@ -54,6 +54,7 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.File;
 import java.io.InputStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -135,6 +136,56 @@ public class IODispatcherTest {
                             "GET /query?query=SELECT%201%20as%20%22select%22 HTTP/1.1\r\n",
                             "67\r\n"
                                     + "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n"
+                                    + "00\r\n"
+                                    + "\r\n"
+                    );
+                });
+    }
+
+    @Test
+    public void queryReturnsEncodedNonprintableCharacters() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> {
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n",
+                            "72\r\n" +
+                                    "{\"query\":\"selecT 'NH\\u001c'; \",\"columns\":[{\"name\":\"NH\\u001c\",\"type\":\"STRING\"}],\"dataset\":[[\"NH\\u001c\"]],\"count\":1}\r\n"
+                                    + "00\r\n"
+                                    + "\r\n"
+                    );
+                });
+    }
+
+    @Test
+    public void copyQueryReturnsErrorMessageWhenValidationFails() throws Exception {
+        final String baseDir = new File("./src/test/resources/csv/").getAbsolutePath();
+        CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir) {
+            @Override
+            public CharSequence getInputRoot() {
+                return baseDir;
+            }
+
+            @Override
+            public CharSequence getInputWorkRoot() {
+                return temp.getRoot().getAbsolutePath();
+            }
+        };
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(configuration, engine -> {
+                    new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
+                            "GET /query?query=copy%20test%20from%20%27test-quotes-small.csv%27%20with%20parallel%3B%20 HTTP/1.1\r\n",
+                            SendAndReceiveRequestBuilder.responseWithCode("400 Bad request") +
+                                    "93\r\n" +
+                                    "{\"query\":\"copy test from 'test-quotes-small.csv' with parallel; \",\"error\":\"partition by unit must be set when importing to new table\",\"position\":0}\r\n"
                                     + "00\r\n"
                                     + "\r\n"
                     );

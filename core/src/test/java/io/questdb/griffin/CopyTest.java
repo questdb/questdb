@@ -28,6 +28,8 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.model.CopyModel;
+import org.hamcrest.CoreMatchers;
+import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -333,6 +335,18 @@ public class CopyTest extends AbstractGriffinTest {
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
 
             assertQuotesTableContent();
+        });
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionWhenValidationFails() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT; ", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("partition by unit must be set when importing to new table"));
+            }
         });
     }
 
