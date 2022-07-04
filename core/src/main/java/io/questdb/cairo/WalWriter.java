@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
@@ -47,6 +48,7 @@ public class WalWriter implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalWriter.class);
     private static final Runnable NOOP = () -> {
     };
+    private final TableDescriptor tableDescriptor = new TableDescriptorImpl();
     private final ObjList<MemoryMA> columns;
     private final ObjList<MapWriter> symbolMapWriters;
     private final ObjList<MapWriter> denseSymbolMapWriters;
@@ -60,9 +62,11 @@ public class WalWriter implements Closeable {
     private final int mkDirMode;
     private final String tableName;
     private final String walName;
+    private final int walId;
     private final WalWriterMetadata metadata;
     private final WalWriterEvents events;
     private final Sequencer sequencer;
+    private final CairoEngine engine;
     private final CairoConfiguration configuration;
     private final ObjList<Runnable> nullSetters;
     private final RowImpl row = new RowImpl();
@@ -79,21 +83,24 @@ public class WalWriter implements Closeable {
     private WalWriterRollStrategy rollStrategy = new WalWriterRollStrategy() {
     };
 
-    public WalWriter(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, Sequencer sequencer, TableDescriptor tableDescriptor) {
+    public WalWriter(CairoEngine engine, String tableName, int walId, Sequencer sequencer) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
         this.sequencer = sequencer;
-        this.configuration = configuration;
+        this.engine = engine;
+        this.configuration = engine.getConfiguration();
         this.millisecondClock = configuration.getMillisecondClock();
         this.mkDirMode = configuration.getMkDirMode();
         this.ff = configuration.getFilesFacade();
-        this.tableName = Chars.toString(tableName);
-        this.walName = Chars.toString(walName);
+        this.tableName = tableName;
+        this.walName = WAL_NAME_BASE + walId;
+        this.walId = walId;
         this.path = new Path().of(configuration.getRoot()).concat(tableName).concat(walName);
         this.rootLen = path.length();
 
         try {
             lock();
 
+            sequencer.populateDescriptor(tableDescriptor);
             columnCount = tableDescriptor.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
             symbolMapWriters = new ObjList<>(columnCount);
@@ -148,7 +155,8 @@ public class WalWriter implements Closeable {
             columnCount++;
             configureSymbolMapWriter(index, name, type, null);
 
-            events.addColumn(sequencer.nextTxn(), index, name, type);
+            final long txn = sequencer.addColumn(index, name, type);
+            events.addColumn(txn, index, name, type);
             LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
         } catch (Throwable e) {
             throw new CairoError(e);
@@ -215,7 +223,8 @@ public class WalWriter implements Closeable {
             metadata.removeColumn(index);
             removeColumn(index);
 
-            events.removeColumn(sequencer.nextTxn(), index);
+            final long txn = sequencer.removeColumn(index);
+            events.removeColumn(txn, index);
             LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
         } catch (Throwable e) {
             throw new CairoError(e);
@@ -322,8 +331,14 @@ public class WalWriter implements Closeable {
     }
 
     private void configureSymbolTable(TableDescriptor descriptor) {
-        for (int i = 0; i < columnCount; i++) {
-            configureSymbolMapWriter(i, descriptor.getColumnName(i), descriptor.getColumnType(i), descriptor.getSymbolMapReader(i));
+        // we should not need the reader here, this will not work in a distributed environment
+        // what if the wal is created on a node where the table itself is not present?
+        // maybe copying symbols from existing table is not the best or sequencer needs an API for it
+        // but then sequencer will have to keep track of all symbol tables
+        try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+            for (int i = 0; i < columnCount; i++) {
+                configureSymbolMapWriter(i, descriptor.getColumnName(i), descriptor.getColumnType(i), reader.getSymbolMapReader(i));
+            }
         }
     }
 
@@ -373,6 +388,7 @@ public class WalWriter implements Closeable {
         freeSymbolMapWriters();
         Misc.free(symbolMapMem);
         freeColumns(truncate);
+        sequencer.unregisterWal(walId);
 
         try {
             releaseLock(!truncate);
@@ -482,10 +498,25 @@ public class WalWriter implements Closeable {
         rollSegmentOnNextRow = rollSegment;
         final long transientRowCount = getTransientRowCount();
         if (transientRowCount != 0) {
-            events.data(sequencer.nextTxn(), startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+            events.data(nextTxn(), startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
             resetDataTxnProperties();
         }
         return transientRowCount;
+    }
+
+    private long nextTxn() {
+        long txn;
+        while ((txn = sequencer.nextTxn(tableDescriptor.getSchemaVersion())) == Sequencer.NO_TXN) {
+            // update table descriptor to get the latest version of the schema
+            sequencer.populateDescriptor(tableDescriptor);
+
+            // check schema differences !!!
+            // might need to reject transaction here depending on schema diff!
+
+            // then update metadata
+            //metadata.of(tableDescriptor);
+        }
+        return txn;
     }
 
     private void resetDataTxnProperties() {

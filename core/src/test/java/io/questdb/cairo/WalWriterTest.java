@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -1821,12 +1822,11 @@ public class WalWriterTest extends AbstractGriffinTest {
     }
 
     private void createTable(TableModel model) {
-        TableUtils.createTable(
-                configuration,
+        engine.createTableUnsafe(
+                AllowAllCairoSecurityContext.INSTANCE,
                 model.getMem(),
                 model.getPath(),
-                model,
-                1
+                model
         );
     }
 

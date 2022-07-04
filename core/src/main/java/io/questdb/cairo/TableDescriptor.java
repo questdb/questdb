@@ -25,9 +25,10 @@
 package io.questdb.cairo;
 
 public interface TableDescriptor {
+    int getSchemaVersion();
     int getColumnCount();
     int getTimestampIndex();
-    CharSequence getColumnName(int columnIndex);
+    String getColumnName(int columnIndex);
     int getColumnType(int columnIndex);
-    SymbolMapReader getSymbolMapReader(int columnIndex);
+    void of(SequencerMetadata source);
 }

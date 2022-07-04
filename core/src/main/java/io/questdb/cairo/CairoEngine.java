@@ -42,7 +42,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
@@ -58,7 +57,6 @@ import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
 public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public static final String BUSY_READER = "busyReader";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
-    private final ThreadLocal<TableDescriptorImpl> tlTableDescriptor = new ThreadLocal<>(TableDescriptorImpl::new);
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
@@ -119,6 +117,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     @TestOnly
     public boolean clear() {
+        tableRegistry.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         return b1 & b2;
@@ -162,6 +161,24 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
+    // the below should become an external service on its own eventually
+    // should also hold a global map of txn -> event location (walId+segmentId+numOfEventInSegment)
+    ////////////////////////////////////////////////////////////////
+    private final ConcurrentHashMap<Sequencer> tableRegistry = new ConcurrentHashMap<>();
+
+    private void registerTable(TableStructure struct) {
+        final CharSequence tableName = struct.getTableName();
+        final SequencerImpl sequencer = new SequencerImpl(this, tableName);
+        final Sequencer other = tableRegistry.putIfAbsent(tableName, sequencer);
+        if (other != null) {
+            // table exists check should always fail before this check
+            throw CairoException.instance(0).put("Table has already been registered '").put(tableName).put("'");
+        }
+        sequencer.of(struct);
+    }
+    ////////////////////////////////////////////////////////////////
+
+    // caller has to acquire the lock before this method is called and release the lock after the call
     public void createTableUnsafe(
             CairoSecurityContext securityContext,
             MemoryMARW mem,
@@ -169,6 +186,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             TableStructure struct
     ) {
         securityContext.checkWritePermission();
+        registerTable(struct);
+
+        // only create the table after it has been registered
         TableUtils.createTable(
                 configuration,
                 mem,
@@ -344,10 +364,15 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     @Override
     public WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName) {
         securityContext.checkWritePermission();
-        try (TableReader reader = getReader(securityContext, tableName)) {
-            final TableDescriptor descriptor = tlTableDescriptor.get().of(reader);
-            return writerPool.getWalWriterFactory(tableName).createWal(descriptor);
+        Sequencer sequencer = tableRegistry.get(tableName);
+        if (sequencer == null) {
+            sequencer = new SequencerImpl(this, tableName);
+            final Sequencer other = tableRegistry.putIfAbsent(tableName, sequencer);
+            if (other != null) {
+                sequencer = other;
+            }
         }
+        return sequencer.createWal();
     }
 
     public CharSequence lock(

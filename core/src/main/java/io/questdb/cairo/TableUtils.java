@@ -61,7 +61,6 @@ public final class TableUtils {
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
-    public static final String SEQ_TXN_FILE_NAME = "_seq_txn.d";
     public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
