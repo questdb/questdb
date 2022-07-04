@@ -1210,10 +1210,10 @@ public class TableWriter implements Closeable {
             return false;
         }
 
+        long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
         commitDetachPartition(timestamp, minTimestamp);
 
         // Call O3 methods to remove check TxnScoreboard and remove partition directly
-        long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
         o3PartitionRemoveCandidates.clear();
         o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
         o3ProcessPartitionRemoveCandidates();
@@ -2769,8 +2769,7 @@ public class TableWriter implements Closeable {
             final long sortedTimestampsAddr = o3TimestampMem.getAddress();
 
             // ensure there is enough size
-            // TODO: this check is wrong
-            // assert o3TimestampMem.getAppendOffset() == o3RowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
+            assert o3TimestampMem.getAppendOffset() == o3RowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
             if (o3RowCount > 600 || !o3QuickSortEnabled) {
                 o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
                 Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
