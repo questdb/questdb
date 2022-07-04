@@ -74,7 +74,7 @@ public class WalWriter implements Closeable {
     private int columnCount;
     private long startRowCount = -1;
     private long rowCount = -1;
-    private long segmentCount = -1;
+    private long segmentId = -1;
     private long segmentStartMillis;
     private boolean txnOutOfOrder = false;
     private long txnMinTimestamp = Long.MAX_VALUE;
@@ -155,7 +155,7 @@ public class WalWriter implements Closeable {
             columnCount++;
             configureSymbolMapWriter(index, name, type, null);
 
-            final long txn = sequencer.addColumn(index, name, type);
+            final long txn = sequencer.addColumn(index, name, type, walId, segmentId);
             events.addColumn(txn, index, name, type);
             LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
         } catch (Throwable e) {
@@ -223,7 +223,7 @@ public class WalWriter implements Closeable {
             metadata.removeColumn(index);
             removeColumn(index);
 
-            final long txn = sequencer.removeColumn(index);
+            final long txn = sequencer.removeColumn(index, walId, segmentId);
             events.removeColumn(txn, index);
             LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
         } catch (Throwable e) {
@@ -505,11 +505,11 @@ public class WalWriter implements Closeable {
 
     private long nextTxn() {
         long txn;
-        while ((txn = sequencer.nextTxn(tableDescriptor.getSchemaVersion())) == Sequencer.NO_TXN) {
+        while ((txn = sequencer.nextTxn(tableDescriptor.getSchemaVersion(), walId, segmentId)) == Sequencer.NO_TXN) {
             // update table descriptor to get the latest version of the schema
             sequencer.populateDescriptor(tableDescriptor);
 
-            // check schema differences !!!
+            // check schema diff !!!
             // might need to reject transaction here depending on schema diff!
 
             // then update metadata
@@ -532,7 +532,7 @@ public class WalWriter implements Closeable {
 
     private void openNewSegment() {
         try {
-            segmentCount++;
+            segmentId++;
             rowCount = 0;
             startRowCount = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
@@ -558,7 +558,7 @@ public class WalWriter implements Closeable {
     }
 
     private int createSegmentDir() {
-        path.slash().put(segmentCount);
+        path.slash().put(segmentId);
         final int segmentPathLen = path.length();
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("Cannot create WAL segment directory: ").put(path);

@@ -29,17 +29,19 @@ import java.io.Closeable;
 public interface Sequencer extends Closeable {
     long NO_TXN = Long.MIN_VALUE;
 
+    void open();
+
     // returns next available txn number
-    long nextTxn();
+    long nextTxn(int walId, long segmentId);
 
     // returns next available txn number if schema version is the expected one, otherwise returns NO_TXN
-    long nextTxn(int expectedSchemaVersion);
+    long nextTxn(int expectedSchemaVersion, int walId, long segmentId);
 
     // returns next available txn number after alters the schema
-    long addColumn(int columnIndex, CharSequence columnName, int columnType);
+    long addColumn(int columnIndex, CharSequence columnName, int columnType, int walId, long segmentId);
 
     // returns next available txn number after alters the schema
-    long removeColumn(int columnIndex);
+    long removeColumn(int columnIndex, int walId, long segmentId);
 
     // populates the given table descriptor with the current snapshot of metadata and schema version number
     void populateDescriptor(TableDescriptor descriptor);

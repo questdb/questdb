@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
 
 import static io.questdb.cairo.TableUtils.*;
@@ -42,12 +41,13 @@ public class SequencerImpl implements Sequencer {
     private final Path path;
     private final int rootLen;
     private final SequencerMetadata metadata;
+    private final TxnCatalog catalog;
     private final IDGenerator txnGenerator;
     private final IDGenerator walIdGenerator;
 
-    SequencerImpl(CairoEngine engine, CharSequence tableName) {
+    SequencerImpl(CairoEngine engine, String tableName) {
         this.engine = engine;
-        this.tableName = Chars.toString(tableName);
+        this.tableName = tableName;
 
         final CairoConfiguration configuration = engine.getConfiguration();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -61,6 +61,8 @@ public class SequencerImpl implements Sequencer {
         walIdGenerator.open(path);
         txnGenerator = new IDGenerator(configuration, TXN_FILE_NAME);
         txnGenerator.open(path);
+        catalog = new TxnCatalog(ff);
+        catalog.open(path, rootLen, txnGenerator.getCurrentId());
     }
 
     private void createSequencerDir(FilesFacade ff, int mkDirMode) {
@@ -68,6 +70,11 @@ public class SequencerImpl implements Sequencer {
             throw CairoException.instance(ff.errno()).put("Cannot create sequencer directory: ").put(path);
         }
         path.trimTo(rootLen);
+    }
+
+    @Override
+    public void open() {
+        metadata.open(path, rootLen);
     }
 
     void of(TableStructure model) {
@@ -80,15 +87,17 @@ public class SequencerImpl implements Sequencer {
     }
 
     @Override
-    public long nextTxn() {
-        return txnGenerator.getNextId();
+    public long nextTxn(int walId, long segmentId) {
+        final long txn = txnGenerator.getNextId();
+        catalog.setEntry(txn, walId, segmentId);
+        return txn;
     }
 
     @Override
-    public long nextTxn(int expectedSchemaVersion) {
+    public long nextTxn(int expectedSchemaVersion, int walId, long segmentId) {
         schemaLock.readLock().lock();
         try {
-            return metadata.getSchemaVersion() == expectedSchemaVersion ? txnGenerator.getNextId() : NO_TXN;
+            return metadata.getSchemaVersion() == expectedSchemaVersion ? nextTxn(walId, segmentId) : NO_TXN;
         } finally {
             schemaLock.readLock().unlock();
         }
@@ -105,22 +114,22 @@ public class SequencerImpl implements Sequencer {
     }
 
     @Override
-    public long addColumn(int columnIndex, CharSequence columnName, int columnType) {
+    public long addColumn(int columnIndex, CharSequence columnName, int columnType, int walId, long segmentId) {
         schemaLock.writeLock().lock();
         try {
             metadata.addColumn(columnIndex, columnName, columnType, path, rootLen);
-            return nextTxn();
+            return nextTxn(walId, segmentId);
         } finally {
             schemaLock.writeLock().unlock();
         }
     }
 
     @Override
-    public long removeColumn(int columnIndex) {
+    public long removeColumn(int columnIndex, int walId, long segmentId) {
         schemaLock.writeLock().lock();
         try {
             metadata.removeColumn(columnIndex, path, rootLen);
-            return nextTxn();
+            return nextTxn(walId, segmentId);
         } finally {
             schemaLock.writeLock().unlock();
         }
@@ -133,9 +142,15 @@ public class SequencerImpl implements Sequencer {
 
     @Override
     public void close() {
-        Misc.free(metadata);
-        Misc.free(path);
-        Misc.free(walIdGenerator);
-        Misc.free(txnGenerator);
+        schemaLock.writeLock().lock();
+        try {
+            Misc.free(metadata);
+            Misc.free(catalog);
+            Misc.free(walIdGenerator);
+            Misc.free(txnGenerator);
+            Misc.free(path);
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
     }
 }

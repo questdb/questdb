@@ -50,8 +50,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
@@ -70,6 +68,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final SCSequence telemetrySubSeq;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final IDGenerator tableIdGenerator;
+    private final TableRegistry tableRegistry;
+
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -80,6 +80,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
         this.configuration = configuration;
         this.metrics = metrics;
+        this.tableRegistry = new TableRegistry(this);
         this.messageBus = new MessageBusImpl(configuration);
         this.writerPool = new WriterPool(configuration, messageBus, metrics);
         this.readerPool = new ReaderPool(configuration, messageBus);
@@ -119,13 +120,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     @TestOnly
     public boolean clear() {
-        // create proper clear() and close() methods on TableRegistry
-        final Set<Map.Entry<CharSequence, Sequencer>> entries =  tableRegistry.entrySet();
-        for (Map.Entry<CharSequence, Sequencer> entry: entries) {
-            entry.getValue().close();
-        }
         tableRegistry.clear();
-
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         return b1 & b2;
@@ -137,6 +132,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         Misc.free(readerPool);
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
+        tableRegistry.close();
     }
 
     public void createTable(
@@ -169,23 +165,6 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
-    // the below should become an external service on its own eventually
-    // should also hold a global map of txn -> event location (walId+segmentId+numOfEventInSegment)
-    ////////////////////////////////////////////////////////////////
-    private final ConcurrentHashMap<Sequencer> tableRegistry = new ConcurrentHashMap<>();
-
-    private void registerTable(TableStructure struct) {
-        final CharSequence tableName = struct.getTableName();
-        final SequencerImpl sequencer = new SequencerImpl(this, tableName);
-        final Sequencer other = tableRegistry.putIfAbsent(tableName, sequencer);
-        if (other != null) {
-            // table exists check should always fail before this check
-            throw CairoException.instance(0).put("Table has already been registered '").put(tableName).put("'");
-        }
-        sequencer.of(struct);
-    }
-    ////////////////////////////////////////////////////////////////
-
     // caller has to acquire the lock before this method is called and release the lock after the call
     public void createTableUnsafe(
             CairoSecurityContext securityContext,
@@ -194,7 +173,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             TableStructure struct
     ) {
         securityContext.checkWritePermission();
-        registerTable(struct);
+        tableRegistry.registerTable(struct);
 
         // only create the table after it has been registered
         TableUtils.createTable(
@@ -372,14 +351,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     @Override
     public WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName) {
         securityContext.checkWritePermission();
-        Sequencer sequencer = tableRegistry.get(tableName);
-        if (sequencer == null) {
-            sequencer = new SequencerImpl(this, tableName);
-            final Sequencer other = tableRegistry.putIfAbsent(tableName, sequencer);
-            if (other != null) {
-                sequencer = other;
-            }
-        }
+        final Sequencer sequencer = tableRegistry.getSequencer(tableName);
         return sequencer.createWal();
     }
 

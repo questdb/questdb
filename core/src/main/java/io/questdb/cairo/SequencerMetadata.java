@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
@@ -60,6 +61,21 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
         syncToMetaFile(path, pathLen);
     }
 
+    void open(Path path, int pathLen) {
+        reset();
+        try (MemoryMR metaMem = Vm.getMRInstance()) {
+            openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
+            columnNameIndexMap.clear();
+            loadSequencerMetadata(metaMem, columnMetadata, columnNameIndexMap, WalWriter.WAL_FORMAT_VERSION);
+            schemaVersion = metaMem.getInt(SEQ_META_OFFSET_SCHEMA_VERSION);
+            columnCount = metaMem.getInt(SEQ_META_OFFSET_COLUMN_COUNT);
+            timestampIndex = metaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+    }
+
     private void reset() {
         columnMetadata.clear();
         columnNameIndexMap.clear();
@@ -76,7 +92,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
         Misc.free(metaMem);
     }
 
-    void addColumn(int columnIndex, CharSequence columnName, int columnType) {
+    private void addColumn(int columnIndex, CharSequence columnName, int columnType) {
         final String name = columnName.toString();
         columnNameIndexMap.put(name, columnNameIndexMap.size());
         columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnIndex));
@@ -106,7 +122,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
             }
         }
 
-        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
+        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
 
         metaMem.putInt(WalWriter.WAL_FORMAT_VERSION);
         metaMem.putInt(schemaVersion);
