@@ -89,6 +89,7 @@ public class TableWriter implements Closeable {
     private final LongList rowValueIsNotNull = new LongList();
     private final Row regularRow = new RowImpl();
     private final int rootLen;
+    private final int detachedRootLen;
     private final MemoryMR metaMem;
     private final int partitionBy;
     private final LongList columnTops;
@@ -249,8 +250,9 @@ public class TableWriter implements Closeable {
         this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
         this.path = new Path().of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
-        this.detachedPath = new Path().of(root).concat(tableName);
         this.rootLen = path.length();
+        this.detachedPath = new Path().of(configuration.getDetachedRoot()).concat(tableName);
+        this.detachedRootLen = detachedPath.length();
         try {
             if (lock) {
                 lock();
@@ -608,7 +610,7 @@ public class TableWriter implements Closeable {
             }
 
             if (!ff.exists(path)) {
-                setPathForPartition(detachedPath.trimTo(rootLen), partitionBy, timestamp, false);
+                setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
                 detachedPath.put(DETACHED_DIR_MARKER).$();
 
                 if (ff.exists(detachedPath)) {
@@ -680,7 +682,7 @@ public class TableWriter implements Closeable {
                 }
             }
             path.trimTo(rootLen);
-            detachedPath.trimTo(rootLen);
+            detachedPath.trimTo(detachedRootLen);
         }
 
         return StatusCode.OK;
@@ -725,8 +727,8 @@ public class TableWriter implements Closeable {
 
         try {
             // partition folder
-            long pNameTxn = txWriter.getPartitionNameTxn(pIndex);
-            setPathForPartition(path, rootLen, partitionBy, timestamp, pNameTxn);
+            long partitionVersion = txWriter.getPartitionNameTxn(pIndex);
+            setPathForPartition(path, rootLen, partitionBy, timestamp, partitionVersion);
             if (!ff.exists(path.$())) {
                 LOG.error()
                         .$("partition folder does not exist [path=")
@@ -737,7 +739,10 @@ public class TableWriter implements Closeable {
             }
 
             // detached partition folder
-            setPathForPartition(detachedPath.trimTo(rootLen), partitionBy, timestamp, false);
+            if (!ff.exists(this.detachedPath.trimTo(detachedRootLen).slash$())) {
+                ff.mkdirs(this.detachedPath, configuration.getDetachedMkDirMode());
+            }
+            setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
             detachedPath.put(DETACHED_DIR_MARKER);
             int detachedPathLen = detachedPath.length();
             if (ff.exists(detachedPath.$())) {
@@ -782,8 +787,8 @@ public class TableWriter implements Closeable {
                         .$();
 
                 // undo rename
-                setPathForPartition(path, rootLen, partitionBy, timestamp, pNameTxn);
-                setPathForPartition(detachedPath.trimTo(rootLen), partitionBy, timestamp, false);
+                setPathForPartition(path, rootLen, partitionBy, timestamp, partitionVersion);
+                setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
                 detachedPath.put(DETACHED_DIR_MARKER);
                 if (!ff.rename(detachedPath.$(), path.$())) {
                     LOG.error()
@@ -797,7 +802,7 @@ public class TableWriter implements Closeable {
             }
         } finally {
             path.trimTo(rootLen);
-            detachedPath.trimTo(rootLen);
+            detachedPath.trimTo(detachedRootLen);
         }
     }
 
@@ -1220,28 +1225,6 @@ public class TableWriter implements Closeable {
         return true;
     }
 
-    private void commitDetachPartition(long timestamp, long minTimestamp) {
-        // when we want to delete first partition we must find out
-        // minTimestamp from next partition if it exists or next partition and so on
-        //
-        // when somebody removed data directories manually and then
-        // attempts to tidy up metadata with logical partition delete
-        // we have to uphold the effort and re-compute table size and its minTimestamp from
-        // what remains on disk
-
-        // find out if we are removing min partition
-        long nextMinTimestamp = minTimestamp;
-        if (timestamp == txWriter.getPartitionTimestamp(0)) {
-            nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
-        }
-        txWriter.beginPartitionSizeUpdate();
-        txWriter.removeAttachedPartitions(timestamp);
-        txWriter.setMinTimestamp(nextMinTimestamp);
-        txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
-        txWriter.bumpTruncateVersion();
-        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-    }
-
     public void renameColumn(CharSequence currentName, CharSequence newName) {
 
         checkDistressed();
@@ -1638,6 +1621,28 @@ public class TableWriter implements Closeable {
         } finally {
             r.cancel();
         }
+    }
+
+    private void commitDetachPartition(long timestamp, long minTimestamp) {
+        // when we want to delete first partition we must find out
+        // minTimestamp from next partition if it exists or next partition and so on
+        //
+        // when somebody removed data directories manually and then
+        // attempts to tidy up metadata with logical partition delete
+        // we have to uphold the effort and re-compute table size and its minTimestamp from
+        // what remains on disk
+
+        // find out if we are removing min partition
+        long nextMinTimestamp = minTimestamp;
+        if (timestamp == txWriter.getPartitionTimestamp(0)) {
+            nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
+        }
+        txWriter.beginPartitionSizeUpdate();
+        txWriter.removeAttachedPartitions(timestamp);
+        txWriter.setMinTimestamp(nextMinTimestamp);
+        txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
+        txWriter.bumpTruncateVersion();
+        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
     }
 
     private static void removeFileAndOrLog(FilesFacade ff, LPSZ name) {

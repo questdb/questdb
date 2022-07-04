@@ -60,6 +60,7 @@ import java.util.*;
 public class PropServerConfiguration implements ServerConfiguration {
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
+    public static final String DETACHED_DIRECTORY = "db";
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
@@ -172,7 +173,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlJitDebugEnabled;
     private final DateLocale locale;
     private final String backupRoot;
-    private final String detachedRoot;
     private final DateFormat backupDirTimestampFormat;
     private final CharSequence backupTempDirName;
     private final int backupMkdirMode;
@@ -206,6 +206,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String dbDirectory;
     private final String confRoot;
     private final String snapshotRoot;
+    private final String detachedRoot;
     private final String snapshotInstanceId;
     private final boolean snapshotRecoveryEnabled;
     private final long maxRerunWaitCapMs;
@@ -421,12 +422,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         if (new File(this.dbDirectory).isAbsolute()) {
             this.root = this.dbDirectory;
-            this.confRoot = rootSubdir(this.root, PropServerConfiguration.CONFIG_DIRECTORY); // ../conf
-            this.snapshotRoot = rootSubdir(this.root, PropServerConfiguration.SNAPSHOT_DIRECTORY); // ../snapshot
+            this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
+            this.snapshotRoot = rootSubdir(this.root, SNAPSHOT_DIRECTORY); // ../snapshot
+            this.detachedRoot = rootSubdir(this.root, DETACHED_DIRECTORY); // ../detached_partitions
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
+            this.detachedRoot = new File(root, DETACHED_DIRECTORY).getAbsolutePath();
         }
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
@@ -787,7 +790,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.inputRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
-            this.detachedRoot = getString(properties, env, PropertyKey.CAIRO_SQL_DETACHED_ROOT, "detached_partitions");
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
             this.backupTempDirName = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_TMP_NAME, "tmp");
             this.backupMkdirMode = getInt(properties, env, PropertyKey.CAIRO_SQL_BACKUP_MKDIR_MODE, 509);

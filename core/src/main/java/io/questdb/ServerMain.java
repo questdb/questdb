@@ -155,8 +155,10 @@ public class ServerMain {
         log.advisoryW().$("available CPUs: ").$(Runtime.getRuntime().availableProcessors()).$();
         log.advisoryW().$("db root: ").$(cairoConfiguration.getRoot()).$();
         log.advisoryW().$("backup root: ").$(cairoConfiguration.getBackupRoot()).$();
+        log.advisoryW().$("partition detach root: ").$(cairoConfiguration.getDetachedRoot()).$();
         try (Path path = new Path()) {
             verifyFileSystem("db", cairoConfiguration.getRoot(), path, log);
+            verifyFileSystem("partition detach", cairoConfiguration.getDetachedRoot(), path, log);
             verifyFileSystem("backup", cairoConfiguration.getBackupRoot(), path, log);
             verifyFileOpts(cairoConfiguration, path);
         }
