@@ -773,10 +773,10 @@ public class WalWriter implements Closeable {
         }
 
         @Override
-        public void putLong128(int columnIndex, long first, long second) {
+        public void putLong128(int columnIndex, long hi, long lo) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
-            primaryColumn.putLong(first);
-            primaryColumn.putLong(second);
+            primaryColumn.putLong(lo);
+            primaryColumn.putLong(hi);
         }
 
         @Override

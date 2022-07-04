@@ -35,6 +35,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.analytic.AnalyticContext;
 import io.questdb.griffin.engine.analytic.AnalyticFunction;
@@ -71,7 +72,25 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                     analyticContext.getPartitionBySink()
             );
         }
-        return null;
+        return new SequenceRowNumberFunction();
+    }
+
+    private class SequenceRowNumberFunction extends LongFunction implements ScalarFunction {
+        private long next = 1;
+        @Override
+        public long getLong(Record rec) {
+            return next++;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            toTop();
+        }
+
+        @Override
+        public void toTop() {
+            next = 1;
+        }
     }
 
     private static class RowNumberFunction extends LongFunction implements ScalarFunction, AnalyticFunction, Closeable {
