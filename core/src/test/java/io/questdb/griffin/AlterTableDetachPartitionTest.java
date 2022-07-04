@@ -146,7 +146,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     public void testDetachPartitionEmpty() throws Exception {
         assertFailedDetachOperation(
                 "ALTER TABLE tab DETACH PARTITION LIST '2022-06-06'",
-                "could not detach [statusCode=PARTITION_FOLDER_DOES_NOT_EXIST, table=tab, partition='2022-06-06']"
+                "could not detach [statusCode=PARTITION_EMPTY, table=tab, partition='2022-06-06']"
         );
     }
 
@@ -518,11 +518,22 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 // Add 1 row without commit
                 long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
+                long timestamp2 = TimestampFormatUtils.parseTimestamp("2022-06-01T09:59:59.999999Z");
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "tab", "testing")) {
-                    TableWriter.Row row = writer.newRow(timestamp);
-                    row.putLong(0, 42L);
-                    row.putInt(1, 42);
-                    row.append();
+                    // structural change
+                    writer.addColumn("new_column", ColumnType.INT);
+
+                    TableWriter.Row row = writer.newRow(timestamp2);
+                    row.putLong(0, 137L);
+                    row.putInt(1, 137);
+                    row.putInt(3, 137);
+                    row.append(); // O3 append
+
+                    row = writer.newRow(timestamp);
+                    row.putLong(0, 2802L);
+                    row.putInt(1, 2802);
+                    row.putInt(3, 2802);
+                    row.append(); // O3 append
 
                     Assert.assertTrue(writer.inTransaction());
                     writer.detachPartition(timestamp);
@@ -530,22 +541,24 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     Assert.assertFalse(writer.inTransaction());
                 }
 
+                engine.releaseAllWriters();
                 compile("ALTER TABLE tab ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
                 assertContent(
-                        "l\ti\tts\n" +
-                                "42\t42\t2022-06-01T00:00:00.000000Z\n" +
-                                "1\t1\t2022-06-01T07:59:59.916666Z\n" +
-                                "2\t2\t2022-06-01T15:59:59.833332Z\n" +
-                                "3\t3\t2022-06-01T23:59:59.749998Z\n" +
-                                "4\t4\t2022-06-02T07:59:59.666664Z\n" +
-                                "5\t5\t2022-06-02T15:59:59.583330Z\n" +
-                                "6\t6\t2022-06-02T23:59:59.499996Z\n" +
-                                "7\t7\t2022-06-03T07:59:59.416662Z\n" +
-                                "8\t8\t2022-06-03T15:59:59.333328Z\n" +
-                                "9\t9\t2022-06-03T23:59:59.249994Z\n" +
-                                "10\t10\t2022-06-04T07:59:59.166660Z\n" +
-                                "11\t11\t2022-06-04T15:59:59.083326Z\n" +
-                                "12\t12\t2022-06-04T23:59:58.999992Z\n",
+                        "l\ti\tts\tnew_column\n" +
+                                "2802\t2802\t2022-06-01T00:00:00.000000Z\t2802\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "137\t137\t2022-06-01T09:59:59.999999Z\t137\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
                         "tab",
                         "ts"
                 );

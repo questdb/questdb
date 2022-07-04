@@ -691,13 +691,26 @@ public class TableWriter implements Closeable {
         // SQL compiler will check that table is partitioned
         assert metadata.getTimestampIndex() > -1;
 
-        if (timestamp > getMaxTimestamp()) {
-            return PARTITION_FOLDER_DOES_NOT_EXIST;
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            return TABLE_NOT_PARTITIONED;
+        }
+
+        final long minTimestamp = txWriter.getMinTimestamp();
+        final long maxTimestamp = txWriter.getMaxTimestamp();
+
+        timestamp = getPartitionLo(timestamp);
+        if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
+            return PARTITION_EMPTY;
         }
 
         int pIndex = txWriter.getPartitionIndex(timestamp);
         if (pIndex == -1) {
+            assert !txWriter.attachedPartitionsContains(timestamp);
             return PARTITION_ALREADY_DETACHED;
+        }
+
+        if (timestamp == getPartitionLo(maxTimestamp)) {
+            return PARTITION_IS_ACTIVE;
         }
 
         if (inTransaction()) {
@@ -707,10 +720,22 @@ public class TableWriter implements Closeable {
                     .$(", partition=")
                     .$ts(timestamp)
                     .I$();
-            commit();
+            commit(CommitMode.SYNC, 0);
         }
 
         try {
+            // partition folder
+            long pNameTxn = txWriter.getPartitionNameTxn(pIndex);
+            setPathForPartition(path, rootLen, partitionBy, timestamp, pNameTxn);
+            if (!ff.exists(path.$())) {
+                LOG.error()
+                        .$("partition folder does not exist [path=")
+                        .$(path)
+                        .$(']')
+                        .$();
+                return StatusCode.PARTITION_FOLDER_DOES_NOT_EXIST;
+            }
+
             // detached partition folder
             setPathForPartition(detachedPath.trimTo(rootLen), partitionBy, timestamp, false);
             detachedPath.put(DETACHED_DIR_MARKER);
@@ -722,18 +747,6 @@ public class TableWriter implements Closeable {
                         .$(']')
                         .$();
                 return PARTITION_ALREADY_DETACHED;
-            }
-
-            // partition folder
-            long pNameTxn = getPartitionNameTxn(pIndex);
-            setPathForPartition(path, rootLen, partitionBy, timestamp, pNameTxn);
-            if (!ff.exists(path.$())) {
-                LOG.error()
-                        .$("partition folder does not exist [path=")
-                        .$(path)
-                        .$(']')
-                        .$();
-                return StatusCode.PARTITION_FOLDER_DOES_NOT_EXIST;
             }
 
             // rename partition folder to name.detached
@@ -754,34 +767,34 @@ public class TableWriter implements Closeable {
             path.trimTo(rootLen).concat(META_FILE_NAME);
             detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME);
             if (-1 != ff.copy(path.$(), detachedPath.$())) {
-                return detachOperationOnPartition(timestamp, false);
-            }
-
-            // copy metadata failed
-            LOG.error()
-                    .$("cannot copy [errno=")
-                    .$(ff.errno())
-                    .$(", from=")
-                    .$(path)
-                    .$(", to=")
-                    .$(detachedPath)
-                    .$(']')
-                    .$();
-
-            // undo rename
-            setPathForPartition(path, rootLen, partitionBy, timestamp, pNameTxn);
-            setPathForPartition(detachedPath.trimTo(rootLen), partitionBy, timestamp, false);
-            detachedPath.put(DETACHED_DIR_MARKER);
-            if (!ff.rename(detachedPath.$(), path.$())) {
+                commitDetachPartition(timestamp, minTimestamp);
+                return StatusCode.OK;
+            } else {
+                // copy metadata failed
                 LOG.error()
-                        .$("file system error on trying to undo rename partition folder [errno=").$(ff.errno())
-                        .$(", undo=").$(detachedPath)
-                        .$(", original=").$(path)
-                        .I$();
-                return StatusCode.PARTITION_FOLDER_CANNOT_UNDO_RENAME;
-            }
+                        .$("cannot copy [errno=")
+                        .$(ff.errno())
+                        .$(", from=")
+                        .$(path)
+                        .$(", to=")
+                        .$(detachedPath)
+                        .$(']')
+                        .$();
 
-            return StatusCode.PARTITION_CANNOT_COPY_META;
+                // undo rename
+                setPathForPartition(path, rootLen, partitionBy, timestamp, pNameTxn);
+                setPathForPartition(detachedPath.trimTo(rootLen), partitionBy, timestamp, false);
+                detachedPath.put(DETACHED_DIR_MARKER);
+                if (!ff.rename(detachedPath.$(), path.$())) {
+                    LOG.error()
+                            .$("undo rename partition folder (admin needs to rename this file) [errno=").$(ff.errno())
+                            .$(", undo=").$(detachedPath)
+                            .$(", original=").$(path)
+                            .I$();
+                    return StatusCode.PARTITION_FOLDER_CANNOT_UNDO_RENAME;
+                }
+                return StatusCode.PARTITION_CANNOT_COPY_META;
+            }
         } finally {
             path.trimTo(rootLen);
             detachedPath.trimTo(rootLen);
@@ -1169,12 +1182,8 @@ public class TableWriter implements Closeable {
     }
 
     public boolean removePartition(long timestamp) {
-        return StatusCode.OK == detachOperationOnPartition(timestamp, true);
-    }
-
-    public StatusCode detachOperationOnPartition(long timestamp, boolean dropDirectoryData) {
         if (!PartitionBy.isPartitioned(partitionBy)) {
-            return TABLE_NOT_PARTITIONED;
+            return false;
         }
 
         final long minTimestamp = txWriter.getMinTimestamp();
@@ -1182,25 +1191,36 @@ public class TableWriter implements Closeable {
 
         timestamp = getPartitionLo(timestamp);
         if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
-            return PARTITION_EMPTY;
+            LOG.error().$("partition is empty, folder does not exist [path=").$(path).$(']').$();
+            return false;
         }
         if (timestamp == getPartitionLo(maxTimestamp)) {
             LOG.error()
-                    .$("cannot ")
-                    .$(dropDirectoryData ? "remove" : "detach")
-                    .$(" active partition [path=")
+                    .$("cannot remove active partition [path=")
                     .$(path)
                     .$(", maxTimestamp=")
                     .$ts(maxTimestamp)
-                    .$(']').$();
-            return PARTITION_IS_ACTIVE;
+                    .$(']')
+                    .$();
+            return false;
         }
 
         if (!txWriter.attachedPartitionsContains(timestamp)) {
             LOG.error().$("partition is already detached [path=").$(path).$(']').$();
-            return PARTITION_ALREADY_DETACHED;
+            return false;
         }
 
+        commitDetachPartition(timestamp, minTimestamp);
+
+        // Call O3 methods to remove check TxnScoreboard and remove partition directly
+        long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
+        o3PartitionRemoveCandidates.clear();
+        o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
+        o3ProcessPartitionRemoveCandidates();
+        return true;
+    }
+
+    private void commitDetachPartition(long timestamp, long minTimestamp) {
         // when we want to delete first partition we must find out
         // minTimestamp from next partition if it exists or next partition and so on
         //
@@ -1214,21 +1234,12 @@ public class TableWriter implements Closeable {
         if (timestamp == txWriter.getPartitionTimestamp(0)) {
             nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
         }
-        long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
         txWriter.beginPartitionSizeUpdate();
         txWriter.removeAttachedPartitions(timestamp);
         txWriter.setMinTimestamp(nextMinTimestamp);
         txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
         txWriter.bumpTruncateVersion();
         txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-
-        if (dropDirectoryData) {
-            // Call O3 methods to remove check TxnScoreboard and remove partition directly
-            o3PartitionRemoveCandidates.clear();
-            o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
-            o3ProcessPartitionRemoveCandidates();
-        }
-        return StatusCode.OK;
     }
 
     public void renameColumn(CharSequence currentName, CharSequence newName) {
