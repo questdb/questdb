@@ -93,12 +93,12 @@ public class TestInterop {
         public static final int TAG_LINE = 10;
         private final Sender sender;
         private final StringChannel stringChannel;
+        private final StringSink stringSink = new StringSink();
         private int tag1Type = -1;
         private int tag2Type = -1;
         private int columnType = -1;
         private String name;
         private boolean encounteredError;
-        private final StringSink stringSink = new StringSink();
 
         public JsonTestSuiteParser(Sender sender, StringChannel channel) {
             this.sender = sender;
@@ -257,23 +257,11 @@ public class TestInterop {
             }
         }
 
-        private void assertSuccessfulLine(CharSequence tag) {
-            String s = stringChannel.toString();
-            Assert.assertTrue("Produced line does not end with a new line char", s.endsWith("\n"));
-            s = s.substring(0, s.length() - 1);
-            Assert.assertTrue(Chars.equals(tag, s));
-        }
-
-        private void resetForNextTestCase() {
-            encounteredError = false;
-            stringChannel.reset();
-        }
-
         private static CharSequence unescape(CharSequence tag, StringSink stringSink) {
             if (tag == null) {
                 return null;
             }
-            stringSink.clear();;
+            stringSink.clear();
 
             for (int i = 0, n = tag.length(); i < n; i++) {
                 char sourceChar = tag.charAt(i);
@@ -283,8 +271,8 @@ public class TestInterop {
                 } else {
                     // slow path. either there is a code unit sequence. think of this: foo\u0001bar
                     // or a simple escaping: \n, \r, \\, \", etc.
-                    // in both cases we will consume more than 1 character from the input
-                    // so we have to adjust i accordingly
+                    // in both cases we will consume more than 1 character from the input,
+                    // so we have to adjust "i" accordingly
 
                     // malformed input could throw IndexOutOfBoundsException, but given we control
                     // the test data then we are OK.
@@ -293,7 +281,7 @@ public class TestInterop {
                         // code unit sequence
                         char ch;
                         try {
-                            ch = (char)Numbers.parseHexInt(tag, i + 2, i + 6);
+                            ch = (char) Numbers.parseHexInt(tag, i + 2, i + 6);
                         } catch (NumericException e) {
                             throw new AssertionError("cannot parse code sequence in " + tag);
                         }
@@ -331,6 +319,18 @@ public class TestInterop {
                 }
             }
             return stringSink.toString();
+        }
+
+        private void assertSuccessfulLine(CharSequence tag) {
+            String s = stringChannel.toString();
+            Assert.assertTrue("Produced line does not end with a new line char", s.endsWith("\n"));
+            s = s.substring(0, s.length() - 1);
+            Assert.assertTrue(Chars.equals(tag, s));
+        }
+
+        private void resetForNextTestCase() {
+            encounteredError = false;
+            stringChannel.reset();
         }
     }
 }
