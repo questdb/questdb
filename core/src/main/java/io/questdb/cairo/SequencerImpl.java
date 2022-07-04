@@ -126,20 +126,9 @@ public class SequencerImpl implements Sequencer {
         }
     }
 
-    private final AtomicInteger activeWals = new AtomicInteger(0);
-
     @Override
     public WalWriter createWal() {
-        final WalWriter w = new WalWriter(engine, tableName, (int) walIdGenerator.getNextId(), this);
-        activeWals.incrementAndGet();
-        return w;
-    }
-
-    @Override
-    public void unregisterWal(int walId) {
-        if (activeWals.decrementAndGet() == 0) {
-            close();
-        }
+        return new WalWriter(engine, tableName, (int) walIdGenerator.getNextId(), this);
     }
 
     @Override

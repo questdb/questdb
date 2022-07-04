@@ -47,6 +47,6 @@ public interface Sequencer extends Closeable {
     // always creates a new wal with an increasing unique id
     WalWriter createWal();
 
-    // unregisters wal
-    void unregisterWal(int walId);
+    @Override
+    void close();
 }

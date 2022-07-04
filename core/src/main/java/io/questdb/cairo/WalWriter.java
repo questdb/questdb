@@ -388,7 +388,6 @@ public class WalWriter implements Closeable {
         freeSymbolMapWriters();
         Misc.free(symbolMapMem);
         freeColumns(truncate);
-        sequencer.unregisterWal(walId);
 
         try {
             releaseLock(!truncate);

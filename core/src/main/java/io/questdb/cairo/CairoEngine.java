@@ -50,6 +50,8 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
@@ -117,7 +119,13 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     @TestOnly
     public boolean clear() {
+        // create proper clear() and close() methods on TableRegistry
+        final Set<Map.Entry<CharSequence, Sequencer>> entries =  tableRegistry.entrySet();
+        for (Map.Entry<CharSequence, Sequencer> entry: entries) {
+            entry.getValue().close();
+        }
         tableRegistry.clear();
+
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         return b1 & b2;
