@@ -29,7 +29,6 @@ import io.questdb.cairo.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 
@@ -112,7 +111,7 @@ public class DropIndexOperator extends PurgingOperator {
         }
     }
 
-    private static LPSZ partitionDFile(
+    private static void partitionDFile(
             Path path,
             int rootLen,
             int partitionBy,
@@ -128,10 +127,10 @@ public class DropIndexOperator extends PurgingOperator {
                 partitionTimestamp,
                 partitionNameTxn
         );
-        return dFile(path, columnName, columnNameTxn);
+        dFile(path, columnName, columnNameTxn);
     }
 
-    private static LPSZ setPathOnPartition(
+    private static void setPathOnPartition(
             Path path,
             int rootLen,
             int partitionBy,
@@ -141,6 +140,5 @@ public class DropIndexOperator extends PurgingOperator {
         path.trimTo(rootLen);
         TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, false);
         TableUtils.txnPartitionConditionally(path, partitionNameTxn);
-        return path;
     }
 }
