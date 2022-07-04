@@ -45,8 +45,6 @@ public interface Log {
 
     LogRecord advisoryW();
 
-    boolean isDebugEnabled();
-
     LogRecord xerror();
 
     LogRecord xcritical();

@@ -298,7 +298,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             return getReader(executionContext.getCairoSecurityContext(), tableName);
         } catch (CairoException ex) {
             // Cannot open reader on existing table is pretty bad.
-            LOG.error().$("error opening reader for ").$(statement)
+            LOG.critical().$("error opening reader for ").$(statement)
                     .$(" statement [table=").$(tableName)
                     .$(",errno=").$(ex.getErrno())
                     .$(",error=").$(ex.getMessage()).I$();
