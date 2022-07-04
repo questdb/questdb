@@ -428,7 +428,7 @@ public class WriterPool extends AbstractPool {
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
-            LOG.error()
+            LOG.critical()
                     .$("could not open [table=`").utf8(name)
                     .$("`, thread=").$(e.owner)
                     .$(", ex=").$(ex.getFlyweightMessage())
@@ -583,7 +583,7 @@ public class WriterPool extends AbstractPool {
 
             notifyListener(thread, name, PoolListener.EV_RETURN);
         } else {
-            LOG.error().$("orphaned [table=`").utf8(name).$("`]").$();
+            LOG.critical().$("orphaned [table=`").utf8(name).$("`]").$();
             notifyListener(thread, name, PoolListener.EV_UNEXPECTED_CLOSE);
         }
         return true;
