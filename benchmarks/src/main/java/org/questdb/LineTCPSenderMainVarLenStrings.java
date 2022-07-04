@@ -33,6 +33,7 @@ import io.questdb.network.Net;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -97,7 +98,7 @@ public class LineTCPSenderMainVarLenStrings {
     }
 
     private static class LoggingLineChannel implements LineChannel {
-        private final LineChannel delegate;
+        private LineChannel delegate;
         private final long outFileFd;
         private final FilesFacade ff;
         private long fileOffset = 0;
@@ -110,7 +111,7 @@ public class LineTCPSenderMainVarLenStrings {
 
         @Override
         public void close() {
-            delegate.close();
+            delegate = Misc.free(delegate);
         }
 
         @Override
