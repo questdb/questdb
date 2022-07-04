@@ -336,7 +336,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             for (int i = 0; i < maxSamplePeriodSize && currentTs <= lastInDataTimestamp; i++) {
                 currentTs = nextTs;
                 nextTs = getNextTimestamp();
-                assert nextTs != currentTs;
+                assert nextTs != currentTs : "uh-oh, we may have got into an infinite loop with ts " + nextTs;
                 samplePeriodAddress.add(currentTs);
             }
             return (int) samplePeriodAddress.size();
