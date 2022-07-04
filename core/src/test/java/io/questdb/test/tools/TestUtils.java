@@ -899,7 +899,7 @@ public final class TestUtils {
                 break;
             case ColumnType.LONG128:
                 sink.put(r.getLong128Hi(i));
-                sink.put('-');
+                sink.put('|');
                 sink.put(r.getLong128Lo(i));
                 break;
             default:

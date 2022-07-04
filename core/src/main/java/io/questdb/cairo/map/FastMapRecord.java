@@ -96,8 +96,6 @@ final class FastMapRecord implements MapRecord {
                     long256A[i + split] = new Long256Impl();
                     long256B[i + split] = new Long256Impl();
                     break;
-                case ColumnType.LONG128:
-                    throw new UnsupportedOperationException();
                 default:
                     break;
             }
@@ -194,6 +192,16 @@ final class FastMapRecord implements MapRecord {
         final long c = Unsafe.getUnsafe().getLong(address + Long.BYTES * 2);
         final long d = Unsafe.getUnsafe().getLong(address + Long.BYTES * 3);
         Numbers.appendLong256(a, b, c, d, sink);
+    }
+
+    @Override
+    public long getLong128Hi(int columnIndex) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex) + Long.BYTES);
+    }
+
+    @Override
+    public long getLong128Lo(int columnIndex) {
+        return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
     }
 
     @Override
