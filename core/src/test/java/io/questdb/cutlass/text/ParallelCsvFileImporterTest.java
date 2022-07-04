@@ -1952,7 +1952,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 try {
                     if (pool != null) {
                         pool.assignCleaner(Path.CLEANER);
-                        pool.assign(new TextImportJob(engine.getMessageBus())); //todo: copy-pasted, refactor this
+                        TextImportJob.assignToPool(engine.getMessageBus(), pool);
                         pool.start(LOG);
                     }
                     inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();

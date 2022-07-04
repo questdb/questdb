@@ -226,7 +226,7 @@ public class ServerMain {
             workerPool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
             workerPool.assign(new GroupByJob(cairoEngine.getMessageBus()));
             workerPool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
-            workerPool.assign(new TextImportJob(cairoEngine.getMessageBus()));
+            TextImportJob.assignToPool(cairoEngine.getMessageBus(), workerPool);
 
             instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
             instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));

@@ -105,7 +105,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final CairoConfiguration configuration;
     private final TableStructureAdapter targetTableStructure;
     private final SqlExecutionCircuitBreaker circuitBreaker;
-    int taskCount;
+    private final TextLexer textLexer;
+    private int taskCount;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
     //input params end
     //path to import directory under, usually $inputWorkRoot/$tableName
@@ -147,6 +148,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.subSeq = bus.getTextImportSubSeq();
         this.collectSeq = bus.getTextImportColSeq();
         this.lock = bus.getTextImportQueueLock();
+        this.textLexer = new TextLexer(configuration.getTextConfiguration());
 
         CairoConfiguration cfg = sqlExecutionContext.getCairoEngine().getConfiguration();
         this.workerCount = sqlExecutionContext.getWorkerCount();
@@ -249,6 +251,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.utf8Sink.close();
         this.textMetadataDetector.close();
         this.textDelimiterScanner.close();
+        this.textLexer.close();
     }
 
     public void of(
@@ -1171,7 +1174,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void stealWork(RingQueue<TextImportTask> queue, Sequence subSeq) {
         long seq = subSeq.next();
         if (seq > -1) {
-            queue.get(seq).run();
+            queue.get(seq).run(textLexer);
             subSeq.done(seq);
             return;
         }

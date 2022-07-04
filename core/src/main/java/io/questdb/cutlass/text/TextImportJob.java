@@ -26,17 +26,37 @@ package io.questdb.cutlass.text;
 
 import io.questdb.MessageBus;
 import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.mp.Job;
+import io.questdb.mp.WorkerPool;
+import io.questdb.std.Misc;
 
-public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> {
+import java.io.Closeable;
+
+public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> implements Closeable {
+    private TextLexer textLexer;
 
     public TextImportJob(MessageBus messageBus) {
         super(messageBus.getTextImportQueue(), messageBus.getTextImportSubSeq());
+        this.textLexer = new TextLexer(messageBus.getConfiguration().getTextConfiguration());
+    }
+
+    public static void assignToPool(MessageBus messageBus, WorkerPool pool) {
+        for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
+            Job job = new TextImportJob(messageBus);
+            pool.assign(i, job);
+            pool.freeOnHalt((Closeable) job);
+        }
+    }
+
+    @Override
+    public void close() {
+        this.textLexer = Misc.free(textLexer);
     }
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
         final TextImportTask task = queue.get(cursor);
-        final boolean result = task.run();
+        final boolean result = task.run(textLexer);
         subSeq.done(cursor);
         return result;
     }

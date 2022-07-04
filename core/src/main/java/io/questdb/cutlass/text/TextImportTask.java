@@ -210,7 +210,7 @@ public class TextImportTask {
         this.updateSymbolColumnKeysStage.of(cairoEngine, tableStructure, index, partitionSize, partitionTimestamp, root, columnName, symbolCount);
     }
 
-    public boolean run() {
+    public boolean run(TextLexer lexer) {
         try {
             status = STATUS_OK;
             if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
@@ -223,7 +223,7 @@ public class TextImportTask {
             } else if (phase == PHASE_INDEXING) {
                 buildPartitionIndexStage.run();
             } else if (phase == PHASE_PARTITION_IMPORT) {
-                importPartitionDataStage.run();
+                importPartitionDataStage.run(lexer);
             } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
                 mergeSymbolTablesStage.run();
             } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
@@ -509,7 +509,7 @@ public class TextImportTask {
             this.importedRows.clear();
         }
 
-        public void run() throws TextException {
+        public void run(TextLexer lexer) throws TextException {
             tableNameSink.clear();
             tableNameSink.put(targetTableStructure.getTableName()).put('_').put(index);
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
@@ -527,8 +527,8 @@ public class TextImportTask {
 
                 tableWriterRef = writer;
 
-                final TextConfiguration textConfiguration = configuration.getTextConfiguration();
-                try (TextLexer lexer = new TextLexer(textConfiguration); Path path = new Path()) {
+
+                try (Path path = new Path()) {
                     lexer.setTableName(tableNameSink);
                     lexer.of(columnDelimiter);
                     lexer.setSkipLinesWithExtraValues(false);
@@ -649,9 +649,11 @@ public class TextImportTask {
             }
         }
 
-        private void mergePartitionIndexAndImportData(final FilesFacade ff,
-                                                      final Path partitionPath,
-                                                      final TextLexer lexer) throws TextException {
+        private void mergePartitionIndexAndImportData(
+                final FilesFacade ff,
+                final Path partitionPath,
+                final TextLexer lexer
+        ) throws TextException {
             try (DirectLongList mergeIndexes = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT)) {
                 partitionPath.slash$();
                 int partitionLen = partitionPath.length();
