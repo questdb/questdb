@@ -89,7 +89,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDetachSyntaxErrorPartitionNameExpected() throws Exception {
+    public void testDetachSyntaxErrorListOrWhereExpected() throws Exception {
         try (TableModel tableModel = new TableModel(configuration, "tab", PartitionBy.DAY).timestamp()) {
             AbstractSqlParserTest.assertSyntaxError(
                     "ALTER TABLE tab DETACH PARTITION",
@@ -101,7 +101,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDetachSyntaxError2() throws Exception {
+    public void testDetachSyntaxErrorPartitionNameExpected() throws Exception {
         try (TableModel tableModel = new TableModel(configuration, "tab", PartitionBy.DAY).timestamp()) {
             AbstractSqlParserTest.assertSyntaxError(
                     "ALTER TABLE tab DETACH PARTITION LIST",
@@ -113,7 +113,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testDetachNotPartitioned0() throws Exception {
+    public void testDetachNotPartitioned() throws Exception {
         try (TableModel tableModel = new TableModel(configuration, "tab", PartitionBy.NONE).timestamp()) {
             AbstractSqlParserTest.assertSyntaxError(
                     "ALTER TABLE tab DETACH PARTITION LIST '2022-06-27'",
@@ -122,14 +122,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     tableModel
             );
         }
-    }
-
-    @Test
-    public void testDetachNotPartitioned1() throws Exception {
-        assertFailedDetachOperation(
-                "ALTER TABLE tab DETACH PARTITION LIST '2022-06-27'",
-                "could not detach [statusCode=PARTITION_EMPTY, table=tab, partition='2022-06-27']"
-        );
     }
 
     @Test
@@ -154,7 +146,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     public void testDetachPartitionEmpty() throws Exception {
         assertFailedDetachOperation(
                 "ALTER TABLE tab DETACH PARTITION LIST '2022-06-06'",
-                "could not detach [statusCode=PARTITION_EMPTY, table=tab, partition='2022-06-06']"
+                "could not detach [statusCode=PARTITION_FOLDER_DOES_NOT_EXIST, table=tab, partition='2022-06-06']"
         );
     }
 
@@ -210,17 +202,94 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
     @Test
     public void testCannotCopyMeta() throws Exception {
-        FilesFacade ff = new FilesFacadeImpl() {
-            @Override
-            public int copy(LPSZ from, LPSZ to) {
-                return -1;
+        assertMemoryLeak(() -> {
+            try (TableModel tab = new TableModel(configuration, "tab", PartitionBy.DAY)) {
+                createPopulateTable(tab
+                                .timestamp("ts")
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG),
+                        10,
+                        "2022-06-01",
+                        4
+                );
+                String expected = "ts\ti\tl\n" +
+                        "2022-06-01T09:35:59.900000Z\t1\t1\n" +
+                        "2022-06-01T19:11:59.800000Z\t2\t2\n" +
+                        "2022-06-02T04:47:59.700000Z\t3\t3\n" +
+                        "2022-06-02T14:23:59.600000Z\t4\t4\n" +
+                        "2022-06-02T23:59:59.500000Z\t5\t5\n" +
+                        "2022-06-03T09:35:59.400000Z\t6\t6\n" +
+                        "2022-06-03T19:11:59.300000Z\t7\t7\n" +
+                        "2022-06-04T04:47:59.200000Z\t8\t8\n" +
+                        "2022-06-04T14:23:59.100000Z\t9\t9\n" +
+                        "2022-06-04T23:59:59.000000Z\t10\t10\n";
+                assertContent(expected, "tab", "ts");
+
+                AbstractCairoTest.ff = new FilesFacadeImpl() {
+                    public int copy(LPSZ from, LPSZ to) {
+                        return -1;
+                    }
+                };
+
+                long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "tab", "detach partition")) {
+                    StatusCode statusCode = writer.detachPartition(timestamp);
+                    Assert.assertEquals(StatusCode.PARTITION_CANNOT_COPY_META, statusCode);
+                }
+
+                // the operation is reversible
+                assertContent(expected, "tab", "ts");
             }
-        };
-        assertFailedDetachOperation(
-                ff,
-                "ALTER TABLE tab DETACH PARTITION LIST '2022-06-03'",
-                "could not detach [statusCode=PARTITION_CANNOT_COPY_META, table=tab, partition='2022-06-03']"
-        );
+        });
+    }
+
+    @Test
+    public void testCannotUndoRenameAfterBrokenCopyMeta() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel tab = new TableModel(configuration, "tab", PartitionBy.DAY)) {
+                createPopulateTable(tab
+                                .timestamp("ts")
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG),
+                        10,
+                        "2022-06-01",
+                        4
+                );
+
+                AbstractCairoTest.ff = new FilesFacadeImpl() {
+                    private boolean copyCalled = false;
+
+                    @Override
+                    public int copy(LPSZ from, LPSZ to) {
+                        copyCalled = true;
+                        return -1;
+                    }
+
+                    @Override
+                    public boolean rename(LPSZ from, LPSZ to) {
+                        return copyCalled ? false : super.rename(from, to);
+                    }
+                };
+
+                long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
+                engine.releaseAllWriters();
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "tab", "detach partition")) {
+                    StatusCode statusCode = writer.detachPartition(timestamp);
+                    Assert.assertEquals(StatusCode.PARTITION_FOLDER_CANNOT_UNDO_RENAME, statusCode);
+                }
+
+                // all that is left is to remove ".detached" from the name, by hand!
+                // this will only happen if rename fails due to an os limit
+                try {
+                    assertContent("expected", "tab", "ts");
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
+                            "Partition '2022-06-01' does not exist in table 'tab' directory"
+                    );
+                }
+            }
+        });
     }
 
     @Test
@@ -286,10 +355,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         .concat("2022-06-02")
                         .put(DETACHED_DIR_MARKER)
                         .concat(META_FILE_NAME)
-                        .put(DETACHED_DIR_MARKER)
                         .$();
                 Assert.assertTrue(configuration.getFilesFacade().remove(path));
 
+                engine.releaseAllWriters();
                 compile("ALTER TABLE tab ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertContent(
                         "ts\ti\tl\n" +
@@ -429,20 +498,57 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         12,
                         "2022-06-01",
                         4);
+                assertContent(
+                        "l\ti\tts\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\n",
+                        "tab",
+                        "ts"
+                );
 
                 // Add 1 row without commit
                 long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, "tab", "testing")) {
                     TableWriter.Row row = writer.newRow(timestamp);
-                    row.putLong(0, 1L);
-                    row.putInt(1, 1);
+                    row.putLong(0, 42L);
+                    row.putInt(1, 42);
                     row.append();
 
                     Assert.assertTrue(writer.inTransaction());
                     writer.detachPartition(timestamp);
-                    Assert.assertEquals(10, writer.size());
+                    Assert.assertEquals(9, writer.size());
                     Assert.assertFalse(writer.inTransaction());
                 }
+
+                compile("ALTER TABLE tab ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                assertContent(
+                        "l\ti\tts\n" +
+                                "42\t42\t2022-06-01T00:00:00.000000Z\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\n",
+                        "tab",
+                        "ts"
+                );
             }
         });
     }
@@ -554,7 +660,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 .concat(partitionName)
                 .put(DETACHED_DIR_MARKER)
                 .concat(META_FILE_NAME)
-                .put(DETACHED_DIR_MARKER)
                 .$();
     }
 }

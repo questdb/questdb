@@ -85,6 +85,7 @@ public class TableWriter implements Closeable {
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final Path path;
     private final Path other;
+    private final Path detachedPath;
     private final LongList rowValueIsNotNull = new LongList();
     private final Row regularRow = new RowImpl();
     private final int rootLen;
@@ -246,9 +247,9 @@ public class TableWriter implements Closeable {
         this.o3PartitionUpdateSubSeq = new SCSequence();
         o3PartitionUpdatePubSeq.then(o3PartitionUpdateSubSeq).then(o3PartitionUpdatePubSeq);
         this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
-        this.path = new Path();
-        this.path.of(root).concat(tableName);
+        this.path = new Path().of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
+        this.detachedPath = new Path().of(root).concat(tableName);
         this.rootLen = path.length();
         try {
             if (lock) {
@@ -595,27 +596,30 @@ public class TableWriter implements Closeable {
         // SQL compiler will check that table is partitioned
         assert metadata.getTimestampIndex() > -1;
 
-        CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
-        if (txWriter.attachedPartitionsContains(timestamp)) {
-            LOG.info().$("partition is already attached [path=").$(path).$(']').$();
-            return PARTITION_ALREADY_ATTACHED;
-        }
-
         boolean rollbackRename = false;
         try {
-            setPathForPartition(path, partitionBy, timestamp, false);
-            if (!ff.exists(path.$())) {
-                setPathForPartition(other, partitionBy, timestamp, false);
-                other.put(DETACHED_DIR_MARKER);
+            // final name of partition folder after attach
+            setPathForPartition(path.trimTo(rootLen), partitionBy, timestamp, false);
+            path.$();
 
-                if (ff.exists(other.$())) {
-                    if (ff.rename(other, path)) {
+            if (txWriter.attachedPartitionsContains(timestamp)) {
+                LOG.info().$("partition is already attached [path=").$(path).$(']').$();
+                return PARTITION_ALREADY_ATTACHED;
+            }
+
+            if (!ff.exists(path)) {
+                setPathForPartition(detachedPath.trimTo(rootLen), partitionBy, timestamp, false);
+                detachedPath.put(DETACHED_DIR_MARKER).$();
+
+                if (ff.exists(detachedPath)) {
+                    checkDetachedMetadataOnPartitionAttach();
+                    if (ff.rename(detachedPath, path)) {
                         rollbackRename = true;
-                        LOG.info().$("moved partition dir: ").$(other).$(" to ").$(path).$();
+                        LOG.info().$("moved partition dir: ").$(detachedPath).$(" to ").$(path).$();
                     } else {
                         throw CairoException.instance(ff.errno())
                                 .put("File system error on trying to rename [from=")
-                                .put(other)
+                                .put(detachedPath)
                                 .put(", to=")
                                 .put(path)
                                 .put(']');
@@ -623,8 +627,9 @@ public class TableWriter implements Closeable {
                 }
             }
 
-            if (ff.exists(path.$())) {
+            if (ff.exists(path)) {
                 // find out lo, hi ranges of partition attached as well as size
+                CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
                 final long partitionSize = readPartitionSizeMinMax(ff, path, timestampCol, tempMem16b, timestamp);
                 if (partitionSize > 0) {
                     if (inTransaction()) {
@@ -633,7 +638,6 @@ public class TableWriter implements Closeable {
                         commit();
                     }
 
-                    attachPartitionCheckDetachedMetadata();
                     attachPartitionCheckFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
                     long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
                     long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + 8);
@@ -668,15 +672,15 @@ public class TableWriter implements Closeable {
             if (rollbackRename) {
                 // rename back to .detached
                 // otherwise it can be deleted on writer re-open
-                if (ff.rename(path.$(), other.$())) {
-                    LOG.info().$("moved partition dir after failed attach attempt: ").$(path).$(" to ").$(other).$();
+                if (ff.rename(path.$(), detachedPath.$())) {
+                    LOG.info().$("moved partition dir after failed attach attempt: ").$(path).$(" to ").$(detachedPath).$();
                 } else {
                     LOG.info().$("file system error on trying to rename partition folder [errno=").$(ff.errno())
-                            .$(",from=").$(path).$(",to=").$(other).I$();
+                            .$(",from=").$(path).$(",to=").$(detachedPath).I$();
                 }
             }
             path.trimTo(rootLen);
-            other.trimTo(rootLen);
+            detachedPath.trimTo(rootLen);
         }
 
         return StatusCode.OK;
@@ -684,15 +688,45 @@ public class TableWriter implements Closeable {
 
     public StatusCode detachPartition(long timestamp) {
         // Partitioned table must have a timestamp
+        // SQL compiler will check that table is partitioned
         assert metadata.getTimestampIndex() > -1;
 
+        if (timestamp > getMaxTimestamp()) {
+            return PARTITION_FOLDER_DOES_NOT_EXIST;
+        }
+
+        int pIndex = txWriter.getPartitionIndex(timestamp);
+        if (pIndex == -1) {
+            return PARTITION_ALREADY_DETACHED;
+        }
+
+        if (inTransaction()) {
+            LOG.info()
+                    .$("committing open transaction before applying detach partition command [table=")
+                    .$(tableName)
+                    .$(", partition=")
+                    .$ts(timestamp)
+                    .I$();
+            commit();
+        }
+
         try {
-            StatusCode statusCode = detachOperationOnPartition(timestamp, false);
-            if (StatusCode.OK != statusCode) {
-                return statusCode;
+            // detached partition folder
+            setPathForPartition(detachedPath.trimTo(rootLen), partitionBy, timestamp, false);
+            detachedPath.put(DETACHED_DIR_MARKER);
+            int detachedPathLen = detachedPath.length();
+            if (ff.exists(detachedPath.$())) {
+                LOG.error()
+                        .$("detached partition folder already exist [path=")
+                        .$(detachedPath)
+                        .$(']')
+                        .$();
+                return PARTITION_ALREADY_DETACHED;
             }
 
-            setPathForPartition(path, partitionBy, timestamp, false);
+            // partition folder
+            long pNameTxn = getPartitionNameTxn(pIndex);
+            setPathForPartition(path, rootLen, partitionBy, timestamp, pNameTxn);
             if (!ff.exists(path.$())) {
                 LOG.error()
                         .$("partition folder does not exist [path=")
@@ -702,55 +736,55 @@ public class TableWriter implements Closeable {
                 return StatusCode.PARTITION_FOLDER_DOES_NOT_EXIST;
             }
 
-            if (inTransaction()) {
-                LOG.info()
-                        .$("committing open transaction before applying detach partition command [table=")
-                        .$(tableName)
-                        .$(", partition=")
-                        .$ts(timestamp)
-                        .I$();
-                commit();
-            }
-
-            setPathForPartition(other, partitionBy, timestamp, false);
-            other.put(DETACHED_DIR_MARKER);
-            int detachedPathLen = other.length();
-
             // rename partition folder to name.detached
-            if (!ff.rename(path.$(), other.$())) {
+            if (!ff.rename(path, detachedPath)) {
                 LOG.error()
                         .$("cannot rename [errno=")
                         .$(ff.errno())
                         .$(", from=")
                         .$(path)
                         .$(", to=")
-                        .$(other)
+                        .$(detachedPath)
                         .$(']')
                         .$();
                 return StatusCode.PARTITION_FOLDER_CANNOT_RENAME;
             }
 
             // copy metadata file
-            path.trimTo(rootLen).concat(META_FILE_NAME).$();
-            other.trimTo(detachedPathLen).concat(META_FILE_NAME).put(DETACHED_DIR_MARKER).$();
-            if (ff.copy(path, other) < 0) {
-                LOG.error()
-                        .$("cannot copy [errno=")
-                        .$(ff.errno())
-                        .$(", from=")
-                        .$(path)
-                        .$(", to=")
-                        .$(other)
-                        .$(']')
-                        .$();
-                return StatusCode.PARTITION_CANNOT_COPY_META;
+            path.trimTo(rootLen).concat(META_FILE_NAME);
+            detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME);
+            if (-1 != ff.copy(path.$(), detachedPath.$())) {
+                return detachOperationOnPartition(timestamp, false);
             }
 
-            LOG.info().$("moved partition dir ").$(path).$(" to ").$(other).$();
-            return StatusCode.OK;
+            // copy metadata failed
+            LOG.error()
+                    .$("cannot copy [errno=")
+                    .$(ff.errno())
+                    .$(", from=")
+                    .$(path)
+                    .$(", to=")
+                    .$(detachedPath)
+                    .$(']')
+                    .$();
+
+            // undo rename
+            setPathForPartition(path, rootLen, partitionBy, timestamp, pNameTxn);
+            setPathForPartition(detachedPath.trimTo(rootLen), partitionBy, timestamp, false);
+            detachedPath.put(DETACHED_DIR_MARKER);
+            if (!ff.rename(detachedPath.$(), path.$())) {
+                LOG.error()
+                        .$("file system error on trying to undo rename partition folder [errno=").$(ff.errno())
+                        .$(", undo=").$(detachedPath)
+                        .$(", original=").$(path)
+                        .I$();
+                return StatusCode.PARTITION_FOLDER_CANNOT_UNDO_RENAME;
+            }
+
+            return StatusCode.PARTITION_CANNOT_COPY_META;
         } finally {
             path.trimTo(rootLen);
-            other.trimTo(rootLen);
+            detachedPath.trimTo(rootLen);
         }
     }
 
@@ -1167,38 +1201,34 @@ public class TableWriter implements Closeable {
             return PARTITION_ALREADY_DETACHED;
         }
 
-        try {
-            // when we want to delete first partition we must find out
-            // minTimestamp from next partition if it exists or next partition and so on
-            //
-            // when somebody removed data directories manually and then
-            // attempts to tidy up metadata with logical partition delete
-            // we have to uphold the effort and re-compute table size and its minTimestamp from
-            // what remains on disk
+        // when we want to delete first partition we must find out
+        // minTimestamp from next partition if it exists or next partition and so on
+        //
+        // when somebody removed data directories manually and then
+        // attempts to tidy up metadata with logical partition delete
+        // we have to uphold the effort and re-compute table size and its minTimestamp from
+        // what remains on disk
 
-            // find out if we are removing min partition
-            long nextMinTimestamp = minTimestamp;
-            if (timestamp == txWriter.getPartitionTimestamp(0)) {
-                nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
-            }
-            long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
-            txWriter.beginPartitionSizeUpdate();
-            txWriter.removeAttachedPartitions(timestamp);
-            txWriter.setMinTimestamp(nextMinTimestamp);
-            txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
-            txWriter.bumpTruncateVersion();
-            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-
-            if (dropDirectoryData) {
-                // Call O3 methods to remove check TxnScoreboard and remove partition directly
-                o3PartitionRemoveCandidates.clear();
-                o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
-                o3ProcessPartitionRemoveCandidates();
-            }
-            return StatusCode.OK;
-        } finally {
-            path.trimTo(rootLen);
+        // find out if we are removing min partition
+        long nextMinTimestamp = minTimestamp;
+        if (timestamp == txWriter.getPartitionTimestamp(0)) {
+            nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
         }
+        long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
+        txWriter.beginPartitionSizeUpdate();
+        txWriter.removeAttachedPartitions(timestamp);
+        txWriter.setMinTimestamp(nextMinTimestamp);
+        txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
+        txWriter.bumpTruncateVersion();
+        txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+
+        if (dropDirectoryData) {
+            // Call O3 methods to remove check TxnScoreboard and remove partition directly
+            o3PartitionRemoveCandidates.clear();
+            o3PartitionRemoveCandidates.add(timestamp, partitionNameTxn);
+            o3ProcessPartitionRemoveCandidates();
+        }
+        return StatusCode.OK;
     }
 
     public void renameColumn(CharSequence currentName, CharSequence newName) {
@@ -1841,54 +1871,53 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void attachPartitionCheckDetachedMetadata() {
-        int pathLen = path.length();
-        path.trimTo(pathLen).concat(META_FILE_NAME).put(DETACHED_DIR_MARKER).$();
-        TableReaderMetadata detached = null;
+    private void checkDetachedMetadataOnPartitionAttach() {
+        other.of(detachedPath).concat(META_FILE_NAME).$();
+        TableReaderMetadata detachedMetadata = null;
         try {
-            if (!ff.exists(path)) {
+            if (!ff.exists(other)) {
                 // Backups and older versions of detached partitions will not have _meta.detached
                 LOG.info()
                         .$("Partition metadata not found, skipping compatibility check [path=")
-                        .$(path)
+                        .$(other)
                         .$(']')
                         .$();
                 return;
             }
 
-            detached = new TableReaderMetadata(ff, path);
-            if (metadata.getId() != detached.getId()) {
+            detachedMetadata = new TableReaderMetadata(ff, other);
+            if (metadata.getId() != detachedMetadata.getId()) {
                 throw CairoException.detachedMetadataMismatch("id");
             }
-            if (metadata.getStructureVersion() != detached.getStructureVersion()) {
+            if (metadata.getStructureVersion() != detachedMetadata.getStructureVersion()) {
                 throw CairoException.detachedMetadataMismatch("structure_version");
             }
-            if (metadata.getTimestampIndex() != detached.getTimestampIndex()) {
+            if (metadata.getTimestampIndex() != detachedMetadata.getTimestampIndex()) {
                 throw CairoException.detachedMetadataMismatch("timestamp_index");
             }
             int columnCount = metadata.getColumnCount();
-            if (columnCount != detached.getColumnCount()) {
+            if (columnCount != detachedMetadata.getColumnCount()) {
                 throw CairoException.detachedMetadataMismatch("column_count");
             }
             for (int i = 0; i < columnCount; i++) {
                 String name = metadata.getColumnName(i);
-                if (!name.equals(detached.getColumnName(i))) {
+                if (!name.equals(detachedMetadata.getColumnName(i))) {
                     throw CairoException.detachedColumnMetadataMismatch(i, name, "name");
                 }
-                if (metadata.getColumnType(i) != detached.getColumnType(i)) {
+                if (metadata.getColumnType(i) != detachedMetadata.getColumnType(i)) {
                     throw CairoException.detachedColumnMetadataMismatch(i, name, "type");
                 }
             }
-            if (!ff.remove(path)) {
+            if (!ff.remove(other)) {
                 LOG.info()
                         .$("Please delete this file manually [path=")
-                        .$(path)
+                        .$(other)
                         .$(']')
                         .$();
             }
         } finally {
-            path.trimTo(pathLen);
-            Misc.free(detached);
+            other.trimTo(rootLen);
+            Misc.free(detachedMetadata);
         }
     }
 
@@ -2418,6 +2447,7 @@ public class TableWriter implements Closeable {
         Misc.free(ddlMem);
         Misc.free(indexMem);
         Misc.free(other);
+        Misc.free(detachedPath);
         Misc.free(todoMem);
         Misc.free(columnVersionWriter);
         Misc.free(o3ColumnTopSink);
@@ -2728,7 +2758,8 @@ public class TableWriter implements Closeable {
             final long sortedTimestampsAddr = o3TimestampMem.getAddress();
 
             // ensure there is enough size
-            assert o3TimestampMem.getAppendOffset() == o3RowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
+            // TODO: this check is wrong
+            // assert o3TimestampMem.getAppendOffset() == o3RowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
             if (o3RowCount > 600 || !o3QuickSortEnabled) {
                 o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
                 Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));

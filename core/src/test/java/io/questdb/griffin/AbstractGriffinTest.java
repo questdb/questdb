@@ -1393,7 +1393,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             TableModel tableModel,
             int totalRows,
             String startDate,
-            int partitionCount) throws NumericException, SqlException {
+            int partitionCount
+    ) throws NumericException, SqlException {
         TestUtils.createPopulateTable(compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
     }
 }

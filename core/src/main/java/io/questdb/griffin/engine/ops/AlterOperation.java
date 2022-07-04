@@ -294,17 +294,15 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
 
     private void applyDetachPartition(TableWriter tableWriter) throws SqlException {
         for (int i = 0, n = longList.size(); i < n; i++) {
-            long partitionTimestamp = longList.getQuick(i);
-            StatusCode statusCode = tableWriter.detachPartition(partitionTimestamp);
+            long timestamp = longList.getQuick(i);
+            StatusCode statusCode = tableWriter.detachPartition(timestamp);
             if (StatusCode.OK != statusCode) {
                 throw putPartitionName(
-                        SqlException.$(tableNamePosition, "could not detach [statusCode=")
-                                .put(statusCode.name())
-                                .put(", table=")
-                                .put(tableName)
+                        SqlException.$(tableNamePosition, "could not detach [statusCode=").put(statusCode.name())
+                                .put(", table=").put(tableName)
                                 .put(", partition='"),
                         tableWriter.getPartitionBy(),
-                        partitionTimestamp
+                        timestamp
                 ).put("']");
             }
         }
