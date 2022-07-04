@@ -171,7 +171,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.createdWorkDir = false;
     }
 
-    public static void createTable(final FilesFacade ff, int mkDirMode, final CharSequence root, final CharSequence tableName, TableStructure structure, int tableId, CairoConfiguration configuration) {
+    public static void createTable(
+            final FilesFacade ff,
+            int mkDirMode,
+            final CharSequence root,
+            final CharSequence tableName,
+            TableStructure structure,
+            int tableId,
+            CairoConfiguration configuration
+    ) {
         checkTableName(tableName, configuration);
         try (Path path = new Path()) {
             switch (TableUtils.exists(ff, path, root, tableName, 0, tableName.length())) {
@@ -243,7 +251,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.textDelimiterScanner.close();
     }
 
-    public void of(CharSequence tableName, CharSequence inputFileName, int partitionBy, byte columnDelimiter, CharSequence timestampColumn, CharSequence tsFormat, boolean forceHeader, int atomicity) {
+    public void of(
+            CharSequence tableName,
+            CharSequence inputFileName,
+            int partitionBy,
+            byte columnDelimiter,
+            CharSequence timestampColumn,
+            CharSequence tsFormat,
+            boolean forceHeader,
+            int atomicity
+    ) {
         clear();
 
         this.tableName = tableName;
@@ -1055,37 +1072,36 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         long startMs = getCurrentTimeMs();
 
-        long fd = ff.openRO(inputFilePath);
-        if (fd < 0) {
-            throw TextException.$("Can't open input file [path='").put(inputFilePath).put("', errno=").put(ff.errno()).put(']');
-        }
-        long length = ff.length(fd);
-        if (length < 1) {
-            ff.close(fd);
-            throw TextException.$("Ignoring file because it's empty [path='").put(inputFilePath).put(']');
-        }
+        final long fd = TableUtils.openRO(ff, inputFilePath, LOG);
+        try {
+            long length = ff.length(fd);
+            if (length < 1) {
+                throw TextException.$("Ignoring file because it's empty [path='").put(inputFilePath).put(']');
+            }
 
-        try (TableWriter writer = parseStructure(fd)) {
-            findChunkBoundaries(length);
-            indexChunks();
-            importPartitions();
-            mergeSymbolTables(writer);
-            updateSymbolKeys(writer);
-            buildColumnIndexes(writer);
-            try {
-                movePartitions();
-                attachPartitions(writer);
+            try (TableWriter writer = parseStructure(fd)) {
+                findChunkBoundaries(length);
+                indexChunks();
+                importPartitions();
+                mergeSymbolTables(writer);
+                updateSymbolKeys(writer);
+                buildColumnIndexes(writer);
+                try {
+                    movePartitions();
+                    attachPartitions(writer);
+                } catch (Throwable t) {
+                    cleanUp(writer);
+                    throw t;
+                }
             } catch (Throwable t) {
-                cleanUp(writer);
+                cleanUp();
                 throw t;
+            } finally {
+                if (createdWorkDir) {
+                    removeWorkDir();
+                }
             }
-        } catch (Throwable t) {
-            cleanUp();
-            throw t;
         } finally {
-            if (createdWorkDir) {
-                removeWorkDir();
-            }
             ff.close(fd);
         }
 
@@ -1152,15 +1168,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.bufferLength = bufferSize;
     }
 
-    private boolean stealWork(RingQueue<TextImportTask> queue, Sequence subSeq) {
+    private void stealWork(RingQueue<TextImportTask> queue, Sequence subSeq) {
         long seq = subSeq.next();
         if (seq > -1) {
             queue.get(seq).run();
             subSeq.done(seq);
-            return true;
+            return;
         }
         Os.pause();
-        return false;
     }
 
     private void updateSymbolKeys(final TableWriter writer) throws TextException {

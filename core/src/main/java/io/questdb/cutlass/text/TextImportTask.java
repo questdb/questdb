@@ -167,7 +167,7 @@ public class TextImportTask {
         this.countQuotesStage.of(ff, path, chunkStart, chunkEnd, bufferLength);
     }
 
-    public void ofImportPartitionDataStage(CairoEngine cairoEngine,
+    void ofImportPartitionDataStage(CairoEngine cairoEngine,
                                            TableStructure targetTableStructure,
                                            ObjList<TypeAdapter> types,
                                            int atomicity,
@@ -319,10 +319,7 @@ public class TextImportTask {
             long ptr;
             long hi;
 
-            long fd = ff.openRO(path);
-            if (fd < 0) {
-                throw TextException.$("Can't open file path='").put(path).put("', errno=").put(ff.errno());
-            }
+            long fd = TableUtils.openRO(ff, path, LOG);
             long fileBufferPtr = -1;
             try {
                 fileBufferPtr = Unsafe.malloc(bufferLength, MemoryTag.NATIVE_DEFAULT);
@@ -483,7 +480,7 @@ public class TextImportTask {
         private int errors;
         private final LongList importedRows = new LongList();
 
-        public void of(CairoEngine cairoEngine,
+        void of(CairoEngine cairoEngine,
                        TableStructure targetTableStructure,
                        ObjList<TypeAdapter> types,
                        int atomicity,
@@ -580,7 +577,12 @@ public class TextImportTask {
         }
 
         private void logError(long offset, int column, final DirectByteCharSequence dbcs) {
-            LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(column).getType())).$(",line offset=").$(offset).$(",column=").$(column).$(" value='").$(dbcs).$("']").$();
+            LOG.error()
+                    .$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(column).getType()))
+                    .$(", offset=").$(offset)
+                    .$(", column=").$(column)
+                    .$(", value='").$(dbcs)
+                    .I$();
         }
 
         private void importPartitionData(final TextLexer lexer, long address, long size) throws TextException {
@@ -591,9 +593,11 @@ public class TextImportTask {
             long buf = Unsafe.malloc(bufLength, MemoryTag.NATIVE_DEFAULT);
             long fd = -1;
             int utf8SinkSize = cairoEngine.getConfiguration().getTextConfiguration().getUtf8SinkSize();
-            try (Path path = new Path().of(configuration.getInputRoot()).concat(inputFileName);
-                 DirectCharSink utf8Sink = new DirectCharSink(utf8SinkSize)) {
-                fd = ff.openRO(path.$());
+            try (
+                    Path path = new Path().of(configuration.getInputRoot()).concat(inputFileName);
+                    DirectCharSink utf8Sink = new DirectCharSink(utf8SinkSize)
+            ) {
+                fd = TableUtils.openRO(ff, path.$(), LOG);
 
                 TextLexer.Listener listener = (long line, ObjList<DirectByteCharSequence> fields, int fieldCount) ->
                         this.onFieldsPartitioned(fields, fieldCount, utf8Sink);

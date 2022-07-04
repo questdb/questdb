@@ -1283,11 +1283,9 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
             indexer.of("tableName", fileName, partitionBy, (byte) ',', "ts", format, false);
 
-            long fd = ff.openRO(path);
-            long length = ff.length(fd);
-            Assert.assertTrue(fd > -1);
-
-            try (TableWriter writer = indexer.parseStructure(fd)) {
+            long fd = TableUtils.openRO(ff, path, LOG);
+            try (TableWriter ignored = indexer.parseStructure(fd)) {
+                long length = ff.length(fd);
                 indexer.findChunkBoundaries(length);
                 indexer.indexChunks();
             } finally {

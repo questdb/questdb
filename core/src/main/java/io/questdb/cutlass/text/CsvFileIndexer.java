@@ -633,12 +633,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
 
         path.of(inputRoot).slash().concat(inputFileName).$();
-
-        long fd = ff.openRO(path);
-        if (fd < 0)
-            throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
-
-        this.fd = fd;
+        this.fd = TableUtils.openRO(ff, path, LOG);
     }
 
     void prepareBuffer() {
