@@ -469,7 +469,6 @@ public class TableWriter implements Closeable {
 
             // remove _todo
             clearTodoLog();
-
         } catch (CairoException err) {
             throwDistressException(err);
         }
@@ -2238,7 +2237,7 @@ public class TableWriter implements Closeable {
                         .$(", errno=").$(e.getErrno())
                         .$(']').$();
                 if (!ff.remove(path)) {
-                    LOG.error()
+                    LOG.critical()
                             .$("could not remove '").utf8(path).$("'. Please remove MANUALLY.")
                             .$("[errno=").$(ff.errno())
                             .$(']').$();
@@ -5003,7 +5002,8 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void throwDistressException(Throwable cause) {
+    private void throwDistressException(CairoException cause) {
+        LOG.critical().$("writer error [table=").$(tableName).$(", e=").$((Sinkable) cause).I$();
         this.distressed = true;
         throw new CairoError(cause);
     }
@@ -5110,7 +5110,6 @@ public class TableWriter implements Closeable {
                 denseIndexers.getQuick(i).refreshSourceAndIndex(lo, hi);
             } catch (CairoException e) {
                 // this is pretty severe, we hit some sort of limit
-                LOG.critical().$("index error {").$((Sinkable) e).$('}').$();
                 throwDistressException(e);
             }
         }
