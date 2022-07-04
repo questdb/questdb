@@ -24,10 +24,16 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.network.Net;
+import io.questdb.std.str.StringSink;
+
 public class LineSenderException extends RuntimeException {
 
+    private final StringSink message = new StringSink();
+    private int errno = Integer.MIN_VALUE;
+
     public LineSenderException(String message) {
-        super(message);
+        this.message.put(message);
     }
 
     public LineSenderException(Throwable t) {
@@ -35,6 +41,39 @@ public class LineSenderException extends RuntimeException {
     }
 
     public LineSenderException(String message, Throwable cause) {
-        super(message, cause);
+        super(cause);
+        this.message.put(message);
+    }
+
+    public LineSenderException put(CharSequence cs) {
+        message.put(cs);
+        return this;
+    }
+
+    public LineSenderException putAsPrintable(CharSequence nonPrintable) {
+        message.putAsPrintable(nonPrintable);
+        return this;
+    }
+
+    public LineSenderException appendIP4(int ip) {
+        Net.appendIP4(message, ip);
+        return this;
+    }
+
+    public LineSenderException errno(int errno) {
+        this.errno = errno;
+        return this;
+    }
+
+    @Override
+    public String getMessage() {
+        if (errno == Integer.MIN_VALUE) {
+            return message.toString();
+        }
+        String errNoRender =  "[" + errno + "]";
+        if (message.length() == 0) {
+            return errNoRender;
+        }
+        return errNoRender + " " + message;
     }
 }

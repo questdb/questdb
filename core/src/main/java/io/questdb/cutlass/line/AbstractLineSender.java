@@ -250,11 +250,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             return;
         }
         if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
-            StringSink sink = new StringSink();
-            sink.put("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
-                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ");
-            sink.putAsPrintable(name);
-            throw new LineSenderException(sink.toString());
+            throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
+                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
         }
     }
 
@@ -270,11 +267,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             return;
         }
         if (!TableUtils.isValidTableName(name, Integer.MAX_VALUE)) {
-            StringSink sink = new StringSink();
-            sink.put("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
-                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ");
-            sink.putAsPrintable(name);
-            throw new LineSenderException(sink.toString());
+            throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
+                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
         }
     }
 
@@ -408,7 +402,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             int rc = lineChannel.receive(ptr + n, capacity - n);
             if (rc < 0) {
                 close();
-                throw new LineSenderException("disconnected during authentication [errno=" + lineChannel.errno() + "]");
+                throw new LineSenderException("disconnected during authentication").errno(lineChannel.errno());
             }
             int eol = findEOL(ptr + n, rc);
             if (eol != -1) {

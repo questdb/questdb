@@ -50,10 +50,7 @@ public final class PlainTcpLineChannel implements LineChannel {
         if (nf.connect(fd, sockaddr) != 0) {
             nf.close(fd, LOG);
             nf.freeSockAddr(sockaddr);
-            CharSink stringSink = new StringSink().put("could not connect to ");
-            Net.appendIP4(stringSink, address);
-            stringSink.put(", [errno=").put(nf.errno()).put("]");
-            throw new LineSenderException(stringSink.toString());
+            throw new LineSenderException("could not connect to ").appendIP4(address).errno(nf.errno());
         }
         configureBuffers(nf, sndBufferSize);
     }
@@ -68,12 +65,12 @@ public final class PlainTcpLineChannel implements LineChannel {
         long addrInfo = nf.getAddrInfo(host, port);
         if (addrInfo == -1) {
             nf.close(fd, LOG);
-            throw new LineSenderException("could not resolve " + host + " to IP address");
+            throw new LineSenderException("could not resolve ").put(host).put( " to IP address");
         }
         if (nf.connectAddrInfo(fd, addrInfo) != 0) {
             nf.close(fd, LOG);
             nf.freeAddrInfo(addrInfo);
-            throw new LineSenderException("could not connect to " + host + " [errno=" + nf.errno() + "]");
+            throw new LineSenderException("could not connect to ").put(host).errno(nf.errno());
         }
         nf.freeAddrInfo(addrInfo);
         configureBuffers(nf, sndBufferSize);
@@ -97,7 +94,7 @@ public final class PlainTcpLineChannel implements LineChannel {
     @Override
     public void send(long ptr, int len) {
         if (nf.send(fd, ptr, len) != len) {
-            throw new LineSenderException("send error [errno=" + nf.errno() + "]");
+            throw new LineSenderException("send error").errno(nf.errno());
         }
     }
 

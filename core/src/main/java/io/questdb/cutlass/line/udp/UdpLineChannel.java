@@ -44,22 +44,19 @@ public final class UdpLineChannel implements LineChannel {
         this.nf = nf;
         this.fd = nf.socketUdp();
         if (fd == -1) {
-            throw new LineSenderException("could not create UDP socket [errno=" + nf.errno() + "]");
+            throw new LineSenderException("could not create UDP socket").errno(nf.errno());
         }
         this.sockaddr = nf.sockaddr(sendToAddress, port);
         if (nf.setMulticastInterface(fd, interfaceIPv4Address) != 0) {
             final int errno = nf.errno();
             close();
-            CharSink stringSink = new StringSink().put("could not bind to ");
-            Net.appendIP4(stringSink, interfaceIPv4Address);
-            stringSink.put(" [errno=").put(errno).put("]");
-            throw new LineSenderException(stringSink.toString());
+            throw new LineSenderException("could not bind to ").appendIP4(interfaceIPv4Address).errno(errno);
         }
 
         if (nf.setMulticastTtl(fd, ttl) != 0) {
             final int errno = nf.errno();
             close();
-            throw new LineSenderException("could not set ttl [fd=" + fd + " , ttl=" + ttl + ", errno=" + errno + "]");
+            throw new LineSenderException("could not set ttl [fd=" + fd + " , ttl=" + ttl + "]").errno(errno);
         }
     }
 
@@ -74,7 +71,7 @@ public final class UdpLineChannel implements LineChannel {
     @Override
     public void send(long ptr, int len) {
         if (nf.sendTo(fd, ptr, len, sockaddr) != len) {
-            throw new LineSenderException("send error [errno=" + nf.errno() + "]");
+            throw new LineSenderException("send error").errno(nf.errno());
         }
     }
 
