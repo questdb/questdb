@@ -429,7 +429,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return challengeBytes;
     }
 
-    private byte[] signAndEncode(PrivateKey privateKey, byte[] challengeBytes) {
+    protected byte[] signAndEncode(PrivateKey privateKey, byte[] challengeBytes) {
+        // protected for testing
         byte[] rawSignature;
         try {
             Signature sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
