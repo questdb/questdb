@@ -28,16 +28,22 @@ import io.questdb.MessageBus;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
 public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> implements Closeable {
     private TextLexer textLexer;
+    private final long fileBufAddr;
+    private long fileBufSize;
 
     public TextImportJob(MessageBus messageBus) {
         super(messageBus.getTextImportQueue(), messageBus.getTextImportSubSeq());
         this.textLexer = new TextLexer(messageBus.getConfiguration().getTextConfiguration());
+        this.fileBufSize = messageBus.getConfiguration().getSqlCopyBufferSize();
+        this.fileBufAddr = Unsafe.malloc(fileBufSize, MemoryTag.MMAP_PARALLEL_IMPORT);
     }
 
     public static void assignToPool(MessageBus messageBus, WorkerPool pool) {
@@ -51,12 +57,16 @@ public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> impl
     @Override
     public void close() {
         this.textLexer = Misc.free(textLexer);
+        if (fileBufSize > 0) {
+            Unsafe.free(fileBufAddr, fileBufSize, MemoryTag.MMAP_PARALLEL_IMPORT);
+            fileBufSize = 0;
+        }
     }
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
         final TextImportTask task = queue.get(cursor);
-        final boolean result = task.run(textLexer);
+        final boolean result = task.run(textLexer, fileBufAddr, fileBufSize);
         subSeq.done(cursor);
         return result;
     }

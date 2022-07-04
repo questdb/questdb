@@ -138,7 +138,6 @@ public class TextImportTask {
                                            int timestampIndex,
                                            TimestampAdapter adapter,
                                            boolean ignoreHeader,
-                                           int bufferLen,
                                            int atomicity) {
         this.phase = PHASE_INDEXING;
         this.buildPartitionIndexStage.of(chunkStart,
@@ -153,7 +152,6 @@ public class TextImportTask {
                 timestampIndex,
                 adapter,
                 ignoreHeader,
-                bufferLen,
                 atomicity);
     }
 
@@ -210,7 +208,7 @@ public class TextImportTask {
         this.updateSymbolColumnKeysStage.of(cairoEngine, tableStructure, index, partitionSize, partitionTimestamp, root, columnName, symbolCount);
     }
 
-    public boolean run(TextLexer lexer) {
+    public boolean run(TextLexer lexer, long fileBufAddr, long fileBufSize) {
         try {
             status = STATUS_OK;
             if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
@@ -219,9 +217,9 @@ public class TextImportTask {
                 return false;
             }
             if (phase == PHASE_BOUNDARY_CHECK) {
-                countQuotesStage.run();
+                countQuotesStage.run(fileBufAddr, fileBufSize);
             } else if (phase == PHASE_INDEXING) {
-                buildPartitionIndexStage.run();
+                buildPartitionIndexStage.run(fileBufAddr, fileBufSize);
             } else if (phase == PHASE_PARTITION_IMPORT) {
                 importPartitionDataStage.run(lexer);
             } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
@@ -272,7 +270,6 @@ public class TextImportTask {
         private long chunkEnd;
         private Path path;
         private FilesFacade ff;
-        private int bufferLength;
 
         public long getNewLineCountEven() {
             return newLineCountEven;
@@ -304,10 +301,9 @@ public class TextImportTask {
             this.path = path;
             this.chunkStart = chunkStart;
             this.chunkEnd = chunkEnd;
-            this.bufferLength = bufferLength;
         }
 
-        public void run() throws TextException {
+        public void run(long fileBufPtr, long fileBufSize) throws TextException {
             long offset = chunkStart;
 
             //output vars
@@ -320,18 +316,16 @@ public class TextImportTask {
             long hi;
 
             long fd = TableUtils.openRO(ff, path, LOG);
-            long fileBufferPtr = -1;
             try {
-                fileBufferPtr = Unsafe.malloc(bufferLength, MemoryTag.NATIVE_DEFAULT);
 
                 do {
-                    long leftToRead = Math.min(chunkEnd - offset, bufferLength);
-                    read = (int) ff.read(fd, fileBufferPtr, leftToRead, offset);
+                    long leftToRead = Math.min(chunkEnd - offset, fileBufSize);
+                    read = (int) ff.read(fd, fileBufPtr, leftToRead, offset);
                     if (read < 1) {
                         break;
                     }
-                    hi = fileBufferPtr + read;
-                    ptr = fileBufferPtr;
+                    hi = fileBufPtr + read;
+                    ptr = fileBufPtr;
 
                     while (ptr < hi) {
                         final byte c = Unsafe.getUnsafe().getByte(ptr++);
@@ -340,7 +334,7 @@ public class TextImportTask {
                         } else if (c == '\n') {
                             nlCount[(int) (quotes & 1)]++;
                             if (nlFirst[(int) (quotes & 1)] == -1) {
-                                nlFirst[(int) (quotes & 1)] = offset + (ptr - fileBufferPtr);
+                                nlFirst[(int) (quotes & 1)] = offset + (ptr - fileBufPtr);
                             }
                         }
                     }
@@ -353,9 +347,6 @@ public class TextImportTask {
                 }
             } finally {
                 ff.close(fd);
-                if (fileBufferPtr > 0) {
-                    Unsafe.free(fileBufferPtr, bufferLength, MemoryTag.NATIVE_DEFAULT);
-                }
             }
 
             this.quoteCount = quotes;
@@ -370,7 +361,6 @@ public class TextImportTask {
             this.path = null;
             this.chunkStart = -1;
             this.chunkEnd = -1;
-            this.bufferLength = -1;
         }
     }
 
@@ -388,7 +378,6 @@ public class TextImportTask {
         private TimestampAdapter adapter;
         private boolean ignoreHeader;
         private CairoConfiguration configuration;
-        private int bufferLen;
         private int atomicity;
 
         public LongList getPartitionKeysAndSizes() {
@@ -407,8 +396,8 @@ public class TextImportTask {
                        int timestampIndex,
                        TimestampAdapter adapter,
                        boolean ignoreHeader,
-                       int bufferLen,
-                       int atomicity) {
+                       int atomicity
+        ) {
             assert chunkStart >= 0 && chunkEnd > chunkStart;
             assert lineNumber >= 0;
 
@@ -425,15 +414,13 @@ public class TextImportTask {
             this.timestampIndex = timestampIndex;
             this.adapter = adapter;
             this.ignoreHeader = ignoreHeader;
-            this.bufferLen = bufferLen;
             this.atomicity = atomicity;
         }
 
-        public void run() throws TextException {
+        public void run(long fileBufAddr, long fileBufSize) throws TextException {
             try (CsvFileIndexer splitter = new CsvFileIndexer(configuration)) {
-                splitter.setBufferLength(bufferLen);
                 splitter.of(inputFileName, importRoot, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader, atomicity);
-                splitter.index(chunkStart, chunkEnd, lineNumber, partitionKeysAndSizes);
+                splitter.index(chunkStart, chunkEnd, lineNumber, partitionKeysAndSizes, fileBufAddr, fileBufSize);
             }
         }
 
@@ -451,7 +438,6 @@ public class TextImportTask {
             this.timestampIndex = -1;
             this.adapter = null;
             this.ignoreHeader = false;
-            this.bufferLen = -1;
             this.atomicity = -1;
         }
     }

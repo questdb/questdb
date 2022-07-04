@@ -79,9 +79,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     //input file descriptor (cached between initial boundary scan & indexing phases)
     private long fd = -1;
-    //input file buffer (used in multiple phases)
-    private long fileBufferPtr = -1;
-    private int bufferLength;
 
     private final long maxIndexChunkSize;
 
@@ -147,12 +144,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.typeManager = new TypeManager(textConfiguration, utf8Sink);
         this.ff = configuration.getFilesFacade();
         this.dirMode = configuration.getMkDirMode();
-
         this.inputRoot = configuration.getInputRoot();
         this.maxIndexChunkSize = configuration.getMaxImportIndexChunkSize();
-
-        this.bufferLength = configuration.getSqlCopyBufferSize();
-
         this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
         this.fieldRollBufLimit = MAX_TIMESTAMP_LENGTH;
         this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_DEFAULT);
@@ -162,7 +155,17 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.failOnTsError = false;
     }
 
-    public void of(CharSequence inputFileName, CharSequence importRoot, int index, int partitionBy, byte columnDelimiter, int timestampIndex, TimestampAdapter adapter, boolean ignoreHeader, int atomicity) {
+    public void of(
+            CharSequence inputFileName,
+            CharSequence importRoot,
+            int index,
+            int partitionBy,
+            byte columnDelimiter,
+            int timestampIndex,
+            TimestampAdapter adapter,
+            boolean ignoreHeader,
+            int atomicity
+    ) {
         this.inputFileName = inputFileName;
         this.importRoot = importRoot;
         this.partitionFloorMethod = PartitionBy.getPartitionFloorMethod(partitionBy);
@@ -328,11 +331,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.inputFileName = null;
 
         closeOutputFiles();
-
-        if (fileBufferPtr > -1) {
-            Unsafe.free(fileBufferPtr, bufferLength, MemoryTag.NATIVE_DEFAULT);
-            fileBufferPtr = -1;
-        }
 
         if (fd > -1) {
             boolean closed = ff.close(fd);
@@ -576,12 +574,18 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.lastLineStart = this.offset + (this.fieldLo - lo);
     }
 
-    public void index(long chunkLo, long chunkHi, long lineNumber, LongList partitionKeysAndSizes) {
+    public void index(
+            long chunkLo,
+            long chunkHi,
+            long lineNumber,
+            LongList partitionKeysAndSizes,
+            long fileBufAddr,
+            long fileBufSize
+    ) {
         assert chunkHi > 0;
         assert chunkLo >= 0 && chunkLo < chunkHi;
 
         openInputFile();
-        prepareBuffer();
 
         this.offset = chunkLo;
         long read;
@@ -591,12 +595,12 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         try {
             do {
-                long leftToRead = Math.min(chunkHi - offset, bufferLength);
-                read = (int) ff.read(fd, fileBufferPtr, leftToRead, offset);
+                long leftToRead = Math.min(chunkHi - offset, fileBufSize);
+                read = (int) ff.read(fd, fileBufAddr, leftToRead, offset);
                 if (read < 1) {
                     break;
                 }
-                parse(fileBufferPtr, fileBufferPtr + read);
+                parse(fileBufAddr, fileBufAddr + read);
                 offset += read;
             } while (offset < chunkHi);
 
@@ -636,12 +640,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.fd = TableUtils.openRO(ff, path, LOG);
     }
 
-    void prepareBuffer() {
-        if (fileBufferPtr < 0) {
-            fileBufferPtr = Unsafe.malloc(bufferLength, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
     public static void sort(FilesFacade ff, final long srcFd, long srcSize) {
         long srcAddress = -1;
         long bufferPtr = -1;
@@ -676,10 +674,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     public void setTimestampIndex(int tsIndex) {
         this.timestampIndex = tsIndex;
-    }
-
-    public void setBufferLength(int length) {
-        this.bufferLength = length;
     }
 
     public CharSequence getImportRoot() {

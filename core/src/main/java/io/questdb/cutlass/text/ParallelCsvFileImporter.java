@@ -88,7 +88,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final Path tmpPath = new Path();
     private final RingQueue<TextImportTask> queue;
     private final Sequence pubSeq;
-    private final Sequence subSeq;
     private final Sequence collectSeq;
     private final Lock lock;
     private final int workerCount;
@@ -105,7 +104,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final CairoConfiguration configuration;
     private final TableStructureAdapter targetTableStructure;
     private final SqlExecutionCircuitBreaker circuitBreaker;
-    private final TextLexer textLexer;
+    private final TextImportJob localImportJob;
+    private final Consumer<TextImportTask> checkStatusRef = this::checkStatus;
     private int taskCount;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
     //input params end
@@ -145,10 +145,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         MessageBus bus = sqlExecutionContext.getMessageBus();
         this.queue = bus.getTextImportQueue();
         this.pubSeq = bus.getTextImportPubSeq();
-        this.subSeq = bus.getTextImportSubSeq();
         this.collectSeq = bus.getTextImportColSeq();
         this.lock = bus.getTextImportQueueLock();
-        this.textLexer = new TextLexer(configuration.getTextConfiguration());
+        this.localImportJob = new TextImportJob(bus);
 
         CairoConfiguration cfg = sqlExecutionContext.getCairoEngine().getConfiguration();
         this.workerCount = sqlExecutionContext.getWorkerCount();
@@ -251,7 +250,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.utf8Sink.close();
         this.textMetadataDetector.close();
         this.textDelimiterScanner.close();
-        this.textLexer.close();
+        this.localImportJob.close();
     }
 
     public void of(
@@ -406,17 +405,20 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         final TextImportTask task = queue.get(seq);
                         task.setIndex(t);
                         task.setCircuitBreaker(circuitBreaker);
+                        // this task will create its own copy of TableWriter to build indexes concurrently?
                         task.ofBuildSymbolColumnIndexStage(cairoEngine, targetTableStructure, importRoot, t, metadata);
                         pubSeq.done(seq);
                         queuedCount++;
                         break;
                     } else {
-                        collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+                        // todo: an alternative to collecting the queue is building indexes serially
+                        collectedCount += collect(queuedCount - collectedCount, checkStatusRef);
                     }
                 }
             }
 
-            collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+            // todo: this is not called when there are no indexed columns
+            collectedCount += collect(queuedCount - collectedCount, checkStatusRef);
             assert collectedCount == queuedCount;
             checkImportStatus();
         }
@@ -461,7 +463,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 collectSeq.done(seq);
                 collectedCount += 1;
             } else {
-                stealWork(queue, subSeq);
+                stealWork();
             }
         }
         return collectedCount;
@@ -647,7 +649,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     final TextImportTask task = queue.get(seq);
                     task.setIndex(colIdx);
                     task.setCircuitBreaker(circuitBreaker);
-                    task.ofBuildPartitionIndexStage(chunkLo, chunkHi, lineNumber, colIdx, configuration, inputFileName, importRoot, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader, bufferLength, atomicity);
+                    task.ofBuildPartitionIndexStage(chunkLo, chunkHi, lineNumber, colIdx, configuration, inputFileName, importRoot, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader, atomicity);
                     if (forceHeader) {
                         forceHeader = false;
                     }
@@ -887,7 +889,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 textMetadataDetector.evaluateResults(lexer.getLineCount(), lexer.getErrorCount());
                 forceHeader = textMetadataDetector.isHeader();
 
-                return prepareTable(securityContext, textMetadataDetector.getColumnNames(), textMetadataDetector.getColumnTypes(), inputFilePath, typeManager);
+                return prepareTable(
+                        securityContext,
+                        textMetadataDetector.getColumnNames(),
+                        textMetadataDetector.getColumnTypes(),
+                        inputFilePath,
+                        typeManager
+                );
             } else {
                 throw TextException.$("Can't read from file path='").put(inputFilePath).put("' to analyze structure");
             }
@@ -1171,11 +1179,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.bufferLength = bufferSize;
     }
 
-    private void stealWork(RingQueue<TextImportTask> queue, Sequence subSeq) {
-        long seq = subSeq.next();
-        if (seq > -1) {
-            queue.get(seq).run(textLexer);
-            subSeq.done(seq);
+    private void stealWork() {
+        if (localImportJob.run(0)) {
             return;
         }
         Os.pause();
