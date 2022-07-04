@@ -463,7 +463,7 @@ public final class ColumnType {
         TYPE_SIZE[VAR_ARG] = -1;
         TYPE_SIZE[RECORD] = -1;
         TYPE_SIZE[NULL] = 0;
-        TYPE_SIZE[LONG128] = Long128.BYTES;
+        TYPE_SIZE[LONG128] = 2 * Long.BYTES;
     }
 
     //geohash bits <-> backing primitive types bit boundaries

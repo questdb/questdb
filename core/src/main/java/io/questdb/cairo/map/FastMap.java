@@ -151,7 +151,7 @@ public class FastMap implements Map {
                         offset += Long256.BYTES;
                         break;
                     case ColumnType.LONG128:
-                        offset += Long128.BYTES;
+                        offset += 16;
                         break;
                     default:
                         close();
@@ -555,6 +555,15 @@ public class FastMap implements Map {
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());
             appendAddress += Long256.BYTES;
+            writeOffset();
+        }
+
+        @Override
+        public void putLong128(long hi, long lo) {
+            checkSize(16);
+            Unsafe.getUnsafe().putLong(appendAddress, lo);
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
+            appendAddress += 16;
             writeOffset();
         }
 

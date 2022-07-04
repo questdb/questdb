@@ -38,8 +38,6 @@ public class TableReaderSelectedColumnRecord implements Record {
     private int columnBase;
     private long recordIndex = 0;
     private TableReader reader;
-    private final Long128Impl long128A = new Long128Impl();
-    private final Long128Impl long128B = new Long128Impl();
 
     public TableReaderSelectedColumnRecord(@NotNull IntList columnIndexes) {
         this.columnIndexes = columnIndexes;
@@ -198,25 +196,23 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public Long128 getLong128A(int columnIndex) {
+    public long getLong128Hi(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Long128.BYTES;
+        final long offset = getAdjustedRecordIndex(col) * 16;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         MemoryR column = reader.getColumn(absoluteColumnIndex);
-        long128A.setAll(column.getLong(offset), column.getLong(offset + Long.BYTES));
-        return long128A;
+        return column.getLong(offset + Long.BYTES); // Store Lo then Hi
     }
 
     @Override
-    public Long128 getLong128B(int columnIndex) {
+    public long getLong128Lo(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
-        final long offset = getAdjustedRecordIndex(col) * Long128.BYTES;
+        final long offset = getAdjustedRecordIndex(col) * 8;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         MemoryR column = reader.getColumn(absoluteColumnIndex);
-        long128B.setAll(column.getLong(offset), column.getLong(offset + Long.BYTES));
-        return long128B;
+        return column.getLong(offset); // Store Lo then Hi
     }
 
 

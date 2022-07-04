@@ -62,7 +62,7 @@ public interface MemoryA extends Closeable {
 
     void putLong(long value);
 
-    void putLong128(long l1, long l2);
+    void putLong128(long hi, long lo);
 
     void putLong256(long l0, long l1, long l2, long l3);
 

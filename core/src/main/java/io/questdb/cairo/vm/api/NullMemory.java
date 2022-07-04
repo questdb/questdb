@@ -132,7 +132,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void putLong128(long l1, long l2) {
+    public void putLong128(long hi, long lo) {
         throw new UnsupportedOperationException();
     }
 

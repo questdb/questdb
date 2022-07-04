@@ -23,7 +23,7 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory;
+import io.questdb.griffin.engine.functions.date.LongsToLong128FunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 
 open module io.questdb {
@@ -219,7 +219,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory,
-            io.questdb.griffin.engine.functions.date.IndexedTimestampSequenceFunctionFactory,
+            LongsToLong128FunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory,

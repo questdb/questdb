@@ -191,7 +191,7 @@ public class WalWriter implements Closeable {
             if (timestampIndex != -1) {
                 //avoid lookups by having a designated field with primaryColumn
                 final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
-                primaryColumn.putLong128(timestamp, rowCount);
+                primaryColumn.putLong128(rowCount, timestamp);
                 setRowValueNotNull(timestampIndex);
                 row.timestamp = timestamp;
             }
@@ -773,10 +773,10 @@ public class WalWriter implements Closeable {
         }
 
         @Override
-        public void putLong128(int columnIndex, Long128 value) {
+        public void putLong128(int columnIndex, long first, long second) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
-            primaryColumn.putLong(value.getLong0());
-            primaryColumn.putLong(value.getLong1());
+            primaryColumn.putLong(first);
+            primaryColumn.putLong(second);
         }
 
         @Override

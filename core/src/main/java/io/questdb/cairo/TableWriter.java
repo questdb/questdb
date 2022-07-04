@@ -3663,7 +3663,9 @@ public class TableWriter implements Closeable, WalWriterFactory {
 
             for (long n = 0; n < transientRowsAdded; n++) {
                 long ts = Unsafe.getUnsafe().getLong(address + alignedExtraLen + (n << shl));
-                o3TimestampMem.putLong128(ts, o3RowCount + n);
+                // putLong128(hi, lo)
+                // written in memory as lo then hi
+                o3TimestampMem.putLong128(o3RowCount + n, ts);
             }
 
             if (locallyMapped) {
@@ -4113,7 +4115,9 @@ public class TableWriter implements Closeable, WalWriterFactory {
     }
 
     private void o3TimestampSetter(long timestamp) {
-        o3TimestampMem.putLong128(timestamp, getO3RowCount0());
+        // putLong128(hi, lo)
+        // written in memory as lo then hi
+        o3TimestampMem.putLong128(getO3RowCount0(), timestamp);
     }
 
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
@@ -5553,7 +5557,7 @@ public class TableWriter implements Closeable, WalWriterFactory {
 
         void putLong256(int columnIndex, CharSequence hexString);
 
-        void putLong128(int columnIndex, Long128 value);
+        void putLong128(int columnIndex, long first, long second);
 
         void putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end);
 
@@ -5710,10 +5714,10 @@ public class TableWriter implements Closeable, WalWriterFactory {
         }
 
         @Override
-        public void putLong128(int columnIndex, Long128 value) {
+        public void putLong128(int columnIndex, long hi, long lo) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
-            primaryColumn.putLong(value.getLong0());
-            primaryColumn.putLong(value.getLong1());
+            primaryColumn.putLong(lo);
+            primaryColumn.putLong(hi);
         }
 
         @Override

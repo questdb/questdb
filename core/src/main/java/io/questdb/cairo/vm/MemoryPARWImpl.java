@@ -370,14 +370,14 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     @Override
-    public final void putLong128(long l1, long l2) {
+    public final void putLong128(long hi, long lo) {
         if (pageHi - appendPointer > 15) {
-            Unsafe.getUnsafe().putLong(appendPointer, l1);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, l2);
+            Unsafe.getUnsafe().putLong(appendPointer, lo);
+            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, hi);
             appendPointer += 16;
         } else {
-            putLong(l1);
-            putLong(l2);
+            putLong(lo);
+            putLong(hi);
         }
     }
 

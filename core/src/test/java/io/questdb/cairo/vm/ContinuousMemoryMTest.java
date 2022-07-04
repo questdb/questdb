@@ -799,8 +799,8 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
     private void assertLong128(MemoryR rwMem, int count) {
         rnd.reset();
         for (int i = 0; i < count; i++) {
-            Assert.assertEquals(rnd.nextLong(), rwMem.getLong(i * 16L));
             Assert.assertEquals(rnd.nextLong(), rwMem.getLong(i * 16L + 8L));
+            Assert.assertEquals(rnd.nextLong(), rwMem.getLong(i * 16L));
         }
     }
 

@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.InterpolationUtil;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 
@@ -168,17 +167,12 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public void getLong128(Record rec, CharSink sink) {
+    public long getLong128Hi(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public Long128 getLong128A(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Long128 getLong128B(Record rec) {
+    public long getLong128Lo(Record rec) {
         throw new UnsupportedOperationException();
     }
 
