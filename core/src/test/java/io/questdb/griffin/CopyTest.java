@@ -342,7 +342,7 @@ public class CopyTest extends AbstractGriffinTest {
     public void testParallelCopyThrowsExceptionWhenValidationFails() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT; ", sqlExecutionContext);
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("partition by unit must be set when importing to new table"));

@@ -34,7 +34,6 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.test.tools.TestUtils;
 import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -1830,10 +1829,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         return result;
     }
 
-    static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
-        assertMemoryLeak(code);
-    }
-
     private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws TextException {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
@@ -1870,7 +1865,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             FilesFacade ff,
             TextImportRunnable runnable
     ) throws Exception {
-        executeVanilla(() -> {
+        // we need to create entire engine
+        assertMemoryLeak(() -> {
             if (workerCount > 0) {
 
                 int[] affinity = new int[workerCount];
@@ -1903,7 +1899,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                         Metrics.disabled()
                 );
 
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
@@ -1925,10 +1921,10 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     }
                 };
 
-                execute(pool, runnable, configuration);
+                execute(pool, runnable, configuration1);
             } else {
                 // we need to create entire engine
-                final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
+                final CairoConfiguration configuration1 = new DefaultCairoConfiguration(root) {
                     @Override
                     public FilesFacade getFilesFacade() {
                         return ff;
@@ -1939,7 +1935,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                         return queueCapacity;
                     }
                 };
-                execute(null, runnable, configuration);
+                execute(null, runnable, configuration1);
             }
         });
     }

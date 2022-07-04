@@ -45,6 +45,8 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.io.File;
+import java.io.IOException;
 import java.util.concurrent.locks.Lock;
 import java.util.function.Consumer;
 
@@ -130,6 +132,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private byte phase;
     private CharSequence errorMessage;
     private long startMs;//start time of current phase (in millis)
+    private boolean createdWorkDir;
 
     public ParallelCsvFileImporter(SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
@@ -165,6 +168,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.targetTableCreated = false;
 
         this.atomicity = Atomicity.SKIP_COL;
+        this.createdWorkDir = false;
     }
 
     public static void createTable(final FilesFacade ff, int mkDirMode, final CharSequence root, final CharSequence tableName, TableStructure structure, int tableId, CairoConfiguration configuration) {
@@ -226,6 +230,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         targetTableCreated = false;
         atomicity = Atomicity.SKIP_COL;
         taskCount = -1;
+        createdWorkDir = false;
     }
 
     @Override
@@ -484,6 +489,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             throw CairoException.instance(errno).put("Can't create import work dir ").put(workDirPath).put(" errno=").put(errno);
         }
 
+        createdWorkDir = true;
         LOG.info().$("created import dir ").$(workDirPath).$();
     }
 
@@ -1077,7 +1083,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             cleanUp();
             throw t;
         } finally {
-            removeWorkDir();
+            if (createdWorkDir) {
+                removeWorkDir();
+            }
             ff.close(fd);
         }
 
@@ -1099,15 +1107,43 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void removeWorkDir() {
-        Path workDirPath = tmpPath.of(importRoot).slash$();
+        Path workDirPath = tmpPath.of(importRoot).$();
 
         if (ff.exists(workDirPath)) {
+            if (isOneOfMainDirectories(importRoot)) {
+                throw CairoException.instance(0).put("Can't remove work dir because it points to one of main instance directories [path='").put(workDirPath).put("'] .");
+            }
+
             LOG.info().$("removing import directory path='").$(workDirPath).$("'").$();
 
             int errno = ff.rmdir(workDirPath);
             if (errno != 0) {
                 throw CairoException.instance(errno).put("Can't remove import directory path='").put(workDirPath).put("' errno=").put(errno);
             }
+        }
+    }
+
+    private boolean isOneOfMainDirectories(CharSequence p) {
+        String path = normalize(p);
+        if (path == null) {
+            return false;
+        }
+
+        return path.equals(normalize(configuration.getConfRoot())) ||
+                path.equals(normalize(configuration.getRoot())) ||
+                path.equals(normalize(configuration.getDbDirectory())) ||
+                path.equals(normalize(configuration.getSnapshotRoot()));
+    }
+
+    private String normalize(CharSequence c) {
+        try {
+            if (c == null) {
+                return null;
+            }
+            return new File(c.toString()).getCanonicalPath().replace(File.separatorChar, '/');
+        } catch (IOException e) {
+            LOG.error().$("Can't normalize [path='").$(c).$("'] ").$(e).$();
+            return null;
         }
     }
 

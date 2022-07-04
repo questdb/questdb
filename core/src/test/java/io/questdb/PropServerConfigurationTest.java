@@ -37,9 +37,11 @@ import io.questdb.network.SelectFacadeImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
@@ -49,6 +51,8 @@ import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+
+import static org.hamcrest.CoreMatchers.*;
 
 public class PropServerConfigurationTest {
 
@@ -1053,5 +1057,52 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.integer.default.column.type", "BITE");
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+    }
+
+    @Test
+    public void testImportWorkRootCantBeTheSameAsOtherInstanceDirectories() throws JsonException, ServerConfigurationException {
+        Properties properties = new Properties();
+
+        PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        MatcherAssert.assertThat(configuration.getCairoConfiguration().getInputWorkRoot(), is(nullValue()));
+
+        //direct cases 
+        assertInputWorkRootCantBeSetTo(properties, root);
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toString());
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getSnapshotRoot().toString());
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getConfRoot().toString());
+
+        //relative cases
+        assertInputWorkRootCantBeSetTo(properties, getRelativePath(root));
+        assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getRoot().toString()));
+        assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getSnapshotRoot().toString()));
+        assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getConfRoot().toString()));
+    }
+
+    @Test
+    public void testImportWorkRootCantBeTheSameAsOtherInstanceDirectories2() throws JsonException, ServerConfigurationException {
+        Assume.assumeTrue(Os.type == Os.WINDOWS);
+
+        Properties properties = new Properties();
+
+        PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        MatcherAssert.assertThat(configuration.getCairoConfiguration().getInputWorkRoot(), is(nullValue()));
+
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toString().toUpperCase());
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toString().toLowerCase());
+    }
+
+    private String getRelativePath(String path) {
+        return path + File.separator + ".." + File.separator + new File(path).getName();
+    }
+
+    private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws JsonException {
+        try {
+            properties.setProperty(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath(), value);
+            new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+            Assert.fail("Should fail for " + value);
+        } catch (ServerConfigurationException e) {
+            MatcherAssert.assertThat(e.getMessage(), containsString("cairo.sql.copy.work.root can't point to root, data, conf or snapshot dirs"));
+        }
     }
 }

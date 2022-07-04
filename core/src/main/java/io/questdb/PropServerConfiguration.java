@@ -56,6 +56,7 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.*;
 
 public class PropServerConfiguration implements ServerConfiguration {
@@ -788,7 +789,20 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
 
             this.inputRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
-            this.inputWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.inputRoot);
+            String inputWorkRootTmp = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.inputRoot);
+            if (inputWorkRootTmp != null) {
+                inputWorkRoot = getCanonicalPath(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, inputWorkRootTmp);
+            } else {
+                inputWorkRoot = null;
+            }
+
+            if (pathEquals(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, root, inputWorkRoot) ||
+                    pathEquals(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.root, inputWorkRoot) ||
+                    pathEquals(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.confRoot, inputWorkRoot) ||
+                    pathEquals(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, this.snapshotRoot, inputWorkRoot)) {
+                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
+            }
+
             this.maxImportIndexChunkSize = getLong(properties, env, PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
             this.maxImportIndexChunkSize -= (maxImportIndexChunkSize % CsvFileIndexer.INDEX_ENTRY_SIZE);
             this.parallelImportQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_IMPORT_QUEUE_CAPACITY, 32));
@@ -960,6 +974,27 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
+        }
+    }
+
+    String getCanonicalPath(PropertyKey key, String path) throws ServerConfigurationException {
+        try {
+            return new File(path).getCanonicalPath();
+        } catch (IOException e) {
+            throw new ServerConfigurationException("Can't get canonical path for configuration property [key=" + key.getPropertyPath() + ",value=" + path + "]");
+        }
+    }
+
+    boolean pathEquals(PropertyKey key, String p1, String p2) throws ServerConfigurationException {
+        try {
+            if (p1 == null || p2 == null) {
+                return false;
+            }
+            //unfortunately java.io.Files.isSameFile() doesn't work on files that don't exist 
+            return new File(p1).getCanonicalPath().replace(File.separatorChar, '/')
+                    .equals(new File(p2).getCanonicalPath().replace(File.separatorChar, '/'));
+        } catch (IOException e) {
+            throw new ServerConfigurationException("Can't validate configuration property [key=" + key.getPropertyPath() + ",value=" + p2 + "]");
         }
     }
 
@@ -3430,3 +3465,4 @@ public class PropServerConfiguration implements ServerConfiguration {
                 PropertyKey.LINE_DEFAULT_PARTITION_BY);
     }
 }
+
