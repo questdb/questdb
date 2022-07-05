@@ -138,6 +138,11 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public CharSequence getDetachedRoot() {
+                return getRoot();
+            }
+
+            @Override
             public CharSequence getBackupRoot() {
                 if (backupDir != null) {
                     return backupDir;
