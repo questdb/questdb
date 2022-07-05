@@ -43,6 +43,7 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 public class DropIndexTest extends AbstractGriffinTest {
 
@@ -72,8 +73,8 @@ public class DropIndexTest extends AbstractGriffinTest {
     protected static SqlExecutionContext sqlExecutionContext2;
     protected static SqlCompiler compiler2;
 
-    private Path path;
-    private int tablePathLen;
+    private static Path path;
+    private static int tablePathLen;
 
     @BeforeClass
     public static void setUpStatic() {
@@ -86,26 +87,14 @@ public class DropIndexTest extends AbstractGriffinTest {
                         null,
                         -1,
                         null);
+        path = new Path().put(configuration.getRoot()).concat(tableName);
+        tablePathLen = path.length();
     }
 
     @AfterClass
     public static void tearDownStatic() {
         AbstractGriffinTest.tearDownStatic();
         compiler2.close();
-    }
-
-    @Before
-    @Override
-    public void setUp() {
-        super.setUp();
-        path = new Path().put(configuration.getRoot()).concat(tableName);
-        tablePathLen = path.length();
-    }
-
-    @After
-    @Override
-    public void tearDown() {
-        super.tearDown();
         path = Misc.free(path);
     }
 
@@ -152,7 +141,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             );
             engine.releaseAllWriters();
             assertFailure(
-                    dropIndexStatement("підрахунок", "колонка"),
+                    "ALTER TABLE підрахунок ALTER COLUMN колонка DROP INDEX",
                     null,
                     12,
                     "Column is not indexed [name=колонка][errno=-100]"
@@ -183,9 +172,6 @@ public class DropIndexTest extends AbstractGriffinTest {
         assertMemoryLeak(noHardLinksFF, () -> {
             compile(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
             checkMetadataAndTxn(
-                    path,
-                    tableName,
-                    columnName,
                     PartitionBy.HOUR,
                     1,
                     0,
@@ -194,16 +180,13 @@ public class DropIndexTest extends AbstractGriffinTest {
                     indexBlockValueSize
             );
             try {
-                compile(dropIndexStatement(tableName, columnName), sqlExecutionContext);
+                compile(dropIndexStatement(), sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException expected) {
                 TestUtils.assertContains(expected.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
                 TestUtils.assertContains(expected.getFlyweightMessage(), "[-1] cannot hardLink ");
                 path.trimTo(tablePathLen);
                 checkMetadataAndTxn(
-                        path,
-                        tableName,
-                        columnName,
                         PartitionBy.HOUR,
                         1,
                         0,
@@ -213,43 +196,28 @@ public class DropIndexTest extends AbstractGriffinTest {
                 );
 
                 // check the original files exist
-                Assert.assertEquals(5, countDFiles(tableName, columnName, 0L));
-                Assert.assertEquals(10, countIndexFiles(tableName, columnName, 0L));
+                Assert.assertEquals(5, countDFiles(0L));
+                Assert.assertEquals(10, countIndexFiles(0L));
 
                 // check there are no leftover link files
-                Assert.assertEquals(0, countDFiles(tableName, columnName, 1L));
+                Assert.assertEquals(0, countDFiles(1L));
             }
         });
     }
 
     @Test
     public void testDropIndexNonPartitionedTable() throws Exception {
-        dropIndexOfIndexedColumn(
-                PartitionBy.NONE,
-                true,
-                indexBlockValueSize,
-                2 // default partition with two files (*.k, *.v)
-        );
+        dropIndexOfIndexedColumn(PartitionBy.NONE);
     }
 
     @Test
     public void testDropIndexPartitionedByDayTable() throws Exception {
-        dropIndexOfIndexedColumn(
-                PartitionBy.DAY,
-                true,
-                indexBlockValueSize,
-                4 // 2 partitions times two files (*.k, *.v)
-        );
+        dropIndexOfIndexedColumn(PartitionBy.DAY);
     }
 
     @Test
     public void testDropIndexPartitionedByHourTable() throws Exception {
-        dropIndexOfIndexedColumn(
-                PartitionBy.HOUR,
-                true,
-                indexBlockValueSize,
-                10 // 5 partitions times two files (*.k, *.v)
-        );
+        dropIndexOfIndexedColumn(PartitionBy.HOUR);
     }
 
     @Test
@@ -257,9 +225,6 @@ public class DropIndexTest extends AbstractGriffinTest {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
             compile(CREATE_TABLE_STMT + " PARTITION BY DAY", sqlExecutionContext);
             checkMetadataAndTxn(
-                    path,
-                    tableName,
-                    columnName,
                     PartitionBy.DAY,
                     1,
                     0,
@@ -269,15 +234,12 @@ public class DropIndexTest extends AbstractGriffinTest {
             );
             assertSql(tableName, expected);
             executeOperation(
-                    dropIndexStatement(tableName, columnName),
+                    dropIndexStatement(),
                     CompiledQuery.ALTER,
                     CompiledQuery::getAlterOperation
             );
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
-                    path,
-                    tableName,
-                    columnName,
                     PartitionBy.DAY,
                     2,
                     1,
@@ -286,8 +248,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                     configuration.getIndexValueBlockSize()
             );
             assertSql(tableName, expected);
-            Assert.assertEquals(2, countDFiles(tableName, columnName, 1L));
-            Assert.assertEquals(0, countIndexFiles(tableName, columnName, 1L));
+            Assert.assertEquals(2, countDFiles(1L));
+            Assert.assertEquals(0, countIndexFiles(1L));
         });
     }
 
@@ -296,9 +258,6 @@ public class DropIndexTest extends AbstractGriffinTest {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
             compile(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
             checkMetadataAndTxn(
-                    path,
-                    "sensors",
-                    "sensor_id",
                     PartitionBy.HOUR,
                     1,
                     0,
@@ -327,7 +286,6 @@ public class DropIndexTest extends AbstractGriffinTest {
                                 path2.trimTo(tablePathLen);
                                 checkMetadataAndTxn(
                                         path2,
-                                        "sensors",
                                         "sensor_id",
                                         PartitionBy.HOUR,
                                         isIndexed ? 1L : 2L,
@@ -336,8 +294,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                                         isIndexed,
                                         isIndexed ? 32 : defaultIndexValueBlockSize
                                 );
-                                Assert.assertEquals(5, countDFiles(tableName, columnName, isIndexed ? 0L : 1L));
-                                Assert.assertEquals(isIndexed ? 10 : 0, countIndexFiles(tableName, columnName, isIndexed ? 0L : 1L));
+                                Assert.assertEquals(5, countDFiles(isIndexed ? 0L : 1L));
+                                Assert.assertEquals(isIndexed ? 10 : 0, countIndexFiles(isIndexed ? 0L : 1L));
                                 if (isIndexed) {
                                     startBarrier.await(); // release writer
                                 }
@@ -356,7 +314,7 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             // drop the index, there will be a reader seeing the index
             startBarrier.await();
-            compile(dropIndexStatement("sensors", "sensor_id"), sqlExecutionContext);
+            compile(dropIndexStatement(), sqlExecutionContext);
             endLatch.await();
 
             Throwable fail = readerFailure.get();
@@ -370,9 +328,6 @@ public class DropIndexTest extends AbstractGriffinTest {
             // no more readers from this point
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
-                    path,
-                    "sensors",
-                    "sensor_id",
                     PartitionBy.HOUR,
                     2L,
                     1L,
@@ -380,18 +335,15 @@ public class DropIndexTest extends AbstractGriffinTest {
                     false,
                     defaultIndexValueBlockSize
             );
-            Assert.assertEquals(5, countDFiles(tableName, columnName, 0L));
-            Assert.assertEquals(10, countIndexFiles(tableName, columnName, 0L));
-            Assert.assertEquals(5, countDFiles(tableName, columnName, 1L));
-            Assert.assertEquals(0, countIndexFiles(tableName, columnName, 1L));
+            Assert.assertEquals(5, countDFiles(0L));
+            Assert.assertEquals(10, countIndexFiles(0L));
+            Assert.assertEquals(5, countDFiles(1L));
+            Assert.assertEquals(0, countIndexFiles(1L));
 
             // clean after
             compile("VACUUM TABLE sensors", sqlExecutionContext);
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
-                    path,
-                    "sensors",
-                    "sensor_id",
                     PartitionBy.HOUR,
                     2,
                     1,
@@ -400,8 +352,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                     defaultIndexValueBlockSize
             );
             assertSql(tableName, expected); // content is not gone
-            Assert.assertEquals(0, countDFiles(tableName, columnName, 0L));
-            Assert.assertEquals(0, countIndexFiles(tableName, columnName, 0L));
+            Assert.assertEquals(0, countDFiles(0L));
+            Assert.assertEquals(0, countIndexFiles(0L));
         });
     }
 
@@ -410,9 +362,6 @@ public class DropIndexTest extends AbstractGriffinTest {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
             compile(CREATE_TABLE_STMT + " PARTITION BY HOUR", sqlExecutionContext);
             checkMetadataAndTxn(
-                    path,
-                    "sensors",
-                    "sensor_id",
                     PartitionBy.HOUR,
                     1,
                     0,
@@ -430,7 +379,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             new Thread(() -> {
                 Path path2 = new Path().put(configuration.getRoot()).concat(tableName);
                 try {
-                    CompiledQuery cc = compiler2.compile(dropIndexStatement("sensors", "sensor_id"), sqlExecutionContext2);
+                    CompiledQuery cc = compiler2.compile(dropIndexStatement(), sqlExecutionContext2);
                     startBarrier.await();
                     try (OperationFuture future = cc.execute(null)) {
                         future.await();
@@ -447,7 +396,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             // drop the index concurrently
             startBarrier.await();
             try {
-                compile(dropIndexStatement("sensors", "sensor_id"), sqlExecutionContext);
+                compile(dropIndexStatement(), sqlExecutionContext);
                 endLatch.await();
                 // we didnt fail, check they did
                 Throwable fail = concurrentDropIndexFailure.get();
@@ -470,9 +419,6 @@ public class DropIndexTest extends AbstractGriffinTest {
 
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
-                    path,
-                    "sensors",
-                    "sensor_id",
                     PartitionBy.HOUR,
                     2,
                     1,
@@ -481,12 +427,12 @@ public class DropIndexTest extends AbstractGriffinTest {
                     defaultIndexValueBlockSize
             );
             assertSql(tableName, expected); // content is not gone
-            Assert.assertEquals(5, countDFiles(tableName, columnName, 1L));
-            Assert.assertEquals(0, countIndexFiles(tableName, columnName, 1L));
+            Assert.assertEquals(5, countDFiles(1L));
+            Assert.assertEquals(0, countIndexFiles(1L));
         });
     }
 
-    private void dropIndexOfIndexedColumn(int partitionedBy, boolean isIndexed, int indexValueBockSize, int numIndexFiles) throws Exception {
+    private void dropIndexOfIndexedColumn(int partitionedBy) throws Exception {
         assertMemoryLeak(configuration.getFilesFacade(), () -> {
             String createStatement = CREATE_TABLE_STMT;
             int expectedDFiles = -1;
@@ -507,23 +453,17 @@ public class DropIndexTest extends AbstractGriffinTest {
             }
             compile(createStatement, sqlExecutionContext);
             checkMetadataAndTxn(
-                    path,
-                    tableName,
-                    columnName,
                     partitionedBy,
                     1,
                     0,
                     0,
-                    isIndexed,
-                    indexValueBockSize
+                    true,
+                    indexBlockValueSize
             );
 
-            compile(dropIndexStatement(tableName, columnName), sqlExecutionContext);
+            compile(dropIndexStatement(), sqlExecutionContext);
             path.trimTo(tablePathLen);
             checkMetadataAndTxn(
-                    path,
-                    tableName,
-                    columnName,
                     partitionedBy,
                     2,
                     1,
@@ -535,13 +475,12 @@ public class DropIndexTest extends AbstractGriffinTest {
             engine.releaseAllReaders();
 
             // check links have been created
-            Assert.assertEquals(expectedDFiles, countDFiles(tableName, columnName, 1L));
+            Assert.assertEquals(expectedDFiles, countDFiles(1L));
             // check index files have been dropped
-            Assert.assertEquals(0, countIndexFiles(tableName, columnName, 1L));
+            Assert.assertEquals(0, countIndexFiles(1L));
 
             checkMetadataAndTxn(
                     path,
-                    tableName,
                     "temperature",
                     partitionedBy,
                     2,
@@ -551,19 +490,46 @@ public class DropIndexTest extends AbstractGriffinTest {
                     4
             );
             // other indexed column remains intact
-            Assert.assertEquals(expectedDFiles, countDFiles(tableName, "temperature", 0L));
+            Assert.assertEquals(expectedDFiles,
+                    countFiles("temperature", 0L, DropIndexTest::isDataFile)
+            );
             // check index files have been dropped
-            Assert.assertEquals(expectedDFiles * 2, countIndexFiles(tableName, "temperature", 0L));
+            Assert.assertEquals(expectedDFiles * 2,
+                    countFiles("temperature", 0L, DropIndexTest::isIndexFile)
+            );
         });
     }
 
-    private static String dropIndexStatement(String tableName, String columnName) {
-        return "ALTER TABLE " + tableName + " ALTER COLUMN " + columnName + " DROP INDEX";
+    private static String dropIndexStatement() {
+        sink.clear();
+        return sink.put("ALTER TABLE ").put(tableName)
+                .put(" ALTER COLUMN ").put(columnName)
+                .put(" DROP INDEX")
+                .toString();
+    }
+
+    private static void checkMetadataAndTxn(
+            int partitionedBy,
+            long expectedReaderVersion,
+            long expectedStructureVersion,
+            long expectedColumnVersion,
+            boolean isColumnIndexed,
+            int indexValueBlockSize
+    ) {
+        checkMetadataAndTxn(
+                path,
+                columnName,
+                partitionedBy,
+                expectedReaderVersion,
+                expectedStructureVersion,
+                expectedColumnVersion,
+                isColumnIndexed,
+                indexValueBlockSize
+        );
     }
 
     private static void checkMetadataAndTxn(
             Path path,
-            String tableName,
             String columnName,
             int partitionedBy,
             long expectedReaderVersion,
@@ -590,32 +556,31 @@ public class DropIndexTest extends AbstractGriffinTest {
         }
     }
 
-    private long countIndexFiles(String tableName, String columnName, long txn) throws IOException {
-        return countFiles((String) configuration.getRoot(), tableName, columnName, txn, DropIndexTest::isIndexFile);
+    private long countIndexFiles(long txn) throws IOException {
+        return countFiles(columnName, txn, DropIndexTest::isIndexFile);
     }
 
-    private long countDFiles(String tableName, String columnName, long txn) throws IOException {
-        return countFiles((String) configuration.getRoot(), tableName, columnName, txn, DropIndexTest::isDataFile);
+    private long countDFiles(long txn) throws IOException {
+        return countFiles(columnName, txn, DropIndexTest::isDataFile);
+    }
+
+    private static long countFiles(String columnName, long txn, FileChecker fileChecker) throws IOException {
+        final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(
+                (String) configuration.getRoot(),
+                tableName
+        );
+        try (Stream<?> stream = Files.find(
+                tablePath,
+                Integer.MAX_VALUE,
+                (filePath, _attrs) -> fileChecker.accepts(tablePath, filePath, columnName, txn)
+        )) {
+            return stream.count();
+        }
     }
 
     @FunctionalInterface
     public interface FileChecker {
         boolean accepts(java.nio.file.Path tablePath, java.nio.file.Path filePath, String columnName, long txn);
-    }
-
-    private static long countFiles(
-            String rootPath,
-            String tableName,
-            String columnName,
-            long txn,
-            FileChecker fileChecker
-    ) throws IOException {
-        final java.nio.file.Path tablePath = FileSystems.getDefault().getPath(rootPath, tableName);
-        return Files.find(
-                tablePath,
-                Integer.MAX_VALUE,
-                (filePath, _attrs) -> fileChecker.accepts(tablePath, filePath, columnName, txn)
-        ).count();
     }
 
     private static boolean isIndexFile(
