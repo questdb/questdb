@@ -23,7 +23,6 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.date.LongsToLong128FunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 
 open module io.questdb {
@@ -93,6 +92,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.join;
     exports io.questdb.griffin.engine.ops;
     exports io.questdb.cairo.sql.async;
+    exports io.questdb.griffin.engine.functions.long128;
 
     provides FunctionFactory with
             // test functions
@@ -115,6 +115,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqLong128FunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLong256StrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLong256FunctionFactory,
@@ -219,7 +220,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory,
-            LongsToLong128FunctionFactory,
+            io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory,

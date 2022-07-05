@@ -100,6 +100,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             longIncrement.init(symbolTableSource, executionContext);
             next = start;
         }
+
+        @Override
+        public boolean supportsRandomAccess() {
+            return false;
+        }
     }
 
     private static final class TimestampSequenceVariableFunction extends TimestampFunction {
@@ -140,6 +145,12 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             start.init(symbolTableSource, executionContext);
             longIncrement.init(symbolTableSource, executionContext);
+            next = 0;
+        }
+
+        @Override
+        public boolean supportsRandomAccess() {
+            return false;
         }
     }
 }

@@ -22,19 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.date;
+package io.questdb.griffin.engine.functions.long128;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.Long128Function;
-import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
 public class LongsToLong128FunctionFactory implements FunctionFactory {
     @Override
@@ -82,12 +81,6 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toTop() {
-            hi.toTop();
-            lo.toTop();
-        }
-
-        @Override
         public Function getLeft() {
             return hi;
         }
@@ -98,18 +91,7 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            hi.init(symbolTableSource, executionContext);
-            lo.init(symbolTableSource, executionContext);
-        }
-
-        @Override
         public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public boolean supportsRandomAccess() {
             return false;
         }
     }

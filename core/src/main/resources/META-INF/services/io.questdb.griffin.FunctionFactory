@@ -45,6 +45,7 @@ io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqLong128FunctionFactory
 io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqLong256StrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqLong256FunctionFactory
@@ -165,7 +166,7 @@ io.questdb.griffin.engine.functions.rnd.RndSymbolFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory
-io.questdb.griffin.engine.functions.date.LongsToLong128FunctionFactory
+io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndBinCCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory

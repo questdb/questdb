@@ -57,6 +57,7 @@ public interface FunctionFactory {
      * <li>R = record</li>
      * <li>H = long256</li>
      * <li>G = GeoHash</li>
+     * <li>Q = long128</li>
      * </ul>
      *
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and

@@ -151,6 +151,24 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
+    public long getLong128Hi(int columnIndex) {
+        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (address == 0) {
+            return Numbers.LONG_NaN;
+        }
+        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES * 2 + 8);
+    }
+
+    @Override
+    public long getLong128Lo(int columnIndex) {
+        final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
+        if (address == 0) {
+            return Numbers.LONG_NaN;
+        }
+        return Unsafe.getUnsafe().getLong(address + rowIndex * Long.BYTES * 2);
+    }
+
+    @Override
     public void getLong256(int columnIndex, CharSink sink) {
         final long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
