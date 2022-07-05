@@ -27,15 +27,13 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
-import io.questdb.cairo.sql.AsyncWriterCommand;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.MemoryFMCRImpl;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
+import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.UpdateOperator;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -53,6 +51,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.tasks.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -195,26 +194,7 @@ public class TableWriter implements Closeable {
     private long commitIntervalDefault;
     private long commitInterval;
     private UpdateOperator updateOperator;
-
-
-    public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
-    }
-
-    public TableWriter(CairoConfiguration configuration, CharSequence tableName, @NotNull MessageBus messageBus, Metrics metrics) {
-        this(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, metrics);
-    }
-
-    public TableWriter(
-            CairoConfiguration configuration,
-            CharSequence tableName,
-            @NotNull MessageBus messageBus,
-            boolean lock,
-            LifecycleManager lifecycleManager,
-            Metrics metrics
-    ) {
-        this(configuration, tableName, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
-    }
+    private DropIndexOperator dropIndexOperator;
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -337,6 +317,28 @@ public class TableWriter implements Closeable {
             doClose(false);
             throw e;
         }
+    }
+
+    @TestOnly
+    public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
+        this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
+    }
+
+    @TestOnly
+    public TableWriter(CairoConfiguration configuration, CharSequence tableName, @NotNull MessageBus messageBus, Metrics metrics) {
+        this(configuration, tableName, messageBus, true, DefaultLifecycleManager.INSTANCE, metrics);
+    }
+
+    @TestOnly
+    TableWriter(
+            CairoConfiguration configuration,
+            CharSequence tableName,
+            @NotNull MessageBus messageBus,
+            boolean lock,
+            LifecycleManager lifecycleManager,
+            Metrics metrics
+    ) {
+        this(configuration, tableName, messageBus, null, lock, lifecycleManager, configuration.getRoot(), metrics);
     }
 
     public static int getPrimaryColumnIndex(int index) {
@@ -545,39 +547,11 @@ public class TableWriter implements Closeable {
             throw e;
         }
 
-        // set index flag in metadata
-        // create new _meta.swp
+        // set index flag in metadata and  create new _meta.swp
+        metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, META_FLAG_BIT_INDEXED, indexValueBlockSize);
 
-        metaSwapIndex = copyMetadataAndSetIndexed(columnIndex, indexValueBlockSize);
+        swapMetaFile(columnName);
 
-        // close _meta so we can rename it
-        metaMem.close();
-
-        // validate new meta
-        validateSwapMeta(columnName);
-
-        // rename _meta to _meta.prev
-        renameMetaToMetaPrev(columnName);
-
-        // after we moved _meta to _meta.prev
-        // we have to have _todo to restore _meta should anything go wrong
-        writeRestoreMetaTodo(columnName);
-
-        // rename _meta.swp to -_meta
-        renameSwapMetaToMeta(columnName);
-
-        try {
-            // open _meta file
-            openMetaFile(ff, path, rootLen, metaMem);
-
-            // remove _todo
-            clearTodoLog();
-
-        } catch (CairoException err) {
-            throwDistressException(err);
-        }
-
-        bumpStructureVersion();
         indexers.extendAndSet(columnIndex, indexer);
         populateDenseIndexerList();
 
@@ -586,6 +560,68 @@ public class TableWriter implements Closeable {
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$(path).$();
+    }
+
+    public void dropIndex(CharSequence columnName) {
+
+        checkDistressed();
+
+        final int columnIndex = getColumnIndexQuiet(metaMem, columnName, columnCount);
+        if (columnIndex == -1) {
+            throw CairoException.invalidMetadata("Column does not exist", columnName);
+        }
+        if (!isColumnIndexed(metaMem, columnIndex)) {
+            // if a column is indexed, it is al so of type SYMBOL
+            throw CairoException.invalidMetadata("Column is not indexed", columnName);
+        }
+        final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
+
+        if (inTransaction()) {
+            LOG.info()
+                    .$("committing current transaction before DROP INDEX execution [txn=").$(txWriter.getTxn())
+                    .$(", table=").$(tableName)
+                    .$(", column=").$(columnName)
+                    .I$();
+            commit();
+        }
+
+        try {
+            LOG.info().$("BEGIN DROP INDEX [txn=").$(txWriter.getTxn())
+                    .$(", table=").$(tableName)
+                    .$(", column=").$(columnName)
+                    .I$();
+            // drop index
+            if (dropIndexOperator == null) {
+                dropIndexOperator = new DropIndexOperator(configuration, messageBus, this, path, other, rootLen);
+            }
+            dropIndexOperator.executeDropIndex(columnName, columnIndex); // upserts column version in partitions
+            // swap meta commit
+            metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, META_FLAG_BIT_NOT_INDEXED, defaultIndexValueBlockSize);
+            swapMetaFile(columnName); // bumps structure version, this is in effect a commit
+            // refresh metadata
+            TableColumnMetadata columnMetadata = metadata.getColumnQuick(columnIndex);
+            columnMetadata.setIndexed(false);
+            columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
+            // remove indexer
+            ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
+            if (columnIndexer != null) {
+                indexers.setQuick(columnIndex, null);
+                Misc.free(columnIndexer);
+                populateDenseIndexerList();
+            }
+            // purge old column versions
+            dropIndexOperator.purgeOldColumnVersions();
+            LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
+                    .$(", table=").$(tableName)
+                    .$(", column=").$(columnName)
+                    .I$();
+        } catch (Throwable e) {
+            throw CairoException.instance(0)
+                    .put("Cannot DROP INDEX for [txn=").put(txWriter.getTxn())
+                    .put(", table=").put(tableName)
+                    .put(", column=").put(columnName)
+                    .put("]: ").put(e.getMessage());
+        }
     }
 
     public void addPhysicallyWrittenRows(long rows) {
@@ -986,7 +1022,7 @@ public class TableWriter implements Closeable {
 
     public UpdateOperator getUpdateOperator() {
         if (updateOperator == null) {
-            updateOperator = new UpdateOperator(configuration, messageBus, this);
+            updateOperator = new UpdateOperator(configuration, messageBus, this, path, rootLen);
         }
         return updateOperator;
     }
@@ -2319,7 +2355,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private int copyMetadataAndSetIndexed(int columnIndex, int indexValueBlockSize) {
+    private int copyMetadataAndSetIndexAttrs(int columnIndex, int indexedFlag, int indexValueBlockSize) {
         try {
             int index = openMetaSwapFile(ff, ddlMem, path, rootLen, configuration.getMaxSwapFileCount());
             int columnCount = metaMem.getInt(META_OFFSET_COUNT);
@@ -2333,7 +2369,7 @@ public class TableWriter implements Closeable {
                     writeColumnEntry(i, false);
                 } else {
                     ddlMem.putInt(getColumnType(metaMem, i));
-                    long flags = META_FLAG_BIT_INDEXED;
+                    long flags = indexedFlag;
                     if (isSequential(metaMem, i)) {
                         flags |= META_FLAG_BIT_SEQUENTIAL;
                     }
@@ -2468,6 +2504,7 @@ public class TableWriter implements Closeable {
         Misc.free(o3ColumnTopSink);
         Misc.free(commandQueue);
         updateOperator = Misc.free(updateOperator);
+        dropIndexOperator = Misc.free(dropIndexOperator);
         freeColumns(truncate & !distressed);
         try {
             releaseLock(!truncate | tx | performRecovery | distressed);
@@ -5342,6 +5379,30 @@ public class TableWriter implements Closeable {
                 }
             }
         }
+    }
+
+    private void swapMetaFile(CharSequence columnName) {
+        // close _meta so we can rename it
+        metaMem.close();
+        // validate new meta
+        validateSwapMeta(columnName);
+        // rename _meta to _meta.prev
+        renameMetaToMetaPrev(columnName);
+        // after we moved _meta to _meta.prev
+        // we have to have _todo to restore _meta should anything go wrong
+        writeRestoreMetaTodo(columnName);
+        // rename _meta.swp to -_meta
+        renameSwapMetaToMeta(columnName);
+        try {
+            // open _meta file
+            openMetaFile(ff, path, rootLen, metaMem);
+            // remove _todo
+            clearTodoLog();
+
+        } catch (CairoException err) {
+            throwDistressException(err);
+        }
+        bumpStructureVersion();
     }
 
     private void validateSwapMeta(CharSequence columnName) {

@@ -34,14 +34,16 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectCharSequence;
 import io.questdb.tasks.TableWriterTask;
 
-public class AlterOperation extends AbstractOperation implements Mutable, QuietClosable {
+public class AlterOperation extends AbstractOperation implements Mutable {
+    public final static String CMD_NAME = "ALTER TABLE";
 
-    public final static short DO_NOTHING = 1;
-    public final static short ADD_COLUMN = 3;
-    public final static short DROP_PARTITION = 4;
-    public final static short ATTACH_PARTITION = 5;
-    public final static short DETACH_PARTITION = 51;
-    public final static short ADD_INDEX = 6;
+    public final static short DO_NOTHING = 0;
+    public final static short ADD_COLUMN = 1;
+    public final static short DROP_PARTITION = 2;
+    public final static short ATTACH_PARTITION = 3;
+    public final static short DETACH_PARTITION = 4;
+    public final static short ADD_INDEX = 5;
+    public final static short DROP_INDEX = 6;
     public final static short ADD_SYMBOL_CACHE = 7;
     public final static short REMOVE_SYMBOL_CACHE = 8;
     public final static short DROP_COLUMN = 9;
@@ -67,6 +69,7 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
     public AlterOperation(LongList longList, ObjList<CharSequence> charSequenceObjList) {
         this.longList = longList;
         this.objCharList = new ObjCharSequenceList(charSequenceObjList);
+        this.command = DO_NOTHING;
     }
 
     @Override
@@ -75,6 +78,18 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
             switch (command) {
                 case ADD_COLUMN:
                     applyAddColumn(tableWriter);
+                    break;
+                case DROP_COLUMN:
+                    if (!contextAllowsAnyStructureChanges) {
+                        throw AlterTableContextException.INSTANCE;
+                    }
+                    applyDropColumn(tableWriter);
+                    break;
+                case RENAME_COLUMN:
+                    if (!contextAllowsAnyStructureChanges) {
+                        throw AlterTableContextException.INSTANCE;
+                    }
+                    applyRenameColumn(tableWriter);
                     break;
                 case DROP_PARTITION:
                     applyDropPartition(tableWriter);
@@ -88,23 +103,14 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
                 case ADD_INDEX:
                     applyAddIndex(tableWriter);
                     break;
+                case DROP_INDEX:
+                    applyDropIndex(tableWriter);
+                    break;
                 case ADD_SYMBOL_CACHE:
                     applySetSymbolCache(tableWriter, true);
                     break;
                 case REMOVE_SYMBOL_CACHE:
                     applySetSymbolCache(tableWriter, false);
-                    break;
-                case DROP_COLUMN:
-                    if (!contextAllowsAnyStructureChanges) {
-                        throw AlterTableContextException.INSTANCE;
-                    }
-                    applyDropColumn(tableWriter);
-                    break;
-                case RENAME_COLUMN:
-                    if (!contextAllowsAnyStructureChanges) {
-                        throw AlterTableContextException.INSTANCE;
-                    }
-                    applyRenameColumn(tableWriter);
                     break;
                 case SET_PARAM_MAX_UNCOMMITTED_ROWS:
                     applyParamUncommittedRows(tableWriter);
@@ -177,8 +183,8 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
         objCharList.clear();
         directCharList.clear();
         charSequenceList = objCharList;
-        setCommandCorrelationId(-1);
         longList.clear();
+        clearCommandCorrelationId();
     }
 
     public AlterOperation of(
@@ -187,7 +193,7 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
             int tableId,
             int tableNamePosition
     ) {
-        init(TableWriterTask.CMD_ALTER_TABLE, "ALTER TABLE", tableName, tableId, -1, tableNamePosition);
+        init(TableWriterTask.CMD_ALTER_TABLE, CMD_NAME, tableName, tableId, -1, tableNamePosition);
         this.command = command;
         return this;
     }
@@ -244,6 +250,19 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
         } catch (CairoException e) {
             throw SqlException.position(tableNamePosition).put(e.getFlyweightMessage())
                     .put("[errno=").put(e.getErrno()).put(']');
+        }
+    }
+
+    private void applyDropIndex(TableWriter tableWriter) throws SqlException {
+        CharSequence columnName = charSequenceList.getStrA(0);
+        try {
+            tableWriter.dropIndex(columnName);
+        } catch (CairoException e) {
+            throw SqlException.position(tableNamePosition)
+                    .put(e.getFlyweightMessage())
+                    .put("[errno=")
+                    .put(e.getErrno())
+                    .put(']');
         }
     }
 
@@ -523,9 +542,5 @@ public class AlterOperation extends AbstractOperation implements Mutable, QuietC
             }
             return lo - initialAddress;
         }
-    }
-
-    @Override
-    public void close() {
     }
 }

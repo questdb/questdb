@@ -37,8 +37,8 @@ public class AlterOperationBuilder {
     // to exception message using TableUtils.setSinkForPartition
     private short command;
     private String tableName;
-    private int tableId;
-    private int tableNamePosition;
+    private int tableId = -1;
+    private int tableNamePosition = -1;
 
     public AlterOperationBuilder() {
         this.resultInstance = new AlterOperation(longList, objCharList);
@@ -48,6 +48,10 @@ public class AlterOperationBuilder {
         resultInstance.clear();
         objCharList.clear();
         longList.clear();
+        command = DO_NOTHING;
+        tableName = null;
+        tableId = -1;
+        tableNamePosition = -1;
     }
 
     public AlterOperation build() {
@@ -69,6 +73,15 @@ public class AlterOperationBuilder {
         this.tableId = tableId;
         this.objCharList.add(columnName);
         this.longList.add(indexValueBlockSize);
+        return this;
+    }
+
+    public AlterOperationBuilder ofDropIndex(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
+        this.command = DROP_INDEX;
+        this.tableNamePosition = tableNamePosition;
+        this.tableName = tableName;
+        this.tableId = tableId;
+        this.objCharList.add(columnName);
         return this;
     }
 
