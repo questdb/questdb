@@ -316,7 +316,10 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                     row.putTimestamp(PARTITION_TIMESTAMP_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP));
                     row.putLong(PARTITION_NAME_COLUMN, updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN));
                     row.append();
-                    updatedColumnInfo.setQuick(i + 3, Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1));
+                    updatedColumnInfo.setQuick(
+                            i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID,
+                            Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1)
+                    );
                 }
             } catch (Throwable th) {
                 LOG.error().$("error saving to column version house keeping log, unable to insert")

@@ -24,7 +24,6 @@
 
 package io.questdb.network;
 
-import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
@@ -80,7 +79,7 @@ public class NetTest {
     public void testLeakyAddrInfo() throws Exception {
         NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
         boolean leakDetected = false;
-        long addrInfo[] = new long[1];
+        long[] addrInfo = new long[1];
         try {
             TestUtils.assertMemoryLeak(() -> addrInfo[0] = nf.getAddrInfo("localhost", 443));
         } catch (AssertionError e) {
@@ -90,7 +89,7 @@ public class NetTest {
         } finally {
             long ptr = addrInfo[0];
             if (ptr == -1) {
-                fail("localhost could not be resolved. something is wrong.");
+                fail("localhost could not be resolved. Something is wrong.");
             }
             nf.freeAddrInfo(ptr);
             if (!leakDetected) {
@@ -103,7 +102,7 @@ public class NetTest {
     public void testLeakySockAddr() throws Exception {
         NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
         boolean leakDetected = false;
-        long sockAddr[] = new long[1];
+        long[] sockAddr = new long[1];
         try {
             TestUtils.assertMemoryLeak(() -> sockAddr[0] = nf.sockaddr("127.0.0.1", 443));
         } catch (AssertionError e) {
@@ -113,7 +112,7 @@ public class NetTest {
         } finally {
             long ptr = sockAddr[0];
             if (ptr == 0) {
-                fail("SockAddr could no be allocated. something is wrong.");
+                fail("SockAddr could no be allocated. Something is wrong.");
             }
             nf.freeSockAddr(ptr);
             if (!leakDetected) {

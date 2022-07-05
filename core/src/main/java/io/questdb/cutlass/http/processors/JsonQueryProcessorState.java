@@ -183,6 +183,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return LOG.error().$('[').$(getFd()).$("] ");
     }
 
+    public LogRecord critical() {
+        return LOG.critical().$('[').$(getFd()).$("] ");
+    }
+
     public void freeAsyncOperation() {
         asyncOperation = Misc.free(asyncOperation);
         operationFuture = Misc.free(operationFuture);
