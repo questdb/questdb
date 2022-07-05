@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
@@ -117,20 +118,18 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 .col("label", ColumnType.SYMBOL)
                 .timestamp("ts")
         ) {
-            TableUtils.createTable(
-                    configuration,
+            engine.createTableUnsafe(
+                    AllowAllCairoSecurityContext.INSTANCE,
                     model.getMem(),
                     model.getPath(),
-                    model,
-                    1
+                    model
             );
             model.setName(tableCopyName);
-            TableUtils.createTable(
-                    configuration,
+            engine.createTableUnsafe(
+                    AllowAllCairoSecurityContext.INSTANCE,
                     model.getMem(),
                     model.getPath(),
-                    model,
-                    1
+                    model
             );
         }
     }

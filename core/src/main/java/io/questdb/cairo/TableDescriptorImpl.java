@@ -24,41 +24,33 @@
 
 package io.questdb.cairo;
 
-class TableDescriptorImpl implements TableDescriptor {
-    private TableReader reader;
-    private TableReaderMetadata metadata;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.ObjList;
+
+class TableDescriptorImpl extends BaseRecordMetadata implements TableDescriptor {
+
+    private int schemaVersion;
 
     TableDescriptorImpl() {
+        columnMetadata = new ObjList<>();
+        columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
-    TableDescriptor of(TableReader tableReader) {
-        reader = tableReader;
-        metadata = tableReader.getMetadata();
-        return this;
-    }
+    public void of(SequencerMetadata source) {
+        schemaVersion = source.getSchemaVersion();
+        timestampIndex = source.getTimestampIndex();
+        columnCount = source.getColumnCount();
 
-    @Override
-    public int getColumnCount() {
-        return metadata.getColumnCount();
-    }
-
-    @Override
-    public int getTimestampIndex() {
-        return metadata.getTimestampIndex();
-    }
-
-    @Override
-    public CharSequence getColumnName(int columnIndex) {
-        return metadata.getColumnName(columnIndex);
+        for (int i = 0; i < columnCount; i++) {
+            final String name = source.getColumnName(i);
+            final int type = source.getColumnType(i);
+            columnNameIndexMap.put(name, columnNameIndexMap.size());
+            columnMetadata.add(new TableColumnMetadata(name, -1L, type, false, 0, false, null, i));
+        }
     }
 
     @Override
-    public int getColumnType(int columnIndex) {
-        return metadata.getColumnType(columnIndex);
-    }
-
-    @Override
-    public SymbolMapReader getSymbolMapReader(int columnIndex) {
-        return reader.getSymbolMapReader(columnIndex);
+    public int getSchemaVersion() {
+        return schemaVersion;
     }
 }

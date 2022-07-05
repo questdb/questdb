@@ -2145,7 +2145,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 // this is very specific failure
                 // it fails to open table writer metadata
                 // and then fails to close txMem
-                if (mapCount++ > 2) {
+                if (mapCount++ > 3) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -2577,7 +2577,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                         "partition by MONTH",
                 sqlExecutionContext
         );
-        engine.releaseAllWriters();
+        engine.clear();
 
         assertFailure(13, "table already exists",
                 "create table x (" +
@@ -2618,18 +2618,19 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRebuildIndex() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)", sqlExecutionContext);
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-            compile("reindex table rebuild_index column sym lock exclusive");
-            assertSql("select * from rebuild_index where sym = '1'", "sym\tx\n" +
-                    "1\t1\n" +
-                    "1\t10\n" +
-                    "1\t11\n" +
-                    "1\t12\n");
-        });
+    public void testInsertAsSelectDuplicateColumn() throws Exception {
+        compiler.compile(
+                "CREATE TABLE tab (" +
+                        "  ts TIMESTAMP, " +
+                        "  x INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+
+        engine.clear();
+
+        assertFailure(21, "Duplicate column [name=X]",
+                "insert into tab ( x, 'X', ts ) values ( 7, 10, 11 )");
     }
 
     @Test
@@ -2646,22 +2647,19 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRebuildIndexInPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            compiler.compile("create table rebuild_index as (" +
-                    "select rnd_symbol('1', '2', '33', '44') sym, x, timestamp_sequence(0, 12*60*60*1000000L) ts " +
-                    "from long_sequence(15)" +
-                    "), index(sym) timestamp(ts)", sqlExecutionContext);
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-            compile("reindex table rebuild_index column sym partition '1970-01-02' lock exclusive");
-            assertSql("select * from rebuild_index where sym = '1'",
-                    "sym\tx\tts\n" +
-                    "1\t1\t1970-01-01T00:00:00.000000Z\n" +
-                    "1\t10\t1970-01-05T12:00:00.000000Z\n" +
-                    "1\t11\t1970-01-06T00:00:00.000000Z\n" +
-                    "1\t12\t1970-01-06T12:00:00.000000Z\n");
-        });
+    public void testInsertAsSelectDuplicateColumnNonAscii() throws Exception {
+        compiler.compile(
+                "CREATE TABLE tabula (" +
+                        "  ts TIMESTAMP, " +
+                        "  龜 INT" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY",
+                sqlExecutionContext
+        );
+
+        engine.clear();
+
+        assertFailure(24, "Duplicate column [name=龜]",
+                "insert into tabula ( 龜, '龜', ts ) values ( 7, 10, 11 )");
     }
 
     @Test
@@ -3142,35 +3140,51 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelectDuplicateColumn() throws Exception {
-        compiler.compile(
-                "CREATE TABLE tab (" +
-                        "  ts TIMESTAMP, " +
-                        "  x INT" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                sqlExecutionContext
-        );
+    public void testInsertAsSelectPersistentIOError() throws Exception {
+        AtomicBoolean inError = new AtomicBoolean(true);
 
-        engine.releaseAllWriters();
+        FilesFacade ff = new FilesFacadeImpl() {
+            int pageCount = 0;
 
-        assertFailure(21, "Duplicate column [name=X]",
-                "insert into tab ( x, 'X', ts ) values ( 7, 10, 11 )");
+            @Override
+            public long getMapPageSize() {
+                return getPageSize();
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (inError.get() && pageCount++ > 14) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+
+        assertInsertAsSelectIOError(inError, ff);
     }
 
     @Test
-    public void testInsertAsSelectDuplicateColumnNonAscii() throws Exception {
-        compiler.compile(
-                "CREATE TABLE tabula (" +
-                        "  ts TIMESTAMP, " +
-                        "  龜 INT" +
-                        ") TIMESTAMP(ts) PARTITION BY DAY",
-                sqlExecutionContext
-        );
+    public void testInsertAsSelectTemporaryIOError() throws Exception {
+        AtomicBoolean inError = new AtomicBoolean(true);
 
-        engine.releaseAllWriters();
+        FilesFacade ff = new FilesFacadeImpl() {
+            int pageCount = 0;
 
-        assertFailure(24, "Duplicate column [name=龜]",
-                "insert into tabula ( 龜, '龜', ts ) values ( 7, 10, 11 )");
+            @Override
+            public long getMapPageSize() {
+                return getPageSize();
+            }
+
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (inError.get() && pageCount++ == 15) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+
+        assertInsertAsSelectIOError(inError, ff);
     }
 
     @Test
@@ -3191,7 +3205,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
         );
         compiler.compile("INSERT INTO t1(ts, x) VALUES (1, 1)", sqlExecutionContext);
         compiler.compile("INSERT INTO t2(ts, x) VALUES (1, 2)", sqlExecutionContext);
-        engine.releaseInactive();
+        engine.clear();
 
         // 1.- the parser finds column t2.ts with an explicit alias TS (case does not matter - it is equiv. to ts)
         // 2.- then it finds column t1.ts with no explicit alias, so it attempts to give it what it finds after the dot,
@@ -3356,27 +3370,18 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelectPersistentIOError() throws Exception {
-        AtomicBoolean inError = new AtomicBoolean(true);
-
-        FilesFacade ff = new FilesFacadeImpl() {
-            int pageCount = 0;
-
-            @Override
-            public long getMapPageSize() {
-                return getPageSize();
-            }
-
-            @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (inError.get() && pageCount++ > 12) {
-                    return -1;
-                }
-                return super.mmap(fd, len, offset, flags, memoryTag);
-            }
-        };
-
-        assertInsertAsSelectIOError(inError, ff);
+    public void testRebuildIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)", sqlExecutionContext);
+            engine.releaseAllReaders();
+            engine.clear();
+            compile("reindex table rebuild_index column sym lock exclusive");
+            assertSql("select * from rebuild_index where sym = '1'", "sym\tx\n" +
+                    "1\t1\n" +
+                    "1\t10\n" +
+                    "1\t11\n" +
+                    "1\t12\n");
+        });
     }
 
     @Test
@@ -3454,27 +3459,22 @@ public class SqlCompilerTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testInsertAsSelectTemporaryIOError() throws Exception {
-        AtomicBoolean inError = new AtomicBoolean(true);
-
-        FilesFacade ff = new FilesFacadeImpl() {
-            int pageCount = 0;
-
-            @Override
-            public long getMapPageSize() {
-                return getPageSize();
-            }
-
-            @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (inError.get() && pageCount++ == 13) {
-                    return -1;
-                }
-                return super.mmap(fd, len, offset, flags, memoryTag);
-            }
-        };
-
-        assertInsertAsSelectIOError(inError, ff);
+    public void testRebuildIndexInPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile("create table rebuild_index as (" +
+                    "select rnd_symbol('1', '2', '33', '44') sym, x, timestamp_sequence(0, 12*60*60*1000000L) ts " +
+                    "from long_sequence(15)" +
+                    "), index(sym) timestamp(ts)", sqlExecutionContext);
+            engine.releaseAllReaders();
+            engine.clear();
+            compile("reindex table rebuild_index column sym partition '1970-01-02' lock exclusive");
+            assertSql("select * from rebuild_index where sym = '1'",
+                    "sym\tx\tts\n" +
+                            "1\t1\t1970-01-01T00:00:00.000000Z\n" +
+                            "1\t10\t1970-01-05T12:00:00.000000Z\n" +
+                            "1\t11\t1970-01-06T00:00:00.000000Z\n" +
+                            "1\t12\t1970-01-06T12:00:00.000000Z\n");
+        });
     }
 
     @Test
@@ -3849,9 +3849,9 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                                     "from long_sequence(10000)" +
                                     "), index(sym1), index(sym2)");
 
-                    engine.releaseAllReaders();
-                    engine.releaseAllWriters();
-                    compile("REINDEX TABLE \"xxx\" Lock exclusive;");
+            engine.releaseAllReaders();
+            engine.clear();
+            compile("REINDEX TABLE \"xxx\" Lock exclusive;");
                 }
         );
     }
@@ -4186,7 +4186,7 @@ public class SqlCompilerTest extends AbstractGriffinTest {
                 "create table X (a int, b int, t timestamp) timestamp(t)",
                 sqlExecutionContext
         );
-        engine.releaseAllWriters();
+        engine.clear();
 
         try (CairoEngine engine = new CairoEngine(configuration) {
             @Override

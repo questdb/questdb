@@ -24,16 +24,31 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.str.Path;
-
 import java.io.Closeable;
 
 public interface Sequencer extends Closeable {
+    long NO_TXN = Long.MIN_VALUE;
 
-    // opens sequencer
-    // Path should be replaced with something much more generic, such as a URI
-    void open(Path path);
+    void open();
 
     // returns next available txn number
-    long nextTxn();
+    long nextTxn(int walId, long segmentId);
+
+    // returns next available txn number if schema version is the expected one, otherwise returns NO_TXN
+    long nextTxn(int expectedSchemaVersion, int walId, long segmentId);
+
+    // returns next available txn number after alters the schema
+    long addColumn(int columnIndex, CharSequence columnName, int columnType, int walId, long segmentId);
+
+    // returns next available txn number after alters the schema
+    long removeColumn(int columnIndex, int walId, long segmentId);
+
+    // populates the given table descriptor with the current snapshot of metadata and schema version number
+    void populateDescriptor(TableDescriptor descriptor);
+
+    // always creates a new wal with an increasing unique id
+    WalWriter createWal();
+
+    @Override
+    void close();
 }

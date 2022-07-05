@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
@@ -33,25 +34,45 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
+public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
     private final FilesFacade ff;
     private final MemoryMAR metaMem = Vm.getMARInstance();
 
-    WalWriterMetadata(FilesFacade ff) {
+    private int schemaVersion = -1;
+
+    SequencerMetadata(FilesFacade ff) {
         this.ff = ff;
         columnMetadata = new ObjList<>();
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
-    void of(TableDescriptor descriptor) {
+    void init(TableStructure model, Path path, int pathLen) {
         reset();
 
-        timestampIndex = descriptor.getTimestampIndex();
+        schemaVersion = 0;
+        timestampIndex = model.getTimestampIndex();
 
-        for (int i = 0; i < descriptor.getColumnCount(); i++) {
-            final CharSequence name = descriptor.getColumnName(i);
-            final int type = descriptor.getColumnType(i);
+        for (int i = 0; i < model.getColumnCount(); i++) {
+            final CharSequence name = model.getColumnName(i);
+            final int type = model.getColumnType(i);
             addColumn(i, name, type);
+        }
+
+        syncToMetaFile(path, pathLen);
+    }
+
+    void open(Path path, int pathLen) {
+        reset();
+        try (MemoryMR metaMem = Vm.getMRInstance()) {
+            openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
+            columnNameIndexMap.clear();
+            loadSequencerMetadata(metaMem, columnMetadata, columnNameIndexMap, WalWriter.WAL_FORMAT_VERSION);
+            schemaVersion = metaMem.getInt(SEQ_META_OFFSET_SCHEMA_VERSION);
+            columnCount = metaMem.getInt(SEQ_META_OFFSET_COLUMN_COUNT);
+            timestampIndex = metaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
+        } catch (Throwable e) {
+            close();
+            throw e;
         }
     }
 
@@ -62,27 +83,49 @@ class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
         timestampIndex = -1;
     }
 
+    public int getSchemaVersion() {
+        return schemaVersion;
+    }
+
     @Override
     public void close() {
         Misc.free(metaMem);
     }
 
-    void addColumn(int columnIndex, CharSequence columnName, int columnType) {
+    private void addColumn(int columnIndex, CharSequence columnName, int columnType) {
         final String name = columnName.toString();
         columnNameIndexMap.put(name, columnNameIndexMap.size());
         columnMetadata.add(new TableColumnMetadata(name, -1L, columnType, false, 0, false, null, columnIndex));
         columnCount++;
+        schemaVersion++;
     }
 
-    void removeColumn(int columnIndex) {
+    void addColumn(int columnIndex, CharSequence columnName, int columnType, Path path, int pathLen) {
+        addColumn(columnIndex, columnName, columnType);
+        syncToMetaFile(path, pathLen);
+    }
+
+    void removeColumn(int columnIndex, Path path, int pathLen) {
         final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         deletedMeta.markDeleted();
         columnNameIndexMap.remove(deletedMeta.getName());
+        schemaVersion++;
+
+        syncToMetaFile(path, pathLen);
     }
 
-    void openMetaFile(Path path, int pathLen, int liveColumnCount) {
-        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_WRITER);
+    private void syncToMetaFile(Path path, int pathLen) {
+        int liveColumnCount = 0;
+        for (int i = 0; i < columnCount; i++) {
+            if (getColumnType(i) > 0) {
+                liveColumnCount++;
+            }
+        }
+
+        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
+
         metaMem.putInt(WalWriter.WAL_FORMAT_VERSION);
+        metaMem.putInt(schemaVersion);
         metaMem.putInt(liveColumnCount);
         metaMem.putInt(timestampIndex);
         for (int i = 0; i < columnCount; i++) {

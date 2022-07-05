@@ -54,6 +54,7 @@ public final class TableUtils {
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
     public static final String EVENT_FILE_NAME = "_event";
+    public static final String CATALOG_FILE_NAME = "_catalog";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
@@ -61,7 +62,6 @@ public final class TableUtils {
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
-    public static final String SEQ_TXN_FILE_NAME = "_seq_txn.d";
     public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
@@ -78,6 +78,11 @@ public final class TableUtils {
     public static final long WAL_META_OFFSET_COLUMN_COUNT = 4;
     public static final long WAL_META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long WAL_META_OFFSET_COLUMNS = 12;
+    public static final long SEQ_META_OFFSET_WAL_VERSION = 0;
+    public static final long SEQ_META_OFFSET_SCHEMA_VERSION = 4;
+    public static final long SEQ_META_OFFSET_COLUMN_COUNT = 8;
+    public static final long SEQ_META_OFFSET_TIMESTAMP_INDEX = 12;
+    public static final long SEQ_META_OFFSET_COLUMNS = 16;
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
@@ -999,6 +1004,50 @@ public final class TableUtils {
         }
     }
 
+    static void loadSequencerMetadata(
+            MemoryMR metaMem,
+            ObjList<TableColumnMetadata> columnMetadata,
+            LowerCaseCharSequenceIntHashMap nameIndex,
+            int expectedVersion
+    ) {
+        try {
+            final long memSize = checkMemSize(metaMem, SEQ_META_OFFSET_COLUMNS);
+            validateMetaVersion(metaMem, SEQ_META_OFFSET_WAL_VERSION, expectedVersion);
+            final int schemaVersion = getSchemaVersion(metaMem, SEQ_META_OFFSET_SCHEMA_VERSION);
+            final int columnCount = getColumnCount(metaMem, SEQ_META_OFFSET_COLUMN_COUNT);
+            final int timestampIndex = getTimestampIndex(metaMem, SEQ_META_OFFSET_TIMESTAMP_INDEX, columnCount);
+
+            // load column types and names
+            long offset = SEQ_META_OFFSET_COLUMNS;
+            for (int i = 0; i < columnCount; i++) {
+                final int type = getColumnType(metaMem, memSize, offset, i);
+                offset += Integer.BYTES;
+
+                final String name = getColumnName(metaMem, memSize, offset, i).toString();
+                offset += Vm.getStorageLength(name);
+
+                nameIndex.put(name, i);
+
+                if (ColumnType.isSymbol(type)) {
+                    columnMetadata.add(new TableColumnMetadata(name, -1L, type, true, 1024, true, null));
+                } else {
+                    columnMetadata.add(new TableColumnMetadata(name, -1L, type));
+                }
+            }
+
+            // validate designated timestamp column
+            if (timestampIndex != -1) {
+                final int timestampType = columnMetadata.getQuick(timestampIndex).getType();
+                if (!ColumnType.isTimestamp(timestampType)) {
+                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
+                }
+            }
+        } catch (Throwable e) {
+            nameIndex.clear();
+            throw e;
+        }
+    }
+
     static long checkMemSize(MemoryMR metaMem, long minSize) {
         final long memSize = metaMem.size();
         if (memSize < minSize) {
@@ -1015,6 +1064,14 @@ public final class TableUtils {
                     .put(", actual=").put(metaVersion)
                     .put(']');
         }
+    }
+
+    private static int getSchemaVersion(MemoryMR metaMem, long offset) {
+        final int schemaVersion = metaMem.getInt(offset);
+        if (schemaVersion < 0) {
+            throw validationException(metaMem).put("Invalid schemaVersion: ").put(schemaVersion);
+        }
+        return schemaVersion;
     }
 
     private static int getColumnCount(MemoryMR metaMem, long offset) {

@@ -42,7 +42,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
-import io.questdb.std.ThreadLocal;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
@@ -58,7 +57,6 @@ import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
 public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public static final String BUSY_READER = "busyReader";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
-    private final ThreadLocal<TableDescriptorImpl> tlTableDescriptor = new ThreadLocal<>(TableDescriptorImpl::new);
     private final WriterPool writerPool;
     private final ReaderPool readerPool;
     private final CairoConfiguration configuration;
@@ -70,6 +68,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final SCSequence telemetrySubSeq;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final IDGenerator tableIdGenerator;
+    private final TableRegistry tableRegistry;
+
 
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
@@ -80,6 +80,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
         this.configuration = configuration;
         this.metrics = metrics;
+        this.tableRegistry = new TableRegistry(this);
         this.messageBus = new MessageBusImpl(configuration);
         this.writerPool = new WriterPool(configuration, messageBus, metrics);
         this.readerPool = new ReaderPool(configuration, messageBus);
@@ -119,6 +120,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
 
     @TestOnly
     public boolean clear() {
+        tableRegistry.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         return b1 & b2;
@@ -130,6 +132,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         Misc.free(readerPool);
         Misc.free(tableIdGenerator);
         Misc.free(messageBus);
+        tableRegistry.close();
     }
 
     public void createTable(
@@ -162,6 +165,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         }
     }
 
+    // caller has to acquire the lock before this method is called and release the lock after the call
     public void createTableUnsafe(
             CairoSecurityContext securityContext,
             MemoryMARW mem,
@@ -169,6 +173,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             TableStructure struct
     ) {
         securityContext.checkWritePermission();
+        tableRegistry.registerTable(struct);
+
+        // only create the table after it has been registered
         TableUtils.createTable(
                 configuration,
                 mem,
@@ -270,7 +277,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             return getReader(executionContext.getCairoSecurityContext(), tableName);
         } catch (CairoException ex) {
             // Cannot open reader on existing table is pretty bad.
-            LOG.error().$("error opening reader for ").$(statement)
+            LOG.critical().$("error opening reader for ").$(statement)
                     .$(" statement [table=").$(tableName)
                     .$(",errno=").$(ex.getErrno())
                     .$(",error=").$(ex.getMessage()).I$();
@@ -344,10 +351,8 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     @Override
     public WalWriter getWalWriter(CairoSecurityContext securityContext, CharSequence tableName) {
         securityContext.checkWritePermission();
-        try (TableReader reader = getReader(securityContext, tableName)) {
-            final TableDescriptor descriptor = tlTableDescriptor.get().of(reader);
-            return writerPool.getWalWriterFactory(tableName).createWal(descriptor);
-        }
+        final Sequencer sequencer = tableRegistry.getSequencer(tableName);
+        return sequencer.createWal();
     }
 
     public CharSequence lock(

@@ -61,7 +61,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.tasks.TableWriterTask.*;
 
-public class TableWriter implements Closeable, WalWriterFactory {
+public class TableWriter implements Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     public static final int O3_BLOCK_NONE = -1;
     public static final int O3_BLOCK_O3 = 1;
@@ -192,8 +192,6 @@ public class TableWriter implements Closeable, WalWriterFactory {
     private long commitIntervalDefault;
     private long commitInterval;
     private UpdateOperator updateOperator;
-    private final IDGenerator walIdGenerator;
-    private final Sequencer sequencer;
 
     public TableWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
         this(configuration, tableName, null, new MessageBusImpl(configuration), true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), metrics);
@@ -256,10 +254,6 @@ public class TableWriter implements Closeable, WalWriterFactory {
             } else {
                 this.lockFd = -1L;
             }
-            walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
-            walIdGenerator.open(path);
-            sequencer = new SequencerImpl(configuration);
-            sequencer.open(path);
             long todoCount = openTodoMem();
             int todo;
             if (todoCount > 0) {
@@ -352,14 +346,6 @@ public class TableWriter implements Closeable, WalWriterFactory {
 
     public static long getTimestampIndexValue(long timestampIndex, long indexRow) {
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
-    }
-
-    // can be called without holding the writer's lock
-    @Override
-    public WalWriter createWal(TableDescriptor descriptor) {
-        // always creates a new wal with an increasing id
-        // remove string concat garbage below, we do not know how many wal writers will be created
-        return new WalWriter(configuration, tableName, WalWriter.WAL_NAME_BASE + walIdGenerator.getNextId(), sequencer, descriptor);
     }
 
     public void addColumn(CharSequence name, int type) {
@@ -484,7 +470,6 @@ public class TableWriter implements Closeable, WalWriterFactory {
 
             // remove _todo
             clearTodoLog();
-
         } catch (CairoException err) {
             throwDistressException(err);
         }
@@ -2243,7 +2228,7 @@ public class TableWriter implements Closeable, WalWriterFactory {
                         .$(", errno=").$(e.getErrno())
                         .$(']').$();
                 if (!ff.remove(path)) {
-                    LOG.error()
+                    LOG.critical()
                             .$("could not remove '").utf8(path).$("'. Please remove MANUALLY.")
                             .$("[errno=").$(ff.errno())
                             .$(']').$();
@@ -2280,8 +2265,6 @@ public class TableWriter implements Closeable, WalWriterFactory {
         boolean tx = inTransaction();
         freeSymbolMapWriters();
         freeIndexers();
-        Misc.free(walIdGenerator);
-        Misc.free(sequencer);
         Misc.free(txWriter);
         Misc.free(metaMem);
         Misc.free(ddlMem);
@@ -5283,7 +5266,8 @@ public class TableWriter implements Closeable, WalWriterFactory {
         }
     }
 
-    private void throwDistressException(Throwable cause) {
+    private void throwDistressException(CairoException cause) {
+        LOG.critical().$("writer error [table=").$(tableName).$(", e=").$((Sinkable) cause).I$();
         this.distressed = true;
         throw new CairoError(cause);
     }
@@ -5390,7 +5374,6 @@ public class TableWriter implements Closeable, WalWriterFactory {
                 denseIndexers.getQuick(i).refreshSourceAndIndex(lo, hi);
             } catch (CairoException e) {
                 // this is pretty severe, we hit some sort of limit
-                LOG.critical().$("index error {").$((Sinkable) e).$('}').$();
                 throwDistressException(e);
             }
         }

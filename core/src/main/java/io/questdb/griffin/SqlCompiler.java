@@ -2791,7 +2791,7 @@ public class SqlCompiler implements Closeable {
                             throw SqlException.$(0, "there is an active query against '").put(writer.getTableName()).put("'. Try again.");
                         }
                     } catch (CairoException | CairoError e) {
-                        LOG.error().$("could truncate [table=").$(writer.getTableName()).$(", e=").$((Sinkable) e).$(']').$();
+                        LOG.error().$("could not truncate [table=").$(writer.getTableName()).$(", e=").$((Sinkable) e).$(']').$();
                         throw e;
                     }
                 }

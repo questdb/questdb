@@ -60,7 +60,8 @@ public final class MemoryTag {
     public static final int NATIVE_CB5 = 32;
     public static final int MMAP_TABLE_WAL_READER = 33;
     public static final int MMAP_TABLE_WAL_WRITER = 34;
-    public static final int SIZE = MMAP_TABLE_WAL_WRITER + 1;
+    public static final int MMAP_SEQUENCER = 35;
+    public static final int SIZE = MMAP_SEQUENCER + 1;
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -103,5 +104,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_CB5, "NATIVE_CB5");
         tagNameMap.extendAndSet(MMAP_TABLE_WAL_READER, "MMAP_TABLE_WAL_READER");
         tagNameMap.extendAndSet(MMAP_TABLE_WAL_WRITER, "MMAP_TABLE_WALD_WRITER");
+        tagNameMap.extendAndSet(MMAP_SEQUENCER, "MMAP_SEQUENCER");
     }
 }
