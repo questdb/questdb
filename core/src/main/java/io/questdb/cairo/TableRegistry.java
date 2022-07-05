@@ -43,7 +43,6 @@ public class TableRegistry implements Closeable {
     // expected that caller holds the lock on the table
     void registerTable(TableStructure struct) {
         final String tableName = Chars.toString(struct.getTableName());
-
         final Sequencer other = tableRegistry.remove(tableName);
         if (other != null) {
             // could happen if there was a table with the same name before
@@ -52,7 +51,7 @@ public class TableRegistry implements Closeable {
 
         final SequencerImpl sequencer = new SequencerImpl(engine, tableName);
         sequencer.of(struct);
-        tableRegistry.put(tableName, sequencer);
+        sequencer.close();
     }
 
     Sequencer getSequencer(CharSequence tableName) {
@@ -61,7 +60,8 @@ public class TableRegistry implements Closeable {
             sequencer = new SequencerImpl(engine, Chars.toString(tableName));
             final Sequencer other = tableRegistry.putIfAbsent(tableName, sequencer);
             if (other != null) {
-                sequencer = other;
+                sequencer.close();
+                return other;
             }
             sequencer.open();
         }

@@ -1863,7 +1863,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
         // we expect optimiser to correctly select column "b" from Y as
         // a match against column "a" in the union
         compile("create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
-        engine.clear();
+        engine.releaseAllWriters();
         assertQuery(
                 "u\ta\tc\n" +
                         "0.6607777894187332\t27\ty\n",
@@ -1994,7 +1994,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     private void assertFailure(String ddlX, String ddlY, int pos) throws Exception {
         compile(ddlY);
-        engine.clear();
+        engine.releaseAllWriters();
         assertFailure("x union all y",
                 ddlX,
                 pos,
@@ -2025,7 +2025,7 @@ public class UnionAllCastTest extends AbstractGriffinTest {
 
     private void testUnionAll(String expected, String sql, String ddlX, String ddlY) throws Exception {
         compile(ddlY);
-        engine.clear();
+        engine.releaseAllWriters();
         assertQuery(expected, sql, ddlX, null, false, true, true);
     }
 }
