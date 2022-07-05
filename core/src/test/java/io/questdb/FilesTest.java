@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.log.LogError;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -246,6 +247,87 @@ public class FilesTest {
     }
 
     @Test
+    public void testHardLinkAsciiName() throws Exception {
+        assertHardLinkPreservesFileContent("some_column.d");
+    }
+
+    @Test
+    public void testHardLinkNonAsciiName() throws Exception {
+        assertHardLinkPreservesFileContent("いくつかの列.d");
+    }
+
+    private void assertHardLinkPreservesFileContent(String fileName) throws Exception {
+        assertMemoryLeak(() -> {
+            File dbRoot = temporaryFolder.newFolder("dbRoot");
+            dbRoot.mkdirs();
+            Path srcFilePath = new Path().of(dbRoot.getAbsolutePath());
+            Path hardLinkFilePath = null;
+            try {
+                final String EOL = System.lineSeparator();
+                final String fileContent = "The theoretical tightest upper bound on the information rate of" + EOL +
+                        "data that can be communicated at an arbitrarily low error rate using an average" + EOL +
+                        "received signal power S through an analog communication channel subject to" + EOL +
+                        "additive white Gaussian noise (AWGN) of power N:" + EOL + EOL +
+                        "C = B * log_2(1 + S/N)" + EOL + EOL +
+                        "where" + EOL + EOL +
+                        "C is the channel capacity in bits per second, a theoretical upper bound on the net " + EOL +
+                        "  bit rate (information rate, sometimes denoted I) excluding error-correction codes;" + EOL +
+                        "B is the bandwidth of the channel in hertz (passband bandwidth in case of a bandpass " + EOL +
+                        "signal);" + EOL +
+                        "S is the average received signal power over the bandwidth (in case of a carrier-modulated " + EOL +
+                        "passband transmission, often denoted C), measured in watts (or volts squared);" + EOL +
+                        "N is the average power of the noise and interference over the bandwidth, measured in " + EOL +
+                        "watts (or volts squared); and" + EOL +
+                        "S/N is the signal-to-noise ratio (SNR) or the carrier-to-noise ratio (CNR) of the " + EOL +
+                        "communication signal to the noise and interference at the receiver (expressed as a linear" + EOL +
+                        "power ratio, not aslogarithmic decibels)." + EOL;
+
+                createTempFile(srcFilePath, fileName, fileContent);
+
+                // perform the hard link
+                hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
+                Assert.assertEquals(0, Files.hardLink(srcFilePath, hardLinkFilePath));
+
+                // check content are the same
+                assertEqualsLinkedFileContent(hardLinkFilePath, fileContent);
+
+                // delete source file
+                Assert.assertTrue(Files.remove(srcFilePath));
+
+                // check linked file still exists and content are the same
+                assertEqualsLinkedFileContent(hardLinkFilePath, fileContent);
+            } finally {
+                Files.remove(srcFilePath);
+                Misc.free(srcFilePath);
+                if (null != hardLinkFilePath) {
+                    Assert.assertTrue(Files.remove(hardLinkFilePath));
+                }
+                Misc.free(hardLinkFilePath);
+                temporaryFolder.delete();
+            }
+        });
+    }
+
+    @Test
+    public void testHardLinkFailuresSrcDoesNotExist() throws Exception {
+        assertMemoryLeak(() -> {
+            File dbRoot = temporaryFolder.newFolder("dbRoot");
+            dbRoot.mkdirs();
+            Path srcFilePath = null;
+            Path hardLinkFilePath = null;
+            try {
+                srcFilePath = new Path().of(dbRoot.getAbsolutePath()).concat("some_column.d").$();
+                hardLinkFilePath = new Path().of(srcFilePath).put(".1").$();
+                Assert.assertEquals(-1, Files.hardLink(srcFilePath, hardLinkFilePath));
+            } finally {
+                Misc.free(srcFilePath);
+                Misc.free(hardLinkFilePath);
+                temporaryFolder.delete();
+            }
+        });
+    }
+
+    @Test
     public void testMkdirs() throws Exception {
         assertMemoryLeak(() -> {
             File r = temporaryFolder.newFolder("to_delete");
@@ -369,5 +451,61 @@ public class FilesTest {
         Assert.assertTrue(Files.touch(path.of(f.getAbsolutePath()).$()));
         Assert.assertTrue(Files.setLastModified(path, t));
         Assert.assertEquals(t, Files.getLastModified(path));
+    }
+
+    private static void createTempFile(Path path, String fileName, String fileContent) {
+        final int buffSize = fileContent.length() * 3;
+        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+        final byte[] bytes = fileContent.getBytes(Files.UTF_8);
+        long p = buffPtr;
+        for (int i = 0, n = bytes.length; i < n; i++) {
+            Unsafe.getUnsafe().putByte(p++, bytes[i]);
+        }
+        Unsafe.getUnsafe().putByte(p, (byte) 0);
+        long fd = -1L;
+        try {
+            fd = Files.openAppend(path.concat(fileName).$());
+            if (fd > -1L) {
+                Files.truncate(fd, 0);
+                Files.append(fd, buffPtr, bytes.length);
+                Files.sync();
+            }
+            Assert.assertTrue(Files.exists(fd));
+        } finally {
+            if (fd != -1L) {
+                Files.close(fd);
+            }
+            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void assertEqualsLinkedFileContent(Path path, String fileContent) {
+        final int buffSize = 2048;
+        final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
+        long fd = -1L;
+        try {
+            fd = Files.openRO(path);
+            Assert.assertTrue(Files.exists(fd));
+            long size = Files.length(fd);
+            if (size > buffSize) {
+                throw new LogError("File is too big: " + path);
+            }
+            if (size < 0 || size != Files.read(fd, buffPtr, size, 0)) {
+                throw new LogError(String.format(
+                        "Cannot read %s [errno=%d, size=%d]",
+                        path,
+                        Os.errno(),
+                        size
+                ));
+            }
+            StringSink sink = Misc.getThreadLocalBuilder();
+            Chars.utf8Decode(buffPtr, buffPtr + size, sink);
+            TestUtils.assertEquals(fileContent, sink.toString());
+        } finally {
+            if (fd != -1L) {
+                Files.close(fd);
+            }
+            Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 }

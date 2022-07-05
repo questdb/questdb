@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cutlass.line.tcp.load.LineData;
 import io.questdb.cutlass.line.tcp.load.TableData;
 import io.questdb.griffin.*;
+import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -104,7 +105,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 LOG.info().$(sql).$();
                 final CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
                 try (
-                        QuietClosable op = cc.getOperation();
+                        AbstractOperation op = cc.getOperation();
                         OperationFuture fut = cc.getDispatcher().execute(op, sqlExecutionContext, waitSequence)
                 ) {
                     if (fut.await(30 * Timestamps.SECOND_MICROS) != QUERY_COMPLETE) {
