@@ -525,6 +525,7 @@
                 <jdk.version>8</jdk.version>
                 <java.enforce.version>1.8.0_242</java.enforce.version>
                 <questdb.artifactid>questdb-jdk8</questdb.artifactid>
+                <compilerArg0>-XDignore.symbol.file</compilerArg0>
                 <excludePattern1>module-info.java</excludePattern1>
                 <excludeTestPattern1>module-info.java</excludeTestPattern1>
                 <javac.compile.source>1.8</javac.compile.source>
@@ -576,7 +577,6 @@
                 <jdk.version>11</jdk.version>
                 <java.enforce.version>11</java.enforce.version>
                 <questdb.artifactid>questdb</questdb.artifactid>
-                <compilerArg0>-XDignore.symbol.file</compilerArg0>
                 <compilerArg1>--add-exports</compilerArg1>
                 <compilerArg2>java.base/jdk.internal.math=io.questdb</compilerArg2>
                 <excludePattern1>nothing-to-exclude-dummy-value-include-all-java11plus</excludePattern1>
