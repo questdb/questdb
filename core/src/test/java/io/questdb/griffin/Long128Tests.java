@@ -67,7 +67,41 @@ public class Long128Tests extends AbstractGriffinTest {
                         " from long_sequence(20)" +
                         ")"
         );
-        engine.releaseInactive();
+        engine.clear();
+
+        assertQuery("ts\tts1\tts11\ti\n" +
+                        "00000000-0000-0006-0000-000000000006\t00000000-0000-0006-0000-000000000006\t2022-02-24T00:00:01.000000Z\t2\n" +
+                        "00000000-0000-000c-0000-00000000000c\t00000000-0000-000c-0000-00000000000c\t2022-02-24T00:00:03.000000Z\t4\n" +
+                        "00000000-0000-0012-0000-000000000012\t00000000-0000-0012-0000-000000000012\t2022-02-24T00:00:05.000000Z\t6\n" +
+                        "00000000-0000-0018-0000-000000000018\t00000000-0000-0018-0000-000000000018\t2022-02-24T00:00:07.000000Z\t8\n" +
+                        "00000000-0000-001e-0000-00000000001e\t00000000-0000-001e-0000-00000000001e\t2022-02-24T00:00:09.000000Z\t10\n" +
+                        "00000000-0000-0024-0000-000000000024\t00000000-0000-0024-0000-000000000024\t2022-02-24T00:00:11.000000Z\t12\n",
+                "select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts = tab2.ts",
+                "create table tab2 as " +
+                        "(select" +
+                        " to_long128(2 * x, 2 * x) ts, " +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts1," +
+                        " cast(x as int) i" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testJoinOnLong128ColumnCompact() throws Exception {
+        compile(
+                "create table tab1 as " +
+                        "(select" +
+                        " to_long128(3 * x, 3 * x) ts, " +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts1," +
+                        " cast(x as int) i" +
+                        " from long_sequence(20)" +
+                        ")"
+        );
+        engine.clear();
+        defaultMapType = "compact";
 
         assertQuery("ts\tts1\tts11\ti\n" +
                         "00000000-0000-0006-0000-000000000006\t00000000-0000-0006-0000-000000000006\t2022-02-24T00:00:01.000000Z\t2\n" +
@@ -100,7 +134,7 @@ public class Long128Tests extends AbstractGriffinTest {
                         " from long_sequence(10)" +
                         ")"
         );
-        engine.releaseInactive();
+        engine.clear();
 
         assertQuery("ts\tts1\tts11\ti\n" +
                         "00000000-0000-0001-0000-000000000002\t00000000-0000-0001-0000-000000000001\t2022-02-24T00:00:00.000000Z\t1\n" +
@@ -223,5 +257,35 @@ public class Long128Tests extends AbstractGriffinTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testUpdateLong128ColumnToNull() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table testUpdateLong128ColumnToNull as " +
+                    "(select" +
+                    " to_long128(x / 2, -x) uuid, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts1," +
+                    " cast(x as int) i" +
+                    " from long_sequence(10)" +
+                    ")");
+
+            compile("update testUpdateLong128ColumnToNull set uuid = null where i < 5");
+            assertSql(
+                    "testUpdateLong128ColumnToNull",
+                    "uuid\tts1\ti\n" +
+                            "\t2022-02-24T00:00:00.000000Z\t1\n" +
+                            "\t2022-02-24T00:00:01.000000Z\t2\n" +
+                            "\t2022-02-24T00:00:02.000000Z\t3\n" +
+                            "\t2022-02-24T00:00:03.000000Z\t4\n" +
+                            "00000000-0000-0002-ffff-fffffffffffb\t2022-02-24T00:00:04.000000Z\t5\n" +
+                            "00000000-0000-0003-ffff-fffffffffffa\t2022-02-24T00:00:05.000000Z\t6\n" +
+                            "00000000-0000-0003-ffff-fffffffffff9\t2022-02-24T00:00:06.000000Z\t7\n" +
+                            "00000000-0000-0004-ffff-fffffffffff8\t2022-02-24T00:00:07.000000Z\t8\n" +
+                            "00000000-0000-0004-ffff-fffffffffff7\t2022-02-24T00:00:08.000000Z\t9\n" +
+                            "00000000-0000-0005-ffff-fffffffffff6\t2022-02-24T00:00:09.000000Z\t10\n"
+            );
+
+        });
     }
 }

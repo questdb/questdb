@@ -899,8 +899,12 @@ public final class TestUtils {
                 r.getLong256(i, sink);
                 break;
             case ColumnType.LONG128:
-                UUID guid = new UUID(r.getLong128Hi(i), r.getLong128Lo(i));
-                sink.put(guid.toString());
+                long long128Hi = r.getLong128Hi(i);
+                long long128Lo = r.getLong128Lo(i);
+                if (!Long128Util.isNull(long128Hi, long128Lo)) {
+                    UUID guid = new UUID(long128Hi, long128Lo);
+                    sink.put(guid.toString());
+                }
                 break;
             default:
                 break;

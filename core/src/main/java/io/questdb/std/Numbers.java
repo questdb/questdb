@@ -25,11 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -437,20 +433,6 @@ public final class Numbers {
         appendHex(sink, a, false);
     }
 
-    public static void appendLong128(long a, long b, CharSink sink) {
-        if (a == Numbers.LONG_NaN && b == Numbers.LONG_NaN) {
-            return;
-        }
-        sink.put("0x");
-
-        if (b != 0L) {
-            appendLong256Two(a, b, sink);
-            return;
-        }
-
-        appendHex(sink, a, false);
-    }
-
     public static int bswap(int value) {
         return ((value >> 24) & 0xff) | ((value << 8) & 0xff0000) | ((value >> 8) & 0xff00) | ((value << 24) & 0xff000000);
     }
@@ -617,7 +599,7 @@ public final class Numbers {
 
     /**
      * Clinger's fast path:
-     * https://www.researchgate.net/publication/2295884_How_to_Read_Floating_Point_Numbers_Accurately
+     * <a href="https://www.researchgate.net/publication/2295884_How_to_Read_Floating_Point_Numbers_Accurately">source</a>
      */
     public static double parseDouble(CharSequence sequence) throws NumericException {
         int lim = sequence.length();

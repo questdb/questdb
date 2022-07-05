@@ -43,4 +43,8 @@ public class Long128Util {
 
         return Long.compareUnsigned(aLo, bLo);
     }
+
+    public static boolean isNull(long hi, long lo) {
+        return hi == Numbers.LONG_NaN && lo == Numbers.LONG_NaN;
+    }
 }
