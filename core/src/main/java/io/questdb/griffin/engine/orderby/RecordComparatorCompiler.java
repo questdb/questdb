@@ -98,7 +98,7 @@ public class RecordComparatorCompiler {
     private void instrumentCompareMethod(int stackMapTableIndex, int nameIndex, int descIndex, IntList keyColumns, ColumnTypes columnTypes) {
         branches.clear();
         int sz = keyColumns.size();
-        int maxStack = 10;//sz + (fieldIndices.size() - sz) * 3 + 3;
+        int maxStack = sz + (fieldIndices.size() > sz ? 4 : 0) + 3;
         asm.startMethod(nameIndex, descIndex, maxStack, 3);
 
         int fieldIndex = 0;
@@ -109,17 +109,18 @@ public class RecordComparatorCompiler {
                 branches.add(asm.ifne());
             }
             asm.aload(0);
-            asm.getfield(fieldIndices.getQuick(fieldIndex));
+            asm.getfield(fieldIndices.getQuick(fieldIndex++));
             asm.aload(1);
             int index = keyColumns.getQuick(i);
-            asm.iconst((index > 0 ? index : -index) - 1);
-            asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(fieldIndex++), 1);
+            int columnIndex = (index > 0 ? index : -index) - 1;
+            asm.iconst(columnIndex);
+            asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), 1);
 
-            if (columnTypes.getColumnType(i) == ColumnType.LONG128) {
+            if (columnTypes.getColumnType(columnIndex) == ColumnType.LONG128) {
                 asm.aload(0);
-                asm.getfield(fieldIndices.getQuick(fieldIndex));
+                asm.getfield(fieldIndices.getQuick(fieldIndex++));
                 asm.aload(1);
-                asm.iconst((index > 0 ? index : -index) - 1);
+                asm.iconst(columnIndex);
                 asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), 1);
             }
 
@@ -192,14 +193,16 @@ public class RecordComparatorCompiler {
             asm.aload(1);
             int index = keyColumns.getQuick(i);
             // make sure column index is valid in case of "descending sort" flag
-            asm.iconst((index > 0 ? index : -index) - 1);
+            int columnIndex = (index > 0 ? index : -index) - 1;
+            asm.iconst(columnIndex);
             asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), 1);
             asm.putfield(fieldIndices.getQuick(fieldIndex++));
 
-            if (columnTypes.getColumnType(i) == ColumnType.LONG128) {
+            if (columnTypes.getColumnType(columnIndex) == ColumnType.LONG128) {
+                asm.aload(0);
                 asm.aload(1);
-                asm.iconst((index > 0 ? index : -index) - 1);
-                asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), 2);
+                asm.iconst(columnIndex);
+                asm.invokeInterface(fieldRecordAccessorIndicesA.getQuick(i), 1);
                 asm.putfield(fieldIndices.getQuick(fieldIndex++));
             }
         }
@@ -313,6 +316,7 @@ public class RecordComparatorCompiler {
                     getterNameA = "getLong128Hi";
                     getterNameB = "getLong128Lo";
                     fieldType = "J";
+                    comparatorDesc = "(JJJJ)I";
                     comparatorClass = Long128Util.class;
                     break;
                 default:
@@ -329,7 +333,6 @@ public class RecordComparatorCompiler {
             int nameIndex;
             int typeIndex;
 
-            String compareFieldType = fieldType;
             keyIndex = typeMap.keyIndex(fieldType);
             if (keyIndex > -1) {
                 typeMap.putAt(keyIndex, fieldType, typeIndex = asm.poolUtf8(fieldType));
@@ -345,8 +348,11 @@ public class RecordComparatorCompiler {
             String getterType  = fieldType;
             if (columnType == ColumnType.LONG128) {
                 // Special case, Long128 is 2 longs of type J on comparison
-                compareFieldType = "JJ";
-                fieldIndices.add(asm.poolField(thisClassIndex, asm.poolNameAndType(nameIndex, typeIndex)));
+                fieldTypeIndices.add(typeIndex);
+                int nameIndex2 = asm.poolUtf8().put('f').put(i).put(i).$();
+                fieldNameIndices.add(nameIndex2);
+                int nameAndTypeIndex = asm.poolNameAndType(nameIndex2, typeIndex);
+                fieldIndices.add(asm.poolField(thisClassIndex, nameAndTypeIndex));
             }
             methodMap.putIfAbsent(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterNameA, "(I)" + getterType));
             fieldRecordAccessorIndicesA.add(methodIndex);
@@ -360,7 +366,7 @@ public class RecordComparatorCompiler {
                     asm.poolMethod(asm.poolClass(comparatorClass),
                             asm.poolNameAndType(
                                     compareMethodIndex, comparatorDesc == null ?
-                                            asm.poolUtf8().put('(').put(compareFieldType).put(compareFieldType).put(")I").$()
+                                            asm.poolUtf8().put('(').put(fieldType).put(fieldType).put(")I").$()
                                             :
                                             asm.poolUtf8(comparatorDesc))
                     ));

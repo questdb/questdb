@@ -27,7 +27,11 @@ package io.questdb.std;
 public class Long128Util {
 
     // this method is used by byte-code generator
-    public static int compare(long aHi, long aLow, long bHi, long bLow) {
+    // Note that the arguments are of weird pattern: aLo, aHi, bHi, bLo
+    // this is because of alternation of the order when using getLong128Hi, getLong128Lo
+    // instead as A, B records.
+    // See special cases for Long128 in RecordComparatorCompiler
+    public static int compare(long aLo, long bHi, long aHi, long bLo) {
 
         if (aHi < bHi) {
             return -1;
@@ -37,6 +41,6 @@ public class Long128Util {
             return 1;
         }
 
-        return Long.compare(aLow, bLow);
+        return Long.compareUnsigned(aLo, bLo);
     }
 }

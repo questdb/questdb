@@ -28,64 +28,31 @@ import org.junit.Test;
 
 public class Long128Tests extends AbstractGriffinTest {
     @Test
-    public void testReadLong128Column() throws SqlException {
-        assertQuery(
-                "ts\tts1\ti\n" +
-                        "1-1645660800000000\t2022-02-24T00:00:00.000000Z\t1\n" +
-                        "2-1645660801000000\t2022-02-24T00:00:01.000000Z\t2\n" +
-                        "3-1645660802000000\t2022-02-24T00:00:02.000000Z\t3\n" +
-                        "4-1645660803000000\t2022-02-24T00:00:03.000000Z\t4\n" +
-                        "5-1645660804000000\t2022-02-24T00:00:04.000000Z\t5\n" +
-                        "6-1645660805000000\t2022-02-24T00:00:05.000000Z\t6\n" +
-                        "7-1645660806000000\t2022-02-24T00:00:06.000000Z\t7\n" +
-                        "8-1645660807000000\t2022-02-24T00:00:07.000000Z\t8\n" +
-                        "9-1645660808000000\t2022-02-24T00:00:08.000000Z\t9\n" +
-                        "10-1645660809000000\t2022-02-24T00:00:09.000000Z\t10\n",
-                "select" +
-                        " to_long128(x, timestamp_sequence('2022-02-24', 1000000L)) ts," +
-                        " timestamp_sequence('2022-02-24', 1000000L) ts1," +
-                        " cast(x as int) i" +
-                        " from long_sequence(10)",
-                null,
-                false,
-                true
-        );
-    }
-
-    @Test
-    public void testJoinWithLong128ColumnOnPrimaryAndSecondary() throws Exception {
-        compile(
+    public void testGroupByLong128Column() throws Exception {
+        assertQuery("ts\tcount\n" +
+                        "00000000-0000-0000-0000-000000000000\t1\n" +
+                        "00000000-0000-0001-0000-000000000001\t2\n" +
+                        "00000000-0000-0002-0000-000000000002\t2\n" +
+                        "00000000-0000-0003-0000-000000000003\t2\n" +
+                        "00000000-0000-0004-0000-000000000004\t2\n" +
+                        "00000000-0000-0005-0000-000000000005\t2\n" +
+                        "00000000-0000-0006-0000-000000000006\t2\n" +
+                        "00000000-0000-0007-0000-000000000007\t2\n" +
+                        "00000000-0000-0008-0000-000000000008\t2\n" +
+                        "00000000-0000-0009-0000-000000000009\t2\n" +
+                        "00000000-0000-000a-0000-00000000000a\t1\n",
+                "select ts, count() from tab1",
                 "create table tab1 as " +
-                "(select" +
-                " to_long128(x, x) ts, " +
-                " timestamp_sequence('2022-02-24', 1000000L) ts1," +
-                " cast(x as int) i" +
-                " from long_sequence(10)" +
-                ")"
-        );
-        engine.releaseInactive();
-
-        assertQuery("ts\tts1\tts11\ti\n" +
-                        "1-2\t1-1\t2022-02-24T00:00:00.000000Z\t1\n" +
-                        "2-4\t2-2\t2022-02-24T00:00:01.000000Z\t2\n" +
-                        "3-6\t3-3\t2022-02-24T00:00:02.000000Z\t3\n" +
-                        "4-8\t4-4\t2022-02-24T00:00:03.000000Z\t4\n" +
-                        "5-10\t5-5\t2022-02-24T00:00:04.000000Z\t5\n" +
-                        "6-12\t6-6\t2022-02-24T00:00:05.000000Z\t6\n" +
-                        "7-14\t7-7\t2022-02-24T00:00:06.000000Z\t7\n" +
-                        "8-16\t8-8\t2022-02-24T00:00:07.000000Z\t8\n" +
-                        "9-18\t9-9\t2022-02-24T00:00:08.000000Z\t9\n" +
-                        "10-20\t10-10\t2022-02-24T00:00:09.000000Z\t10\n",
-                "select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts1 = tab2.ts1",
-                "create table tab2 as " +
                         "(select" +
-                        " to_long128(x, 2 * x) ts, " +
+                        " to_long128(x / 2, x / 2) ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
-                        " from long_sequence(10)" +
+                        " from long_sequence(20)" +
                         ")",
                 null,
-                false
+                true,
+                true,
+                true
         );
     }
 
@@ -103,12 +70,12 @@ public class Long128Tests extends AbstractGriffinTest {
         engine.releaseInactive();
 
         assertQuery("ts\tts1\tts11\ti\n" +
-                        "6-6\t6-6\t2022-02-24T00:00:01.000000Z\t2\n" +
-                        "12-12\t12-12\t2022-02-24T00:00:03.000000Z\t4\n" +
-                        "18-18\t18-18\t2022-02-24T00:00:05.000000Z\t6\n" +
-                        "24-24\t24-24\t2022-02-24T00:00:07.000000Z\t8\n" +
-                        "30-30\t30-30\t2022-02-24T00:00:09.000000Z\t10\n" +
-                        "36-36\t36-36\t2022-02-24T00:00:11.000000Z\t12\n",
+                        "00000000-0000-0006-0000-000000000006\t00000000-0000-0006-0000-000000000006\t2022-02-24T00:00:01.000000Z\t2\n" +
+                        "00000000-0000-000c-0000-00000000000c\t00000000-0000-000c-0000-00000000000c\t2022-02-24T00:00:03.000000Z\t4\n" +
+                        "00000000-0000-0012-0000-000000000012\t00000000-0000-0012-0000-000000000012\t2022-02-24T00:00:05.000000Z\t6\n" +
+                        "00000000-0000-0018-0000-000000000018\t00000000-0000-0018-0000-000000000018\t2022-02-24T00:00:07.000000Z\t8\n" +
+                        "00000000-0000-001e-0000-00000000001e\t00000000-0000-001e-0000-00000000001e\t2022-02-24T00:00:09.000000Z\t10\n" +
+                        "00000000-0000-0024-0000-000000000024\t00000000-0000-0024-0000-000000000024\t2022-02-24T00:00:11.000000Z\t12\n",
                 "select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts = tab2.ts",
                 "create table tab2 as " +
                         "(select" +
@@ -123,26 +90,62 @@ public class Long128Tests extends AbstractGriffinTest {
     }
 
     @Test
-    public void testGroupByLong128Column() throws Exception {
-        assertQuery("ts\tcount\n" +
-                        "0-0\t1\n" +
-                        "1-1\t2\n" +
-                        "2-2\t2\n" +
-                        "3-3\t2\n" +
-                        "4-4\t2\n" +
-                        "5-5\t2\n" +
-                        "6-6\t2\n" +
-                        "7-7\t2\n" +
-                        "8-8\t2\n" +
-                        "9-9\t2\n" +
-                        "10-10\t1\n",
-                "select ts, count() from tab1",
+    public void testJoinWithLong128ColumnOnPrimaryAndSecondary() throws Exception {
+        compile(
                 "create table tab1 as " +
                         "(select" +
-                        " to_long128(x / 2, x / 2) ts, " +
+                        " to_long128(x, x) ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
                         " cast(x as int) i" +
-                        " from long_sequence(20)" +
+                        " from long_sequence(10)" +
+                        ")"
+        );
+        engine.releaseInactive();
+
+        assertQuery("ts\tts1\tts11\ti\n" +
+                        "00000000-0000-0001-0000-000000000002\t00000000-0000-0001-0000-000000000001\t2022-02-24T00:00:00.000000Z\t1\n" +
+                        "00000000-0000-0002-0000-000000000004\t00000000-0000-0002-0000-000000000002\t2022-02-24T00:00:01.000000Z\t2\n" +
+                        "00000000-0000-0003-0000-000000000006\t00000000-0000-0003-0000-000000000003\t2022-02-24T00:00:02.000000Z\t3\n" +
+                        "00000000-0000-0004-0000-000000000008\t00000000-0000-0004-0000-000000000004\t2022-02-24T00:00:03.000000Z\t4\n" +
+                        "00000000-0000-0005-0000-00000000000a\t00000000-0000-0005-0000-000000000005\t2022-02-24T00:00:04.000000Z\t5\n" +
+                        "00000000-0000-0006-0000-00000000000c\t00000000-0000-0006-0000-000000000006\t2022-02-24T00:00:05.000000Z\t6\n" +
+                        "00000000-0000-0007-0000-00000000000e\t00000000-0000-0007-0000-000000000007\t2022-02-24T00:00:06.000000Z\t7\n" +
+                        "00000000-0000-0008-0000-000000000010\t00000000-0000-0008-0000-000000000008\t2022-02-24T00:00:07.000000Z\t8\n" +
+                        "00000000-0000-0009-0000-000000000012\t00000000-0000-0009-0000-000000000009\t2022-02-24T00:00:08.000000Z\t9\n" +
+                        "00000000-0000-000a-0000-000000000014\t00000000-0000-000a-0000-00000000000a\t2022-02-24T00:00:09.000000Z\t10\n",
+                "select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts1 = tab2.ts1",
+                "create table tab2 as " +
+                        "(select" +
+                        " to_long128(x, 2 * x) ts, " +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts1," +
+                        " cast(x as int) i" +
+                        " from long_sequence(10)" +
+                        ")",
+                null,
+                false
+        );
+    }
+
+    @Test
+    public void testOrderByLong128Column() throws Exception {
+        assertQuery("ts\tts1\ti\n" +
+                        "00000000-0000-0005-ffff-fffffffffff6\t2022-02-24T00:00:09.000000Z\t10\n" +
+                        "00000000-0000-0004-ffff-fffffffffff8\t2022-02-24T00:00:07.000000Z\t8\n" +
+                        "00000000-0000-0004-ffff-fffffffffff7\t2022-02-24T00:00:08.000000Z\t9\n" +
+                        "00000000-0000-0003-ffff-fffffffffffa\t2022-02-24T00:00:05.000000Z\t6\n" +
+                        "00000000-0000-0003-ffff-fffffffffff9\t2022-02-24T00:00:06.000000Z\t7\n" +
+                        "00000000-0000-0002-ffff-fffffffffffc\t2022-02-24T00:00:03.000000Z\t4\n" +
+                        "00000000-0000-0002-ffff-fffffffffffb\t2022-02-24T00:00:04.000000Z\t5\n" +
+                        "00000000-0000-0001-ffff-fffffffffffe\t2022-02-24T00:00:01.000000Z\t2\n" +
+                        "00000000-0000-0001-ffff-fffffffffffd\t2022-02-24T00:00:02.000000Z\t3\n" +
+                        "00000000-0000-0000-ffff-ffffffffffff\t2022-02-24T00:00:00.000000Z\t1\n",
+                "select * from tab1 order by ts desc",
+                "create table tab1 as " +
+                        "(select" +
+                        " to_long128(x / 2, -x) ts, " +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts1," +
+                        " cast(x as int) i" +
+                        " from long_sequence(10)" +
                         ")",
                 null,
                 true,
@@ -152,30 +155,54 @@ public class Long128Tests extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByLong128Column() throws Exception {
-        assertQuery("ts\tcount\n" +
-                        "0-0\t1\n" +
-                        "1-1\t2\n" +
-                        "2-2\t2\n" +
-                        "3-3\t2\n" +
-                        "4-4\t2\n" +
-                        "5-5\t2\n" +
-                        "6-6\t2\n" +
-                        "7-7\t2\n" +
-                        "8-8\t2\n" +
-                        "9-9\t2\n" +
-                        "10-10\t1\n",
-                "select * from tab1 order by ts desc",
+    public void testOrderByLong128ColumnAndOtherFields() throws Exception {
+        assertQuery("ts\tts1\ti\n" +
+                        "00000000-0000-0000-ffff-ffffffffffff\t2022-02-24T00:00:00.000000Z\t0\n" +
+                        "00000000-0000-0001-ffff-fffffffffffe\t2022-02-24T00:00:01.000000Z\t1\n" +
+                        "00000000-0000-0001-ffff-fffffffffffd\t2022-02-24T00:00:02.000000Z\t1\n" +
+                        "00000000-0000-0002-ffff-fffffffffffc\t2022-02-24T00:00:03.000000Z\t2\n" +
+                        "00000000-0000-0002-ffff-fffffffffffb\t2022-02-24T00:00:04.000000Z\t2\n" +
+                        "00000000-0000-0003-ffff-fffffffffffa\t2022-02-24T00:00:05.000000Z\t3\n" +
+                        "00000000-0000-0003-ffff-fffffffffff9\t2022-02-24T00:00:06.000000Z\t3\n" +
+                        "00000000-0000-0004-ffff-fffffffffff8\t2022-02-24T00:00:07.000000Z\t4\n" +
+                        "00000000-0000-0004-ffff-fffffffffff7\t2022-02-24T00:00:08.000000Z\t4\n" +
+                        "00000000-0000-0005-ffff-fffffffffff6\t2022-02-24T00:00:09.000000Z\t5\n",
+                "select * from tab1 order by i, ts desc, ts1 asc",
                 "create table tab1 as " +
                         "(select" +
-                        " to_long128(x, -x) ts, " +
+                        " to_long128(x / 2, -x) ts, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts1," +
-                        " cast(x as int) i" +
-                        " from long_sequence(20)" +
+                        " cast(x / 2 as int) i" +
+                        " from long_sequence(10)" +
                         ")",
                 null,
                 true,
                 true,
+                true
+        );
+    }
+
+    @Test
+    public void testReadLong128Column() throws SqlException {
+        assertQuery(
+                "ts\tts1\ti\n" +
+                        "00000000-0000-0001-0005-d8b84367a000\t2022-02-24T00:00:00.000000Z\t1\n" +
+                        "00000000-0000-0002-0005-d8b84376e240\t2022-02-24T00:00:01.000000Z\t2\n" +
+                        "00000000-0000-0003-0005-d8b843862480\t2022-02-24T00:00:02.000000Z\t3\n" +
+                        "00000000-0000-0004-0005-d8b8439566c0\t2022-02-24T00:00:03.000000Z\t4\n" +
+                        "00000000-0000-0005-0005-d8b843a4a900\t2022-02-24T00:00:04.000000Z\t5\n" +
+                        "00000000-0000-0006-0005-d8b843b3eb40\t2022-02-24T00:00:05.000000Z\t6\n" +
+                        "00000000-0000-0007-0005-d8b843c32d80\t2022-02-24T00:00:06.000000Z\t7\n" +
+                        "00000000-0000-0008-0005-d8b843d26fc0\t2022-02-24T00:00:07.000000Z\t8\n" +
+                        "00000000-0000-0009-0005-d8b843e1b200\t2022-02-24T00:00:08.000000Z\t9\n" +
+                        "00000000-0000-000a-0005-d8b843f0f440\t2022-02-24T00:00:09.000000Z\t10\n",
+                "select" +
+                        " to_long128(x, timestamp_sequence('2022-02-24', 1000000L)) ts," +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts1," +
+                        " cast(x as int) i" +
+                        " from long_sequence(10)",
+                null,
+                false,
                 true
         );
     }

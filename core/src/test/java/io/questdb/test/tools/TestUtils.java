@@ -51,6 +51,7 @@ import org.junit.Assert;
 
 import java.io.*;
 import java.util.Arrays;
+import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -898,9 +899,8 @@ public final class TestUtils {
                 r.getLong256(i, sink);
                 break;
             case ColumnType.LONG128:
-                sink.put(r.getLong128Hi(i));
-                sink.put('|');
-                sink.put(r.getLong128Lo(i));
+                UUID guid = new UUID(r.getLong128Hi(i), r.getLong128Lo(i));
+                sink.put(guid.toString());
                 break;
             default:
                 break;
