@@ -589,7 +589,7 @@ public final class TestUtils {
     }
 
     public static void copyDirectory(Path src, Path dst, int dirMode) {
-        if (Files.mkdir(dst, dirMode) != 0) {
+        if (Files.mkdirs(dst, dirMode) != 0) {
             Assert.fail("Cannot create " + dst + ". Error: " + Os.errno());
         }
 
