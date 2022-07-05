@@ -24,12 +24,15 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.Path;
 
 import java.util.concurrent.locks.ReadWriteLock;
 
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.cairo.TableUtils.WAL_INDEX_FILE_NAME;
 
 public class SequencerImpl implements Sequencer {
     private static final String SEQ_DIR = "seq";
@@ -51,18 +54,23 @@ public class SequencerImpl implements Sequencer {
 
         final CairoConfiguration configuration = engine.getConfiguration();
         final FilesFacade ff = configuration.getFilesFacade();
-        path = new Path().of(configuration.getRoot()).concat(tableName).concat(SEQ_DIR);
-        rootLen = path.length();
+        try {
+            path = new Path().of(configuration.getRoot()).concat(tableName).concat(SEQ_DIR);
+            rootLen = path.length();
 
-        createSequencerDir(ff, configuration.getMkDirMode());
-        metadata = new SequencerMetadata(ff);
+            createSequencerDir(ff, configuration.getMkDirMode());
+            metadata = new SequencerMetadata(ff);
 
-        walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
-        walIdGenerator.open(path);
-        txnGenerator = new IDGenerator(configuration, TXN_FILE_NAME);
-        txnGenerator.open(path);
-        catalog = new TxnCatalog(ff);
-        catalog.open(path, rootLen, txnGenerator.getCurrentId());
+            walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
+            walIdGenerator.open(path);
+            txnGenerator = new IDGenerator(configuration, TXN_FILE_NAME);
+            txnGenerator.open(path);
+            catalog = new TxnCatalog(ff);
+            catalog.open(path, rootLen, txnGenerator.getCurrentId());
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     private void createSequencerDir(FilesFacade ff, int mkDirMode) {
