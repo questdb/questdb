@@ -89,7 +89,7 @@ elseif (UNIX)
                 src/main/c/freebsd/accept.c
                 src/main/c/freebsd/files.c
         )
-    else (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
+    else (CMAKE_SYSTEM_NAME MATCHES "Linux")
         MESSAGE("Building for GNU/Linux")
         include_directories($ENV{JAVA_HOME}/include/linux/)
         if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
@@ -106,6 +106,7 @@ elseif (UNIX)
                 src/main/c/linux/affinity.c
                 src/main/c/linux/accept.c
                 src/main/c/linux/files.c
+                src/main/c/linux/io_uring.c
         )
 
     endif (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
@@ -153,7 +154,7 @@ FetchContent_Declare(
 )
 
 FetchContent_GetProperties(asmjit)
-if(NOT asmjit_POPULATED)
+if (NOT asmjit_POPULATED)
     FetchContent_Populate(asmjit)
 endif()
 include("${asmjit_SOURCE_DIR}/CMakeLists.txt")
@@ -174,9 +175,31 @@ if(JIT_TEST)
 endif()
 
 #zlib
+
 set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
 
 include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
+
+#liburing
+
+if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+    MESSAGE("Downloading io_uring")
+    FetchContent_Declare(
+        liburing
+        GIT_REPOSITORY https://github.com/axboe/liburing.git
+        GIT_TAG        dda4848a9911120a903bef6284fb88286f4464c9 # liburing-2.2
+    )
+    FetchContent_MakeAvailable(liburing)
+
+    include_directories (${liburing_SOURCE_DIR}/src/include)
+    link_directories (${liburing_BINARY_DIR}/lib)
+    link_libraries (uring)
+
+    add_custom_target(
+    	liburing
+    	cd ${liburing_SOURCE_DIR} && ./configure --prefix=${liburing_BINARY_DIR} && make -j && make install
+    )
+endif ()
 
 # ZLIB_SRCS is defined in Zlib Cmake config
 add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS} ${ASMJIT_SRC})
@@ -188,6 +211,11 @@ set(RELEASE_OPTIONS "-O3")
 
 list(APPEND DEBUG_OPTIONS  "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
 list(APPEND RELEASE_OPTIONS  "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
+
+if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+    target_link_libraries(questdb liburing.a)
+    add_dependencies(questdb liburing)
+endif ()
 
 if (AARCH64)
 
