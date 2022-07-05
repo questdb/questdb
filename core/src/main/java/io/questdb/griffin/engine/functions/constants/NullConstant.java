@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
 public final class NullConstant implements ConstantFunction, ScalarFunction {
@@ -131,12 +132,12 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     @Override
     public long getLong128Hi(Record rec) {
-        throw new UnsupportedOperationException();
+        return Numbers.LONG_NaN;
     }
 
     @Override
     public long getLong128Lo(Record rec) {
-        throw new UnsupportedOperationException();
+        return Numbers.LONG_NaN;
     }
 
     @Override
