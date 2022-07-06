@@ -32,6 +32,7 @@ public class ColumnPurgeTask implements Mutable {
     public static final int OFFSET_COLUMN_VERSION = 0;
     public static final int OFFSET_PARTITION_TIMESTAMP = 1;
     public static final int OFFSET_PARTITION_NAME_TXN = 2;
+    public static final int OFFSET_UPDATE_ROW_ID = 3;
     private final LongList updatedColumnInfo = new LongList();
     private CharSequence columnName;
     private String tableName;

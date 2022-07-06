@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.std.*;
@@ -46,7 +47,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     private long recordOffset;
     private long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
-    private RecordCursor symbolTableResolver;
+    private SymbolTableSource symbolTableResolver;
 
     public RecordChain(@Transient ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
         this.mem = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
@@ -88,14 +89,15 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
     @Override
     public void clear() {
-        close();
+        mem.close();
+        nextRecordOffset = -1L;
+        varAppendOffset = 0L;
     }
 
     @Override
     public void close() {
-        mem.close();
-        nextRecordOffset = -1L;
-        varAppendOffset = 0L;
+        clear();
+        symbolTableResolver = null;
     }
 
     @Override
@@ -258,7 +260,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         mem.skip(bytes);
     }
 
-    public void setSymbolTableResolver(RecordCursor resolver) {
+    public void setSymbolTableResolver(SymbolTableSource resolver) {
         this.symbolTableResolver = resolver;
     }
 

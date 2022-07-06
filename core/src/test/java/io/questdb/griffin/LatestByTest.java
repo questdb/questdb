@@ -35,6 +35,22 @@ import io.questdb.std.str.StringSink;
 import org.junit.Test;
 
 public class LatestByTest extends AbstractGriffinTest {
+
+    @Test
+    public void testSymbolInPredicate_singleElement() throws Exception {
+        assertMemoryLeak(() -> {
+            String createStmt = "CREATE table trades(symbol symbol, side symbol, timestamp timestamp) timestamp(timestamp);";
+            compiler.compile(createStmt, sqlExecutionContext);
+            executeInsert("insert into trades VALUES ('BTC', 'buy', 1609459199000000);");
+            String expected = "symbol\tside\ttimestamp\n" +
+                    "BTC\tbuy\t2020-12-31T23:59:59.000000Z\n";
+            String query = "SELECT * FROM trades\n" +
+                    "WHERE symbol in ('BTC') and side in 'buy'\n" +
+                    "LATEST ON timestamp PARTITION BY symbol;";
+            assertSql(query, expected);
+        });
+    }
+
     @Test
     public void testLatestByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {

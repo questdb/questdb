@@ -82,9 +82,9 @@ class LatestByValueFilteredRecordCursor extends AbstractDataFrameRecordCursor {
         this.dataFrameCursor = dataFrameCursor;
         this.recordA.of(dataFrameCursor.getTableReader());
         this.recordB.of(dataFrameCursor.getTableReader());
+        filter.init(this, executionContext);
         findRecord();
         hasNext = !empty;
-        filter.init(this, executionContext);
     }
 
     private void findRecord() {
