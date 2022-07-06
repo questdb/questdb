@@ -144,8 +144,8 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.close();
                 mem.close();
 
-                // make sure reload functions correctly
-                Assert.assertFalse(reader.reload());
+                // make sure reload functions correctly. Txn changed from 1 to 3, reload should return true
+                Assert.assertTrue(reader.reload());
 
                 try (TableWriter w = new TableWriter(configuration, "x", metrics)) {
                     // add more data
