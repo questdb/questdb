@@ -268,11 +268,6 @@ public class SyncLogger implements LogRecord, Log {
         return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
     }
 
-    @Override
-    public boolean isDebugEnabled() {
-        return debugSeq != null;
-    }
-
     public LogRecord xerror() {
         return next(errorSeq, errorRing, LogLevel.ERROR);
     }

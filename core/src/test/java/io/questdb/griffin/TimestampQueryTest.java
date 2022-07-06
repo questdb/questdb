@@ -44,7 +44,6 @@ import java.util.stream.Stream;
 
 public class TimestampQueryTest extends AbstractGriffinTest {
 
-
     @Test
     public void testCast2AsValidColumnNameTouchFunction() throws Exception {
         assertMemoryLeak(() -> {

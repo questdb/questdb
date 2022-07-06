@@ -190,7 +190,6 @@ public class AbstractCairoTest {
                 return configOverrideCommitLagMicros >= 0 ? configOverrideCommitLagMicros : super.getCommitLag();
             }
 
-
             @Override
             public long getSpinLockTimeoutUs() {
                 if (spinLockTimeoutUs > -1) {

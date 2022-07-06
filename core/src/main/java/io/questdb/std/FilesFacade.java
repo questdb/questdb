@@ -76,6 +76,8 @@ public interface FilesFacade {
 
     int lock(long fd);
 
+    int hardLink(LPSZ src, LPSZ hardLink);
+
     int mkdir(Path path, int mode);
 
     int mkdirs(Path path, int mode);
