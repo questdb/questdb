@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -97,16 +97,6 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
     public Long256 getLong256B(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getLong128Hi(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getLong128Lo(Record rec) {
         throw new UnsupportedOperationException();
     }
 

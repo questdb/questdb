@@ -51,14 +51,14 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
     ) {
         final Function hiLong = args.getQuick(0);
         final Function loLong = args.getQuick(1);
-        return new ToLongFunction(hiLong, loLong);
+        return new LongsToLong128Function(hiLong, loLong);
     }
 
-    private static class ToLongFunction extends Long128Function implements BinaryFunction {
+    private static class LongsToLong128Function extends Long128Function implements BinaryFunction {
         private final Function hi;
         private final Function lo;
 
-        public ToLongFunction(Function hi, Function lo) {
+        public LongsToLong128Function(Function hi, Function lo) {
 
             this.hi = hi;
             this.lo = lo;

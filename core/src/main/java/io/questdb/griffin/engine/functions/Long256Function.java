@@ -150,16 +150,6 @@ public abstract class Long256Function implements ScalarFunction {
     }
 
     @Override
-    public long getLong128Hi(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getLong128Lo(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public final int getType() {
         return ColumnType.LONG256;
     }

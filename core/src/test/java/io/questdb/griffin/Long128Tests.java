@@ -90,6 +90,44 @@ public class Long128Tests extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFatJoinOnLong128Column() throws Exception {
+        compile(
+                "create table tab1 as " +
+                        "(select" +
+                        " to_long128(3 * x, 3 * x) ts, " +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts1," +
+                        " cast(x as int) i" +
+                        " from long_sequence(20)" +
+                        ")"
+        );
+        engine.clear();
+
+        try {
+            compiler.setFullFatJoins(true);
+            assertQuery("ts\tts1\tts11\ti\n" +
+                            "00000000-0000-0006-0000-000000000006\t00000000-0000-0006-0000-000000000006\t2022-02-24T00:00:01.000000Z\t2\n" +
+                            "00000000-0000-000c-0000-00000000000c\t00000000-0000-000c-0000-00000000000c\t2022-02-24T00:00:03.000000Z\t4\n" +
+                            "00000000-0000-0012-0000-000000000012\t00000000-0000-0012-0000-000000000012\t2022-02-24T00:00:05.000000Z\t6\n" +
+                            "00000000-0000-0018-0000-000000000018\t00000000-0000-0018-0000-000000000018\t2022-02-24T00:00:07.000000Z\t8\n" +
+                            "00000000-0000-001e-0000-00000000001e\t00000000-0000-001e-0000-00000000001e\t2022-02-24T00:00:09.000000Z\t10\n" +
+                            "00000000-0000-0024-0000-000000000024\t00000000-0000-0024-0000-000000000024\t2022-02-24T00:00:11.000000Z\t12\n",
+                    "select tab2.ts, tab1.* from tab1 JOIN tab2 ON tab1.ts = tab2.ts",
+                    "create table tab2 as " +
+                            "(select" +
+                            " to_long128(2 * x, 2 * x) ts, " +
+                            " timestamp_sequence('2022-02-24', 1000000L) ts1," +
+                            " cast(x as int) i" +
+                            " from long_sequence(20)" +
+                            ")",
+                    null,
+                    false
+            );
+        } finally {
+            compiler.setFullFatJoins(false);
+        }
+    }
+
+    @Test
     public void testJoinOnLong128ColumnCompact() throws Exception {
         compile(
                 "create table tab1 as " +

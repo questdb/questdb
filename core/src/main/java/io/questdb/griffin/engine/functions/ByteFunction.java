@@ -140,16 +140,6 @@ public abstract class ByteFunction implements ScalarFunction {
     }
 
     @Override
-    public long getLong128Hi(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long getLong128Lo(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public byte getGeoByte(Record rec) {
         throw new UnsupportedOperationException();
     }
