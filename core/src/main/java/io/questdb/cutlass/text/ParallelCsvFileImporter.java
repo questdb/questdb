@@ -75,17 +75,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private static final int DEFAULT_MIN_CHUNK_SIZE = 300 * 1024 * 1024;
     //holds result of first phase - boundary scanning
     //count of quotes, even new lines, odd new lines, offset to first even newline, offset to first odd newline
-    private final LongList chunkStats = new LongList();
+    private final LongList chunkStats;
     //holds input for second phase - indexing: offset and start line number for each chunk
-    private final LongList indexChunkStats = new LongList();
-    private final LongList partitionKeysAndSizes = new LongList();
-    private final StringSink partitionNameSink = new StringSink();
-    private final ObjList<PartitionInfo> partitions = new ObjList<>();
+    private final LongList indexChunkStats;
+    private final LongList partitionKeysAndSizes;
+    private final StringSink partitionNameSink;
+    private final ObjList<PartitionInfo> partitions;
     //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
-    private final IntList taskDistribution = new IntList();
+    private final IntList taskDistribution;
     private final FilesFacade ff;
-    private final Path inputFilePath = new Path();
-    private final Path tmpPath = new Path();
+    private final Path inputFilePath;
+    private final Path tmpPath;
     private final RingQueue<TextImportTask> queue;
     private final Sequence pubSeq;
     private final Sequence collectSeq;
@@ -93,7 +93,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final int workerCount;
     private final CharSequence inputRoot;
     private final CharSequence inputWorkRoot;
-    private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
+    private final ObjectPool<OtherToTimestampAdapter> otherToTimestampAdapterPool;
     private final CairoSecurityContext securityContext;
     private final DirectCharSink utf8Sink;
     private final TypeManager typeManager;
@@ -136,24 +136,31 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private boolean createdWorkDir;
 
     public ParallelCsvFileImporter(SqlExecutionContext sqlExecutionContext) {
+        this.workerCount = sqlExecutionContext.getWorkerCount();
+        if (workerCount < 1) {
+            throw TextException.$("Invalid worker count set [value=").put(this.workerCount).put("]");
+        }
+
+        MessageBus bus = sqlExecutionContext.getMessageBus();
+        this.queue = bus.getTextImportQueue();
+
+        if (this.queue.getCycle() < 1) {
+            throw TextException.$("Parallel import queue size can't be zero!");
+        }
+
+        this.pubSeq = bus.getTextImportPubSeq();
+        this.collectSeq = bus.getTextImportColSeq();
+        this.lock = bus.getTextImportQueueLock();
+        this.localImportJob = new TextImportJob(bus);
+
         this.sqlExecutionContext = sqlExecutionContext;
         this.cairoEngine = sqlExecutionContext.getCairoEngine();
         this.securityContext = sqlExecutionContext.getCairoSecurityContext();
         this.configuration = cairoEngine.getConfiguration();
         this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
 
-        MessageBus bus = sqlExecutionContext.getMessageBus();
-        this.queue = bus.getTextImportQueue();
-        this.pubSeq = bus.getTextImportPubSeq();
-        this.collectSeq = bus.getTextImportColSeq();
-        this.lock = bus.getTextImportQueueLock();
-        this.localImportJob = new TextImportJob(bus);
-
         CairoConfiguration cfg = sqlExecutionContext.getCairoEngine().getConfiguration();
-        this.workerCount = sqlExecutionContext.getWorkerCount();
-
         this.ff = cfg.getFilesFacade();
-
         this.inputRoot = cfg.getInputRoot();
         this.inputWorkRoot = cfg.getInputWorkRoot();
 
@@ -170,6 +177,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         this.atomicity = Atomicity.SKIP_COL;
         this.createdWorkDir = false;
+        this.otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
+        this.inputFilePath = new Path();
+        this.tmpPath = new Path();
+
+        this.chunkStats = new LongList();
+        this.indexChunkStats = new LongList();
+        this.partitionKeysAndSizes = new LongList();
+        this.partitionNameSink = new StringSink();
+        this.partitions = new ObjList<>();
+        this.taskDistribution = new IntList();
     }
 
     public static void createTable(
@@ -222,6 +239,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         typeManager.clear();
         textMetadataDetector.clear();
         otherToTimestampAdapterPool.clear();
+        partitions.clear();
 
         inputFileName = null;
         tableName = null;
@@ -1077,10 +1095,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void processInner() throws TextException {
-        if (this.queue.getCycle() <= 0) {
-            throw TextException.$("Unable to process, the processing queue is misconfigured");
-        }
-
         long startMs = getCurrentTimeMs();
 
         final long fd = TableUtils.openRO(ff, inputFilePath, LOG);

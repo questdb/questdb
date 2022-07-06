@@ -122,4 +122,10 @@ public class LongObjHashMap<V> extends AbstractLongHashSet {
             }
         }
     }
+
+    @Override
+    public void clear() {
+        super.clear();
+        Arrays.fill(values, null);
+    }
 }

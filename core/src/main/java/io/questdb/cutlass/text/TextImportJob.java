@@ -28,14 +28,26 @@ import io.questdb.MessageBus;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> implements Closeable {
+
+    private static final int INDEX_MERGE_LIST_CAPACITY = 64;
+
     private TextLexer textLexer;
+    private CsvFileIndexer indexer;
+    private DirectCharSink utf8Sink;
+    private DirectLongList mergeIndexes;
+    private Path tmpPath1;
+    private Path tmpPath2;
+
     private final long fileBufAddr;
     private long fileBufSize;
 
@@ -44,6 +56,11 @@ public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> impl
         this.textLexer = new TextLexer(messageBus.getConfiguration().getTextConfiguration());
         this.fileBufSize = messageBus.getConfiguration().getSqlCopyBufferSize();
         this.fileBufAddr = Unsafe.malloc(fileBufSize, MemoryTag.MMAP_PARALLEL_IMPORT);
+        this.indexer = new CsvFileIndexer(messageBus.getConfiguration());
+        this.utf8Sink = new DirectCharSink(messageBus.getConfiguration().getTextConfiguration().getUtf8SinkSize());
+        this.mergeIndexes = new DirectLongList(INDEX_MERGE_LIST_CAPACITY, MemoryTag.NATIVE_DEFAULT);
+        this.tmpPath1 = new Path();
+        this.tmpPath2 = new Path();
     }
 
     public static void assignToPool(MessageBus messageBus, WorkerPool pool) {
@@ -57,16 +74,21 @@ public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> impl
     @Override
     public void close() {
         this.textLexer = Misc.free(textLexer);
+        this.indexer = Misc.free(indexer);
         if (fileBufSize > 0) {
             Unsafe.free(fileBufAddr, fileBufSize, MemoryTag.MMAP_PARALLEL_IMPORT);
             fileBufSize = 0;
         }
+        this.mergeIndexes = Misc.free(this.mergeIndexes);
+        this.utf8Sink = Misc.free(utf8Sink);
+        this.tmpPath1 = Misc.free(tmpPath1);
+        this.tmpPath2 = Misc.free(tmpPath2);
     }
 
     @Override
     protected boolean doRun(int workerId, long cursor) {
         final TextImportTask task = queue.get(cursor);
-        final boolean result = task.run(textLexer, fileBufAddr, fileBufSize);
+        final boolean result = task.run(textLexer, indexer, utf8Sink, mergeIndexes, fileBufAddr, fileBufSize, tmpPath1, tmpPath2);
         subSeq.done(cursor);
         return result;
     }

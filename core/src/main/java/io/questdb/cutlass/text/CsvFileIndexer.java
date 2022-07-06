@@ -68,7 +68,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private final DirectCharSink utf8Sink;
 
     //work dir path
-    private final Path path = new Path();
+    private final Path path;
 
     private final CharSequence inputRoot;
     private CharSequence importRoot;
@@ -101,7 +101,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private static final int MAX_TIMESTAMP_LENGTH = 100;
 
     //maps partitionFloors to output file descriptors
-    final private LongObjHashMap<IndexOutputFile> outputFiles = new LongObjHashMap<>();
+    final private LongObjHashMap<IndexOutputFile> outputFiles;
 
     //timestamp field of current line
     final private DirectByteCharSequence timestampField;
@@ -138,6 +138,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private boolean failOnTsError;
 
+    private long sortBufferPtr;
+    private long sortBufferLength;
+
     public CsvFileIndexer(CairoConfiguration configuration) {
         final TextConfiguration textConfiguration = configuration.getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());
@@ -153,6 +156,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         this.timestampField = new DirectByteCharSequence();
         this.failOnTsError = false;
+        this.path = new Path();
+        this.outputFiles = new LongObjHashMap<>();
+        this.sortBufferPtr = -1;
+        this.sortBufferLength = 0;
     }
 
     public void of(
@@ -229,7 +236,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
     }
 
-    static class IndexOutputFile {
+    class IndexOutputFile {
         final MemoryPMARImpl memory = new MemoryPMARImpl();
         long indexChunkSize;
         long dataSize;//partition data size in bytes 
@@ -247,7 +254,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         public void nextChunk(FilesFacade ff, Path path) {
             if (memory.isOpen()) {
-                sortAndClose(ff);
+                sortAndClose();
             }
 
             //start with file name like $workerIndex_$chunkIndex, e.g. 1_1
@@ -271,15 +278,17 @@ public class CsvFileIndexer implements Closeable, Mutable {
             dataSize += length;
         }
 
-        private void sortAndClose(FilesFacade ff) {
+        private void sortAndClose() {
             if (memory.isOpen()) {
-                sort(ff, memory.getFd(), indexChunkSize);
+                CsvFileIndexer.this.sort(memory.getFd(), indexChunkSize);
                 memory.close(true, Vm.TRUNCATE_TO_POINTER);
             }
         }
 
-        public void close(FilesFacade ff) {
-            sortAndClose(ff);
+        public void close() {
+            if (memory.isOpen()) {
+                memory.close(true, Vm.TRUNCATE_TO_POINTER);
+            }
         }
     }
 
@@ -290,7 +299,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         if (!ff.exists(path)) {
             int result = ff.mkdir(path, dirMode);
-            if (result != 0) {//TODO: maybe we can ignore it
+            if (result != 0 && !ff.exists(path)) {//ignore because other worker might've created it 
                 LOG.error().$("Couldn't create partition dir=").$(path).$();
             }
         }
@@ -329,8 +338,15 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.timestampValue = Long.MIN_VALUE;
 
         this.inputFileName = null;
+        this.importRoot = null;
+        this.timestampAdapter = null;
+        this.timestampIndex = -1;
+        this.partitionFloorMethod = null;
+        this.partitionDirFormatMethod = null;
+        this.columnDelimiter = -1;
 
         closeOutputFiles();
+        closeSortBuffer();
 
         if (fd > -1) {
             boolean closed = ff.close(fd);
@@ -342,10 +358,16 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
 
         this.failOnTsError = false;
+        this.path.trimTo(0);
+    }
+
+    private void sortAndCloseOutputFiles() {
+        this.outputFiles.forEach((key, value) -> value.sortAndClose());
+        this.outputFiles.clear();
     }
 
     private void closeOutputFiles() {
-        this.outputFiles.forEach((key, value) -> value.close(ff));
+        this.outputFiles.forEach((key, value) -> value.close());
         this.outputFiles.clear();
     }
 
@@ -611,8 +633,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
             }
 
             collectPartitionStats(partitionKeysAndSizes);
+            sortAndCloseOutputFiles();
         } finally {
-            closeOutputFiles();
+            closeOutputFiles();//close without sorting if there's an error
+            closeSortBuffer();
         }
 
         LOG.info()
@@ -621,6 +645,14 @@ public class CsvFileIndexer implements Closeable, Mutable {
                 .$(", lines=").$(lineCount - lineNumber)
                 .$(", errors=").$(errorCount)
                 .I$();
+    }
+
+    private void closeSortBuffer() {
+        if (sortBufferPtr != -1) {
+            Unsafe.free(sortBufferPtr, sortBufferLength, MemoryTag.NATIVE_DEFAULT);
+            sortBufferPtr = -1;
+            sortBufferLength = 0;
+        }
     }
 
     private void collectPartitionStats(LongList partitionKeysAndSizes) {
@@ -640,22 +672,21 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.fd = TableUtils.openRO(ff, path, LOG);
     }
 
-    public static void sort(FilesFacade ff, final long srcFd, long srcSize) {
+    public void sort(final long srcFd, long srcSize) {
         long srcAddress = -1;
-        long bufferPtr = -1;
 
         try {
             srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_DEFAULT);
-            bufferPtr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
-            //TODO: use a single buffer or max chunk size instead of allocating per file 
-            Vect.radixSortLongIndexAscInPlace(srcAddress, srcSize / INDEX_ENTRY_SIZE, bufferPtr);
+
+            if (sortBufferPtr == -1) {
+                sortBufferPtr = Unsafe.malloc(maxIndexChunkSize, MemoryTag.NATIVE_DEFAULT);
+                sortBufferLength = maxIndexChunkSize;
+            }
+
+            Vect.radixSortLongIndexAscInPlace(srcAddress, srcSize / INDEX_ENTRY_SIZE, sortBufferPtr);
         } finally {
             if (srcAddress != -1) {
                 ff.munmap(srcAddress, srcSize, MemoryTag.MMAP_DEFAULT);
-            }
-
-            if (bufferPtr != -1) {
-                Unsafe.free(bufferPtr, srcSize, MemoryTag.NATIVE_DEFAULT);
             }
         }
     }

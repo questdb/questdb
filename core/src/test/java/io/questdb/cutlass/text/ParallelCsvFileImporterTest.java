@@ -1012,6 +1012,209 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testImportFailsOnFileOpenInBoundaryCheckPhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            int count = 0;
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (name.toString().endsWith("test-quotes-big.csv")) {
+                    if (count++ > 1) {
+                        return -1;
+                    }
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertImportFailsInPhase(brokenFf, "BOUNDARY_CHECK");
+    }
+
+    @Test
+    public void testImportFailsOnFileOpenInIndexingPhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (name.toString().endsWith("test-quotes-big.csv") && stackContains("CsvFileIndexer")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertImportFailsInPhase(brokenFf, "INDEXING");
+    }
+
+    @Test
+    public void testImportFailsOnFileSortingInIndexingPhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (stackContains("CsvFileIndexer", "sort")) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+
+        assertImportFailsInPhase(brokenFf, "INDEXING");
+    }
+
+    @Test
+    //"[5] Can't remove import directory path='C:\Users\bolo\AppData\Local\Temp\junit2458364502615821703\imports1181738016629600\tab\1972\2_1' errno=5"
+    public void testImportFailsOnFileOpenInDataImportPhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (name.toString().endsWith("3_1")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertImportFailsInPhase(brokenFf, "PARTITION_IMPORT");
+    }
+
+    @Test
+    public void testImportFailsOnFileOpenInSymbolMergePhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (name.toString().endsWith("line.c")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertImportFailsInPhase(brokenFf, "SYMBOL_TABLE_MERGE");
+    }
+
+    @Test
+    public void testImportFailsOnFileOpenInSymbolKeysUpdatePhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (name.toString().endsWith("line.r") && stackContains("UpdateSymbolColumnKeysStage")) {
+                    return -1;
+                }
+
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertImportFailsInPhase(brokenFf, "UPDATE_SYMBOL_KEYS");
+    }
+
+    @Test
+    public void testImportFailsOnFileOpenInBuildSymbolIndexPhase() throws Exception {
+        FilesFacade brokenFf = new FilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, long opts) {
+                if (name.toString().endsWith("line.v") && stackContains("BuildSymbolColumnIndexStage")) {
+                    return -1;
+                }
+
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertImportFailsInPhase(brokenFf, "BUILD_SYMBOL_INDEX");
+    }
+
+    private void assertImportFailsInPhase(FilesFacade brokenFf, String phase) throws Exception {
+        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab ( line symbol index, ts timestamp, d double, description string) timestamp(ts) partition by YEAR;", sqlExecutionContext);
+            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(sqlExecutionContext)) {
+                indexer.setMinChunkSize(1);
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.YEAR, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Import terminated at " + phase + " phase"));
+            }
+        });
+    }
+
+    private static boolean stackContains(String klass, String method) {
+        return Arrays.stream(new Exception().getStackTrace())
+                .anyMatch(ste -> ste.getClassName().endsWith(klass) && ste.getMethodName().equals(method));
+    }
+
+    private static boolean stackContains(String klass) {
+        return Arrays.stream(new Exception().getStackTrace())
+                .anyMatch(stackTraceElement -> stackTraceElement.getClassName().endsWith(klass));
+    }
+
+    @Test
+    public void testImportWithZeroWorkersFails() throws Exception {
+        executeWithPool(0, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            SqlExecutionContextStub context = new SqlExecutionContextStub() {
+                @Override
+                public int getWorkerCount() {
+                    return 0;
+                }
+            };
+
+            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(context)) {
+                indexer.setMinChunkSize(1);
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+                Assert.fail();
+            } catch (TextException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Invalid worker count set "));
+            }
+        });
+    }
+
+    @Test
+    public void testImportWithZeroLengthQueueReturnsError() throws Exception {
+        executeWithPool(2, 0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(sqlExecutionContext)) {
+                indexer.setMinChunkSize(1);
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                indexer.process();
+                Assert.fail();
+            } catch (TextException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("Parallel import queue size can't be zero"));
+            }
+        });
+    }
+
+    @Test
+    public void testRunManyImportsSequentially() throws Exception {
+        int run = 0;
+
+        for (int workers = 2; workers < 6; workers++) {
+            for (int queueSize = 1; queueSize < 9; queueSize <<= 1) {
+                LOG.info().$("run [no=").$(run++).$(",workers=").$(workers).$(",queueSize=").$(queueSize).I$();
+
+                executeWithPool(workers, queueSize, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext context) -> {
+                    try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(context)) {
+                        importer.setMinChunkSize(1);
+
+                        importAndCleanupTable(importer, context, compiler, "tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                        importAndCleanupTable(importer, context, compiler, "alltypes", "test-alltypes-with-gaps.csv", PartitionBy.YEAR, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                        importAndCleanupTable(importer, context, compiler, "alltypes_errors", "test-errors.csv", PartitionBy.HOUR, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                        importAndCleanupTable(importer, context, compiler, "testimport", "test-import.csv", PartitionBy.DAY, (byte) ',', "IsoDate", "yyyy-MM-ddTHH:mm:ss.SSSZ", false);
+                    }
+                });
+            }
+        }
+    }
+
+    private void importAndCleanupTable(ParallelCsvFileImporter importer, SqlExecutionContext context, SqlCompiler compiler, CharSequence tableName, CharSequence inputFileName, int partitionBy, byte columnDelimiter, CharSequence timestampColumn, CharSequence tsFormat, boolean forceHeader) throws Exception {
+        importer.of(tableName, inputFileName, partitionBy, columnDelimiter, timestampColumn, tsFormat, forceHeader, Atomicity.SKIP_COL);
+        importer.process();
+        importer.clear();
+
+        assertQuery("test\ntrue\n", "select case when cnt > 0 then true else false end as test from ( select count(*) cnt from " + tableName + " )", null, null, false, true, true);
+
+        compiler.compile("drop table " + tableName, context);
+    }
+
+    @Test
     public void testWhenImportFailsWhenMovingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
@@ -1028,22 +1231,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
-        executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(sqlExecutionContext)) {
-                indexer.setMinChunkSize(1);
-                indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                indexer.process();
-                Assert.fail();
-            } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Cannot copy partition file"));
-            }
-
-            try {
-                compiler.compile("select count(*) from tab;", sqlExecutionContext);
-            } catch (SqlException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("table does not exist"));
-            }
-        });
+        assertImportFailsWith(brokenFf, "Cannot copy partition file");
     }
 
     @Test
@@ -1058,6 +1246,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
         };
 
+        String expectedError = "Can't attach partition 1972-09";
+
+        assertImportFailsWith(brokenFf, expectedError);
+    }
+
+    private void assertImportFailsWith(FilesFacade brokenFf, String expectedError) throws Exception {
         executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(sqlExecutionContext)) {
                 indexer.setMinChunkSize(1);
@@ -1065,7 +1259,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Can't attach partition 1972-09"));
+                MatcherAssert.assertThat(e.getMessage(), containsString(expectedError));
             }
 
             try {
@@ -1246,7 +1440,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImportCsvIntoNewTable() throws Exception {
+    public void testImportCsvIntoNewTable() throws Exception {  //this
         executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             final String tableName = "tableName";
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(sqlExecutionContext)) {
@@ -1502,9 +1696,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         });
     }
 
-
-    //file with header and target table
-    //file with header and no target table
     @Test
     public void testImportFileWithNoHeaderIntoExistingTableFailsBecauseTsPositionInTableIsDifferentFromFile() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
@@ -1944,18 +2135,19 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             CairoConfiguration configuration
     ) throws Exception {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount();
+        inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
+
         try (final CairoEngine engine = new CairoEngine(configuration);
-             final SqlCompiler compiler = new SqlCompiler(engine)
-        ) {
-            try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)
-            ) {
+             final SqlCompiler compiler = new SqlCompiler(engine)) {
+
+            try (final SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount)) {
                 try {
                     if (pool != null) {
                         pool.assignCleaner(Path.CLEANER);
                         TextImportJob.assignToPool(engine.getMessageBus(), pool);
                         pool.start(LOG);
                     }
-                    inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
+
                     runnable.run(engine, compiler, sqlExecutionContext);
                     Assert.assertEquals("busy writer", 0, engine.getBusyWriterCount());
                     Assert.assertEquals("busy reader", 0, engine.getBusyReaderCount());
