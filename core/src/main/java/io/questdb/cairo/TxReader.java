@@ -362,6 +362,7 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitionsSize = -1;
         attachedPartitions.clear();
         version = -1;
+        txn = -1;
     }
 
     private int findAttachedPartitionIndex(long ts) {
