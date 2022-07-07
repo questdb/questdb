@@ -505,11 +505,16 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         }
 
-        // We have to be sure last txn is acquired in Scoreboard
-        // otherwise writer can delete partition version files
-        // between reading txn file and acquiring txn in the Scoreboard.
-        Unsafe.getUnsafe().loadFence();
-        return txFile.getVersion() == txFile.unsafeReadVersion();
+        // txFile can also be reloaded in goPassive->checkSchedulePurgeO3Partitions
+        // if txFile txn doesn't much reader txn, reader has to be slow reloaded
+        if (txn == txFile.getTxn()) {
+            // We have to be sure last txn is acquired in Scoreboard
+            // otherwise writer can delete partition version files
+            // between reading txn file and acquiring txn in the Scoreboard.
+            Unsafe.getUnsafe().loadFence();
+            return txFile.getVersion() == txFile.unsafeReadVersion();
+        }
+        return false;
     }
 
     private void checkSchedulePurgeO3Partitions() {

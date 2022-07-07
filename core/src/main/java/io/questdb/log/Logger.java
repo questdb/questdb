@@ -296,11 +296,6 @@ class Logger implements LogRecord, Log {
         return addTimestamp(xadvisory(), LogLevel.ADVISORY_HEADER);
     }
 
-    @Override
-    public boolean isDebugEnabled() {
-        return debugSeq != null;
-    }
-
     public LogRecord xerror() {
         return next(errorSeq, errorRing, LogLevel.ERROR);
     }

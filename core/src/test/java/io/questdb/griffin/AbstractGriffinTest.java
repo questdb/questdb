@@ -30,6 +30,9 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.ops.AbstractOperation;
+import io.questdb.griffin.engine.ops.OperationDispatcher;
+import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.*;
@@ -46,6 +49,7 @@ import org.junit.BeforeClass;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 public class AbstractGriffinTest extends AbstractCairoTest {
     private static final LongList rows = new LongList();
@@ -54,6 +58,8 @@ public class AbstractGriffinTest extends AbstractCairoTest {
     protected static SqlExecutionContext sqlExecutionContext;
     protected static SqlCompiler compiler;
     protected static Metrics metrics = Metrics.enabled();
+
+    protected final SCSequence eventSubSequence = new SCSequence();
 
     public static boolean assertCursor(
             CharSequence expected,
@@ -1395,5 +1401,21 @@ public class AbstractGriffinTest extends AbstractCairoTest {
             String startDate,
             int partitionCount) throws NumericException, SqlException {
         TestUtils.createPopulateTable(compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
+    }
+
+    protected <T extends AbstractOperation> void executeOperation(
+            String query,
+            int opType,
+            Function<CompiledQuery, T> op
+    ) throws SqlException {
+        CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
+        Assert.assertEquals(opType, cq.getType());
+        OperationDispatcher<T> dispatcher = cq.getDispatcher();
+        try (
+                T operation = op.apply(cq);
+                OperationFuture fut = dispatcher.execute(operation, sqlExecutionContext, eventSubSequence)
+        ) {
+            fut.await();
+        }
     }
 }

@@ -225,6 +225,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int hardLink(LPSZ src, LPSZ hardLink) {
+        return Files.hardLink(src, hardLink);
+    }
+
+    @Override
     public int mkdir(Path path, int mode) {
         return Files.mkdir(path, mode);
     }

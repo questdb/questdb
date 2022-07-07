@@ -40,6 +40,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Iterator;
 
@@ -47,7 +48,7 @@ import java.util.Iterator;
  * This class maintains cache of open writers to avoid OS overhead of
  * opening and closing files. While doing so it abides by the same
  * rule as non-pooled writers: there can only be one TableWriter instance
- * for any given name.
+ * for any given table name.
  * <p>
  * This implementation is thread-safe. Writer allocated by one thread
  * cannot be used by any other threads until it is released. This factory
@@ -71,10 +72,11 @@ public class WriterPool extends AbstractPool {
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
-    private static final long QUEUE_PROCESSING = -2L;
+    private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final ConcurrentHashMap<Entry> entries = new ConcurrentHashMap<>();
     private final CairoConfiguration configuration;
     private final Path path = new Path();
+    private final int rootLen;
     private final MicrosecondClock clock;
     private final CharSequence root;
     @NotNull
@@ -95,6 +97,8 @@ public class WriterPool extends AbstractPool {
         this.messageBus = messageBus;
         this.clock = configuration.getMicrosecondClock();
         this.root = configuration.getRoot();
+        this.path.concat(this.root);
+        this.rootLen = this.path.length();
         this.metrics = metrics;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN, null);
     }
@@ -103,13 +107,15 @@ public class WriterPool extends AbstractPool {
      * <p>
      * Creates or retrieves existing TableWriter from pool. Because of TableWriter compliance with <b>single
      * writer model</b> pool ensures there is single TableWriter instance for given table name. Table name is unique in
-     * context of <b>root</b> and pool instance covers single root.
+     * context of <b>root</b>, and pool instance covers single root.
      * </p>
-     * When TableWriter from this pool is used by another thread @{@link EntryUnavailableException} is thrown and
-     * when table is locked outside of pool, which includes same or different process, @{@link CairoException} instead.
-     * In case of former application can retry getting writer from pool again at any time. When latter occurs application has
-     * to call {@link #releaseAll(long)} before retrying for TableWriter.
-     *
+     * Exceptions thrown:
+     * <ul>
+     * <li>{@link EntryUnavailableException}: When TableWriter from this pool is used by another thread.
+     * In this case, application can retry getting writer from pool again at any time.</li>
+     * <li>{@link CairoException}: When table is locked outside of pool, which includes same or different process.
+     * In this case, application has to call {@link #releaseAll(long)} before retrying for TableWriter.</li>
+     * </ul>
      * @param tableName  name of the table
      * @param lockReason description of where or why lock is held
      * @return cached TableWriter instance.
@@ -123,6 +129,7 @@ public class WriterPool extends AbstractPool {
      *
      * @return number of busy writer instances.
      */
+    @TestOnly
     public int getBusyCount() {
         int count = 0;
         for (Entry e : entries.values()) {
@@ -225,22 +232,20 @@ public class WriterPool extends AbstractPool {
             return;
         }
 
-        // When entry is locked, writer must be null,
-        // however if writer is not null, calling thread must be trying to unlock
-        // writer that hasn't been locked. This qualifies for "illegal state"
         if (e.owner == thread) {
-
             if (e.writer != null) {
+                // When entry is locked, writer must be null, however if writer is not null,
+                // calling thread must be trying to unlock writer that hasn't been locked.
+                // This qualifies for "illegal state".
                 notifyListener(thread, name, PoolListener.EV_NOT_LOCKED, null);
                 throw CairoException.instance(0).put("Writer ").put(name).put(" is not locked");
             }
 
             if (newTable) {
-                // Note that the TableUtils.createTable method will create files, but on some OS's these files will not immediately become
-                // visible on all threads,
-                // only in this thread will they definitely be visible. To prevent spurious file system errors (or even allowing the same
-                // table to be created twice),
-                // we cache the writer in the writerPool whose access via the engine is thread safe
+                // Note that the TableUtils.createTable method will create files, but on some OS's these files
+                // will not immediately become visible on all threads, only in this thread will they definitely
+                // be visible. To prevent spurious file system errors (or even allowing the same table to be
+                // created twice), we cache the writer in the WriterPool whose access via the engine is thread safe.
                 assert writer == null && e.lockFd != -1;
                 LOG.info().$("created [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
                 writer = new TableWriter(configuration, name, messageBus, null, false, e, root, metrics);
@@ -249,9 +254,9 @@ public class WriterPool extends AbstractPool {
             if (writer == null) {
                 // unlock must remove entry because pool does not deal with null writer
 
-                if (e.lockFd != -1) {
+                if (e.lockFd != -1L) {
                     ff.close(e.lockFd);
-                    TableUtils.lockName(path.of(root).concat(name));
+                    TableUtils.lockName(path.trimTo(rootLen).concat(name));
                     if (!ff.remove(path)) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
@@ -289,7 +294,7 @@ public class WriterPool extends AbstractPool {
 
         // Make sure writer does not go to the pool with command in the queue
         // Wait until writer is either in the pool or out
-        while (e.owner == QUEUE_PROCESSING) {
+        while (e.owner == QUEUE_PROCESSING_OWNER) {
             Os.pause();
         }
 
@@ -305,7 +310,7 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private void assertLockReason(CharSequence lockReason) {
+    private void assertLockReasonIsNone(CharSequence lockReason) {
         if (lockReason == OWNERSHIP_REASON_NONE) {
             throw new NullPointerException();
         }
@@ -319,7 +324,7 @@ public class WriterPool extends AbstractPool {
     }
 
     private TableWriter checkClosedAndGetWriter(CharSequence tableName, Entry e, CharSequence lockReason) {
-        assertLockReason(lockReason);
+        assertLockReasonIsNone(lockReason);
         if (isClosed()) {
             // pool closed, but we somehow managed to lock writer
             // make sure that interceptor cleared to allow calling thread close writer normally
@@ -423,7 +428,7 @@ public class WriterPool extends AbstractPool {
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
-            LOG.error()
+            LOG.critical()
                     .$("could not open [table=`").utf8(name)
                     .$("`, thread=").$(e.owner)
                     .$(", ex=").$(ex.getFlyweightMessage())
@@ -507,8 +512,8 @@ public class WriterPool extends AbstractPool {
     }
 
     private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, CharSequence lockReason) {
-        assertLockReason(lockReason);
-        TableUtils.lockName(path.of(root).concat(tableName));
+        assertLockReasonIsNone(lockReason);
+        TableUtils.lockName(path.trimTo(rootLen).concat(tableName));
         e.lockFd = TableUtils.lock(ff, path);
         if (e.lockFd == -1L) {
             LOG.error().$("could not lock [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
@@ -544,7 +549,7 @@ public class WriterPool extends AbstractPool {
             e.writer.rollback();
 
             if (e.owner != UNALLOCATED) {
-                e.owner = QUEUE_PROCESSING;
+                e.owner = QUEUE_PROCESSING_OWNER;
             }
             // We can apply structure changes with ALTER TABLE and do UPDATE(s) before the writer returned to the pool
             e.writer.tick(true);
@@ -578,7 +583,7 @@ public class WriterPool extends AbstractPool {
 
             notifyListener(thread, name, PoolListener.EV_RETURN, e.writer);
         } else {
-            LOG.error().$("orphaned [table=`").utf8(name).$("`]").$();
+            LOG.critical().$("orphaned [table=`").utf8(name).$("`]").$();
             notifyListener(thread, name, PoolListener.EV_UNEXPECTED_CLOSE, e.writer);
         }
         return true;
