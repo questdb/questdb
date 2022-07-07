@@ -126,7 +126,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private int timestampIndex;
     private boolean targetTableCreated;
     private int targetTableStatus;
-    private int bufferLength;
 
     //import status variables 
     private boolean isSuccess;
@@ -171,7 +170,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
 
         this.targetTableStructure = new TableStructureAdapter(configuration);
-        this.bufferLength = configuration.getSqlCopyBufferSize();
         this.targetTableStatus = -1;
         this.targetTableCreated = false;
 
@@ -384,7 +382,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         for (int i = 0, sz = partitions.size(); i < sz; i++) {
             PartitionInfo partition = partitions.getQuick(i);
-            if (partition.importedRows == 0 || partition.name == null) {
+            if (partition.importedRows == 0) {
                 continue;
             }
 
@@ -413,7 +411,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         if (isAnyIndexed) {
-
             int queuedCount = 0;
             int collectedCount = 0;
             for (int t = 0; t < tmpTableCount; ++t) {
@@ -438,8 +435,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             // todo: this is not called when there are no indexed columns
             collectedCount += collect(queuedCount - collectedCount, checkStatusRef);
             assert collectedCount == queuedCount;
-            checkImportStatus();
         }
+
+        checkImportStatus();
 
         logEndOf("building column indexes");
     }
@@ -565,7 +563,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     final TextImportTask task = queue.get(seq);
                     task.setIndex(5 * i);
                     task.setCircuitBreaker(circuitBreaker);
-                    task.ofCountQuotesStage(ff, inputFilePath, chunkLo, chunkHi, bufferLength);
+                    task.ofCountQuotesStage(ff, inputFilePath, chunkLo, chunkHi);
                     pubSeq.done(seq);
                     queuedCount++;
                     break;
@@ -646,10 +644,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         int queuedCount = 0;
         int collectedCount = 0;
-
-        if (indexChunkStats.size() < 2) {
-            throw TextException.$("No chunks found for indexing in file=").put(inputFilePath);
-        }
 
         createWorkDir();
 
@@ -750,14 +744,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             int index = taskDistribution.getQuick(i * 3);
             int lo = taskDistribution.getQuick(i * 3 + 1);
             int hi = taskDistribution.getQuick(i * 3 + 2);
-            final Path srcPath = Path.getThreadLocal(importRoot).concat(tableName).put("_").put(index);
-            final Path dstPath = Path.getThreadLocal2(configuration.getRoot()).concat(tableName);
+            final Path srcPath = localImportJob.getTmpPath1().of(importRoot).concat(tableName).put("_").put(index);
+            final Path dstPath = localImportJob.getTmpPath2().of(configuration.getRoot()).concat(tableName);
             final int srcPlen = srcPath.length();
             final int dstPlen = dstPath.length();
 
             for (int j = lo; j < hi; j++) {
                 PartitionInfo partition = partitions.get(j);
-                if (partition.importedRows == 0 || partition.name == null) {
+                if (partition.importedRows == 0) {
                     continue;
                 }
                 final CharSequence partitionName = partition.name;
@@ -771,7 +765,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         LOG.info().$(srcPath).$(" and ").$(dstPath).$(" are not on the same mounted filesystem. Partitions will be copied.").$();
 
                         if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
-                            throw CairoException.instance(ff.errno()).put("Cannot create partition directory [path=").put(dstPath).put(']');
+                            throw TextException.$("Cannot create partition directory [path='").put(dstPath).put("',errno=").put(ff.errno()).put(']');
                         }
 
                         ff.iterateDir(srcPath, (long name, int type) -> {
@@ -779,7 +773,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
                                 dstPath.trimTo(dstPlen).concat(partitionName).concat(name).$();
                                 if (ff.copy(srcPath, dstPath) < 0) {
-                                    throw CairoException.instance(ff.errno()).put("Cannot copy partition file [to=").put(dstPath).put(']');
+                                    throw TextException.$("Cannot copy partition file [to='").put(dstPath).put("',errno=").put(ff.errno()).put("]");
                                 }
                             }
                         });
@@ -842,7 +836,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         break;
                     case ColumnType.BINARY:
                         writer.close();
-                        throw CairoException.instance(0).put("cannot import text into BINARY column [index=").put(i).put(']');
+                        throw TextException.$("cannot import text into BINARY column [index=").put(i).put(']');
                     default:
                         types.setQuick(i, typeManager.getTypeAdapter(columnType));
                         break;
@@ -1159,7 +1153,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
             int errno = ff.rmdir(workDirPath);
             if (errno != 0) {
-                throw CairoException.instance(errno).put("Can't remove import directory path='").put(workDirPath).put("' errno=").put(errno);
+                throw TextException.$("Can't remove import directory [path='").put(workDirPath).put("' errno=").put(errno).put("]");
             }
         }
     }
@@ -1186,11 +1180,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             LOG.error().$("Can't normalize [path='").$(c).$("'] ").$(e).$();
             return null;
         }
-    }
-
-    @TestOnly
-    void setBufferLength(int bufferSize) {
-        this.bufferLength = bufferSize;
     }
 
     private void stealWork() {

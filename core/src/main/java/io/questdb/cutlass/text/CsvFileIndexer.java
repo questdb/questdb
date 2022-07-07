@@ -179,6 +179,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.partitionDirFormatMethod = PartitionBy.getPartitionDirFormatMethod(partitionBy);
         this.offset = 0;
         this.columnDelimiter = columnDelimiter;
+        if (timestampIndex < 0) {
+            throw TextException.$("Timestamp index is not set [value=").put(timestampIndex).put("]");
+        }
         this.timestampIndex = timestampIndex;
         this.timestampAdapter = adapter;
         this.header = ignoreHeader;
@@ -257,14 +260,12 @@ public class CsvFileIndexer implements Closeable, Mutable {
                 sortAndClose();
             }
 
-            //start with file name like $workerIndex_$chunkIndex, e.g. 1_1
-            chunkNumber++;
+            chunkNumber++; //start with file name like $workerIndex_$chunkIndex, e.g. 1_1
             indexChunkSize = 0;
-
             path.put('_').put(chunkNumber).$();
 
             if (ff.exists(path)) {
-                throw CairoException.instance(-1).put("index file already exists [path=").put(path).put(']');
+                throw TextException.$("index file already exists [path=").put(path).put(']');
             } else {
                 LOG.debug().$("created import index file ").$(path).$();
             }
@@ -349,11 +350,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         closeSortBuffer();
 
         if (fd > -1) {
-            boolean closed = ff.close(fd);
-            if (!closed) {
-                LOG.error().$("Couldn't close file fd=").$(fd).$();
-            }
-
+            ff.close(fd);
             fd = -1;
         }
 
@@ -385,10 +382,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
         clear();
     }
 
-    public long getErrorCount() {
-        return errorCount;
-    }
-
     public void parseLast() {
         if (useFieldRollBuf) {
             if (inQuote && lastQuotePos < fieldHi) {
@@ -415,7 +408,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     private void eol(long ptr, byte c) {
-        if (c == '\n' || c == '\r') {//what if we're inside a quote ? TODO: fix !!!
+        if (c == '\n' || c == '\r') {
             eol = true;
             rollBufferUnusable = false;
             clearRollBuffer(ptr);
@@ -519,7 +512,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
             this.fieldLo = 0;
         } else if (fieldIndex == timestampIndex) {
             rollField(hi);
-            useFieldRollBuf = true;
         }
     }
 
@@ -538,17 +530,16 @@ public class CsvFileIndexer implements Closeable, Mutable {
         // lastLineStart is an offset from 'lo'
         // 'lo' is the address of incoming buffer
         int length = (int) (hi - fieldLo);
-        if (length < fieldRollBufLen || fitsInBuffer(length)) {
+        if (length > 0 && fitsInBuffer(length)) {
             assert fieldLo + length <= hi;
             Vect.memcpy(fieldRollBufPtr, fieldLo, length);
             fieldRollBufCur = fieldRollBufPtr + length;
-            //TODO: do we need this ? if we're rolling then we don't have timestamp yet
             shift(fieldLo - fieldRollBufPtr);
+            useFieldRollBuf = true;
         }
     }
 
     private void shift(long d) {
-        timestampField.shl(d);
         this.fieldLo -= d;
         this.fieldHi -= d;
         if (lastQuotePos > -1) {
@@ -627,7 +618,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             } while (offset < chunkHi);
 
             if (read < 0 || offset < chunkHi) {
-                throw CairoException.instance(ff.errno()).put("could not read file [path=").put(path).put(",offset=").put(offset).put("]");
+                throw TextException.$("could not read file [path='").put(path).put("',offset=").put(offset).put(",errno=").put(ff.errno()).put("]");
             } else {
                 parseLast();
             }
@@ -689,29 +680,5 @@ public class CsvFileIndexer implements Closeable, Mutable {
                 ff.munmap(srcAddress, srcSize, MemoryTag.MMAP_DEFAULT);
             }
         }
-    }
-
-    public boolean isHeader() {
-        return header;
-    }
-
-    public byte getColumnDelimiter() {
-        return columnDelimiter;
-    }
-
-    public void setColumnDelimiter(byte delimiter) {
-        this.columnDelimiter = delimiter;
-    }
-
-    public void setTimestampIndex(int tsIndex) {
-        this.timestampIndex = tsIndex;
-    }
-
-    public CharSequence getImportRoot() {
-        return this.importRoot;
-    }
-
-    public CharSequence getInputFileName() {
-        return this.inputFileName;
     }
 }

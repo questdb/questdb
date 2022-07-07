@@ -531,16 +531,22 @@ Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
     quick_sort_long_index_asc_in_place<long_3x>(reinterpret_cast<long_3x *>(pLong), 0, count - 1);
 }
 
-index_t* merge_long_indexes_asc(const java_index_entry_t *java_entries, uint32_t count, index_t *merged_index) {
-    if (count == 1) {
-        return java_entries[0].index;
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeLongIndexesAscInner(JAVA_STATIC, jlong pIndexStructArray, jint cnt, jlong mergedIndex) {
+    // prepare merge entries
+    // they need to have mutable current position "pos" in index
+
+    if (cnt < 2) {
+        return;
     }
+
+    auto count = static_cast<uint32_t>(cnt);
+    const java_index_entry_t *java_entries = reinterpret_cast<java_index_entry_t *>(pIndexStructArray);
+    index_t* merged_index = reinterpret_cast<index_t *>(mergedIndex);
 
     uint32_t size = ceil_pow_2(count);
     index_entry_t entries[size];
     uint64_t merged_index_size = 0;
-    // prepare merge entries
-    // they need to have mutable current position "pos" in index
     for (uint32_t i = 0; i < count; i++) {
         entries[i].index = java_entries[i].index;
         entries[i].pos = 0;
@@ -555,38 +561,9 @@ index_t* merge_long_indexes_asc(const java_index_entry_t *java_entries, uint32_t
             entries[i].size = -1;
         }
     }
-    if (merged_index == nullptr) {
-        //this piece allocates memory for merged_index that doesn't show up in stats
-        merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
-    }
+
     k_way_merge_long_index(entries, size, size - count, merged_index);
-    return merged_index;
 }
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_mergeLongIndexesAsc(JAVA_STATIC, jlong pIndexStructArray, jint cnt) {
-
-    if (cnt < 1) {
-        return 0;
-    }
-
-    auto count = static_cast<uint32_t>(cnt);
-    const java_index_entry_t *java_entries = reinterpret_cast<java_index_entry_t *>(pIndexStructArray);
-    return reinterpret_cast<jlong>(merge_long_indexes_asc(java_entries, count, nullptr));
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_mergeLongIndexesAscExt(JAVA_STATIC, jlong pIndexStructArray, jint cnt, jlong mergedIndex) {
-
-    if (cnt < 1) {
-        return 0;
-    }
-
-    auto count = static_cast<uint32_t>(cnt);
-    const java_index_entry_t *java_entries = reinterpret_cast<java_index_entry_t *>(pIndexStructArray);
-    return reinterpret_cast<jlong>(merge_long_indexes_asc(java_entries, count, reinterpret_cast<index_t *>(mergedIndex)));
-}
-
 
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeTwoLongIndexesAsc(

@@ -11,12 +11,14 @@ public class ObjListTest {
     @Test
     public void testEquals() {
         Assert.assertEquals(list("a"), list("a"));
+        Assert.assertEquals(list("a", null, "b"), list("a", null, "b"));
         Assert.assertEquals(list("a", "b", "c"), list("a", "b", "c"));
 
         Assert.assertEquals(list(), list());
 
         Assert.assertNotEquals(list("a"), list("b"));
         Assert.assertNotEquals(list("a"), list("a", "b"));
+        Assert.assertNotEquals(list("a", null), list("a", "b"));
         Assert.assertNotEquals(list("a"), list());
     }
 

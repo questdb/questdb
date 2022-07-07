@@ -145,21 +145,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 chunk("2022-05-14/0_1", 1652529121000000L, 18L));
     }
 
-    @Test//timestamp should be reassembled properly via rolling buffer
-    public void testIndexChunksInCsvWithTimestampFieldSplitBetweenReadBuffers() throws Exception {
-        assertIndexChunks(4, "yyyy-MM-ddTHH:mm:ss.SSSZ", PartitionBy.DAY, 1, "test-quotes-small.csv",
-                chunk("2022-05-10/0_1", 1652183520000000L, 15L),
-                chunk("2022-05-11/1_1", 1652269920000000L, 90L),
-                chunk("2022-05-11/2_1", 1652269920001000L, 185L));
-    }
-
-    @Test//timestamp is ignored if it doesn't fit in ts rolling buffer 
-    public void testIndexChunksInCsvWithTooLongTimestampFieldSplitBetweenReadBuffers() throws Exception {
-        assertIndexChunks(2, "yyyy-MM-ddTHH:mm:ss.SSSZ", PartitionBy.DAY, 1, "test-quotes-tstoolong.csv",
-                chunk("2022-05-10/0_1", 1652183520000000L, 14L),
-                chunk("2022-05-11/1_1", 1652269920001000L, 263L));
-    }
-
     @Test
     public void testIndexChunksInBigCsvByYear() throws Exception { //buffer = 93
         assertIndexChunks(4, "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", PartitionBy.YEAR, "test-quotes-big.csv",
@@ -695,13 +680,9 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     private void assertIndexChunks(int workerCount, String dateFormat, int partitionBy, String fileName, IndexChunk... expectedChunks) throws Exception {
-        assertIndexChunks(workerCount, dateFormat, partitionBy, -1/* use default */, fileName, expectedChunks);
-    }
-
-    private void assertIndexChunks(int workerCount, String dateFormat, int partitionBy, int bufferSize, String fileName, IndexChunk... expectedChunks) throws Exception {
         executeWithPool(workerCount, 8,
                 (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) ->
-                        assertIndexChunksFor(sqlExecutionContext, dateFormat, partitionBy, bufferSize, fileName, expectedChunks));
+                        assertIndexChunksFor(sqlExecutionContext, dateFormat, partitionBy, fileName, expectedChunks));
     }
 
     static IndexChunk chunk(String path, long... data) {
@@ -1464,7 +1445,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         });
     }
 
-    private void assertIndexChunksFor(SqlExecutionContext sqlExecutionContext, String format, int partitionBy, int bufferLen,
+    private void assertIndexChunksFor(SqlExecutionContext sqlExecutionContext, String format, int partitionBy,
                                       String fileName, IndexChunk... expectedChunks) {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
         inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
@@ -1472,9 +1453,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         try (Path path = new Path().of(inputRoot).slash().concat(fileName).$();
              ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(sqlExecutionContext)) {
             indexer.setMinChunkSize(1);
-            if (bufferLen > 0) {
-                indexer.setBufferLength(bufferLen);
-            }
             indexer.of("tableName", fileName, partitionBy, (byte) ',', "ts", format, false);
 
             long fd = TableUtils.openRO(ff, path, LOG);
@@ -1491,7 +1469,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         Assert.assertEquals(list(expectedChunks), actualChunks);
     }
 
-    private ObjList<IndexChunk> readIndexChunks(File root) {
+    static ObjList<IndexChunk> readIndexChunks(File root) {
         List<File> indexChunks = findAllFilesIn(root);
         indexChunks.sort(Comparator.comparing(File::getAbsolutePath));
 
@@ -1525,7 +1503,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         return result;
     }
 
-    private List<File> findAllFilesIn(File root) {
+    static List<File> findAllFilesIn(File root) {
         List<File> result = new ArrayList<>();
         File[] files = root.listFiles();
         if (files == null) {

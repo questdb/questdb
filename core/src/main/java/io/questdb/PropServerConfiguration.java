@@ -300,7 +300,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int textLexerStringPoolCapacity;
     private int timestampAdapterPoolCapacity;
     private int utf8SinkSize;
-    private long maxImportIndexChunkSize;
     private MimeTypesCache mimeTypesCache;
     private String keepAliveHeader;
     private int httpNetBindIPv4Address;
@@ -314,6 +313,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean httpReadOnlySecurityContext;
     private long maxHttpQueryResponseRowLimit;
     private boolean interruptOnClosedConnection;
+    private long parallelImportMaxIndexChunkSize;
     private int parallelImportQueueCapacity;
     private int pgNetConnectionLimit;
     private boolean pgNetConnectionHint;
@@ -803,8 +803,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
             }
 
-            this.maxImportIndexChunkSize = getLong(properties, env, PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
-            this.maxImportIndexChunkSize -= (maxImportIndexChunkSize % CsvFileIndexer.INDEX_ENTRY_SIZE);
+            this.parallelImportMaxIndexChunkSize = getLong(properties, env, PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
+            this.parallelImportMaxIndexChunkSize -= (parallelImportMaxIndexChunkSize % CsvFileIndexer.INDEX_ENTRY_SIZE);
             this.parallelImportQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_IMPORT_QUEUE_CAPACITY, 32));
 
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
@@ -2089,7 +2089,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public long getMaxImportIndexChunkSize() {
-            return maxImportIndexChunkSize;
+            return parallelImportMaxIndexChunkSize;
         }
 
         @Override

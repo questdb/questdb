@@ -24,7 +24,6 @@
 
 #include <processthreadsapi.h>
 #include <errhandlingapi.h>
-#include <winerror.h>
 
 #define SECURITY_WIN32
 

@@ -160,9 +160,9 @@ public class TextImportTask {
         this.buildSymbolColumnIndexStage.of(cairoEngine, tableStructure, root, index, metadata);
     }
 
-    public void ofCountQuotesStage(final FilesFacade ff, Path path, long chunkStart, long chunkEnd, int bufferLength) {
+    public void ofCountQuotesStage(final FilesFacade ff, Path path, long chunkStart, long chunkEnd) {
         this.phase = PHASE_BOUNDARY_CHECK;
-        this.countQuotesStage.of(ff, path, chunkStart, chunkEnd, bufferLength);
+        this.countQuotesStage.of(ff, path, chunkStart, chunkEnd);
     }
 
     void ofImportPartitionDataStage(CairoEngine cairoEngine,
@@ -291,11 +291,10 @@ public class TextImportTask {
             return quoteCount;
         }
 
-        public void of(final FilesFacade ff, Path path, long chunkStart, long chunkEnd, int bufferLength) {
+        public void of(final FilesFacade ff, Path path, long chunkStart, long chunkEnd) {
             assert ff != null;
             assert path != null;
             assert chunkStart >= 0 && chunkEnd > chunkStart;
-            assert bufferLength > 0;
 
             this.ff = ff;
             this.path = path;
@@ -469,6 +468,7 @@ public class TextImportTask {
         private final LongList importedRows = new LongList();
 
         private DirectCharSink utf8Sink;
+        private final TextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
 
         void of(CairoEngine cairoEngine,
                 TableStructure targetTableStructure,
@@ -499,7 +499,7 @@ public class TextImportTask {
             this.importedRows.clear();
         }
 
-        public void run(TextLexer lexer, long fileBufAddr, long fileBufSize, DirectCharSink sink, DirectLongList longList, Path path, Path tmpPath) throws TextException {
+        public void run(TextLexer lexer, long fileBufAddr, long fileBufSize, DirectCharSink sink, DirectLongList mergeIndexes, Path path, Path tmpPath) throws TextException {
 
             this.utf8Sink = sink;
             tableNameSink.clear();
@@ -531,7 +531,7 @@ public class TextImportTask {
 
                         final CharSequence name = partitions.get(i).name;
                         path.of(importRoot).concat(name);
-                        mergePartitionIndexAndImportData(ff, path, lexer, fileBufAddr, fileBufSize, sink, longList, tmpPath);
+                        mergePartitionIndexAndImportData(ff, path, lexer, fileBufAddr, fileBufSize, sink, mergeIndexes, tmpPath);
 
                         long imported = atomicity == Atomicity.SKIP_ROW ? lexer.getLineCount() - errors : lexer.getLineCount();
                         importedRows.add(i);
@@ -579,15 +579,15 @@ public class TextImportTask {
                     .I$();
         }
 
-        private void importPartitionData(final TextLexer lexer, long address, long size, long fileBufAddr, long fileBufSize, DirectCharSink utf8Sink, Path path) throws TextException {
+        private void importPartitionData(final TextLexer lexer, long address, long size, long fileBufAddr, long fileBufSize, DirectCharSink utf8Sink, Path tmpPath) throws TextException {
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
             long fd = -1;
             try {
-                path.of(configuration.getInputRoot()).concat(inputFileName).$();
+                tmpPath.of(configuration.getInputRoot()).concat(inputFileName).$();
                 utf8Sink.clear();
-                fd = TableUtils.openRO(ff, path, LOG);
+                fd = TableUtils.openRO(ff, tmpPath, LOG);
 
                 long MASK = ~((255L) << 56 | (255L) << 48);
                 final long count = size / (2 * Long.BYTES);
@@ -620,9 +620,9 @@ public class TextImportTask {
 
                     long n = ff.read(fd, fileBufAddr, bytesToRead, offset);
                     if (n > 0) {
-                        lexer.parse(fileBufAddr, fileBufAddr + n, Integer.MAX_VALUE, this::onFieldsPartitioned);
+                        lexer.parse(fileBufAddr, fileBufAddr + n, Integer.MAX_VALUE, onFieldsPartitioned);
                     } else {
-                        throw TextException.$("Can't read from file path='").put(path).put("', errno=").put(ff.errno()).put(",offset=").put(offset);
+                        throw TextException.$("Could not read from file [path='").put(tmpPath).put("', errno=").put(ff.errno()).put(", offset=").put(offset).put("]");
                     }
                 }
 
@@ -649,41 +649,35 @@ public class TextImportTask {
             int partitionLen = partitionPath.length();
 
             long mergedIndexSize = -1;
-            long address = -1;
+            long mergeIndexAddr = -1;
             long fd = -1;
 
             try {
                 mergedIndexSize = openIndexChunks(ff, partitionPath, mergeIndexes, partitionLen);
 
-                partitionPath.trimTo(partitionLen);
-                partitionPath.concat(CsvFileIndexer.INDEX_FILE_NAME).$();
+                if (mergeIndexes.size() > 2) {//there's more than 1 chunk so we've to merge
+                    partitionPath.trimTo(partitionLen);
+                    partitionPath.concat(CsvFileIndexer.INDEX_FILE_NAME).$();
 
-                fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
-                address = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                    fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
+                    mergeIndexAddr = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
 
-                long mergedAddr = getMergedIndexes(ff, address, mergeIndexes);
+                    Vect.mergeLongIndexesAsc(mergeIndexes.getAddress(), (int) mergeIndexes.size() / 2, mergeIndexAddr);
+                    //release chunk memory because it's been copied to merge area 
+                    unmap(ff, mergeIndexes);
 
-                importPartitionData(lexer, mergedAddr, mergedIndexSize, fileBufAddr, fileBufSize, utf8Sink, tmpPath);
+                    importPartitionData(lexer, mergeIndexAddr, mergedIndexSize, fileBufAddr, fileBufSize, utf8Sink, tmpPath);
+                } else {//we can use the single chunk as is 
+                    importPartitionData(lexer, mergeIndexes.get(0), mergedIndexSize, fileBufAddr, fileBufSize, utf8Sink, tmpPath);
+                }
             } finally {
                 if (fd > -1) {
                     ff.close(fd);
                 }
-                if (address != -1) {
-                    ff.munmap(address, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                if (mergeIndexAddr != -1) {
+                    ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
                 }
                 unmap(ff, mergeIndexes);
-            }
-        }
-
-        private long getMergedIndexes(FilesFacade ff, long address, DirectLongList mergeIndexes) {
-            try {
-                return Vect.mergeLongIndexesAscExt(mergeIndexes.getAddress(), (int) mergeIndexes.size() / 2, address);
-            } finally {
-                //release chunk memory early
-                //if there's only one chunk we didn't have to merge, can use it and have to release after loading data
-                if (mergeIndexes.size() > 2) {
-                    unmap(ff, mergeIndexes);
-                }
             }
         }
 
@@ -767,6 +761,9 @@ public class TextImportTask {
 
                             try {
                                 size = ff.length(fd);
+                                if (size < 1) {
+                                    throw TextException.$("Index chunk is empty [path='").put(partitionPath).put(']');
+                                }
                                 address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_PARALLEL_IMPORT);
                                 mergeIndexes.add(address);
                                 mergeIndexes.add(size / CsvFileIndexer.INDEX_ENTRY_SIZE);

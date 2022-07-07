@@ -120,16 +120,16 @@ public final class Vect {
 
     public static native void memset(long dst, long len, int value);
 
-    //caller must call freeMergedIndex !!!
-    private static native long mergeLongIndexesAsc(long pIndexStructArray, int count);
+    public static void mergeLongIndexesAsc(long pIndexStructArray, int count, long mergedIndexAddr) {
+        if (count < 2) {
+            throw new IllegalArgumentException("Count of indexes to merge should at least be 2.");
+        }
+
+        mergeLongIndexesAscInner(pIndexStructArray, count, mergedIndexAddr);
+    }
 
     // accept externally allocated memory for merged index of proper size
-    public static native long mergeLongIndexesAscExt(long pIndexStructArray, int count, long mergedIndex);
-
-    public static long mergeLongIndexesAsc(long pIndexStructArray, int count, long indexSize) {
-        Unsafe.recordMemAlloc(indexSize, MemoryTag.NATIVE_O3);
-        return mergeLongIndexesAsc(pIndexStructArray, count);
-    }
+    private static native void mergeLongIndexesAscInner(long pIndexStructArray, int count, long mergedIndexAddr);
 
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 

@@ -92,4 +92,12 @@ public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> impl
         subSeq.done(cursor);
         return result;
     }
+
+    Path getTmpPath1() {
+        return tmpPath1;
+    }
+
+    Path getTmpPath2() {
+        return tmpPath2;
+    }
 }

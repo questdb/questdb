@@ -350,6 +350,72 @@ public class CopyTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testParallelCopyThrowsExceptionOnBadPartitionByUnit() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel partition by jiffy;", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected"));
+            }
+        });
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionOnBadOnErrorOption() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel on error EXPLODE;", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("invalid 'on error' copy option found"));
+            }
+        });
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionOnUnexpectedOption() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel YadaYadaYada;", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("unexpected option"));
+            }
+        });
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionOnEmptyDelimiter() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel delimiter '';", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("delimiter is empty or contains more than 1 character"));
+            }
+        });
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionOnMultiCharDelimiter() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel delimiter '____';", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("delimiter is empty or contains more than 1 character"));
+            }
+        });
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionOnNonAsciiDelimiter() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel delimiter 'ą';", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("delimiter is not an ascii character"));
+            }
+        });
+    }
+
     private void assertQuotesTableContent() throws SqlException {
         assertQuery("line\tts\td\tdescription\n" +
                         "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
