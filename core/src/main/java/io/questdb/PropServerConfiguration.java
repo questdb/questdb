@@ -399,9 +399,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
     private final boolean simulateCrashEnabled;
-    private final boolean checkOsProcessLimits;
-    private final long checkOsProcessLimitFiles;
-    private final long checkOsProcessLimitMaps;
+    private final boolean checkProcessLimits;
+    private final long startupCheckProcessMinFiles;
+    private final long startupCheckProcessMinMaps;
 
     public PropServerConfiguration(
             String root,
@@ -433,9 +433,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
         this.simulateCrashEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SIMULATE_CRASH_ENABLED, false);
-        this.checkOsProcessLimits = getBoolean(properties, env, PropertyKey.CAIRO_CHECK_OS_PROCESS_LIMITS, true);
-        this.checkOsProcessLimitFiles = getLong(properties, env, PropertyKey.CAIRO_CHECK_OS_PROCESS_FILES_LIMIT, 100_000);
-        this.checkOsProcessLimitMaps = getLong(properties, env, PropertyKey.CAIRO_CHECK_OS_PROCESS_MAPS_LIMIT, 262_144);
+        this.checkProcessLimits = getBoolean(properties, env, PropertyKey.CAIRO_CHECK_PROCESS_LIMITS, true);
+        this.startupCheckProcessMinFiles = getLong(properties, env, PropertyKey.CAIRO_STARTUP_CHECK_PROCESS_MIN_FILES, 100_000);
+        this.startupCheckProcessMinMaps = getLong(properties, env, PropertyKey.CAIRO_STARTUP_CHECK_PROCESS_MIN_MAPS, 262_144);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
@@ -1795,8 +1795,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropCairoConfiguration implements CairoConfiguration {
 
         @Override
-        public boolean checkOsProcessLimits() {
-            return checkOsProcessLimits;
+        public boolean checkProcessLimits() {
+            return checkProcessLimits;
         }
 
         @Override
@@ -1845,13 +1845,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getCheckOsProcessLimitFiles() {
-            return checkOsProcessLimitFiles;
+        public long getStartupCheckProcessMinFiles() {
+            return startupCheckProcessMinFiles;
         }
 
         @Override
-        public long getCheckOsProcessLimitMaps() {
-            return checkOsProcessLimitMaps;
+        public long getStartupCheckProcessMinMaps() {
+            return startupCheckProcessMinMaps;
         }
 
         @Override

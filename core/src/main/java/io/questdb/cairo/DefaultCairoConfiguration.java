@@ -64,7 +64,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean checkOsProcessLimits() {
+    public boolean checkProcessLimits() {
         return true;
     }
 
@@ -114,12 +114,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getCheckOsProcessLimitFiles() {
+    public long getStartupCheckProcessMinFiles() {
         return 64 * (1 << 10);
     }
 
     @Override
-    public long getCheckOsProcessLimitMaps() {
+    public long getStartupCheckProcessMinMaps() {
         return 64 * (1 << 10);
     }
 

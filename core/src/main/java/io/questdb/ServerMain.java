@@ -114,7 +114,7 @@ public class ServerMain {
         }
 
         CairoConfiguration cairoConfiguration = configuration.getCairoConfiguration();
-        if (!checkOsProcessLimits(log, cairoConfiguration, cairoConfiguration.getCheckOsProcessLimitMaps(), cairoConfiguration.getCheckOsProcessLimitFiles())) {
+        if (!checkOsProcessLimits(log, cairoConfiguration, cairoConfiguration.getStartupCheckProcessMinMaps(), cairoConfiguration.getStartupCheckProcessMinFiles())) {
             String errorMessage = "FATAL: OS configuration will make QuestDB unstable. To disable OS configuration check set environment variable QDB_CHECK_OS_PROCESS_LIMITS to false";
             log.errorW().$(errorMessage).$();
             throw new ServerConfigurationException(errorMessage);
@@ -299,8 +299,13 @@ public class ServerMain {
         }
     }
 
-    public static boolean checkOsProcessLimits(Log log, CairoConfiguration cairoConfiguration, long mapMinCount, long fileMinCount) {
-        if (!cairoConfiguration.checkOsProcessLimits()) {
+    public static boolean checkOsProcessLimits(
+            Log log,
+            CairoConfiguration cairoConfiguration,
+            long startupCheckProcessMinMaps,
+            long startupCheckProcessMinFiles
+    ) {
+        if (!cairoConfiguration.checkProcessLimits()) {
             log.advisoryW().$("os file limit checks disabled in configuration.").$();
             return true;
         }
@@ -312,9 +317,12 @@ public class ServerMain {
             log.advisoryW().$("cannot detect OS vm.max_map_count parameter, verification not performed").$();
         } else {
             log.advisoryW().$("vm.max_map_count=").$(mapCount).$();
-            if (mapCount < mapMinCount) {
+            if (mapCount < startupCheckProcessMinMaps) {
                 // This is recommended setting in the configuration
-                log.errorW().$("FATAL: vm.max_map_count of [").$(mapCount).$("] is too low, check documentation and increase to at least [").$(mapMinCount).I$();
+                log.errorW().$("FATAL: vm.max_map_count of [")
+                        .$(mapCount).$("] is too low, check documentation and increase to at least [")
+                        .$(startupCheckProcessMinMaps)
+                        .I$();
                 success = false;
             }
             ff.setMapLimit(mapCount);
@@ -325,9 +333,12 @@ public class ServerMain {
             log.advisoryW().$("cannot detect OS file-max parameter for the process, verification not performed").$();
         } else {
             log.advisoryW().$("file-max=").$(fileLimit).$();
-            if (fileLimit < fileMinCount) {
+            if (fileLimit < startupCheckProcessMinFiles) {
                 // This is recommended setting in the configuration
-                log.errorW().$("FATAL: process file-max of [").$(fileLimit).$("] is too low, check documentation and increase to at least [").$(fileMinCount).I$();
+                log.errorW().$("FATAL: process file-max of [").$(fileLimit)
+                        .$("] is too low, check documentation and increase to at least [")
+                        .$(startupCheckProcessMinFiles)
+                        .I$();
                 success = false;
             }
             ff.setOpenFileLimit(fileLimit);

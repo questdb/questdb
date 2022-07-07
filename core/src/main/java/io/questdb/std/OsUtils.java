@@ -34,15 +34,7 @@ public class OsUtils {
             return getMaxMapCountLinux(log, ff);
         }
 
-        if (Os.type == Os.OSX_ARM64 || Os.type == Os.OSX_AMD64) {
-            return getMaxMapCountOsx(log, ff);
-        }
-
         return -1;
-    }
-
-    private static long getMaxMapCountOsx(Log log, FilesFacade ff) {
-        return -1L;
     }
 
     private static CharSequence readFileAsText(Path path, Log log, FilesFacade ff, StringSink sink) {

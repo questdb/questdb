@@ -357,9 +357,9 @@ public enum PropertyKey {
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
     CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
-    CAIRO_CHECK_OS_PROCESS_LIMITS("cairo.check.os.process.limits"),
-    CAIRO_CHECK_OS_PROCESS_FILES_LIMIT("cairo.check.os.process.files.limit"),
-    CAIRO_CHECK_OS_PROCESS_MAPS_LIMIT("cairo.check.os.process.maps.limit");
+    CAIRO_CHECK_PROCESS_LIMITS("cairo.check.process.limits"),
+    CAIRO_STARTUP_CHECK_PROCESS_MIN_FILES("cairo.startup.check.process.min.files"),
+    CAIRO_STARTUP_CHECK_PROCESS_MIN_MAPS("cairo.startup.check.process.min.maps");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

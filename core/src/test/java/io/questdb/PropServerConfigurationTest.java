@@ -339,9 +339,9 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
         Assert.assertTrue(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
 
-        Assert.assertEquals(262_144, configuration.getCairoConfiguration().getCheckOsProcessLimitMaps());
-        Assert.assertEquals(100_000, configuration.getCairoConfiguration().getCheckOsProcessLimitFiles());
-        Assert.assertTrue(configuration.getCairoConfiguration().checkOsProcessLimits());
+        Assert.assertEquals(262_144, configuration.getCairoConfiguration().getStartupCheckProcessMinMaps());
+        Assert.assertEquals(100_000, configuration.getCairoConfiguration().getStartupCheckProcessMinFiles());
+        Assert.assertTrue(configuration.getCairoConfiguration().checkProcessLimits());
     }
 
     @Test
@@ -863,9 +863,9 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
             Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
 
-            Assert.assertEquals(-1, configuration.getCairoConfiguration().getCheckOsProcessLimitMaps());
-            Assert.assertEquals(-1, configuration.getCairoConfiguration().getCheckOsProcessLimitFiles());
-            Assert.assertFalse(configuration.getCairoConfiguration().checkOsProcessLimits());
+            Assert.assertEquals(-1, configuration.getCairoConfiguration().getStartupCheckProcessMinMaps());
+            Assert.assertEquals(-1, configuration.getCairoConfiguration().getStartupCheckProcessMinFiles());
+            Assert.assertFalse(configuration.getCairoConfiguration().checkProcessLimits());
         }
     }
 

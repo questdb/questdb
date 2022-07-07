@@ -45,7 +45,7 @@ public interface CairoConfiguration {
 
     ThreadLocal<Rnd> RANDOM = new ThreadLocal<>();
 
-    boolean checkOsProcessLimits();
+    boolean checkProcessLimits();
 
     boolean enableTestFactories();
 
@@ -66,9 +66,9 @@ public interface CairoConfiguration {
 
     BuildInformation getBuildInformation();
 
-    long getCheckOsProcessLimitFiles();
+    long getStartupCheckProcessMinFiles();
 
-    long getCheckOsProcessLimitMaps();
+    long getStartupCheckProcessMinMaps();
 
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 

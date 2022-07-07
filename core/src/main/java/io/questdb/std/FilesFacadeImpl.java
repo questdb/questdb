@@ -117,6 +117,9 @@ public class FilesFacadeImpl implements FilesFacade {
         if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
             return Files.getFileLimit();
         }
+        if (Os.type == Os.WINDOWS) {
+            return 16_711_680L; // 16M is default limit of handles on Windows 10.
+        }
         return -1L;
     }
 
