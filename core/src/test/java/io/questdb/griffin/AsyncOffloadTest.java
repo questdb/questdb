@@ -27,15 +27,17 @@ package io.questdb.griffin;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordCursorPrinter;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.*;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -198,6 +200,67 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                 1,
                 SqlJitMode.JIT_MODE_DISABLED
         );
+    }
+
+    @Test
+    public void testTimeout() throws Exception {
+
+        SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+        currentMicros = 0;
+        SqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(new DefaultSqlExecutionCircuitBreakerConfiguration(), MemoryTag.NATIVE_DEFAULT) {
+            @Override
+            public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
+                return new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                    @Override
+                    public MicrosecondClock getClock() {
+                        return () -> 10;
+                    }
+
+                    @Override
+                    public long getMaxTime() {
+                        return 1; // getClock will be 10, make first check trigger the timeout
+                    }
+                };
+            }
+        };
+
+
+        compiler.compile("create table x ( " +
+                        "v long, " +
+                        "s symbol capacity 4 cache " +
+                        ")",
+                sqlExecutionContext
+        );
+        compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
+                sqlExecutionContext
+        );
+
+        context.with(
+                context.getCairoSecurityContext(),
+                context.getBindVariableService(),
+                context.getRandom(),
+                context.getRequestFd(),
+                circuitBreaker
+        );
+
+        try {
+            assertSql(
+                    "x where v > 3326086085493629941L and v < 4326086085493629941L and s ~ 'A' order by v",
+                    "v\ts\n" +
+                            "3393210801760647293\tA\n"
+            );
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
+        } finally {
+            context.with(
+                    context.getCairoSecurityContext(),
+                    context.getBindVariableService(),
+                    context.getRandom(),
+                    context.getRequestFd(),
+                    null
+            );
+        }
     }
 
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
