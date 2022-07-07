@@ -263,7 +263,6 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         if (context == null || context.invalid()) {
             return;
         }
-        context.dumpBuffer();
 
         final long fd = context.getFd();
         LOG.info()
