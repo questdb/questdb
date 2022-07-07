@@ -39,6 +39,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -77,6 +78,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private boolean txnAcquired = false;
     private int filePerPartitionCount;
+    private int openPartitionCount;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null);
@@ -150,17 +152,8 @@ public class TableReader implements Closeable, SymbolTableSource {
      */
     public void checkOsLimitsCapacity() {
         int partitionCount = txFile.getPartitionCount();
-        int partitions = partitionCount;
-        // Some partitions already opened, substruct the number of opened from total file count
-        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
-            if (partitionRowCount > -1L) {
-                // Already opened
-                partitions--;
-            }
-        }
-
-        int columnFilesToMap = partitions * filePerPartitionCount;
+        // Some partitions already opened, subtract the number of opened from total file count
+        int columnFilesToMap = (partitionCount - openPartitionCount) * filePerPartitionCount;
         if (columnFilesToMap > 0) {
             if (ff.getMapCapacity() < columnFilesToMap) {
                 throw CairoException.instance(0).put("OS vm.max_map_count set too low to map all files of the table [table=").put(tableName)
@@ -176,6 +169,20 @@ public class TableReader implements Closeable, SymbolTableSource {
                         .put(']');
             }
         }
+    }
+
+    @TestOnly
+    public int countOpenPartition() {
+        int partitions = 0;
+        int partitionCount = openPartitionInfo.size();
+        for (int sizeIndex = PARTITIONS_SLOT_OFFSET_SIZE; sizeIndex < partitionCount; sizeIndex += PARTITIONS_SLOT_SIZE) {
+            long partitionRowCount = openPartitionInfo.getQuick(sizeIndex);
+            if (partitionRowCount > -1L) {
+                // Already opened
+                partitions++;
+            }
+        }
+        return partitions;
     }
 
     @Override
@@ -291,6 +298,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getMinTimestamp() {
         return txFile.getMinTimestamp();
+    }
+
+    @TestOnly
+    public int getOpenPartitionCount() {
+        return openPartitionCount;
     }
 
     public int getPartitionCount() {
@@ -445,7 +457,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-   public boolean reload() {
+    public boolean reload() {
         if (acquireTxn()) {
             return false;
         }
@@ -533,12 +545,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
         long newSize = txFile.getPartitionSizeByPartitionTimestamp(partitionTs);
         if (exisingPartitionNameTxn != newNameTxn || newSize < 0) {
-            LOG.debugW().$("close outdated partition files [table=").$(tableName).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
-            // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
-            for (int i = 0; i < this.columnCount; i++) {
-                closePartitionColumnFile(oldBase, i);
+            if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE) != -1L) {
+                LOG.debugW().$("close outdated partition files [table=").$(tableName).$(", ts=").$ts(partitionTs).$(", nameTxn=").$(newNameTxn).$();
+                // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
+                for (int i = 0; i < this.columnCount; i++) {
+                    closePartitionColumnFile(oldBase, i);
+                }
+                openPartitionCount = getOpenPartitionCount() - 1;
+                openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
             }
-            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
             return -1;
         }
         pathGenPartitioned(partitionIndex);
@@ -674,6 +689,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int k = 0; k < columnCount; k++) {
                 closePartitionColumnFile(columnBase, k);
             }
+            openPartitionCount = getOpenPartitionCount() - 1;
         }
         int baseIndex = getPrimaryColumnIndex(columnBase, 0);
         int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);
@@ -859,6 +875,9 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                     openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                     final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+                    if (this.openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE) == -1L && partitionSize > 0L) {
+                        openPartitionCount = getOpenPartitionCount() + 1;
+                    }
                     this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                     final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
                     this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txPartitionNameTxn);
@@ -925,7 +944,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reOpenPartition(int offset, int partitionIndex, long txPartitionNameTxn) {
-        this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1L);
+        if (this.openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE) != -1L) {
+            this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1L);
+            openPartitionCount = getOpenPartitionCount() - 1;
+        }
         openPartition0(partitionIndex);
         this.openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txPartitionNameTxn);
     }

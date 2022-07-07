@@ -297,7 +297,7 @@ public class ImportIODispatcherTest {
                 .run(engine -> {
                     setupSql(engine);
                     final SOCountDownLatch waitForData = new SOCountDownLatch(1);
-                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                    engine.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
                         if (event == PoolListener.EV_RETURN && Chars.equals("syms", name)) {
                             waitForData.countDown();
                         }
@@ -545,7 +545,7 @@ public class ImportIODispatcherTest {
                 .withTelemetry(false)
                 .run((engine) -> {
                     AtomicBoolean locked = new AtomicBoolean(false);
-                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                    engine.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
                         if (event == PoolListener.EV_LOCK_SUCCESS && Chars.equalsNc(name, tableName)) {
                             try (Path path = new Path()) {
                                 if (engine.getStatus(AllowAllCairoSecurityContext.INSTANCE, path, tableName) == TableUtils.TABLE_DOES_NOT_EXIST) {
@@ -580,7 +580,7 @@ public class ImportIODispatcherTest {
                 .run(engine -> {
                     setupSql(engine);
                     final SOCountDownLatch waitForData = new SOCountDownLatch(1);
-                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                    engine.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
                         if (event == PoolListener.EV_RETURN && Chars.equals("syms", name)) {
                             waitForData.countDown();
                         }

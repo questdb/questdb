@@ -28,6 +28,7 @@ import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -315,10 +316,16 @@ public class AbstractCairoTest {
 
             @Override
             public RostiAllocFacade getRostiAllocFacade() {
-                return rostiAllocFacade != null? rostiAllocFacade : super.getRostiAllocFacade();
+                return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
             }
         };
         engine = new CairoEngine(configuration, metrics);
+        engine.setPoolListener((factoryType, thread, name, event, segment, position, reader) -> {
+            if (event == PoolListener.EV_RETURN && reader instanceof TableReader) {
+                TableReader tableReader = (TableReader) reader;
+                assert tableReader.getOpenPartitionCount() == tableReader.countOpenPartition();
+            }
+        });
         snapshotAgent = new DatabaseSnapshotAgent(engine);
         messageBus = engine.getMessageBus();
     }

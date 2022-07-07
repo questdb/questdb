@@ -80,17 +80,17 @@ abstract class AbstractPool implements Closeable {
 
     protected void closePool() {
         releaseAll(Long.MAX_VALUE);
-        notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_CLOSED);
+        notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_CLOSED, null);
     }
 
     protected boolean isClosed() {
         return closed == TRUE;
     }
 
-    protected void notifyListener(long thread, CharSequence name, short event) {
+    protected void notifyListener(long thread, CharSequence name, short event, Object poolItem) {
         PoolListener listener = getPoolListener();
         if (listener != null) {
-            listener.onEvent(PoolListener.SRC_WRITER, thread, name, event, (short) 0, (short) 0);
+            listener.onEvent(PoolListener.SRC_WRITER, thread, name, event, (short) 0, (short) 0, poolItem);
         }
     }
 

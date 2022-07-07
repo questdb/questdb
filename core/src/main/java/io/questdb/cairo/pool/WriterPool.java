@@ -96,7 +96,7 @@ public class WriterPool extends AbstractPool {
         this.clock = configuration.getMicrosecondClock();
         this.root = configuration.getRoot();
         this.metrics = metrics;
-        notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
+        notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN, null);
     }
 
     /**
@@ -204,7 +204,7 @@ public class WriterPool extends AbstractPool {
         }
 
         LOG.error().$("could not lock, busy [table=`").utf8(tableName).$("`, owner=").$(e.owner).$(", thread=").$(thread).$(']').$();
-        notifyListener(thread, tableName, PoolListener.EV_LOCK_BUSY);
+        notifyListener(thread, tableName, PoolListener.EV_LOCK_BUSY, null);
         return reinterpretOwnershipReason(e.ownershipReason);
     }
 
@@ -221,7 +221,7 @@ public class WriterPool extends AbstractPool {
 
         Entry e = entries.get(name);
         if (e == null) {
-            notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
+            notifyListener(thread, name, PoolListener.EV_NOT_LOCKED, writer);
             return;
         }
 
@@ -231,7 +231,7 @@ public class WriterPool extends AbstractPool {
         if (e.owner == thread) {
 
             if (e.writer != null) {
-                notifyListener(thread, name, PoolListener.EV_NOT_LOCKED);
+                notifyListener(thread, name, PoolListener.EV_NOT_LOCKED, null);
                 throw CairoException.instance(0).put("Writer ").put(name).put(" is not locked");
             }
 
@@ -266,10 +266,10 @@ public class WriterPool extends AbstractPool {
                 Unsafe.getUnsafe().storeFence();
                 Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
-            notifyListener(thread, name, PoolListener.EV_UNLOCKED);
+            notifyListener(thread, name, PoolListener.EV_UNLOCKED, e.writer);
             LOG.debug().$("unlocked [table=`").utf8(name).$("`, thread=").$(thread).I$();
         } else {
-            notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
+            notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER, null);
             throw CairoException.instance(0).put("Not lock owner of ").put(name);
         }
     }
@@ -398,7 +398,7 @@ public class WriterPool extends AbstractPool {
             e.writer = null;
             e.ownershipReason = OWNERSHIP_REASON_RELEASED;
             LOG.info().$("closed [table=`").utf8(name).$("`, reason=").$(PoolConstants.closeReasonText(reason)).$(", by=").$(thread).$(']').$();
-            notifyListener(thread, name, ev);
+            notifyListener(thread, name, ev, w);
         }
     }
 
@@ -432,7 +432,7 @@ public class WriterPool extends AbstractPool {
             e.ex = ex;
             e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
             e.owner = UNALLOCATED;
-            notifyListener(e.owner, name, PoolListener.EV_CREATE_EX);
+            notifyListener(e.owner, name, PoolListener.EV_CREATE_EX, e.writer);
             throw ex;
         }
     }
@@ -483,7 +483,7 @@ public class WriterPool extends AbstractPool {
                     }
 
                     if (e.ex != null) {
-                        notifyListener(thread, tableName, PoolListener.EV_EX_RESEND);
+                        notifyListener(thread, tableName, PoolListener.EV_EX_RESEND, e.writer);
                         // this writer failed to allocate by this very thread
                         // ensure consistent response
                         entries.remove(tableName);
@@ -517,14 +517,14 @@ public class WriterPool extends AbstractPool {
             return false;
         }
         LOG.debug().$("locked [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
-        notifyListener(thread, tableName, PoolListener.EV_LOCK_SUCCESS);
+        notifyListener(thread, tableName, PoolListener.EV_LOCK_SUCCESS, e.writer);
         e.ownershipReason = lockReason;
         return true;
     }
 
     private TableWriter logAndReturn(Entry e, short event) {
         LOG.info().$(">> [table=`").utf8(e.writer.getTableName()).$("`, thread=").$(e.owner).$(']').$();
-        notifyListener(e.owner, e.writer.getTableName(), event);
+        notifyListener(e.owner, e.writer.getTableName(), event, e.writer);
         return e.writer;
     }
 
@@ -571,15 +571,15 @@ public class WriterPool extends AbstractPool {
                 // free agent
                 if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
                     e.writer = null;
-                    notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE);
+                    notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE, null);
                     return false;
                 }
             }
 
-            notifyListener(thread, name, PoolListener.EV_RETURN);
+            notifyListener(thread, name, PoolListener.EV_RETURN, e.writer);
         } else {
             LOG.error().$("orphaned [table=`").utf8(name).$("`]").$();
-            notifyListener(thread, name, PoolListener.EV_UNEXPECTED_CLOSE);
+            notifyListener(thread, name, PoolListener.EV_UNEXPECTED_CLOSE, e.writer);
         }
         return true;
     }

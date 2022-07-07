@@ -227,7 +227,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 short ev = -1;
 
                 @Override
-                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position, Object poolItem) {
                     this.ev = event;
                 }
             }
@@ -372,26 +372,20 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWriterPingPong() throws Exception {
+    public void testUnlockNonExisting() throws Exception {
         assertWithPool(pool -> {
-            for (int i = 0; i < 10_000; i++) {
-                final SOCountDownLatch next = new SOCountDownLatch(1);
+            class X implements PoolListener {
+                short ev = -1;
 
-                // listener will release the latch
-                pool.setPoolListener((factoryType, thread, name, event, segment, position) -> {
-                    if (event == PoolListener.EV_RETURN) {
-                        next.countDown();
-                    }
-                });
-
-                new Thread(() -> {
-                    // trigger the release
-                    pool.get("z", "test").close();
-                }).start();
-
-                next.await();
-                pool.get("z", "test2").close();
+                @Override
+                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position, Object poolItem) {
+                    this.ev = event;
+                }
             }
+            X x = new X();
+            pool.setPoolListener(x);
+            pool.unlock("x");
+            Assert.assertEquals(PoolListener.EV_NOT_LOCKED, x.ev);
         });
     }
 
@@ -796,24 +790,6 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnlockNonExisting() throws Exception {
-        assertWithPool(pool -> {
-            class X implements PoolListener {
-                short ev = -1;
-
-                @Override
-                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
-                    this.ev = event;
-                }
-            }
-            X x = new X();
-            pool.setPoolListener(x);
-            pool.unlock("x");
-            Assert.assertEquals(PoolListener.EV_NOT_LOCKED, x.ev);
-        });
-    }
-
-    @Test
     public void testUnlockWriterWhenPoolIsClosed() throws Exception {
         assertWithPool(pool -> {
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock("z", "testing"));
@@ -833,7 +809,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 short ev = -1;
 
                 @Override
-                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position, Object poolItem) {
                     this.ev = event;
                 }
             }
@@ -849,6 +825,30 @@ public class WriterPoolTest extends AbstractCairoTest {
             w.close();
             Assert.assertEquals(PoolListener.EV_UNEXPECTED_CLOSE, x.ev);
             Assert.assertEquals(0, pool.getBusyCount());
+        });
+    }
+
+    @Test
+    public void testWriterPingPong() throws Exception {
+        assertWithPool(pool -> {
+            for (int i = 0; i < 10_000; i++) {
+                final SOCountDownLatch next = new SOCountDownLatch(1);
+
+                // listener will release the latch
+                pool.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
+                    if (event == PoolListener.EV_RETURN) {
+                        next.countDown();
+                    }
+                });
+
+                new Thread(() -> {
+                    // trigger the release
+                    pool.get("z", "test").close();
+                }).start();
+
+                next.await();
+                pool.get("z", "test2").close();
+            }
         });
     }
 

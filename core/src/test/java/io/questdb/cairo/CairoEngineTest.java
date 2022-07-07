@@ -27,22 +27,15 @@ package io.questdb.cairo;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.griffin.engine.table.LongTreeSet;
 import io.questdb.mp.Job;
-import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.LongList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.fail;
 
@@ -59,7 +52,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 int count = 0;
 
                 @Override
-                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position, Object poolItem) {
                     count++;
                 }
             }
@@ -93,7 +86,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 int count = 0;
 
                 @Override
-                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position, Object poolItem) {
                     if (event == PoolListener.EV_EXPIRE) {
                         count++;
                     }

@@ -92,7 +92,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         }
 
                         e.readers[i] = r;
-                        notifyListener(thread, name, PoolListener.EV_CREATE, e.index, i);
+                        notifyListener(thread, name, PoolListener.EV_CREATE, e.index, i, r);
                     } else {
                         try {
                             r.goActive();
@@ -100,7 +100,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                             r.close();
                             throw ex;
                         }
-                        notifyListener(thread, name, PoolListener.EV_GET, e.index, i);
+                        notifyListener(thread, name, PoolListener.EV_GET, e.index, i, r);
                     }
 
                     if (isClosed()) {
@@ -126,7 +126,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         } while (e != null && e.index < maxSegments);
 
         // max entries exceeded
-        notifyListener(thread, name, PoolListener.EV_FULL, -1, -1);
+        notifyListener(thread, name, PoolListener.EV_FULL, -1, -1, null);
         LOG.info().$("could not get, busy [table=`").utf8(name).$("`, thread=").$(thread).$(", retries=").$(this.maxSegments).$(']').$();
         throw EntryUnavailableException.instance("unknown");
     }
@@ -182,10 +182,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             } while (e != null);
         } else {
             LOG.error().$("' already locked [table=`").utf8(name).$("`, owner=").$(e.lockOwner).$(']').$();
-            notifyListener(thread, name, PoolListener.EV_LOCK_BUSY, -1, -1);
+            notifyListener(thread, name, PoolListener.EV_LOCK_BUSY, -1, -1, null);
             return false;
         }
-        notifyListener(thread, name, PoolListener.EV_LOCK_SUCCESS, -1, -1);
+        notifyListener(thread, name, PoolListener.EV_LOCK_SUCCESS, -1, -1, null);
         LOG.debug().$("locked [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
         return true;
     }
@@ -195,7 +195,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         long thread = Thread.currentThread().getId();
         if (e == null) {
             LOG.info().$("not found, cannot unlock [table=`").$(name).$("`]").$();
-            notifyListener(thread, name, PoolListener.EV_NOT_LOCKED, -1, -1);
+            notifyListener(thread, name, PoolListener.EV_NOT_LOCKED, -1, -1, null);
             return;
         }
 
@@ -205,11 +205,11 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                 e = e.next;
             }
         } else {
-            notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
+            notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER, null);
             throw CairoException.instance(0).put("Not the lock owner of ").put(name);
         }
 
-        notifyListener(thread, name, PoolListener.EV_UNLOCKED, -1, -1);
+        notifyListener(thread, name, PoolListener.EV_UNLOCKED, -1, -1, null);
         LOG.debug().$("unlocked [table=`").utf8(name).$("`]").$();
     }
 
@@ -277,7 +277,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     .$("' [at=").$(entry.index).$(':').$(index)
                     .$(", reason=").$(PoolConstants.closeReasonText(reason))
                     .I$();
-            notifyListener(thread, r.getTableName(), ev, entry.index, index);
+            notifyListener(thread, r.getTableName(), ev, entry.index, index, r);
             entry.readers[index] = null;
         }
     }
@@ -296,10 +296,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         return e;
     }
 
-    private void notifyListener(long thread, CharSequence name, short event, int segment, int position) {
+    private void notifyListener(long thread, CharSequence name, short event, int segment, int position, Object poolItem) {
         PoolListener listener = getPoolListener();
         if (listener != null) {
-            listener.onEvent(PoolListener.SRC_READER, thread, name, event, (short) segment, (short) position);
+            listener.onEvent(PoolListener.SRC_READER, thread, name, event, (short) segment, (short) position, poolItem);
         }
     }
 
@@ -318,7 +318,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         if (owner != UNALLOCATED) {
 
             LOG.debug().$('\'').$(name).$("' is back [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
-            notifyListener(thread, name, PoolListener.EV_RETURN, e.index, index);
+            notifyListener(thread, name, PoolListener.EV_RETURN, e.index, index, reader);
 
             // release the entry for anyone to pick up
             e.releaseTimes[index] = clock.getTicks();

@@ -785,7 +785,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 private final IntList events = new IntList();
 
                 @Override
-                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position) {
+                public void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position, Object poolItem) {
                     names.add(name == null ? "" : Chars.toString(name));
                     events.add(event);
                 }
@@ -865,7 +865,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     public void testUnlockNonExisting() throws Exception {
         assertWithPool(pool -> {
             AtomicInteger counter = new AtomicInteger();
-            pool.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            pool.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
                 if (event == PoolListener.EV_NOT_LOCKED) {
                     counter.incrementAndGet();
                 }

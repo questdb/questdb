@@ -85,7 +85,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                engine.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
                     if (event == PoolListener.EV_RETURN && Chars.equals(tableName, name)) {
                         waitForData.countDown();
                     }

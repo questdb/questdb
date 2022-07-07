@@ -46,5 +46,5 @@ public interface PoolListener {
     short EV_POOL_CLOSED = 24;
     short EV_FULL = 25;
 
-    void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position);
+    void onEvent(byte factoryType, long thread, CharSequence name, short event, short segment, short position, Object poolItem);
 }

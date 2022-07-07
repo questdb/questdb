@@ -127,7 +127,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         final SOCountDownLatch finished = new SOCountDownLatch(1);
         runInContext(receiver -> {
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                     if (name.equals(tableName)) {
                         finished.countDown();
@@ -149,7 +149,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
             // this will wait until the writer is returned into the pool
             finished.await();
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
             });
 
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
@@ -407,7 +407,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         final SOCountDownLatch finished = new SOCountDownLatch(1);
         runInContext(receiver -> {
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                     if (name.equals(tableName)) {
                         finished.countDown();
@@ -424,7 +424,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
                 finished.await(30_000_000_000L);
             } finally {
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                engine.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
                 });
             }
         }, false, 250);
@@ -494,7 +494,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             }
 
             // One engine hook for all writers
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                     tableIndex.get(name).countDown();
                 }
@@ -562,7 +562,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 }
             } finally {
                 // Clean engine hook
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                engine.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
                 });
             }
         });
@@ -1181,7 +1181,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             final Rnd rand = new Rnd();
             final StringBuilder[] expectedSbs = new StringBuilder[tables.size()];
 
-            engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            engine.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
                 if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN) {
                     if (tables.contains(name)) {
                         tablesCreated.countDown();

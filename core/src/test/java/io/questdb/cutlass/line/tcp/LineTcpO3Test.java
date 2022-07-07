@@ -168,7 +168,7 @@ public class LineTcpO3Test extends AbstractCairoTest {
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
                 SOCountDownLatch haltLatch = new SOCountDownLatch(1);
-                engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                engine.setPoolListener((factoryType, thread, name, event, segment, position, poolItem) -> {
                     if (factoryType == PoolListener.SRC_WRITER && event == PoolListener.EV_RETURN && Chars.equals(name, "cpu")) {
                         haltLatch.countDown();
                     }
