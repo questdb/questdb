@@ -106,6 +106,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final SqlExecutionCircuitBreaker circuitBreaker;
     private final TextImportJob localImportJob;
     private final Consumer<TextImportTask> checkStatusRef = this::checkStatus;
+    private final Consumer<TextImportTask> collectChunkStatsRef = this::collectChunkStats;
+    private final Consumer<TextImportTask> collectDataImportStatsRef = this::collectDataImportStats;
+    private final Consumer<TextImportTask> collectIndexStatsRef = this::collectIndexStats;
+    private final Consumer<TextImportTask> collectStubRef = this::collectStub;
     private int taskCount;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
     //input params end
@@ -570,12 +574,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     queuedCount++;
                     break;
                 } else {
-                    collectedCount += collect(queuedCount - collectedCount, this::collectChunkStats);
+                    collectedCount += collect(queuedCount - collectedCount, collectChunkStatsRef);
                 }
             }
         }
 
-        collectedCount += collect(queuedCount - collectedCount, this::collectChunkStats);
+        collectedCount += collect(queuedCount - collectedCount, collectChunkStatsRef);
         assert collectedCount == queuedCount;
         checkImportStatus();
 
@@ -620,12 +624,24 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     final TextImportTask task = queue.get(seq);
                     task.setIndex(i);
                     task.setCircuitBreaker(circuitBreaker);
-                    task.ofImportPartitionDataStage(cairoEngine, targetTableStructure, textMetadataDetector.getColumnTypes(), atomicity, columnDelimiter, importRoot, inputFileName, i, lo, hi, partitions);
+                    task.ofImportPartitionDataStage(
+                            cairoEngine,
+                            targetTableStructure,
+                            textMetadataDetector.getColumnTypes(),
+                            atomicity,
+                            columnDelimiter,
+                            importRoot,
+                            inputFileName,
+                            i,
+                            lo,
+                            hi,
+                            partitions
+                    );
                     pubSeq.done(seq);
                     queuedCount++;
                     break;
                 } else {
-                    collectedCount += collect(queuedCount - collectedCount, this::collectDataImportStats);
+                    collectedCount += collect(queuedCount - collectedCount, collectDataImportStatsRef);
                 }
             }
 
@@ -634,7 +650,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             taskDistribution.add(hi);
         }
 
-        collectedCount += collect(queuedCount - collectedCount, this::collectDataImportStats);
+        collectedCount += collect(queuedCount - collectedCount, collectDataImportStatsRef);
         assert collectedCount == queuedCount;
 
         checkImportStatus();
@@ -671,12 +687,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     queuedCount++;
                     break;
                 } else {
-                    collectedCount += collect(queuedCount - collectedCount, this::collectIndexStats);
+                    collectedCount += collect(queuedCount - collectedCount, collectIndexStatsRef);
                 }
             }
         }
 
-        collectedCount += collect(queuedCount - collectedCount, this::collectIndexStats);
+        collectedCount += collect(queuedCount - collectedCount, collectIndexStatsRef);
         assert collectedCount == queuedCount;
         checkImportStatus();
         processIndexStats();
@@ -686,11 +702,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void logEndOf(String phase) {
         long endMs = getCurrentTimeMs();
-        LOG.info().$("Finished ").$(phase).$(" of file='").$(inputFilePath).$("' time=").$((endMs - startMs) / 1000).$("s").$();
+        LOG.info().$("finished [phase=`").$(phase).$("`, file=`").$(inputFilePath).$("`, duration=").$((endMs - startMs) / 1000).$('s').I$();
     }
 
     private void logStartOf(String phase) {
-        LOG.info().$("Started ").$(phase).$(" of file='").$(inputFilePath).$("'").$();
+        LOG.info().$("started [phase=`").$(phase).$("`, file=`").$(inputFilePath).$('`').I$();
         startMs = getCurrentTimeMs();
     }
 
@@ -725,13 +741,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         queuedCount++;
                         break;
                     } else {
-                        collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+                        collectedCount += collect(queuedCount - collectedCount, collectStubRef);
                     }
                 }
             }
         }
 
-        collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+        collectedCount += collect(queuedCount - collectedCount, collectStubRef);
         assert collectedCount == queuedCount;
         checkImportStatus();
 
@@ -1230,7 +1246,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                     queuedCount++;
                                     break;
                                 } else {
-                                    collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+                                    collectedCount += collect(queuedCount - collectedCount, collectStubRef);
                                 }
                             }
                         }
@@ -1240,7 +1256,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         }
 
-        collectedCount += collect(queuedCount - collectedCount, this::collectStub);
+        collectedCount += collect(queuedCount - collectedCount, collectStubRef);
         assert collectedCount == queuedCount;
         checkImportStatus();
 

@@ -542,7 +542,7 @@ Java_io_questdb_std_Vect_mergeLongIndexesAscInner(JAVA_STATIC, jlong pIndexStruc
 
     auto count = static_cast<uint32_t>(cnt);
     const java_index_entry_t *java_entries = reinterpret_cast<java_index_entry_t *>(pIndexStructArray);
-    index_t* merged_index = reinterpret_cast<index_t *>(mergedIndex);
+    auto * merged_index = reinterpret_cast<index_t *>(mergedIndex);
 
     uint32_t size = ceil_pow_2(count);
     index_entry_t entries[size];
