@@ -97,8 +97,8 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     @Override
-    public final void atMicros(long timestamp) {
-        put(' ').put(timestamp * 1000);
+    public final void at(long timestamp) {
+        put(' ').put(timestamp);
         atNow();
     }
 

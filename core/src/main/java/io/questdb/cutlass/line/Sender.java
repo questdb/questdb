@@ -50,7 +50,7 @@ import java.security.PrivateKey;
  *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)},
  *     {@link #doubleColumn(CharSequence, double)}, {@link #boolColumn(CharSequence, boolean)},
  *     {@link #timestampColumn(CharSequence, long)} to add remaining columns columns</li>
- *     <li>Use {@link #atMicros(long)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use use
+ *     <li>Use {@link #at(long)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use use
  *     {@link #atNow()} which will add a timestamp on a server.</li>
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
  * </ol>
@@ -133,7 +133,7 @@ public interface Sender extends Closeable {
 
     /**
      * Finalize the current row and let QuestDB server assign a timestamp. If you need to set timestamp
-     * explicitly then see {@link #atMicros(long)}.
+     * explicitly then see {@link #at(long)}.
      * <br>
      * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
      *
@@ -141,12 +141,17 @@ public interface Sender extends Closeable {
     void atNow();
 
     /**
-     *  Finalize the current row and assign an explicit timestamp in microseconds since Epoch.
+     *  Finalize the current row and assign an explicit timestamp.
      *  After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
+     *  <br>
+     *  From a client perspective timestamp is an opaque number, and it's interpreted only on a QuestDB server.
+     *  QuestDB server default behaviour is to treat the timestamp as a number of nanoseconds since 1st Jan 1970 UTC.
+     *  This behavior can be adjusted by QuestDB server configuration. See <code>line.tcp.timestamp</code> in
+     *  <a href="https://questdb.io/docs/reference/configuration/">QuestDB server documentation</a>
      *
-     * @param timestamp timestamp in Epoch microseconds.
+     * @param timestamp time since 1st Jan 1970 UTC (epoch)
      */
-    void atMicros(long timestamp);
+    void at(long timestamp);
 
 
     /**

@@ -238,7 +238,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                     .enableTls().advancedTls().customTrustStore(truststore, TRUSTSTORE_PASSWORD);
             try {
                 builder.build();
-                fail("non existing trustore should throw an exception");
+                fail("non existing trust store should throw an exception");
             } catch (LineSenderException e) {
                 TestUtils.assertContains(e.getMessage(), "configured trust store is unavailable [path=classpath:/foo/whatever/non-existing]");
             }

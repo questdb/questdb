@@ -150,7 +150,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .stringColumn("string_field", "foo")
                         .doubleColumn("double_field", 42.0)
                         .timestampColumn("ts_field", tsMicros)
-                        .atMicros(tsMicros);
+                        .at(tsMicros * 1000);
                 sender.flush();
             }
 
@@ -177,7 +177,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .doubleColumn("nan", Double.NaN)
                         .doubleColumn("max_value", Double.MAX_VALUE)
                         .doubleColumn("min_value", Double.MIN_VALUE)
-                        .atMicros(ts);
+                        .at(ts * 1000);
                 sender.flush();
 
                 assertTableSizeEventually(engine, "mytable", 1);
@@ -331,7 +331,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         assertExceptionOnClosedSender(s -> {
             s.table("mytable");
             s.longColumn("col", 42);
-        }, s -> s.atMicros(MicrosecondClockImpl.INSTANCE.getTicks()));
+        }, s -> s.at(MicrosecondClockImpl.INSTANCE.getTicks()));
     }
 
     @Test
