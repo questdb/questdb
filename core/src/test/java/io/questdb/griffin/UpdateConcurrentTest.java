@@ -30,6 +30,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import io.questdb.std.ThreadLocal;
@@ -158,7 +159,7 @@ public class UpdateConcurrentTest extends AbstractGriffinTest {
                             Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
 
                             try (
-                                    QuietClosable op = cc.getOperation();
+                                    AbstractOperation op = cc.getOperation();
                                     OperationFuture fut = cc.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence.get())) {
                                 fut.await(10 * Timestamps.SECOND_MICROS);
                             }

@@ -157,9 +157,9 @@ public class Worker extends Thread {
 
     private void onError(int i, Throwable e) throws Throwable {
         metrics.healthCheck().incrementUnhandledErrors();
-        // Log error even when halt on error is set
+        // Log error even then halt if halt error setting is on.
         if (log != null) {
-            log.error().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();
+            log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();
         } else {
             e.printStackTrace();
         }
