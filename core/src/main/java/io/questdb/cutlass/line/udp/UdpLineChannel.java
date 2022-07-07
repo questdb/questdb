@@ -28,10 +28,7 @@ import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
 
 public final class UdpLineChannel implements LineChannel {
     private static final Log LOG = LogFactory.getLog(UdpLineChannel.class);
@@ -50,13 +47,18 @@ public final class UdpLineChannel implements LineChannel {
         if (nf.setMulticastInterface(fd, interfaceIPv4Address) != 0) {
             final int errno = nf.errno();
             close();
-            throw new LineSenderException("could not bind to ").appendIP4(interfaceIPv4Address).errno(errno);
+            throw new LineSenderException("could not bind ")
+                    .put("[ip=").appendIPv4(interfaceIPv4Address).put("]")
+                    .errno(errno);
         }
 
         if (nf.setMulticastTtl(fd, ttl) != 0) {
             final int errno = nf.errno();
             close();
-            throw new LineSenderException("could not set ttl [fd=" + fd + " , ttl=" + ttl + "]").errno(errno);
+            throw new LineSenderException("could not set ttl ")
+                    .put("[fd=").put(fd)
+                    .put(", ttl=").put(ttl).put("]")
+                    .errno(errno);
         }
     }
 

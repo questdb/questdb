@@ -376,7 +376,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             afterCloseAction.accept(sender);
             fail("use-after-close must throw exception");
         } catch (LineSenderException e) {
-            assertContains(e.getMessage(), "Sender already closed");
+            assertContains(e.getMessage(), "sender already closed");
         }
     }
 

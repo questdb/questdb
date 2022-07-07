@@ -28,10 +28,7 @@ import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
 
 public final class PlainTcpLineChannel implements LineChannel {
     private static final Log LOG = LogFactory.getLog(PlainTcpLineChannel.class);
@@ -44,14 +41,16 @@ public final class PlainTcpLineChannel implements LineChannel {
         this.nf = nf;
         this.fd = nf.socketTcp(true);
         if (fd < 0) {
-            throw new LineSenderException("could not allocate a file descriptor");
+            throw new LineSenderException("could not allocate a file descriptor").errno(nf.errno());
         }
         this.sockaddr = nf.sockaddr(address, port);
         if (nf.connect(fd, sockaddr) != 0) {
             int errno = nf.errno();
             nf.close(fd, LOG);
             nf.freeSockAddr(sockaddr);
-            throw new LineSenderException("could not connect").appendIP4(address).errno(errno);
+            throw new LineSenderException("could not connect to host ")
+                    .put("[ip=").appendIPv4(address).put("]")
+                    .errno(errno);
         }
         configureBuffers(nf, sndBufferSize);
     }
@@ -61,17 +60,20 @@ public final class PlainTcpLineChannel implements LineChannel {
         this.sockaddr = -1;
         this.fd = nf.socketTcp(true);
         if (fd < 0) {
-            throw new LineSenderException("could not allocate a file descriptor");
+            throw new LineSenderException("could not allocate a file descriptor").errno(nf.errno());
         }
         long addrInfo = nf.getAddrInfo(host, port);
         if (addrInfo == -1) {
             nf.close(fd, LOG);
-            throw new LineSenderException("could not resolve ").put(host).put( " to IP address");
+            throw new LineSenderException("could not resolve host ")
+                    .put("[host=").put(host).put( "]");
         }
         if (nf.connectAddrInfo(fd, addrInfo) != 0) {
+            int errno = nf.errno();
             nf.close(fd, LOG);
             nf.freeAddrInfo(addrInfo);
-            throw new LineSenderException("could not connect to ").put(host).errno(nf.errno());
+            throw new LineSenderException("could not connect to host ")
+                    .put("[host=").put(host).put("]").errno(errno);
         }
         nf.freeAddrInfo(addrInfo);
         configureBuffers(nf, sndBufferSize);

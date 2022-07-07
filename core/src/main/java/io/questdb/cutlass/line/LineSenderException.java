@@ -50,12 +50,17 @@ public class LineSenderException extends RuntimeException {
         return this;
     }
 
+    public LineSenderException put(long value) {
+        message.put(value);
+        return this;
+    }
+
     public LineSenderException putAsPrintable(CharSequence nonPrintable) {
         message.putAsPrintable(nonPrintable);
         return this;
     }
 
-    public LineSenderException appendIP4(int ip) {
+    public LineSenderException appendIPv4(int ip) {
         Net.appendIP4(message, ip);
         return this;
     }

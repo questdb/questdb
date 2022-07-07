@@ -241,7 +241,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     protected final void validateNotClosed() {
         if (closed) {
-            throw new LineSenderException("Sender already closed");
+            throw new LineSenderException("sender already closed");
         }
     }
 
@@ -433,13 +433,13 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
             rawSignature = sig.sign();
         } catch (InvalidKeyException ex) {
             close();
-            throw new LineSenderException("invalid key");
+            throw new LineSenderException("invalid key", ex);
         } catch (SignatureException ex) {
             close();
-            throw new LineSenderException("cannot sign challenge");
+            throw new LineSenderException("cannot sign challenge", ex);
         } catch (NoSuchAlgorithmException ex) {
             close();
-            throw new LineSenderException("unsupported signing algorithm");
+            throw new LineSenderException("unsupported signing algorithm", ex);
         }
         return Base64.getEncoder().encode(rawSignature);
     }

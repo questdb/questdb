@@ -183,7 +183,8 @@ public final class DelegatingTlsChannel implements LineChannel {
             String adjustedPath = trustStorePath.substring("classpath:".length());
             trustStoreStream = DelegatingTlsChannel.class.getResourceAsStream(adjustedPath);
             if (trustStoreStream == null) {
-                throw new LineSenderException("Configured trust at classpath:" + trustStorePath + " is unavailable on a classpath");
+                throw new LineSenderException("configured trust store is unavailable ")
+                        .put("[path=").put(trustStorePath).put("]");
             }
             return trustStoreStream;
         }

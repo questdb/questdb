@@ -243,24 +243,30 @@ public interface Sender extends Closeable {
          */
         public LineSenderBuilder address(CharSequence address) {
             if (this.address != null) {
-                throw new LineSenderException("server address is already configured to " + this.address);
+                throw new LineSenderException("server address is already configured ")
+                        .put("[configured-address=").put(this.address).put("]");
             }
             if (address == null || address.length() == 0) {
                 throw new LineSenderException("address cannot be empty nor null");
             }
             int portIndex = Chars.indexOf(address, ':');
             if (portIndex + 1 == address.length()) {
-                throw new LineSenderException("cannot parse address " + address + ". address cannot ends with :");
+                throw new LineSenderException("address cannot ends with : ")
+                        .put("[address=").put(address).put("]");
             }
             if (portIndex != -1) {
                 if (port != 0) {
-                    throw new LineSenderException("address " + address + " contains a port, but a port was already configured to " + port);
+                    throw new LineSenderException("address contains a port, but a port was already configured ")
+                            .put("[address=").put(address)
+                            .put(", configured-port=").put(port)
+                            .put("]");
                 }
                 addressLimit = portIndex;
                 try {
                     port = Numbers.parseInt(address, portIndex + 1, address.length());
                 } catch (NumericException e) {
-                    throw new LineSenderException("cannot parse port from address " + address, e);
+                    throw new LineSenderException("cannot parse port from address ", e).
+                            put("[address=").put(address).put("]");
                 }
             } else {
                 addressLimit = address.length();
@@ -277,7 +283,8 @@ public interface Sender extends Closeable {
          */
         public LineSenderBuilder port(int port) {
             if (this.port != 0) {
-                throw new LineSenderException("post is already configured to " + this.port);
+                throw new LineSenderException("post is already configured ")
+                        .put("[configured-port=").put(port).put("]");
             }
             this.port = port;
             return this;
@@ -291,7 +298,8 @@ public interface Sender extends Closeable {
          */
         public LineSenderBuilder.AuthBuilder enableAuth(String keyId) {
             if (this.keyId != null) {
-                throw new LineSenderException("authentication keyId was already configured");
+                throw new LineSenderException("authentication keyId was already configured ")
+                        .put("[configured-keyId=").put(this.keyId).put("]");
             }
             this.keyId = keyId;
             return new LineSenderBuilder.AuthBuilder();
@@ -304,7 +312,7 @@ public interface Sender extends Closeable {
          */
         public LineSenderBuilder enableTls() {
             if (tlsEnabled) {
-                throw new LineSenderException("tls was already configured");
+                throw new LineSenderException("tls was already enabled");
             }
             tlsEnabled = true;
             return this;
@@ -321,7 +329,8 @@ public interface Sender extends Closeable {
          */
         public LineSenderBuilder bufferCapacity(int bufferCapacity) {
             if (this.bufferCapacity != BUFFER_CAPACITY_DEFAULT) {
-                throw new LineSenderException("buffer capacity was already configured to " + this.bufferCapacity);
+                throw new LineSenderException("buffer capacity was already configured ")
+                        .put("[configured-capacity=").put(this.bufferCapacity).put("]");
             }
             this.bufferCapacity = bufferCapacity;
             return this;
@@ -334,7 +343,8 @@ public interface Sender extends Closeable {
          */
         public AdvancedTlsSettings advancedTls() {
             if (LineSenderBuilder.this.trustStorePath != null) {
-                throw new LineSenderException("custom trust store was already configured to " + LineSenderBuilder.this.trustStorePath);
+                throw new LineSenderException("custom trust store was already configured ")
+                        .put("[configured-path=").put(LineSenderBuilder.this.trustStorePath).put("]");
             }
             if (tlsValidationMode == TlsValidationMode.INSECURE) {
                 throw new LineSenderException("TLS validation was already disabled");
@@ -405,13 +415,17 @@ public interface Sender extends Closeable {
                 throw new LineSenderException("questdb server address not set");
             }
             if (!tlsEnabled && trustStorePath != null) {
-                throw new LineSenderException("custom trust store configured to " + trustStorePath + ", but TLS was not enabled");
+                throw new LineSenderException("custom trust store configured, but TLS was not enabled ")
+                        .put("[configured-path=").put(LineSenderBuilder.this.trustStorePath).put("]");
             }
             if (!tlsEnabled && tlsValidationMode != TlsValidationMode.DEFAULT) {
                 throw new LineSenderException("TSL validation disabled, but TLS was not enabled");
             }
             if (keyId != null && bufferCapacity < MIN_BUFFER_SIZE_FOR_AUTH) {
-                throw new LineSenderException("Minimal buffer capacity is " + MIN_BUFFER_SIZE_FOR_AUTH + ". Requested buffer capacity: " + bufferCapacity);
+                throw new LineSenderException("Requested buffer too small ")
+                        .put("[minimal-capacity=").put(MIN_BUFFER_SIZE_FOR_AUTH)
+                        .put(", requested-capacity=").put(bufferCapacity)
+                        .put("]");
             }
         }
 
