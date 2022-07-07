@@ -25,7 +25,6 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryPMARImpl;
@@ -180,7 +179,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.offset = 0;
         this.columnDelimiter = columnDelimiter;
         if (timestampIndex < 0) {
-            throw TextException.$("Timestamp index is not set [value=").put(timestampIndex).put("]");
+            throw TextException.$("Timestamp index is not set [value=").put(timestampIndex).put(']');
         }
         this.timestampIndex = timestampIndex;
         this.timestampAdapter = adapter;
@@ -231,9 +230,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
             timestampValue = timestampAdapter.getTimestamp(timestampField);
         } catch (Exception e) {
             if (failOnTsError) {
-                throw TextException.$("Can't parse timestamp on line ").put(lineCount).put(" column ").put(timestampIndex);
+                throw TextException.$("could not parse timestamp [line=").put(lineCount).put(", column=").put(timestampIndex).put(']');
             } else {
-                LOG.error().$("Can't parse timestamp on line ").$(lineCount).$(" column ").$(timestampIndex).$();
+                LOG.error().$("could not parse timestamp [line=").$(lineCount).$(", column=").$(timestampIndex).I$();
                 errorCount++;
             }
         }
@@ -618,7 +617,11 @@ public class CsvFileIndexer implements Closeable, Mutable {
             } while (offset < chunkHi);
 
             if (read < 0 || offset < chunkHi) {
-                throw TextException.$("could not read file [path='").put(path).put("',offset=").put(offset).put(",errno=").put(ff.errno()).put("]");
+                throw TextException
+                        .$("could not read file [path='").put(path)
+                        .put("', offset=").put(offset)
+                        .put(", errno=").put(ff.errno())
+                        .put(']');
             } else {
                 parseLast();
             }

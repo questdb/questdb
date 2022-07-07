@@ -47,9 +47,8 @@ public class Copy2Test extends AbstractGriffinTest {
                 compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Can't remove work dir because it points to one of main instance directories"));
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("cannot remove work dir because it points to one of main instance directories"));
             }
-
         });
     }
 }

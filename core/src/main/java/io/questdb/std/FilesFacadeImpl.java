@@ -272,6 +272,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
+        // do not bother allocating on Windows because mmap() will try to allocate regardless
         if (Os.type != Os.WINDOWS) {
             return Files.allocate(fd, size);
         }

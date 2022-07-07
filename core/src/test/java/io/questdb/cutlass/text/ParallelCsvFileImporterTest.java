@@ -730,7 +730,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.of("t", "test-quotes-empty.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
             } catch (TextException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Ignoring file because it's empty"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("ignored empty input file [file='"));
             }
         });
     }
@@ -938,7 +938,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Import terminated at BOUNDARY_CHECK phase. Could not read import file"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=BOUNDARY_CHECK, msg=`could not read import file"));
             }
         });
     }
@@ -963,7 +963,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Import terminated at INDEXING phase."));
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=INDEXING, msg=`could not read file"));
             }
         });
     }
@@ -987,7 +987,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Import terminated at PARTITION_IMPORT phase."));
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=PARTITION_IMPORT, msg=`could not read from file"));
             }
         });
     }
@@ -999,7 +999,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
             @Override
             public long openRO(LPSZ name) {
-                if (name.toString().endsWith("test-quotes-big.csv")) {
+                if (Chars.endsWith(name, "test-quotes-big.csv")) {
                     if (count++ > 1) {
                         return -1;
                     }
@@ -1016,7 +1016,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (name.toString().endsWith("test-quotes-big.csv") && stackContains("CsvFileIndexer")) {
+                if (Chars.endsWith(name, "test-quotes-big.csv") && stackContains("CsvFileIndexer")) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -1047,7 +1047,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (name.toString().endsWith("3_1")) {
+                if (Chars.endsWith(name, "3_1")) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -1062,7 +1062,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (name.toString().endsWith("line.c")) {
+                if (Chars.endsWith(name, "line.c")) {
                     return -1;
                 }
                 return super.openRO(name);
@@ -1077,7 +1077,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (name.toString().endsWith("line.r") && stackContains("UpdateSymbolColumnKeysStage")) {
+                if (Chars.endsWith(name, "line.r") && stackContains("UpdateSymbolColumnKeysStage")) {
                     return -1;
                 }
 
@@ -1093,7 +1093,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (name.toString().endsWith("line.v") && stackContains("BuildSymbolColumnIndexStage")) {
+                if (Chars.endsWith(name, "line.v") && stackContains("BuildSymbolColumnIndexStage")) {
                     return -1;
                 }
 
@@ -1113,7 +1113,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Import terminated at " + phase + " phase"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=" + phase));
             }
         });
     }
@@ -1185,7 +1185,18 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         }
     }
 
-    private void importAndCleanupTable(ParallelCsvFileImporter importer, SqlExecutionContext context, SqlCompiler compiler, CharSequence tableName, CharSequence inputFileName, int partitionBy, byte columnDelimiter, CharSequence timestampColumn, CharSequence tsFormat, boolean forceHeader) throws Exception {
+    private void importAndCleanupTable(
+            ParallelCsvFileImporter importer,
+            SqlExecutionContext context,
+            SqlCompiler compiler,
+            CharSequence tableName,
+            CharSequence inputFileName,
+            int partitionBy,
+            byte columnDelimiter,
+            CharSequence timestampColumn,
+            CharSequence tsFormat,
+            boolean forceHeader
+    ) throws Exception {
         importer.of(tableName, inputFileName, partitionBy, columnDelimiter, timestampColumn, tsFormat, forceHeader, Atomicity.SKIP_COL);
         importer.process();
         importer.clear();
@@ -1200,7 +1211,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (from.toString().endsWith("1972-09" + File.separator)) {
+                if (Chars.endsWith(from, "1972-09" + File.separator)) {
                     return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
@@ -1220,7 +1231,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                if (path.toString().endsWith("1972-09" + File.separator + "ts.d")) {
+                if (Chars.endsWith(path, "1972-09" + File.separator + "ts.d")) {
                     return false;
                 }
                 return super.exists(path);
@@ -1256,7 +1267,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (from.toString().endsWith("1972-09" + File.separator)) {
+                if (Chars.endsWith(from,"1972-09" + File.separator)) {
                     return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
@@ -1289,7 +1300,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
-                if (path.toString().endsWith("1972-09" + File.separator + "ts.d")) {
+                if (Chars.endsWith(path, "1972-09" + File.separator + "ts.d")) {
                     return false;
                 }
                 return super.exists(path);
@@ -1320,7 +1331,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (TextException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Import terminated at INDEXING phase. Can't parse timestamp"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=INDEXING, msg=`could not parse timestamp [line=0, column=1]`]"));
             }
         });
     }
@@ -1527,7 +1538,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileWithHeaderButMissingTimestampColumn() throws Exception {
-        testImportThrowsException("test-quotes-big.csv", PartitionBy.MONTH, "ts1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", "timestamp column 'ts1' not found in file header");
+        testImportThrowsException("test-quotes-big.csv", PartitionBy.DAY, "ts1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", "timestamp column 'ts1' not found in file header");
     }
 
     @Test
@@ -1900,7 +1911,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (TextException e) {
-                MatcherAssert.assertThat(e.getMessage(), containsString("Import terminated at PARTITION_IMPORT phase. bad syntax"));
+                MatcherAssert.assertThat(e.getMessage(), containsString("import failed [phase=PARTITION_IMPORT, msg=`bad syntax"));
             }
         });
     }

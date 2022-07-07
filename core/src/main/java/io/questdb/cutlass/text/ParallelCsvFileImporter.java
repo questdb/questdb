@@ -137,7 +137,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public ParallelCsvFileImporter(SqlExecutionContext sqlExecutionContext) {
         this.workerCount = sqlExecutionContext.getWorkerCount();
         if (workerCount < 1) {
-            throw TextException.$("Invalid worker count set [value=").put(this.workerCount).put("]");
+            throw TextException.$("Invalid worker count set [value=").put(this.workerCount).put(']');
         }
 
         MessageBus bus = sqlExecutionContext.getMessageBus();
@@ -444,7 +444,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void checkImportStatus() throws TextException {
         if (!isSuccess) {
-            throw TextException.$("Import terminated at ").put(TextImportTask.getPhaseName(phase)).put(" phase. ").put(errorMessage);
+            throw TextException
+                    .$("import failed [phase=").put(TextImportTask.getPhaseName(phase))
+                    .put(", msg=`").put(errorMessage).put("`]");
         }
     }
 
@@ -661,7 +663,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     final TextImportTask task = queue.get(seq);
                     task.setIndex(colIdx);
                     task.setCircuitBreaker(circuitBreaker);
-                    task.ofBuildPartitionIndexStage(chunkLo, chunkHi, lineNumber, colIdx, configuration, inputFileName, importRoot, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader, atomicity);
+                    task.ofBuildPartitionIndexStage(chunkLo, chunkHi, lineNumber, colIdx, inputFileName, importRoot, partitionBy, columnDelimiter, timestampIndex, timestampAdapter, forceHeader, atomicity);
                     if (forceHeader) {
                         forceHeader = false;
                     }
@@ -773,7 +775,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
                                 dstPath.trimTo(dstPlen).concat(partitionName).concat(name).$();
                                 if (ff.copy(srcPath, dstPath) < 0) {
-                                    throw TextException.$("Cannot copy partition file [to='").put(dstPath).put("',errno=").put(ff.errno()).put("]");
+                                    throw TextException.$("Cannot copy partition file [to='").put(dstPath).put("',errno=").put(ff.errno()).put(']');
                                 }
                             }
                         });
@@ -1095,7 +1097,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         try {
             long length = ff.length(fd);
             if (length < 1) {
-                throw TextException.$("Ignoring file because it's empty [path='").put(inputFilePath).put(']');
+                throw TextException.$("ignored empty input file [file='").put(inputFilePath).put(']');
             }
 
             try (TableWriter writer = parseStructure(fd)) {
@@ -1125,7 +1127,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         long endMs = getCurrentTimeMs();
-        LOG.info().$("Finished importing file='").$(inputFileName).$("' time=").$((endMs - startMs) / 1000).$("s").$();
+        LOG.info().$("import complete [file='").$(inputFileName).$("', time=").$((endMs - startMs) / 1000).$("s").I$();
     }
 
     @TestOnly
@@ -1146,14 +1148,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         if (ff.exists(workDirPath)) {
             if (isOneOfMainDirectories(importRoot)) {
-                throw CairoException.instance(0).put("Can't remove work dir because it points to one of main instance directories [path='").put(workDirPath).put("'] .");
+                throw CairoException.instance(0).put("cannot remove work dir because it points to one of main instance directories [path='").put(workDirPath).put("'] .");
             }
 
             LOG.info().$("removing import directory path='").$(workDirPath).$("'").$();
 
             int errno = ff.rmdir(workDirPath);
             if (errno != 0) {
-                throw TextException.$("Can't remove import directory [path='").put(workDirPath).put("' errno=").put(errno).put("]");
+                throw TextException.$("could not remove [path='").put(workDirPath).put("', errno=").put(errno).put(']');
             }
         }
     }

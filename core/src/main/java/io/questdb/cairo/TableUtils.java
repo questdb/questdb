@@ -647,7 +647,11 @@ public final class TableUtils {
         if (addr > -1) {
             return addr;
         }
-        throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
+        int errno = ff.errno();
+        if (Os.type != Os.WINDOWS || errno != 112) {
+            throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
+        }
+        throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
     }
 
     public static long mapRWOrClose(FilesFacade ff, long fd, long size, int memoryTag) {
