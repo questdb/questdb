@@ -35,7 +35,6 @@ import io.questdb.std.NumericException;
 
 import javax.security.auth.DestroyFailedException;
 import java.io.Closeable;
-import java.io.IOException;
 import java.security.PrivateKey;
 
 /**
@@ -213,8 +212,7 @@ public interface Sender extends Closeable {
         private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
 
         private int port = PORT_DEFAULT;
-        private CharSequence address;
-        private int addressLimit;
+        private String host;
         private PrivateKey privateKey;
         private boolean shouldDestroyPrivKey;
         private int bufferCapacity = BUFFER_CAPACITY_DEFAULT;
@@ -242,9 +240,9 @@ public interface Sender extends Closeable {
          * @return this instance for method chaining.
          */
         public LineSenderBuilder address(CharSequence address) {
-            if (this.address != null) {
+            if (this.host != null) {
                 throw new LineSenderException("server address is already configured ")
-                        .put("[configured-address=").put(this.address).put("]");
+                        .put("[configured-address=").put(this.host).put("]");
             }
             if (address == null || address.length() == 0) {
                 throw new LineSenderException("address cannot be empty nor null");
@@ -261,7 +259,7 @@ public interface Sender extends Closeable {
                             .put(", configured-port=").put(port)
                             .put("]");
                 }
-                addressLimit = portIndex;
+                this.host = address.subSequence(0, portIndex).toString();
                 try {
                     port = Numbers.parseInt(address, portIndex + 1, address.length());
                 } catch (NumericException e) {
@@ -269,9 +267,8 @@ public interface Sender extends Closeable {
                             put("[address=").put(address).put("]");
                 }
             } else {
-                addressLimit = address.length();
+                this.host = address.toString();
             }
-            this.address = address;
             return this;
         }
 
@@ -362,14 +359,13 @@ public interface Sender extends Closeable {
             validateParameters();
 
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-            CharSequence host = address.subSequence(0, addressLimit);
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
             LineTcpSender sender;
             if (tlsEnabled) {
                 assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                 DelegatingTlsChannel tlsChannel;
                 try {
-                    tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword, tlsValidationMode, host.toString());
+                    tlsChannel = new DelegatingTlsChannel(channel, trustStorePath, trustStorePassword, tlsValidationMode, host);
                 } catch (Throwable t) {
                     channel.close();
                     throw rethrow(t);
@@ -411,7 +407,7 @@ public interface Sender extends Closeable {
         }
 
         private void validateParameters() {
-            if (address == null) {
+            if (host == null) {
                 throw new LineSenderException("questdb server address not set");
             }
             if (!tlsEnabled && trustStorePath != null) {

@@ -75,7 +75,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 builder.address("foo:");
                 fail("should fail when address ends with colon");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "cannot parse address");
+                TestUtils.assertContains(e.getMessage(), "address cannot ends");
             }
         });
     }
@@ -240,7 +240,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 builder.build();
                 fail("non existing trustore should throw an exception");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "is unavailable on a classpath");
+                TestUtils.assertContains(e.getMessage(), "configured trust store is unavailable [path=classpath:/foo/whatever/non-existing]");
             }
         });
     }
@@ -468,7 +468,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 builder.enableTls();
                 fail("should not allow double tls set");
             } catch (LineSenderException e) {
-                TestUtils.assertContains(e.getMessage(), "already configured");
+                TestUtils.assertContains(e.getMessage(), "already enabled");
             }
         });
     }
