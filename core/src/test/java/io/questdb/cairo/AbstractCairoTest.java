@@ -38,6 +38,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.RostiAllocFacade;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -328,6 +329,7 @@ public class AbstractCairoTest {
                 return rostiAllocFacade != null? rostiAllocFacade : super.getRostiAllocFacade();
             }
         };
+        Unsafe.initLog();
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
         messageBus = engine.getMessageBus();
