@@ -48,9 +48,10 @@ public final class PlainTcpLineChannel implements LineChannel {
         }
         this.sockaddr = nf.sockaddr(address, port);
         if (nf.connect(fd, sockaddr) != 0) {
+            int errno = nf.errno();
             nf.close(fd, LOG);
             nf.freeSockAddr(sockaddr);
-            throw new LineSenderException("could not connect to ").appendIP4(address).errno(nf.errno());
+            throw new LineSenderException("could not connect").appendIP4(address).errno(errno);
         }
         configureBuffers(nf, sndBufferSize);
     }
