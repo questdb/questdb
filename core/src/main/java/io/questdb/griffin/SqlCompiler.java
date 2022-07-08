@@ -1885,7 +1885,7 @@ public class SqlCompiler implements Closeable {
             try {
                 final CharSequence name = GenericLexer.assertNoDots(GenericLexer.unquote(model.getFileName().token), model.getFileName().position);
 
-                if (model.isParalell()) {
+                if (model.isParallel()) {
                     if (model.getTimestampFormat() == null) {
                         model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
                     }
@@ -1893,7 +1893,7 @@ public class SqlCompiler implements Closeable {
                         model.setDelimiter((byte) ',');
                     }
 
-                    try (ParallelCsvFileImporter loader = new ParallelCsvFileImporter(executionContext)) {
+                    try (ParallelCsvFileImporter loader = new ParallelCsvFileImporter(executionContext.getCairoEngine(), executionContext.getWorkerCount(), executionContext.getCircuitBreaker())) {
                         loader.of(model.getTableName().token, name, model.getPartitionBy(), model.getDelimiter(), model.getTimestampColumnName(), model.getTimestampFormat(), model.isHeader(), model.getAtomicity());
                         loader.process();
                     }

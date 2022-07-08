@@ -25,8 +25,8 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cutlass.text.types.TimestampAdapter;
@@ -39,6 +39,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.text.ParallelCsvFileImporter.createTable;
 
@@ -46,31 +47,54 @@ public class TextImportTask {
 
     private static final Log LOG = LogFactory.getLog(TextImportTask.class);
 
+    public static final byte PHASE_SETUP = 0;
     public static final byte PHASE_BOUNDARY_CHECK = 1;
     public static final byte PHASE_INDEXING = 2;
     public static final byte PHASE_PARTITION_IMPORT = 3;
     public static final byte PHASE_SYMBOL_TABLE_MERGE = 4;
     public static final byte PHASE_UPDATE_SYMBOL_KEYS = 5;
     public static final byte PHASE_BUILD_SYMBOL_INDEX = 6;
+    public static final byte PHASE_MOVE_PARTITIONS = 7;
+    public static final byte PHASE_ATTACH_PARTITIONS = 8;
+    public static final byte PHASE_ANALYZE_FILE_STRUCTURE = 9;
+    public static final byte PHASE_CLEANUP = 10;
+
 
     private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();
+    private static final IntObjHashMap<String> STATUS_NAME_MAP = new IntObjHashMap<>();
+
+    public static final byte STATUS_STARTED = 0;
+    public static final byte STATUS_FINISHED = 1;
+    public static final byte STATUS_FAILED = 2;
+    public static final byte STATUS_CANCELLED = 3;
+
 
     static {
+        PHASE_NAME_MAP.put(PHASE_SETUP, "SETUP");
         PHASE_NAME_MAP.put(PHASE_BOUNDARY_CHECK, "BOUNDARY_CHECK");
         PHASE_NAME_MAP.put(PHASE_INDEXING, "INDEXING");
         PHASE_NAME_MAP.put(PHASE_PARTITION_IMPORT, "PARTITION_IMPORT");
         PHASE_NAME_MAP.put(PHASE_SYMBOL_TABLE_MERGE, "SYMBOL_TABLE_MERGE");
         PHASE_NAME_MAP.put(PHASE_UPDATE_SYMBOL_KEYS, "UPDATE_SYMBOL_KEYS");
         PHASE_NAME_MAP.put(PHASE_BUILD_SYMBOL_INDEX, "BUILD_SYMBOL_INDEX");
+        PHASE_NAME_MAP.put(PHASE_MOVE_PARTITIONS, "MOVE_PARTITIONS");
+        PHASE_NAME_MAP.put(PHASE_ATTACH_PARTITIONS, "ATTACH_PARTITIONS");
+        PHASE_NAME_MAP.put(PHASE_ANALYZE_FILE_STRUCTURE, "ANALYZE_FILE_STRUCTURE");
+        PHASE_NAME_MAP.put(PHASE_CLEANUP, "CLEANUP");
+
+        STATUS_NAME_MAP.put(STATUS_STARTED, "STARTED");
+        STATUS_NAME_MAP.put(STATUS_FINISHED, "FINISHED");
+        STATUS_NAME_MAP.put(STATUS_FAILED, "FAILED");
+        STATUS_NAME_MAP.put(STATUS_CANCELLED, "CANCELLED");
     }
 
-    public static final byte STATUS_OK = 0;
-    public static final byte STATUS_ERROR = 1;
-    public static final byte STATUS_CANCEL = 2;
-
     private byte phase;
+
     private int index;
-    private SqlExecutionCircuitBreaker circuitBreaker;
+    private ExecutionCircuitBreaker circuitBreaker;
+
+    private byte status;
+    private @Nullable CharSequence errorMessage;
 
     private final CountQuotesStage countQuotesStage = new CountQuotesStage();
     private final BuildPartitionIndexStage buildPartitionIndexStage = new BuildPartitionIndexStage();
@@ -79,11 +103,12 @@ public class TextImportTask {
     private final UpdateSymbolColumnKeysStage updateSymbolColumnKeysStage = new UpdateSymbolColumnKeysStage();
     private final BuildSymbolColumnIndexStage buildSymbolColumnIndexStage = new BuildSymbolColumnIndexStage();
 
-    private byte status;
-    private CharSequence errorMessage;
-
     public static String getPhaseName(byte phase) {
         return PHASE_NAME_MAP.get(phase);
+    }
+
+    public static String getStatusName(byte status) {
+        return STATUS_NAME_MAP.get(status);
     }
 
     public BuildPartitionIndexStage getBuildPartitionIndexStage() {
@@ -98,7 +123,7 @@ public class TextImportTask {
         return countQuotesStage;
     }
 
-    public CharSequence getErrorMessage() {
+    public @Nullable CharSequence getErrorMessage() {
         return errorMessage;
     }
 
@@ -111,18 +136,22 @@ public class TextImportTask {
     }
 
     public boolean isFailed() {
-        return this.status == STATUS_ERROR;
+        return this.status == STATUS_FAILED;
     }
 
     public boolean isCancelled() {
-        return this.status == STATUS_CANCEL;
+        return this.status == STATUS_CANCELLED;
+    }
+
+    public byte getStatus() {
+        return status;
     }
 
     public void setIndex(int index) {
         this.index = index;
     }
 
-    public void setCircuitBreaker(SqlExecutionCircuitBreaker circuitBreaker) {
+    public void setCircuitBreaker(ExecutionCircuitBreaker circuitBreaker) {
         this.circuitBreaker = circuitBreaker;
     }
 
@@ -219,10 +248,13 @@ public class TextImportTask {
             Path p2
     ) {
         try {
-            status = STATUS_OK;
+            this.status = STATUS_STARTED;
+            this.errorMessage = null;
+
             if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
-                status = STATUS_CANCEL;
-                this.errorMessage = "Task is cancelled";
+                this.status = STATUS_CANCELLED;
+                this.errorMessage = "Cancelled";
+                LOG.error().$("Import cancelled in ").$(getPhaseName(phase)).$(" phase.").$();
                 return false;
             }
             if (phase == PHASE_BOUNDARY_CHECK) {
@@ -245,7 +277,7 @@ public class TextImportTask {
                     .$("could not import [phase=").$(getPhaseName(phase))
                     .$(", ex=").$(t)
                     .I$();
-            this.status = STATUS_ERROR;
+            this.status = STATUS_FAILED;
             this.errorMessage = t.getMessage();
             return false;
         }
