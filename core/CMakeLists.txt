@@ -192,11 +192,11 @@ if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
             GIT_TAG liburing-2.2
             BUILD_IN_SOURCE 1
             BUILD_BYPRODUCTS "<SOURCE_DIR>/src/liburing.a"
+            BUILD_COMMAND make "CC=${CMAKE_C_COMPILER}" "AR=${CMAKE_AR}" "RANLIB=${CMAKE_RANLIB}"
             CONFIGURE_COMMAND ""
             INSTALL_COMMAND ""
             TEST_COMMAND ""
             LOG_BUILD ON
-            CMAKE_ARGS "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
     )
     ExternalProject_Get_Property(liburing_git SOURCE_DIR)
     add_library(liburing INTERFACE)
