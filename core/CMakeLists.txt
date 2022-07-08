@@ -3,9 +3,6 @@ project(questdb)
 
 include(ExternalProject)
 
-find_package(JNI REQUIRED)
-include_directories(${JNI_INCLUDE_DIRS})
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -200,6 +197,7 @@ if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
             INSTALL_COMMAND ""
             TEST_COMMAND ""
             LOG_BUILD ON
+            CMAKE_ARGS "-DCMAKE_TOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
     )
     ExternalProject_Get_Property(liburing_git SOURCE_DIR)
     add_library(liburing INTERFACE)
