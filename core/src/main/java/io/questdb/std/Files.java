@@ -185,6 +185,12 @@ public final class Files {
 
     public static native int lock(long fd);
 
+    public static native int hardLink(long lpszSrc, long lpszHardLink);
+
+    public static int hardLink(LPSZ src, LPSZ hardLink){
+        return hardLink(src.address(), hardLink.address());
+    }
+
     public static int mkdir(Path path, int mode) {
         return mkdir(path.address(), mode);
     }

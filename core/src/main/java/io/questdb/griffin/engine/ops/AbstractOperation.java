@@ -25,9 +25,16 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.QuietClosable;
 import io.questdb.tasks.TableWriterTask;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-public abstract class AbstractOperation implements AsyncWriterCommand {
+public abstract class AbstractOperation implements AsyncWriterCommand, QuietClosable {
+
+    static final long NO_CORRELATION_ID = -1L;
+
     private int cmdType;
     private String cmdName;
     private int tableId;
@@ -36,6 +43,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand {
 
     String tableName;
     int tableNamePosition;
+    @Nullable SqlExecutionContext sqlExecutionContext;
 
     void init(
             int cmdType,
@@ -51,6 +59,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand {
         this.tableId = tableId;
         this.tableVersion = tableVersion;
         this.tableNamePosition = tableNamePosition;
+        this.correlationId = NO_CORRELATION_ID;
     }
 
     @Override
@@ -88,9 +97,23 @@ public abstract class AbstractOperation implements AsyncWriterCommand {
         this.correlationId = correlationId;
     }
 
+    public void clearCommandCorrelationId() {
+        setCommandCorrelationId(NO_CORRELATION_ID);
+    }
+
     @Override
     public void serialize(TableWriterTask task) {
         task.of(cmdType, tableId, tableName);
         task.setInstance(correlationId);
+    }
+
+    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
+        assert sqlExecutionContext != null;
+        this.sqlExecutionContext = sqlExecutionContext;
+    }
+
+    @Override
+    public void close() {
+        // intentionally left empty
     }
 }

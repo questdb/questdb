@@ -1848,6 +1848,33 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReaderGoesToPoolWhenCommitHappen() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "testReaderGoesToPoolWhenCommitHappen";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("l", ColumnType.LONG)) {
+                CairoTestUtils.create(model);
+            }
+
+            int rowCount = 10;
+            try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
+                try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        TableWriter.Row row = writer.newRow();
+                        row.putLong(0, i);
+                        row.append();
+                    }
+                    writer.commit();
+                }
+            }
+
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(rowCount, reader.size());
+            }
+        });
+
+    }
+
+    @Test
     public void testLong256WriterReOpen() throws Exception {
         // we had a bug where size of LONG256 column was incorrectly defined
         // this caused TableWriter to incorrectly calculate append position in constructor

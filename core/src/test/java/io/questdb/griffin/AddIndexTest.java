@@ -55,8 +55,6 @@ public class AddIndexTest extends AbstractGriffinTest {
         });
     }
 
-
-
     @Test
     public void testBeforeAndAfterIndex() throws Exception {
         final String expected = "sym\tprice\tts\n" +
@@ -92,7 +90,6 @@ public class AddIndexTest extends AbstractGriffinTest {
                 "alter table trades alter column sym add index",
                 expected,
                 true
-
         );
     }
 
