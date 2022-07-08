@@ -906,4 +906,28 @@ public class NumbersTest {
         int x = Numbers.bswap(expected);
         Assert.assertEquals(expected, Numbers.bswap(x));
     }
+
+    @Test
+    public void testParseDoubleNegativeZero() throws NumericException {
+        double actual = Numbers.parseDouble("-0.0");
+
+        //check it's zero at all
+        Assert.assertEquals(0, actual, 0.0);
+
+        //check it's *negative* zero
+        double res = 1 / actual;
+        Assert.assertEquals(Double.NEGATIVE_INFINITY, res, 0.0);
+    }
+
+    @Test
+    public void testParseFloatNegativeZero() throws NumericException {
+        float actual = Numbers.parseFloat("-0.0");
+
+        //check it's zero at all
+        Assert.assertEquals(0, actual, 0.0);
+
+        //check it's *negative* zero
+        float res = 1 / actual;
+        Assert.assertEquals(Float.NEGATIVE_INFINITY, res, 0.0);
+    }
 }
