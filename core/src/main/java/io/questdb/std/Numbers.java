@@ -693,11 +693,8 @@ public final class Numbers {
             exp = -308;
         }
 
-        if (exp > -1) {
-            return (negative ? -val : val) * pow10d[exp];
-        } else {
-            return (negative ? -val : val) / pow10d[-exp];
-        }
+        double v = exp > -1 ? val * pow10d[exp] : val / pow10d[-exp];
+        return negative ? -v : v;
     }
 
     public static float parseFloat(CharSequence sequence) throws NumericException {
@@ -788,11 +785,8 @@ public final class Numbers {
             exp = -38;
         }
 
-        if (exp > 0) {
-            return (negative ? -val : val) * pow10f[exp];
-        } else {
-            return (negative ? -val : val) / pow10f[-exp];
-        }
+        float v = exp > 0 ? val * pow10f[exp] : val / pow10f[-exp];
+        return negative ? -v : v;
     }
 
     public static int parseHexInt(CharSequence sequence) throws NumericException {
