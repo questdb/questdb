@@ -190,7 +190,6 @@ if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
             liburing_git
             GIT_REPOSITORY http://github.com/axboe/liburing.git
             GIT_TAG liburing-2.2
-            BUILD_COMMAND make
             BUILD_IN_SOURCE 1
             BUILD_BYPRODUCTS "<SOURCE_DIR>/src/liburing.a"
             CONFIGURE_COMMAND ""
