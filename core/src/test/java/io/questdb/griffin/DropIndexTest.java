@@ -401,7 +401,14 @@ public class DropIndexTest extends AbstractGriffinTest {
                 // we didnt fail, check they did
                 Throwable fail = concurrentDropIndexFailure.get();
                 Assert.assertNotNull(fail);
-                TestUtils.assertContains(fail.getMessage(), "Column is not indexed [name=sensor_id][errno=-100]");
+                if (fail instanceof EntryUnavailableException) {
+                    TestUtils.assertContains(fail.getMessage(), "table busy [reason=Alter table execute]");
+                }
+                else if (fail instanceof SqlException) {
+                    TestUtils.assertContains(fail.getMessage(), "Column is not indexed");
+                } else {
+                    Assert.fail();
+                }
             } catch (EntryUnavailableException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=Alter table execute]");
                 // we failed, check they didnt
@@ -412,6 +419,8 @@ public class DropIndexTest extends AbstractGriffinTest {
                 // we failed, check they didnt
                 Assert.assertNull(concurrentDropIndexFailure.get());
                 endLatch.await();
+            } catch (Throwable t) {
+                Assert.fail();
             }
 
             engine.releaseAllReaders();
