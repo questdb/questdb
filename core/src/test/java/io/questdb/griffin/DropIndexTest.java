@@ -493,7 +493,7 @@ public class DropIndexTest extends AbstractGriffinTest {
             Assert.assertEquals(expectedDFiles,
                     countFiles("temperature", 0L, DropIndexTest::isDataFile)
             );
-            // check index files have been dropped
+            // check index files exist
             Assert.assertEquals(expectedDFiles * 2,
                     countFiles("temperature", 0L, DropIndexTest::isIndexFile)
             );

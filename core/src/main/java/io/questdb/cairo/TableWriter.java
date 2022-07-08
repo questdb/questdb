@@ -151,6 +151,7 @@ public class TableWriter implements Closeable {
     private final LongLongHashMap cmdSequences = new LongLongHashMap();
     private final AlterOperation alterTableStatement = new AlterOperation();
     private final ColumnVersionWriter columnVersionWriter;
+    private ColumnVersionReader detachedColumnVersionReader;
     private final Metrics metrics;
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
@@ -647,9 +648,11 @@ public class TableWriter implements Closeable {
             if (!ff.exists(path)) {
                 setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
                 detachedPath.put(DETACHED_DIR_MARKER).$();
-
                 if (ff.exists(detachedPath)) {
-                    checkDetachedMetadataOnPartitionAttach();
+
+                    // check metadata
+                    checkDetachedMetadataOnPartitionAttach(timestamp);
+
                     if (ff.rename(detachedPath, path)) {
                         rollbackRename = true;
                         LOG.info().$("moved partition dir: ").$(detachedPath).$(" to ").$(path).$();
@@ -806,11 +809,8 @@ public class TableWriter implements Closeable {
             // copy metadata file
             path.trimTo(rootLen).concat(META_FILE_NAME);
             detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME);
-            if (-1 != ff.copy(path.$(), detachedPath.$())) {
-                commitDetachPartition(timestamp, minTimestamp);
-                return StatusCode.OK;
-            } else {
-                // copy metadata failed
+            int rollbackRename = 0;
+            if (-1 == ff.copy(path.$(), detachedPath.$())) {
                 LOG.error()
                         .$("cannot copy [errno=")
                         .$(ff.errno())
@@ -820,6 +820,36 @@ public class TableWriter implements Closeable {
                         .$(detachedPath)
                         .$(']')
                         .$();
+                rollbackRename = 1;
+            } else {
+                // copy column versions file
+                path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME);
+                detachedPath.trimTo(detachedPathLen).concat(COLUMN_VERSION_FILE_NAME);
+                if (-1 == ff.copy(path.$(), detachedPath.$())) {
+                    LOG.error()
+                            .$("cannot copy [errno=")
+                            .$(ff.errno())
+                            .$(", from=")
+                            .$(path)
+                            .$(", to=")
+                            .$(detachedPath)
+                            .$(']')
+                            .$();
+                    rollbackRename = 2;
+                }
+            }
+
+            if (rollbackRename > 0) {
+                StatusCode statusCode = StatusCode.PARTITION_CANNOT_COPY_META;
+                if (rollbackRename == 2) {
+                    detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME).$();
+                    if (!ff.remove(detachedPath)) { // remove .detached/_meta
+                        LOG.error()
+                                .$("cannot remove [errno=").$(ff.errno())
+                                .$(", path=").$(detachedPath)
+                                .I$();
+                    }
+                }
 
                 // undo rename
                 setPathForPartition(path, rootLen, partitionBy, timestamp, partitionVersion);
@@ -831,10 +861,13 @@ public class TableWriter implements Closeable {
                             .$(", undo=").$(detachedPath)
                             .$(", original=").$(path)
                             .I$();
-                    return StatusCode.PARTITION_FOLDER_CANNOT_UNDO_RENAME;
+                    statusCode = StatusCode.PARTITION_FOLDER_CANNOT_UNDO_RENAME;
                 }
-                return StatusCode.PARTITION_CANNOT_COPY_META;
+                return statusCode;
             }
+
+            commitDetachPartition(timestamp, minTimestamp);
+            return StatusCode.OK;
         } finally {
             path.trimTo(rootLen);
             detachedPath.trimTo(detachedRootLen);
@@ -1922,12 +1955,13 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void checkDetachedMetadataOnPartitionAttach() {
-        other.of(detachedPath).concat(META_FILE_NAME).$();
+    private void checkDetachedMetadataOnPartitionAttach(long timestamp) {
         TableReaderMetadata detachedMetadata = null;
         try {
+            // _meta
+            other.of(detachedPath).concat(META_FILE_NAME).$();
             if (!ff.exists(other)) {
-                // Backups and older versions of detached partitions will not have _meta.detached
+                // Backups and older versions of detached partitions will not have _meta
                 LOG.info()
                         .$("Partition metadata not found, skipping compatibility check [path=")
                         .$(other)
@@ -1958,6 +1992,42 @@ public class TableWriter implements Closeable {
                 if (metadata.getColumnType(i) != detachedMetadata.getColumnType(i)) {
                     throw CairoException.detachedColumnMetadataMismatch(i, name, "type");
                 }
+            }
+            if (!ff.remove(other)) {
+                LOG.info()
+                        .$("Please delete this file manually [path=")
+                        .$(other)
+                        .$(']')
+                        .$();
+            }
+
+            // _cv
+            other.of(detachedPath).concat(COLUMN_VERSION_FILE_NAME).$();
+            if (!ff.exists(other)) {
+                // Backups and older versions of detached partitions will not have _cv
+                LOG.info()
+                        .$("Partition column version metadata not found, skipping compatibility check [path=")
+                        .$(other)
+                        .$(']')
+                        .$();
+                return;
+            }
+
+            if (detachedColumnVersionReader == null) {
+                detachedColumnVersionReader = new ColumnVersionReader();
+            }
+            detachedColumnVersionReader.ofRO(ff, other);
+            boolean hasChanges = false;
+            for (int i = 0; i < columnCount; i++) {
+                long detachedTop = detachedColumnVersionReader.getColumnTopQuick(timestamp, i);
+                long top = columnVersionWriter.getColumnTopQuick(timestamp, i);
+                if (detachedTop > top) {
+                    columnVersionWriter.upsertColumnTop(timestamp, i, detachedTop);
+                    hasChanges = true;
+                }
+            }
+            if (hasChanges) {
+                columnVersionWriter.commit();
             }
             if (!ff.remove(other)) {
                 LOG.info()
@@ -2501,9 +2571,10 @@ public class TableWriter implements Closeable {
         Misc.free(detachedPath);
         Misc.free(todoMem);
         Misc.free(columnVersionWriter);
+        Misc.free(detachedColumnVersionReader);
+        updateOperator = Misc.free(updateOperator);
         Misc.free(o3ColumnTopSink);
         Misc.free(commandQueue);
-        updateOperator = Misc.free(updateOperator);
         dropIndexOperator = Misc.free(dropIndexOperator);
         freeColumns(truncate & !distressed);
         try {
