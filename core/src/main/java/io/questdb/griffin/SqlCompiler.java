@@ -32,10 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.ParallelCsvFileImporter;
-import io.questdb.cutlass.text.TextException;
-import io.questdb.cutlass.text.TextLoader;
+import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.*;
@@ -1935,7 +1932,7 @@ public class SqlCompiler implements Closeable {
             }
 
             LOG.info().$("copied").$();
-        } catch (TextException e) {
+        } catch (TextImportException | TextException e) {
             LOG.error().$((Throwable) e).$();
             throw SqlException.$(0, e.getMessage());
         }
