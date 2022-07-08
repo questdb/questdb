@@ -65,8 +65,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getRssMemoryLimit() {
-        // For test, limit memory allocated to 3 GB
-        return 3 * 1024L * 1024 * 1024;
+        return -1;
     }
 
     @Override
