@@ -33,7 +33,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.AbstractCharSink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 import java.security.InvalidKeyException;
@@ -118,8 +117,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender field(CharSequence name, long value) {
-        validateColumnName(name);
-        field(name).put(value).put('i');
+        writeFieldName(name).put(value).put('i');
         return this;
     }
 
@@ -129,8 +127,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender field(CharSequence name, CharSequence value) {
-        validateColumnName(name);
-        field(name).put('"');
+        writeFieldName(name).put('"');
         quoted = true;
         encodeUtf8(value);
         quoted = false;
@@ -144,8 +141,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender field(CharSequence name, double value) {
-        validateColumnName(name);
-        field(name).put(value);
+        writeFieldName(name).put(value);
         return this;
     }
 
@@ -155,8 +151,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
     }
 
     public AbstractLineSender field(CharSequence name, boolean value) {
-        validateColumnName(name);
-        field(name).put(value ? 't' : 'f');
+        writeFieldName(name).put(value ? 't' : 'f');
         return this;
     }
 
@@ -167,8 +162,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
 
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, long value) {
-        validateColumnName(name);
-        field(name).put(value).put('t');
+        writeFieldName(name).put(value).put('t');
         return this;
     }
 
@@ -295,8 +289,9 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         return tag(name, value);
     }
 
-    private CharSink field(CharSequence name) {
+    private CharSink writeFieldName(CharSequence name) {
         validateNotClosed();
+        validateColumnName(name);
         if (hasTable) {
             if (!hasColumns) {
                 put(' ');
