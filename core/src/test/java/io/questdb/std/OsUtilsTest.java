@@ -39,11 +39,21 @@ public class OsUtilsTest {
     static final Log LOG = LogFactory.getLog(OsUtils.class);
 
     @Test
-    public void testFileLimitNonLinux() {
-        Assume.assumeFalse(Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64);
+    public void testFileLimitOsx() {
+        Assume.assumeTrue(Os.type == Os.OSX_ARM64 || Os.type == Os.OSX_AMD64);
 
         long fileLimit = FilesFacadeImpl.INSTANCE.getOsFileLimit();
         Assert.assertEquals(-1L, fileLimit);
+
+        System.out.println(fileLimit);
+    }
+
+    @Test
+    public void testFileLimitWindows() {
+        Assume.assumeTrue(Os.type == Os.WINDOWS);
+
+        long fileLimit = FilesFacadeImpl.INSTANCE.getOsFileLimit();
+        Assert.assertEquals(16711680, fileLimit);
 
         System.out.println(fileLimit);
     }
