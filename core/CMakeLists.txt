@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.5)
 project(questdb)
 
+include(ExternalProject)
+
+find_package(JNI REQUIRED)
+include_directories(${JNI_INCLUDE_DIRS})
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -184,21 +189,23 @@ include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 
 if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
     MESSAGE("Downloading io_uring")
-    FetchContent_Declare(
-        liburing
-        GIT_REPOSITORY https://github.com/axboe/liburing.git
-        GIT_TAG        dda4848a9911120a903bef6284fb88286f4464c9 # liburing-2.2
+    ExternalProject_Add(
+            liburing_git
+            GIT_REPOSITORY http://github.com/axboe/liburing.git
+            GIT_TAG liburing-2.2
+            BUILD_COMMAND make
+            BUILD_IN_SOURCE 1
+            BUILD_BYPRODUCTS "<SOURCE_DIR>/src/liburing.a"
+            CONFIGURE_COMMAND ""
+            INSTALL_COMMAND ""
+            TEST_COMMAND ""
+            LOG_BUILD ON
     )
-    FetchContent_MakeAvailable(liburing)
-
-    include_directories (${liburing_SOURCE_DIR}/src/include)
-    link_directories (${liburing_BINARY_DIR}/lib)
-    link_libraries (uring)
-
-    add_custom_target(
-    	liburing
-    	cd ${liburing_SOURCE_DIR} && ./configure --prefix=${liburing_BINARY_DIR} && make -j && make install
-    )
+    ExternalProject_Get_Property(liburing_git SOURCE_DIR)
+    add_library(liburing INTERFACE)
+    add_dependencies(liburing liburing_git)
+    target_include_directories(liburing INTERFACE ${SOURCE_DIR}/src/include)
+    target_link_libraries(liburing INTERFACE ${SOURCE_DIR}/src/liburing.a)
 endif ()
 
 # ZLIB_SRCS is defined in Zlib Cmake config
@@ -213,7 +220,7 @@ list(APPEND DEBUG_OPTIONS  "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
 list(APPEND RELEASE_OPTIONS  "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
 
 if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
-    target_link_libraries(questdb liburing.a)
+    target_link_libraries(questdb liburing)
     add_dependencies(questdb liburing)
 endif ()
 
