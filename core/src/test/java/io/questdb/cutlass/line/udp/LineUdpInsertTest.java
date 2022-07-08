@@ -98,6 +98,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                     }
                     receiver.start();
                     try (AbstractLineSender sender = createLineProtoSender()) {
+                        sender.disableValidation();
                         senderConsumer.accept(sender);
                         sender.flush();
                     }
