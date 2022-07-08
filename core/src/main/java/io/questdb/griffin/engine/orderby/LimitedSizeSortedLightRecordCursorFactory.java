@@ -81,8 +81,11 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
 
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (RuntimeException ex) {
+        } catch (Throwable ex) {
             baseCursor.close();
+            if (chain != null) {
+                chain.clear();
+            }
             throw ex;
         }
     }
