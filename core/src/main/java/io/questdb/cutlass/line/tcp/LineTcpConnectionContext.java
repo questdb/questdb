@@ -35,7 +35,6 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.StringSink;
 
 class LineTcpConnectionContext implements IOContext, Mutable {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -46,8 +45,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     private final MillisecondClock milliClock;
     private final DirectByteCharSequence byteCharSequence = new DirectByteCharSequence();
     private final LineTcpParser parser;
-    private final DirectBinarySequence binarySequence = new DirectBinarySequence();
-    private final StringSink stringSink = new StringSink();
     private final boolean disconnectOnError;
     protected long fd;
     protected IODispatcher<LineTcpConnectionContext> dispatcher;
@@ -93,15 +90,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     @Override
     public boolean invalid() {
         return fd == -1;
-    }
-
-    @Override
-    public void dumpBuffer() {
-        if (recvBufPos > recvBufStart) {
-            stringSink.clear();
-            Chars.toSink(binarySequence.of(recvBufStart, recvBufPos - recvBufStart), stringSink);
-            LOG.error().$('[').$(fd).$("] data remained in buffer: [").$(stringSink).$(']').$();
-        }
     }
 
     @Override
