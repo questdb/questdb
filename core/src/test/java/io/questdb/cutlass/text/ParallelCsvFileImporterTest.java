@@ -1166,7 +1166,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     public void testRunManyImportsSequentially() throws Exception {
         int run = 0;
 
-        for (int workers = 2; workers < 6; workers++) {
+        for (int workers = 2; workers < 3; workers++) {
             for (int queueSize = 1; queueSize < 9; queueSize <<= 1) {
                 LOG.info().$("run [no=").$(run++).$(",workers=").$(workers).$(",queueSize=").$(queueSize).I$();
 
@@ -1174,8 +1174,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, context.getWorkerCount(), null)) {
                         importer.setMinChunkSize(1);
 
-                        importAndCleanupTable(importer, context, compiler, "tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                        importAndCleanupTable(importer, context, compiler, "alltypes", "test-alltypes-with-gaps.csv", PartitionBy.YEAR, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                        importAndCleanupTable(importer, context, compiler, "tab", "test-quotes-big.csv", PartitionBy.YEAR, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                        importAndCleanupTable(importer, context, compiler, "alltypes", "test-alltypes-with-gaps.csv", PartitionBy.MONTH, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importAndCleanupTable(importer, context, compiler, "alltypes_errors", "test-errors.csv", PartitionBy.HOUR, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                         importAndCleanupTable(importer, context, compiler, "testimport", "test-import.csv", PartitionBy.DAY, (byte) ',', "IsoDate", "yyyy-MM-ddTHH:mm:ss.SSSZ", false);
                     }
@@ -1381,6 +1381,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                             "false\t123\t8110\tC\t5\t5\t1970-01-04T00:00:00.000Z\t1970-01-06T00:00:00.000000Z\t5.1000\t5.2\ts5\tsy5\t0x5a86aaa24c707fff785191c8901fd7a16ffa1093e392dc537967b0fb8165c161\tu33d\n" + //char adapter ignores anything after first character
                             "true\t102\t5672\tS\t8\t8\t1970-01-08T00:00:00.000Z\t1970-01-09T00:00:00.000000Z\t8.1000\t8.2\ts8\tsy8\t0x6df9f4797b131d69aa4f08d320dde2dc72cb5a65911401598a73264e80123440\tu33d\n" + //date format discovery is flawed 
                             "false\t61\t-1559\tH\t13\t13\t1970-01-13T00:00:00.000Z\t1970-01-14T00:00:00.000000Z\t13.1000\t13.2\ts13\tsy13\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\t\n",//geohash stores anything it can't parse as null
+                    //"false\t31\t-150\tI\t14\t14\t1970-01-14T00:00:00.000Z\t1970-01-15T00:00:00.000000Z\t14.1000\t14.2\ts13\tsy14\t\tu33d\n",//long256 triggers error for bad values 
                     "select * cnt from alltypes", "tstmp", true, false, true);
         });
     }
@@ -1405,12 +1406,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     "  ge geohash(20b)" +
                     ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
 
-            try (ParallelCsvFileImporter indexer = new  ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount(), null)) {
-                indexer.of("alltypes", "test-errors.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, Atomicity.SKIP_COL);
-                indexer.process();
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount(), null)) {
+                importer.of("alltypes", "test-errors.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, Atomicity.SKIP_COL);
+                importer.process();
             }
 
-            assertQuery("cnt\n12\n",
+            assertQuery("cnt\n13\n",
                     "select count(*) cnt from alltypes", null, false, false, true);
         });
     }
@@ -1538,6 +1539,15 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileWithHeaderButMissingTimestampColumn() throws Exception {
         testImportThrowsException("test-quotes-big.csv", PartitionBy.DAY, "ts1", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", "timestamp column 'ts1' not found in file header");
+    }
+
+    @Test
+    public void testImportFileFailsWhenTargetTableDirectoryIsMangled() throws Exception {
+        try (Path p = Path.getThreadLocal(temp.getRoot().getPath()).concat("dbRoot").concat("tableName").slash$()) {
+            FilesFacadeImpl.INSTANCE.mkdir(p, configuration.getMkDirMode());
+        }
+
+        testImportThrowsException("test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "name is reserved [table=tableName]");
     }
 
     @Test

@@ -223,7 +223,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
                     break;
                 default:
-                    throw CairoException.instance(0).put("name is reserved [tableName=").put(tableName).put(']');
+                    throw TextException.$("name is reserved [tableName=").put(tableName).put(']');
             }
         }
     }
@@ -494,7 +494,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void collectChunkStats(final TextImportTask task) {
         updateStatus(task);
         final TextImportTask.CountQuotesStage countQuotesStage = task.getCountQuotesStage();
-        final int chunkIndex = task.getIndex();
+        final int chunkIndex = 5 * task.getIndex();
         chunkStats.set(chunkIndex, countQuotesStage.getQuoteCount());
         chunkStats.set(chunkIndex + 1, countQuotesStage.getNewLineCountEven());
         chunkStats.set(chunkIndex + 2, countQuotesStage.getNewLineCountOdd());
@@ -534,7 +534,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         createdWorkDir = true;
-        LOG.info().$("created import dir ").$(workDirPath).$();
+        LOG.info().$("created import dir [path='").$(workDirPath).I$();
     }
 
     //returns list with N chunk boundaries
@@ -567,7 +567,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 final long seq = pubSeq.next();
                 if (seq > -1) {
                     final TextImportTask task = queue.get(seq);
-                    task.setIndex(5 * i);
+                    task.setIndex(i);
                     task.setCircuitBreaker(circuitBreaker);
                     task.ofCountQuotesStage(ff, inputFilePath, chunkLo, chunkHi);
                     pubSeq.done(seq);
@@ -1043,14 +1043,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
                     break;
                 default:
-                    throw CairoException.instance(0).put("name is reserved [table=").put(tableName).put(']');
+                    throw TextException.$("name is reserved [table=").put(tableName).put(']');
             }
 
             inputFilePath.of(inputRoot).concat(inputFileName).$();//getStatus might override it
             targetTableStructure.setIgnoreColumnIndexedFlag(true);
 
             if (timestampIndex == -1) {
-                throw CairoException.instance(-1).put("timestamp column not found");
+                throw TextException.$("timestamp column not found");
             }
 
             if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
@@ -1193,7 +1193,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         if (ff.exists(workDirPath)) {
             if (isOneOfMainDirectories(importRoot)) {
-                throw CairoException.instance(0).put("cannot remove work dir because it points to one of main instance directories [path='").put(workDirPath).put("'] .");
+                throw TextException.$("cannot remove work dir because it points to one of main instance directories [path='").put(workDirPath).put("'] .");
             }
 
             LOG.info().$("removing import directory path='").$(workDirPath).$("'").$();

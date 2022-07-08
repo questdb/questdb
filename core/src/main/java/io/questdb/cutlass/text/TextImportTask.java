@@ -248,6 +248,8 @@ public class TextImportTask {
             Path p2
     ) {
         try {
+            LOG.debug().$("starting [phase=").$(getPhaseName(phase)).$(",index=").$(index).I$();
+
             this.status = STATUS_STARTED;
             this.errorMessage = null;
 
@@ -272,6 +274,8 @@ public class TextImportTask {
             } else {
                 throw TextException.$("Unexpected phase ").put(phase);
             }
+
+            LOG.debug().$("finished [phase=").$(getPhaseName(phase)).$(",index=").$(index).I$();
         } catch (Throwable t) {
             LOG.error()
                     .$("could not import [phase=").$(getPhaseName(phase))
@@ -633,7 +637,7 @@ public class TextImportTask {
                     .$(", offset=").$(offset)
                     .$(", column=").$(column)
                     .$(", value='").$(dbcs)
-                    .I$();
+                    .$("']").$();
         }
 
         private void importPartitionData(
@@ -765,12 +769,11 @@ public class TextImportTask {
                 TableWriter.Row w,
                 int fieldIndex,
                 DirectCharSink utf8Sink
-        )
-                throws TextException {
+        ) throws TextException {
             TypeAdapter type = this.types.getQuick(fieldIndex);
             try {
                 type.write(w, fieldIndex, dbcs, utf8Sink);
-            } catch (Exception ignore) {
+            } catch (NumericException | Utf8Exception | ConversionException ignore) {
                 errors++;
                 logError(offset, fieldIndex, dbcs);
                 switch (atomicity) {
@@ -783,6 +786,8 @@ public class TextImportTask {
                     default: // SKIP column
                         break;
                 }
+            } catch (Exception e) {
+                throw TextException.$("unexpected error [line offset=").put(offset).put(",column=").put(fieldIndex).put(",message=").put(e.getMessage()).put(']');
             }
             return false;
         }
