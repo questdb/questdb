@@ -22,12 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line.interop;
+package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.std.Unsafe;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 public class StringChannel implements LineChannel {

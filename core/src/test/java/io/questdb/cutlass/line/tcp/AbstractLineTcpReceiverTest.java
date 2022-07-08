@@ -37,9 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.TestWorkerPool;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.Net;
+import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
@@ -94,6 +92,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected long commitIntervalDefault = 2000;
     protected boolean disconnectOnError = false;
     protected boolean symbolAsFieldSupported;
+    protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public boolean getDisconnectOnError() {
@@ -158,6 +157,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public boolean isSymbolAsFieldSupported() {
             return symbolAsFieldSupported;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return nf;
         }
     };
 

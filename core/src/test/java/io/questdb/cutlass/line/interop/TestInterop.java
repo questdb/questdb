@@ -31,6 +31,7 @@ import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.cutlass.line.Sender;
+import io.questdb.cutlass.line.tcp.StringChannel;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;

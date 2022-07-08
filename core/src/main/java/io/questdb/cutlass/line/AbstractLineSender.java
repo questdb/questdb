@@ -222,7 +222,7 @@ public abstract class AbstractLineSender extends AbstractCharSink implements Clo
         validateNotClosed();
         validateTableName(metric);
         if (hasTable) {
-            throw new LineSenderException("duplicate table");
+            throw new LineSenderException("duplicated table. call sender.at() or sender.atNow() to finish the current row first");
         }
         if (metric.length() == 0) {
             throw new LineSenderException("table name cannot be empty");

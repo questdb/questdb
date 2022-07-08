@@ -25,12 +25,14 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.cutlass.line.Sender;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
+import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
@@ -347,6 +349,69 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             s.table("mytable");
             s.boolColumn("col\u0001", true);
         });
+    }
+
+    @Test
+    public void testServerIgnoresUnfinishedRows() throws Exception{
+        String tableName = "myTable";
+        runInContext(r -> {
+            send(r, tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
+                try (Sender sender = Sender.builder()
+                        .address("127.0.0.1")
+                        .port(bindPort)
+                        .build()) {
+                    // well-formed row first
+                    sender.table(tableName).longColumn("field0", 42)
+                            .longColumn("field1", 42)
+                            .atNow();
+
+                    // failed validation
+                    sender.table(tableName)
+                            .longColumn("field0", 42)
+                            .longColumn("field1\n", 42);
+                    fail("validation should have failed");
+                } catch (LineSenderException e) {
+                    // ignored
+                }
+            });
+            // make sure the 2nd unfinished row was not inserted by the server
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                assertEquals(1, reader.getCursor().size());
+            }
+        });
+    }
+
+    @Test
+    public void testUnfinishedRowDoesNotContainNewLine() {
+        StringChannel channel = new StringChannel();
+        try (Sender sender = new LineTcpSender(channel, 1000)) {
+            sender.table("mytable");
+            sender.boolColumn("col\n", true);
+        } catch (LineSenderException e) {
+            assertContains(e.getMessage(), "name contains an illegal char");
+        }
+        assertFalse(Chars.contains(channel.toString(), "\n"));
+    }
+
+    @Test
+    public void testCannotStartNewRowBeforeClosingTheExistingAfterValidationError() {
+        StringChannel channel = new StringChannel();
+        try (Sender sender = new LineTcpSender(channel, 1000)) {
+            sender.table("mytable");
+            try {
+                sender.boolColumn("col\n", true);
+                fail();
+            }  catch (LineSenderException e) {
+                assertContains(e.getMessage(), "name contains an illegal char");
+            }
+            try {
+                sender.table("mytable");
+                fail();
+            } catch (LineSenderException e) {
+                assertContains(e.getMessage(), "duplicated table");
+            }
+        }
+        assertFalse(Chars.contains(channel.toString(), "\n"));
     }
 
     private static void assertControlCharacterException(Consumer<Sender> senderAction) {

@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.cutlass.line.tcp.AbstractLineTcpReceiverTest;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
 import org.junit.ClassRule;
@@ -188,6 +189,32 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
                 sender.table("mytable").symbol("symbol", "symbol").atNow();
                 sender.flush();
                 assertTableExistsEventually(engine, "mytable");
+            }
+        });
+    }
+
+    @Test
+    public void testConnectPlainAuthWithTokenFailure() throws Exception {
+        authKeyId = AUTH_KEY_ID1;
+        nf = new NetworkFacadeImpl() {
+            @Override
+            public int recv(long fd, long buffer, int bufferLen) {
+                // force server to fail to receive userId and this disconnect
+                // mid-authentication
+                return -1;
+            }
+        };
+        runInContext(r -> {
+            try {
+                Sender.builder()
+                        .address(LOCALHOST)
+                        .port(bindPort)
+                        .enableAuth(AUTH_KEY_ID1)
+                        .authToken(AUTH_TOKEN_KEY1) // it does not really matter as server will never receive the challange response due to the custom NetworkFacade
+                        .build();
+                fail("should have failed");
+            } catch (LineSenderException e) {
+                // ignored
             }
         });
     }

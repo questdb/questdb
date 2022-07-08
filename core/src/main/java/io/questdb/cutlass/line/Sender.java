@@ -387,7 +387,7 @@ public interface Sender extends Closeable {
                 try {
                     sender.authenticate(keyId, privateKey);
                 } catch (Throwable t) {
-                    channel.close();
+                    sender.close();
                     throw rethrow(t);
                 } finally {
                     if (shouldDestroyPrivKey) {
