@@ -202,7 +202,12 @@ public class DispatcherWriterQueueTest {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "\\default\\s.v")) {
-                            alterAckReceived.await();
+                            long start = System.nanoTime();
+                            if (!alterAckReceived.await(30 * 1000000000L)) {
+                                long end = System.nanoTime();
+                                System.out.printf("Timed out after waiting for %d ns %n", (end - start));
+                                throw CairoException.instance(0).put("Timed out waiting for acknowledgement to be processed!");
+                            }
                             Os.sleep(600);
                         }
                         return super.openRW(name, opts);
