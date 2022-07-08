@@ -114,7 +114,11 @@ class LineTcpWriterJob implements Job, Closeable {
                         // taking the earliest commit time
                         minTableNextCommitTime = tableNextCommitTime;
                     }
-                } catch (Throwable th) {
+                } catch (Throwable ex) {
+                    LOG.critical()
+                            .$("commit failed [table=").$(assignedTables.getQuick(n).getTableNameUtf16())
+                            .$(",ex=").$(ex)
+                            .I$();
                     metrics.healthCheck().incrementUnhandledErrors();
                 }
             }
@@ -159,11 +163,11 @@ class LineTcpWriterJob implements Job, Closeable {
                         }
                     } catch (Throwable ex) {
                         tab.setWriterInError();
-                        metrics.healthCheck().incrementUnhandledErrors();
-                        LOG.error()
+                        LOG.critical()
                                 .$("closing writer because of error [table=").$(tab.getTableNameUtf16())
                                 .$(",ex=").$(ex)
                                 .I$();
+                        metrics.healthCheck().incrementUnhandledErrors();
                         closeWriter = true;
                         event.createWriterReleaseEvent(tab, false);
                         // This is a critical error, so we treat it as an unhandled one.

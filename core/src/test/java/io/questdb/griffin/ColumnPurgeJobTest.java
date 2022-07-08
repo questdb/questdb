@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
@@ -849,7 +850,7 @@ public class ColumnPurgeJobTest extends AbstractGriffinTest {
     private void executeUpdate(String query) throws SqlException {
         final CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
         Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-        try (QuietClosable op = cq.getOperation()) {
+        try (AbstractOperation op = cq.getOperation()) {
             try (OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, null)) {
                 fut.await();
             }

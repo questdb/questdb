@@ -502,11 +502,6 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public boolean isDebugEnabled() {
-            return false;
-        }
-
-        @Override
         public LogRecord xerror() {
             throw new UnsupportedOperationException();
         }

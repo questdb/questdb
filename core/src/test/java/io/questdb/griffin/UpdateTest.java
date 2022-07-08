@@ -27,16 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
-import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.mp.SCSequence;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -48,7 +41,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.function.Consumer;
 
 public class UpdateTest extends AbstractGriffinTest {
-    private final SCSequence eventSubSequence = new SCSequence();
 
     @Test
     public void testInsertAfterFailedUpdate() throws Exception {
@@ -2002,14 +1994,7 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     private void executeUpdate(String query) throws SqlException {
-        CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
-        Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-        try (
-                UpdateOperation op = cq.getUpdateOperation();
-                OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-        ) {
-            fut.await();
-        }
+        executeOperation(query, CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation);
     }
 
     private void executeUpdateFails(String sql, int position, String reason) {
