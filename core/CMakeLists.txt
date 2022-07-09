@@ -192,7 +192,7 @@ if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
             GIT_TAG liburing-2.2
             BUILD_IN_SOURCE 1
             BUILD_BYPRODUCTS "<SOURCE_DIR>/src/liburing.a"
-            BUILD_COMMAND make "CC=${CMAKE_C_COMPILER}" "AR=${CMAKE_AR}" "RANLIB=${CMAKE_RANLIB}"
+            BUILD_COMMAND make "CC=${CMAKE_C_COMPILER}" "CXX=${CMAKE_CXX_COMPILER}" "AR=${CMAKE_AR}" "RANLIB=${CMAKE_RANLIB}"
             CONFIGURE_COMMAND ""
             INSTALL_COMMAND ""
             TEST_COMMAND ""
