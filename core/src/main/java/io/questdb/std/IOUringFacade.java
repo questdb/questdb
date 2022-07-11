@@ -34,5 +34,7 @@ public interface IOUringFacade {
 
     int submit(long ptr);
 
+    int submitAndWait(long ptr, int waitNr);
+
     int errno();
 }
