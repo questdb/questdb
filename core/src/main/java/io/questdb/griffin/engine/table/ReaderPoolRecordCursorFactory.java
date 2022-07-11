@@ -90,8 +90,22 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         private boolean tryAdvance() {
-            TableReader reader = null;
+            TableReader reader;
             do {
+                if (!selectPoolEntry()) {
+                    return false;
+                }
+                owner = poolEntry.getOwnerVolatile(allocationIndex);
+                timestamp = poolEntry.getReleaseTimeVolatile(allocationIndex);
+                reader = poolEntry.getReaderVolatile(allocationIndex);
+                allocationIndex++;
+            } while (reader == null);
+            txn = reader.getTxnVolatile();
+            return true;
+        }
+
+        private boolean selectPoolEntry() {
+            for (;;) {
                 if (poolEntry == null) {
                     assert allocationIndex == 0;
                     if (!iterator.hasNext()) {
@@ -100,20 +114,14 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                     Map.Entry<CharSequence, ReaderPool.Entry> mapEntry = iterator.next();
                     tableName = mapEntry.getKey();
                     poolEntry = mapEntry.getValue();
-                    continue;
-                }
-                if (allocationIndex == ReaderPool.ENTRY_SIZE) {
-                    allocationIndex = 0;
+                    return true;
+                } else if (allocationIndex == ReaderPool.ENTRY_SIZE) {
                     poolEntry = poolEntry.getNext();
-                    continue;
+                    allocationIndex = 0;
+                } else {
+                    return true;
                 }
-                owner = poolEntry.getOwnerVolatile(allocationIndex);
-                reader = poolEntry.getReaderVolatile(allocationIndex);
-                timestamp = poolEntry.getReleaseTimeVolatile(allocationIndex);
-                allocationIndex++;
-            } while (reader == null);
-            txn = reader.getTxnVolatile();
-            return true;
+            }
         }
 
         @Override
