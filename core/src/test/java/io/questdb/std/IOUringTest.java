@@ -26,6 +26,7 @@ package io.questdb.std;
 
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -50,25 +51,28 @@ public class IOUringTest {
     public void testRead() throws IOException {
         Assume.assumeTrue(rf.isAvailable());
 
-        final int inFlight = 4;
+        final int inFlight = 34;
         final int txtLen = 42;
-        StringBuilder sb = new StringBuilder();
+        StringSink sink = new StringSink();
         for (int i = 0; i < inFlight; i++) {
-            sb.append(String.valueOf(i).repeat(txtLen));
+            for (int j = 0; j < txtLen; j++) {
+                sink.put(i);
+            }
         }
-        String txt = sb.toString();
+
+        String txt = sink.toString();
 
         File file = temp.newFile();
         TestUtils.writeStringToFile(file, txt);
 
         try (
                 Path path = new Path();
-                IOUring ring = new IOUring(rf, 32)
+                IOUring ring = new IOUring(rf, Numbers.ceilPow2(inFlight))
         ) {
             long fd = Files.openRO(path.of(file.getAbsolutePath()).$());
             Assert.assertTrue(fd > -1);
 
-            Set<Long> expectedIds = new HashSet<>();
+            LongList expectedIds = new LongList();
             long[] bufs = new long[inFlight];
             for (int i = 0; i < inFlight; i++) {
                 bufs[i] = Unsafe.malloc(txtLen, MemoryTag.NATIVE_DEFAULT);
@@ -78,9 +82,9 @@ public class IOUringTest {
             }
 
             int submitted = ring.submit();
-            Assert.assertEquals(4, submitted);
+            Assert.assertEquals(inFlight, submitted);
 
-            Set<Long> actualIds = new HashSet<>();
+            LongList actualIds = new LongList();
             for (int i = 0; i < inFlight; i++) {
                 while (!ring.nextCqe()) {
                     Os.pause();
@@ -95,7 +99,7 @@ public class IOUringTest {
                 TestUtils.assertEquals(txt.substring(i * txtLen, (i + 1) * txtLen), txtInBuf);
             }
 
-            Assert.assertEquals(expectedIds, actualIds);
+            TestUtils.assertEquals(expectedIds, actualIds);
 
             for (int i = 0; i < inFlight; i++) {
                 Unsafe.free(bufs[i], txtLen, MemoryTag.NATIVE_DEFAULT);
