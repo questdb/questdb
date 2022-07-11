@@ -24,17 +24,37 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.cutlass.line.udp.UdpLineChannel;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
+import org.junit.Test;
 
-public class LineUdpSender extends AbstractLineSender {
+import static org.junit.Assert.*;
 
-    public LineUdpSender(int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int bufferCapacity, int ttl) {
-        this(NetworkFacadeImpl.INSTANCE, interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, ttl);
+public class LineSenderExceptionTest {
+
+    @Test
+    public void testEmptyMessage() {
+        LineSenderException e = new LineSenderException(new RuntimeException());
+        String message = e.getMessage();
+        assertEquals("", message);
     }
 
-    public LineUdpSender(NetworkFacade nf, int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int capacity, int ttl) {
-        super(new UdpLineChannel(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, ttl), capacity);
+    @Test
+    public void testEmptyMessage_withErrNo() {
+        LineSenderException e = new LineSenderException(new RuntimeException()).errno(10);
+        String message = e.getMessage();
+        assertEquals("[10]", message);
+    }
+
+    @Test
+    public void testMessage_withErrNo() {
+        LineSenderException e = new LineSenderException("message").errno(10);
+        String message = e.getMessage();
+        assertEquals("[10] message", message);
+    }
+
+    @Test
+    public void testMessage_withoutErrNo() {
+        LineSenderException e = new LineSenderException("message");
+        String message = e.getMessage();
+        assertEquals("message", message);
     }
 }

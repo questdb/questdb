@@ -64,6 +64,7 @@ public class TableUtilsTest {
         testIsValidColumnName('*', false);
         testIsValidColumnName('%', false);
         testIsValidColumnName('~', false);
+        testIsValidColumnName('\n', false);
         Assert.assertFalse(TableUtils.isValidColumnName("..", 127));
         Assert.assertFalse(TableUtils.isValidColumnName(".", 127));
         Assert.assertFalse(TableUtils.isValidColumnName("t\u007Ftcsv", 127));
@@ -103,9 +104,10 @@ public class TableUtilsTest {
         Assert.assertTrue(TableUtils.isValidTableName("table-name", 127));
         Assert.assertTrue(TableUtils.isValidTableName("table_name", 127));
         Assert.assertTrue(TableUtils.isValidTableName("table$name", 127));
-        Assert.assertTrue(TableUtils.isValidTableName("asdfasdf", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("asdfasdf", 127));
 
         Assert.assertFalse(TableUtils.isValidTableName("abc", 2));
+        Assert.assertTrue(TableUtils.isValidTableName("الْعَرَبِيَّة", 127));
     }
 
     private void testIsValidColumnName(char c, boolean expected) {

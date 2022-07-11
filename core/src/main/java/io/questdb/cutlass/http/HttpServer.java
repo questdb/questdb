@@ -414,7 +414,7 @@ public class HttpServer implements Closeable {
         }
 
         private void closeContextPool() {
-            Misc.free(this.contextPool.get());
+            Misc.free(this.contextPool);
             LOG.info().$("closed").$();
         }
     }

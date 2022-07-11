@@ -27,15 +27,17 @@ package io.questdb.griffin;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.AbstractCairoTest;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordCursorPrinter;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.*;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -118,6 +120,19 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAsyncOffloadTimeoutWithJitEnabled() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        jitMode = SqlJitMode.JIT_MODE_ENABLED;
+        testAsyncOffloadTimeout();
+    }
+
+    @Test
+    public void testAsyncOffloadTimeoutWithoutJit() throws Exception {
+        jitMode = SqlJitMode.JIT_MODE_DISABLED;
+        testAsyncOffloadTimeout();
+    }
+
+    @Test
     public void testParallelStressMultipleThreadsMultipleWorkersJitDisabled() throws Exception {
         testParallelStress(queryNoLimit, expectedNoLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
@@ -131,29 +146,16 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelStressSingleThreadMultipleWorkersJitDisabled() throws Exception {
-        testParallelStress(queryNoLimit, expectedNoLimit, 4, 1, SqlJitMode.JIT_MODE_DISABLED);
+    public void testParallelStressMultipleThreadsMultipleWorkersNegativeLimitJitDisabled() throws Exception {
+        testParallelStress(queryNegativeLimit, expectedNegativeLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
 
     @Test
-    public void testParallelStressSingleThreadMultipleWorkersJitEnabled() throws Exception {
+    public void testParallelStressMultipleThreadsMultipleWorkersNegativeLimitJitEnabled() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        testParallelStress(queryNoLimit, expectedNoLimit, 4, 1, SqlJitMode.JIT_MODE_ENABLED);
-    }
-
-    @Test
-    public void testParallelStressMultipleThreadsSingleWorkerJitDisabled() throws Exception {
-        testParallelStress(queryNoLimit, expectedNoLimit, 1, 4, SqlJitMode.JIT_MODE_DISABLED);
-    }
-
-    @Test
-    public void testParallelStressMultipleThreadsSingleWorkerJitEnabled() throws Exception {
-        // Disable the test on ARM64.
-        Assume.assumeTrue(JitUtil.isJitSupported());
-
-        testParallelStress(queryNoLimit, expectedNoLimit, 1, 4, SqlJitMode.JIT_MODE_ENABLED);
+        testParallelStress(queryNegativeLimit, expectedNegativeLimit, 4, 4, SqlJitMode.JIT_MODE_ENABLED);
     }
 
     @Test
@@ -170,16 +172,29 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelStressMultipleThreadsMultipleWorkersNegativeLimitJitDisabled() throws Exception {
-        testParallelStress(queryNegativeLimit, expectedNegativeLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
+    public void testParallelStressMultipleThreadsSingleWorkerJitDisabled() throws Exception {
+        testParallelStress(queryNoLimit, expectedNoLimit, 1, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
 
     @Test
-    public void testParallelStressMultipleThreadsMultipleWorkersNegativeLimitJitEnabled() throws Exception {
+    public void testParallelStressMultipleThreadsSingleWorkerJitEnabled() throws Exception {
         // Disable the test on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
 
-        testParallelStress(queryNegativeLimit, expectedNegativeLimit, 4, 4, SqlJitMode.JIT_MODE_ENABLED);
+        testParallelStress(queryNoLimit, expectedNoLimit, 1, 4, SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testParallelStressSingleThreadMultipleWorkersJitDisabled() throws Exception {
+        testParallelStress(queryNoLimit, expectedNoLimit, 4, 1, SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
+    public void testParallelStressSingleThreadMultipleWorkersJitEnabled() throws Exception {
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
+        testParallelStress(queryNoLimit, expectedNoLimit, 4, 1, SqlJitMode.JIT_MODE_ENABLED);
     }
 
     @Test
@@ -198,6 +213,127 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                 1,
                 SqlJitMode.JIT_MODE_DISABLED
         );
+    }
+
+    private static void assertQuery(
+            CharSequence expected,
+            RecordCursorFactory factory,
+            SqlExecutionContext sqlExecutionContext
+    ) throws Exception {
+        StringSink sink = new StringSink();
+        RecordCursorPrinter printer = new RecordCursorPrinter();
+        LongList rows = new LongList();
+        if (
+                assertCursor(
+                        expected,
+                        factory,
+                        sqlExecutionContext,
+                        sink,
+                        printer,
+                        rows
+                )
+        ) {
+            return;
+        }
+        // make sure we get the same outcome when we get factory to create new cursor
+        assertCursor(
+                expected,
+                factory,
+                sqlExecutionContext,
+                sink,
+                printer,
+                rows
+        );
+    }
+
+    private static boolean assertCursor(
+            CharSequence expected,
+            RecordCursorFactory factory,
+            SqlExecutionContext sqlExecutionContext,
+            StringSink sink,
+            RecordCursorPrinter printer,
+            LongList rows
+    ) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue("supports random access", factory.recordCursorSupportsRandomAccess());
+            if (
+                    assertCursor(
+                            expected,
+                            true,
+                            true,
+                            false,
+                            true,
+                            cursor,
+                            factory.getMetadata(),
+                            sink,
+                            printer,
+                            rows,
+                            factory.fragmentedSymbolTables()
+                    )
+            ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void testAsyncOffloadTimeout() throws SqlException {
+        SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+        currentMicros = 0;
+        SqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(new DefaultSqlExecutionCircuitBreakerConfiguration(), MemoryTag.NATIVE_DEFAULT) {
+            @Override
+            public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
+                return new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                    @Override
+                    public MicrosecondClock getClock() {
+                        return () -> 10;
+                    }
+
+                    @Override
+                    public long getMaxTime() {
+                        return 1; // getClock will be 10, make first check trigger the timeout
+                    }
+                };
+            }
+        };
+
+
+        compiler.compile("create table x ( " +
+                        "v long, " +
+                        "s symbol capacity 4 cache " +
+                        ")",
+                sqlExecutionContext
+        );
+        compiler.compile("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")",
+                sqlExecutionContext
+        );
+
+        context.with(
+                context.getCairoSecurityContext(),
+                context.getBindVariableService(),
+                context.getRandom(),
+                context.getRequestFd(),
+                circuitBreaker
+        );
+
+        try {
+            assertSql(
+                    "x where v > 3326086085493629941L and v < 4326086085493629941L and s ~ 'A' order by v",
+                    "v\ts\n" +
+                            "3393210801760647293\tA\n"
+            );
+            Assert.fail();
+        } catch (CairoException ex) {
+            TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
+        } finally {
+            context.with(
+                    context.getCairoSecurityContext(),
+                    context.getBindVariableService(),
+                    context.getRandom(),
+                    context.getRequestFd(),
+                    null
+            );
+        }
     }
 
     private void testParallelStress(String query, String expected, int workerCount, int threadCount, int jitMode) throws Exception {
@@ -279,67 +415,5 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
                 },
                 configuration
         );
-    }
-
-    private static void assertQuery(
-            CharSequence expected,
-            RecordCursorFactory factory,
-            SqlExecutionContext sqlExecutionContext
-    ) throws Exception {
-        StringSink sink = new StringSink();
-        RecordCursorPrinter printer = new RecordCursorPrinter();
-        LongList rows = new LongList();
-        if (
-                assertCursor(
-                        expected,
-                        factory,
-                        sqlExecutionContext,
-                        sink,
-                        printer,
-                        rows
-                )
-        ) {
-            return;
-        }
-        // make sure we get the same outcome when we get factory to create new cursor
-        assertCursor(
-                expected,
-                factory,
-                sqlExecutionContext,
-                sink,
-                printer,
-                rows
-        );
-    }
-
-    private static boolean assertCursor(
-            CharSequence expected,
-            RecordCursorFactory factory,
-            SqlExecutionContext sqlExecutionContext,
-            StringSink sink,
-            RecordCursorPrinter printer,
-            LongList rows
-    ) throws SqlException {
-        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertTrue("supports random access", factory.recordCursorSupportsRandomAccess());
-            if (
-                    assertCursor(
-                            expected,
-                            true,
-                            true,
-                            false,
-                            true,
-                            cursor,
-                            factory.getMetadata(),
-                            sink,
-                            printer,
-                            rows,
-                            factory.fragmentedSymbolTables()
-                    )
-            ) {
-                return true;
-            }
-        }
-        return false;
     }
 }

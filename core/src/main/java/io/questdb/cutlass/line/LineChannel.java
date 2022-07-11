@@ -24,17 +24,11 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.cutlass.line.udp.UdpLineChannel;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
+import java.io.Closeable;
 
-public class LineUdpSender extends AbstractLineSender {
-
-    public LineUdpSender(int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int bufferCapacity, int ttl) {
-        this(NetworkFacadeImpl.INSTANCE, interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, ttl);
-    }
-
-    public LineUdpSender(NetworkFacade nf, int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int capacity, int ttl) {
-        super(new UdpLineChannel(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, ttl), capacity);
-    }
+public interface LineChannel extends Closeable {
+    void send(long ptr, int len);
+    int receive(long ptr, int len);
+    int errno();
+    void close();
 }
