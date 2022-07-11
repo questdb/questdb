@@ -431,7 +431,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
         this.simulateCrashEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SIMULATE_CRASH_ENABLED, false);
-        this.rssMemoryLimit = (long) (getDouble(properties, env, PropertyKey.CAIRO_RSS_MEMORY_LIMIT, -1) * 1024L * 1024L * 1024L);
+        this.rssMemoryLimit = getLongSize(properties, env, PropertyKey.CAIRO_RSS_MEMORY_LIMIT, -1);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;

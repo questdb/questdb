@@ -248,6 +248,20 @@ public class MemoryCARWImplTest {
         }
     }
 
+    @Test
+    public void testCalculatePages() {
+        Assert.assertEquals(1, MemoryCARWImpl.calculatePages(0, 10));
+        Assert.assertEquals(1, MemoryCARWImpl.calculatePages(1, 10));
+        Assert.assertEquals(1, MemoryCARWImpl.calculatePages(1 << 10, 10));
+        Assert.assertEquals(2, MemoryCARWImpl.calculatePages((1 << 10) + 1, 10));
+        Assert.assertEquals(1, MemoryCARWImpl.calculatePages((1 << 10) - 1, 10));
+        Assert.assertEquals(11, MemoryCARWImpl.calculatePages(10 * (1 << 20) + 1, 20));
+        Assert.assertEquals(9, MemoryCARWImpl.calculatePages(9 * (1 << 20), 20));
+        Assert.assertEquals(9, MemoryCARWImpl.calculatePages(9 * (1 << 20) - (1 << 10), 20));
+        Assert.assertEquals(1, MemoryCARWImpl.calculatePages(-1, 20));
+        Assert.assertEquals(99, MemoryCARWImpl.calculatePages(98 * (1 << 12) + 1, 12));
+        Assert.assertEquals(1_000_000_000L, MemoryCARWImpl.calculatePages(1_000_000_000L * (1 << 12), 12));
+    }
 
     @Test
     public void testByteRnd() {

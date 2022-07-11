@@ -860,7 +860,7 @@ public class PropServerConfigurationTest {
             Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getAutoCreateNewTables());
             Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().getAutoCreateNewTables());
 
-            Assert.assertEquals((long)(3.5 * 1024L * 1024L * 1024L), configuration.getCairoConfiguration().getRssMemoryLimit());
+            Assert.assertEquals(3500 * 1024L * 1024L, configuration.getCairoConfiguration().getRssMemoryLimit());
         }
     }
 
