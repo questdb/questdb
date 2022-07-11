@@ -74,7 +74,7 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
     @Test//timestamp should be reassembled properly via rolling buffer
     public void testIndexChunksInCsvWithTimestampFieldAtLineEndSplitBetweenTinyReadBuffers2() throws Exception {
         assertChunksFor("test-quotes-tslast2.csv", 1, 3,
-                chunk("2022-05-10/0_1", 1652183520000000L, 15L));
+                chunk("2022-05-10/0_1", 1652183520000000L, 14L));
     }
 
     @Test//timestamp is ignored if it doesn't fit in ts rolling buffer 

@@ -104,7 +104,7 @@ public class TableUtilsTest {
         Assert.assertTrue(TableUtils.isValidTableName("table-name", 127));
         Assert.assertTrue(TableUtils.isValidTableName("table_name", 127));
         Assert.assertTrue(TableUtils.isValidTableName("table$name", 127));
-        Assert.assertFalse(TableUtils.isValidTableName("asdfasdf", 127));
+        Assert.assertFalse(TableUtils.isValidTableName("asdf\nasdf", 127));
 
         Assert.assertFalse(TableUtils.isValidTableName("abc", 2));
         Assert.assertTrue(TableUtils.isValidTableName("الْعَرَبِيَّة", 127));
