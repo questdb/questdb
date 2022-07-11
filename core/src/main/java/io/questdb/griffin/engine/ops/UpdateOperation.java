@@ -32,21 +32,22 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
-import io.questdb.std.QuietClosable;
 import io.questdb.tasks.TableWriterTask;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class UpdateOperation extends AbstractOperation implements QuietClosable {
+public class UpdateOperation extends AbstractOperation {
+
+    public final static String CMD_NAME = "UPDATE";
     public static final int WRITER_CLOSED_INCREMENT = 10;
     public static final int SENDER_CLOSED_INCREMENT = 7;
     public static final int FULLY_CLOSED_STATE = WRITER_CLOSED_INCREMENT + SENDER_CLOSED_INCREMENT;
     private final AtomicInteger closeState = new AtomicInteger();
     private RecordCursorFactory factory;
-    private SqlExecutionContext sqlExecutionContext;
-    private volatile boolean requesterTimeout = false;
+    private volatile boolean requesterTimeout;
     private boolean executingAsync;
-    private SqlExecutionCircuitBreaker circuitBreaker;
+    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
 
     public UpdateOperation(
             String tableName,
@@ -55,7 +56,7 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
             int tableNamePosition,
             RecordCursorFactory factory
     ) {
-        init(TableWriterTask.CMD_UPDATE_TABLE, "UPDATE", tableName, tableId, tableVersion, tableNamePosition);
+        init(TableWriterTask.CMD_UPDATE_TABLE, CMD_NAME, tableName, tableId, tableVersion, tableNamePosition);
         this.factory = factory;
     }
 
@@ -102,7 +103,8 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
     public void forceTestTimeout() {
         if (requesterTimeout || circuitBreaker.checkIfTripped()) {
             throw CairoException.instance(0)
-                    .put("timeout, query aborted [fd=").put(circuitBreaker != null ? circuitBreaker.getFd() : -1L)
+                    .put("timeout, query aborted [fd=")
+                    .put(circuitBreaker.getFd())
                     .put(']')
                     .setInterruption(true);
         }
@@ -111,7 +113,8 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
     public void testTimeout() {
         if (requesterTimeout) {
             throw CairoException.instance(0)
-                    .put("timeout, query aborted [fd=").put(circuitBreaker != null ? circuitBreaker.getFd() : -1L)
+                    .put("timeout, query aborted [fd=")
+                    .put(circuitBreaker.getFd())
                     .put(']')
                     .setInterruption(true);
         }
@@ -129,8 +132,9 @@ public class UpdateOperation extends AbstractOperation implements QuietClosable 
         task.setAsyncWriterCommand(this);
     }
 
-    public void withContext(SqlExecutionContext sqlExecutionContext) {
-        this.sqlExecutionContext = sqlExecutionContext;
-        this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+    @Override
+    public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
+        super.withContext(sqlExecutionContext);
+        this.circuitBreaker = this.sqlExecutionContext.getCircuitBreaker();
     }
 }

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -56,6 +57,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private long rowsRemaining;
     // the OG rows remaining, used to reset the counter when re-running cursor from top();
     private long ogRowsRemaining;
+    private boolean allFramesActive;
 
     public AsyncFilteredRecordCursor(Function filter, boolean hasDescendingOrder) {
         this.filter = filter;
@@ -122,6 +124,10 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 return checkLimit();
             }
         }
+
+        if (!allFramesActive) {
+            throw CairoException.instance(0).put("timeout, query aborted").setInterruption(true);
+        }
         return false;
     }
 
@@ -157,6 +163,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             frameIndex = -1;
             fetchNextFrame();
         }
+        allFramesActive = true;
     }
 
     @Override
@@ -185,6 +192,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                         .$(", cursor=").$(cursor)
                         .I$();
 
+                this.allFramesActive &= frameSequence.isActive();
                 this.rows = task.getRows();
                 this.frameRowCount = rows.size();
                 this.frameIndex = task.getFrameIndex();
@@ -207,6 +215,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.frameLimit = frameSequence.getFrameCount() - 1;
         this.ogRowsRemaining = rowsRemaining;
         this.rowsRemaining = rowsRemaining;
+        this.allFramesActive = true;
         record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
         if (recordB != null) {
             recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());

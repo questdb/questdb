@@ -182,13 +182,24 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.checkWritePermission();
         // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
-        return new TableWriter(configuration, tableName, messageBus, null, true, DefaultLifecycleManager.INSTANCE, backupDirName, Metrics.disabled());
+        return new TableWriter(
+                configuration,
+                tableName,
+                messageBus,
+                null,
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                backupDirName,
+                Metrics.disabled()
+        );
     }
 
+    @TestOnly
     public int getBusyReaderCount() {
         return readerPool.getBusyCount();
     }
 
+    @TestOnly
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
     }

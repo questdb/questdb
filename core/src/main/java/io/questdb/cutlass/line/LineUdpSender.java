@@ -24,49 +24,17 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.network.NetworkError;
+import io.questdb.cutlass.line.udp.UdpLineChannel;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 
 public class LineUdpSender extends AbstractLineSender {
 
-    private static final Log LOG = LogFactory.getLog(LineUdpSender.class);
-
     public LineUdpSender(int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int bufferCapacity, int ttl) {
-        super(interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, ttl, LOG);
+        this(NetworkFacadeImpl.INSTANCE, interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, ttl);
     }
 
     public LineUdpSender(NetworkFacade nf, int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int capacity, int ttl) {
-        super(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, capacity, ttl, LOG);
-    }
-
-    @Override
-    protected long createSocket(int interfaceIPv4Address, int ttl, long sockaddr) throws NetworkError {
-        long fd = nf.socketUdp();
-
-        if (fd == -1) {
-            throw NetworkError.instance(nf.errno()).put("could not create UDP socket");
-        }
-
-        if (nf.setMulticastInterface(fd, interfaceIPv4Address) != 0) {
-            final int errno = nf.errno();
-            nf.close(fd, LOG);
-            throw NetworkError.instance(errno).put("could not bind to ").ip(interfaceIPv4Address);
-        }
-
-        if (nf.setMulticastTtl(fd, ttl) != 0) {
-            final int errno = nf.errno();
-            nf.close(fd, LOG);
-            throw NetworkError.instance(errno).put("could not set ttl [fd=").put(fd).put(", ttl=").put(ttl).put(']');
-        }
-        return fd;
-    }
-
-
-    protected void sendToSocket(long fd, long lo, long sockaddr, int len) throws NetworkError {
-        if (nf.sendTo(fd, lo, len, sockaddr) != len) {
-            throw NetworkError.instance(nf.errno()).put("send error");
-        }
+        super(new UdpLineChannel(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, ttl), capacity);
     }
 }
