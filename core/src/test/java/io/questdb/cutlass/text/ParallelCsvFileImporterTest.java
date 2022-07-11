@@ -1177,6 +1177,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                         importAndCleanupTable(importer, context, compiler, "tab", "test-quotes-big.csv", PartitionBy.YEAR, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                         importAndCleanupTable(importer, context, compiler, "alltypes", "test-alltypes-with-gaps.csv", PartitionBy.MONTH, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                         importAndCleanupTable(importer, context, compiler, "alltypes_errors", "test-errors.csv", PartitionBy.HOUR, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+
+                        compiler.compile("create table testimport (StrSym symbol index,Int symbol,Int_Col int,DoubleCol double,IsoDate timestamp,Fmt1Date timestamp,Fmt2Date date,Phone string,boolean boolean,long long) timestamp(IsoDate) partition by DAY;", sqlExecutionContext);
                         importAndCleanupTable(importer, context, compiler, "testimport", "test-import.csv", PartitionBy.DAY, (byte) ',', "IsoDate", "yyyy-MM-ddTHH:mm:ss.SSSZ", false);
                     }
                 });
@@ -1199,9 +1201,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         importer.of(tableName, inputFileName, partitionBy, columnDelimiter, timestampColumn, tsFormat, forceHeader, Atomicity.SKIP_COL);
         importer.process();
         importer.clear();
-
         assertQuery("test\ntrue\n", "select case when cnt > 0 then true else false end as test from ( select count(*) cnt from " + tableName + " )", null, null, false, true, true);
-
         compiler.compile("drop table " + tableName, context);
     }
 

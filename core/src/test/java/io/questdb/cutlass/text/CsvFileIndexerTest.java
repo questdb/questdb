@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
@@ -65,9 +66,15 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
 
     @Test//timestamp should be reassembled properly via rolling buffer
     public void testIndexChunksInCsvWithTimestampFieldAtLineEndSplitBetweenTinyReadBuffers() throws Exception {
-        assertChunksFor("test-quotes-tslast.csv", 10, 3,
+        assertChunksFor("test-quotes-tslast.csv", 1, 3,
                 chunk("2022-05-10/0_1", 1652183520000000L, 15L),
                 chunk("2022-05-11/0_1", 1652269920000000L, 90L));
+    }
+
+    @Test//timestamp should be reassembled properly via rolling buffer
+    public void testIndexChunksInCsvWithTimestampFieldAtLineEndSplitBetweenTinyReadBuffers2() throws Exception {
+        assertChunksFor("test-quotes-tslast2.csv", 1, 3,
+                chunk("2022-05-10/0_1", 1652183520000000L, 15L));
     }
 
     @Test//timestamp is ignored if it doesn't fit in ts rolling buffer 
@@ -84,12 +91,33 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
                 chunk("2022-05-11/0_1", 1652269920001000L, 263L));
     }
 
+    @Test
+    public void testIndexFileWithLowChunkSizeLimitProducesMoreFiles() throws Exception {
+        assertChunksFor("test-quotes-small.csv", 10, 1, 16, chunk("2022-05-10/0_1", 1652183520000000L, 15L),
+                chunk("2022-05-11/0_1", 1652269920000000L, 90L),
+                chunk("2022-05-11/0_2", 1652269920001000L, 185));
+    }
+
     private void assertChunksFor(String fileName, long bufSize, int timestampIndex, IndexChunk... chunks) throws Exception {
+        assertChunksFor(fileName, bufSize, timestampIndex, -1, chunks);
+    }
+
+    private void assertChunksFor(String fileName, long bufSize, int timestampIndex, int chunkSize, IndexChunk... chunks) throws Exception {
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
         assertMemoryLeak(() -> {
             long bufAddr = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
 
-            try (CsvFileIndexer indexer = new CsvFileIndexer(engine.getConfiguration());
+            CairoConfiguration conf = new CairoConfigurationWrapper(engine.getConfiguration()) {
+                @Override
+                public long getMaxImportIndexChunkSize() {
+                    if (chunkSize > 0) {
+                        return chunkSize;
+                    }
+                    return super.getMaxImportIndexChunkSize();
+                }
+            };
+
+            try (CsvFileIndexer indexer = new CsvFileIndexer(conf);
                  DirectCharSink sink = new DirectCharSink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize())) {
 
                 long length = ff.length(Path.getThreadLocal(inputRoot).concat(fileName).$());

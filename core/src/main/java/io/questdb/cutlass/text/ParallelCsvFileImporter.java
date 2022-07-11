@@ -1049,10 +1049,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             inputFilePath.of(inputRoot).concat(inputFileName).$();//getStatus might override it
             targetTableStructure.setIgnoreColumnIndexedFlag(true);
 
-            if (timestampIndex == -1) {
-                throw TextException.$("timestamp column not found");
-            }
-
             if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
                 timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
             }
@@ -1224,7 +1220,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
             return new File(c.toString()).getCanonicalPath().replace(File.separatorChar, '/');
         } catch (IOException e) {
-            LOG.error().$("Can't normalize [path='").$(c).$("'] ").$(e).$();
+            LOG.error().$("Can't normalize [path='").$(c).$("', message=").$(e.getMessage()).I$();
             return null;
         }
     }

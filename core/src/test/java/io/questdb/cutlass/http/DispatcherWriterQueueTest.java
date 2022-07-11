@@ -45,10 +45,12 @@ import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.Timeout;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class DispatcherWriterQueueTest {
@@ -58,6 +60,12 @@ public class DispatcherWriterQueueTest {
     private SqlCompiler compiler;
     private SqlExecutionContextImpl sqlExecutionContext;
     private Error error = null;
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     public void setupSql(CairoEngine engine) {
         compiler = new SqlCompiler(engine);
@@ -202,12 +210,7 @@ public class DispatcherWriterQueueTest {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "\\default\\s.v")) {
-                            long start = System.nanoTime();
-                            if (!alterAckReceived.await(30 * 1000000000L)) {
-                                long end = System.nanoTime();
-                                System.out.printf("Timed out after waiting for %d ns %n", (end - start));
-                                throw CairoException.instance(0).put("Timed out waiting for acknowledgement to be processed!");
-                            }
+                            alterAckReceived.await();
                             Os.sleep(600);
                         }
                         return super.openRW(name, opts);

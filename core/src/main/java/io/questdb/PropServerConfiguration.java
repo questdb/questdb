@@ -805,6 +805,10 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.parallelImportMaxIndexChunkSize = getLong(properties, env, PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
             this.parallelImportMaxIndexChunkSize -= (parallelImportMaxIndexChunkSize % CsvFileIndexer.INDEX_ENTRY_SIZE);
+            if (this.parallelImportMaxIndexChunkSize < 16) {
+                throw new ServerConfigurationException("invalid configuration value [key=" + PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE.getPropertyPath() +
+                        ", description=max import chunk size can't be smaller than 16]");
+            }
             this.parallelImportQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_IMPORT_QUEUE_CAPACITY, 32));
 
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);

@@ -107,7 +107,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private long timestampValue;
 
     //fields taken & adjusted  from textLexer
-    private final int fieldRollBufLimit;
     private long lastLineStart;
 
     private long fieldRollBufCur;
@@ -149,7 +148,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.inputRoot = configuration.getInputRoot();
         this.maxIndexChunkSize = configuration.getMaxImportIndexChunkSize();
         this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
-        this.fieldRollBufLimit = MAX_TIMESTAMP_LENGTH;
         this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_DEFAULT);
         this.fieldRollBufCur = fieldRollBufPtr;
 
@@ -218,11 +216,11 @@ public class CsvFileIndexer implements Closeable, Mutable {
             target = outputFiles.valueAt(keyIndex);
         }
 
-        target.putEntry(timestampValue, lengthAndOffset, length);
-
         if (target.indexChunkSize == maxIndexChunkSize) {
             target.nextChunk(ff, getPartitionIndexPrefix(partitionKey));
         }
+
+        target.putEntry(timestampValue, lengthAndOffset, length);
     }
 
     private void parseTimestamp() {
@@ -417,12 +415,12 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     private boolean fitsInBuffer(int requiredLength) {
-        if (requiredLength > fieldRollBufLimit) {
+        if (requiredLength > fieldRollBufLen) {
             LOG.info()
                     .$("timestamp column value too long [path=").$(inputFileName)
                     .$(", line=").$(lineCount)
                     .$(", requiredLen=").$(requiredLength)
-                    .$(", rollLimit=").$(fieldRollBufLimit)
+                    .$(", rollLimit=").$(fieldRollBufLen)
                     .$(']').$();
             errorCount++;
             rollBufferUnusable = true;
@@ -515,11 +513,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     private void putToRollBuf(byte c) {
-        if (fieldRollBufCur - fieldRollBufPtr == fieldRollBufLen) {
-            if (fitsInBuffer(fieldRollBufLen + 1)) {
-                Unsafe.getUnsafe().putByte(fieldRollBufCur++, c);
-            }
-        } else {
+        if (fitsInBuffer((int) (fieldRollBufCur - fieldRollBufPtr + 1L))) {
             Unsafe.getUnsafe().putByte(fieldRollBufCur++, c);
         }
     }
@@ -667,6 +661,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     public void sort(final long srcFd, long srcSize) {
+        if (srcSize < 1) {
+            return;
+        }
+
         long srcAddress = -1;
 
         try {
