@@ -41,10 +41,10 @@ import java.util.Map;
 
 public class ReaderPool extends AbstractPool implements ResourcePool<TableReader> {
 
+    public static final int ENTRY_SIZE = 32;
     private static final Log LOG = LogFactory.getLog(ReaderPool.class);
     private static final long UNLOCKED = -1L;
     private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
-    private static final int ENTRY_SIZE = 32;
     private static final long LOCK_OWNER = Unsafe.getFieldOffset(Entry.class, "lockOwner");
     private static final int NEXT_OPEN = 0;
     private static final int NEXT_ALLOCATED = 1;
@@ -59,6 +59,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         this.maxSegments = configuration.getReaderPoolMaxSegments();
         this.messageBus = messageBus;
         this.maxEntries = maxSegments * ENTRY_SIZE;
+    }
+
+    public Map<CharSequence, Entry> entries() {
+        return entries;
     }
 
     @Override
@@ -78,7 +82,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             for (int i = 0; i < ENTRY_SIZE; i++) {
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                     // got lock, allocate if needed
-                    R r = e.readers[i];
+                    R r = e.getReader(i);
                     if (r == null) {
                         try {
                             LOG.info()
@@ -91,7 +95,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                             throw ex;
                         }
 
-                        e.readers[i] = r;
+                        e.setReader(i, r);
                         notifyListener(thread, name, PoolListener.EV_CREATE, e.index, i);
                     } else {
                         try {
@@ -104,7 +108,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     }
 
                     if (isClosed()) {
-                        e.readers[i] = null;
+                        e.setReader(i, null);
                         r.goodbye();
                         LOG.info().$('\'').utf8(name).$("' born free").$();
                         return r;
@@ -237,7 +241,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     R r;
-                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && (r = e.readers[i]) != null) {
+                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && (r = e.getReader(i)) != null) {
                         if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                             // check if deadline violation still holds
                             if (deadline > e.releaseTimes[i]) {
@@ -269,7 +273,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     }
 
     private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
-        R r = entry.readers[index];
+        R r = entry.getReader(index);
         if (r != null) {
             r.goodbye();
             r.close();
@@ -278,7 +282,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     .$(", reason=").$(PoolConstants.closeReasonText(reason))
                     .I$();
             notifyListener(thread, r.getTableName(), ev, entry.index, index);
-            entry.readers[index] = null;
+            entry.setReader(index, null);
         }
     }
 
@@ -333,10 +337,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         throw CairoException.instance(0).put("double close [table=").put(name).put(", index=").put(index).put(']');
     }
 
-    public static class Entry {
+    public static final class Entry {
         final long[] allocations = new long[ENTRY_SIZE];
         final long[] releaseTimes = new long[ENTRY_SIZE];
-        final R[] readers = new R[ENTRY_SIZE];
+        final Object[] readers = new Object[ENTRY_SIZE];
         final int index;
         volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
@@ -347,6 +351,34 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             this.index = index;
             Arrays.fill(allocations, UNALLOCATED);
             Arrays.fill(releaseTimes, currentMicros);
+        }
+
+        public long getOwnerVolatile(int pos) {
+            assert pos >= 0 && pos <= ENTRY_SIZE;
+            return Unsafe.arrayGetVolatile(allocations, pos);
+        }
+
+        public long getReleaseTimeVolatile(int pos) {
+            assert pos >= 0 && pos <= ENTRY_SIZE;
+            return Unsafe.arrayGetVolatile(releaseTimes, pos);
+        }
+
+        public R getReader(int pos) {
+            assert pos >= 0 && pos <= ENTRY_SIZE;
+            return (R) readers[pos];
+        }
+
+        public R getReaderVolatile(int pos) {
+            assert pos >= 0 && pos <= ENTRY_SIZE;
+            return (R) Unsafe.arrayGetVolatile(readers, pos);
+        }
+
+        public void setReader(int pos, R reader) {
+            Unsafe.arrayPutOrdered(readers, pos, reader);
+        }
+
+        public Entry getNext() {
+            return next;
         }
     }
 
