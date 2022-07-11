@@ -42,6 +42,7 @@ public class LineTcpSender extends AbstractLineSender {
      * @param port port where a server is listening
      * @param bufferCapacity capacity of an internal buffer in bytes
      */
+    @Deprecated
     public LineTcpSender(int ip, int port, int bufferCapacity) {
         super(new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, ip, port, bufferCapacity * 2), bufferCapacity);
     }

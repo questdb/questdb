@@ -566,7 +566,6 @@ public final class TableUtils {
                 case '\u000e':
                 case '\u000f':
                 case '\u007f':
-                case '\n':
                 case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
                     return false;
             }
