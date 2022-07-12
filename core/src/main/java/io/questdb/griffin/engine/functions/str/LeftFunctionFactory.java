@@ -192,7 +192,7 @@ public class LeftFunctionFactory implements FunctionFactory {
     }
 
     private static int getPos(int len, int count) {
-        return count > 0 ? Math.max(0, Math.min(len, count)) : Math.max(0, len + count);
+        return count > -1 ? Math.max(0, Math.min(len, count)) : Math.max(0, len + count);
     }
 
 }
