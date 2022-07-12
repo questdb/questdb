@@ -30,12 +30,12 @@ import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -122,6 +122,13 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
     @Test
     public void testEmptyPool() throws SqlException {
         assertSql("select * from reader_pool()", "table\towner\ttimestamp\ttxn\n");
+    }
+
+    @Test
+    public void testCursorNotRuntimeConstant() throws Exception {
+        try (Function cursorFunction = new ReaderPoolFunctionFactory().newInstance(0, new ObjList<>(), new IntList(), configuration, sqlExecutionContext)) {
+            Assert.assertFalse(cursorFunction.isRuntimeConstant());
+        }
     }
 
     @Test
