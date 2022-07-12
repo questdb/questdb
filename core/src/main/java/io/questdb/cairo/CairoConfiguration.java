@@ -220,6 +220,8 @@ public interface CairoConfiguration {
 
     int getRndFunctionMemoryPageSize();
 
+    int getReplaceFunctionMaxBufferLength();
+
     CharSequence getRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
     default RostiAllocFacade getRostiAllocFacade() {

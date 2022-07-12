@@ -6,7 +6,7 @@ and FreeBSD.
 To compile the code CMAKE v3.19 or higher is required, also gcc, g++ >=8.1 are
 required.
 
-To build in ./core run
+To build in `./core` run:
 
 ```bash
 cmake -B build/release -DCMAKE_BUILD_TYPE=Release .
@@ -23,7 +23,7 @@ This is detailed example of how to install and build on FreeBSD 12 stock VM
 image.
 
 1. Install Open JDK (11 at the time of writing), gcc (10 in the below example),
-   cmake
+   cmake:
 
 ```bash
 pkg install openjdk11-11.0.8+10.1
@@ -31,23 +31,21 @@ pkg install gcc10-devel
 pkg install cmake
 ```
 
-2. Add JAVA_HOME
+2. Add JAVA_HOME and reload the profile:
 
 ```bash
 echo "export JAVA_HOME=/usr/local/openjdk11" >> ~/.profile
 ```
 
-reload the profile
-
-3. Open new shell to apply JAVA_HOME export and run cmake
+3. Open new shell to apply JAVA_HOME export and run cmake:
 
 ```bash
 cmake -DCMAKE_BUILD_TYPE=Release -B build/release -H.
 cmake --build build/release --config Release
 ```
 
-it is also possible to compile using g++ as c++ compiler instead of default
-clang
+It is also possible to compile using g++ as C++ compiler instead of default
+clang:
 
 ```bash
 cmake -DCMAKE_BUILD_TYPE:STRING=Release -DCMAKE_C_COMPILER=/usr/local/bin/gcc10 -DCMAKE_CXX_COMPILER=/usr/local/bin/g++10 .
