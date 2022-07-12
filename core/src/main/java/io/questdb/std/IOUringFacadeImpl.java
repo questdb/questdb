@@ -50,6 +50,11 @@ public class IOUringFacadeImpl implements IOUringFacade {
     }
 
     @Override
+    public int submitAndWait(long ptr, int waitNr) {
+        return IOUringAccessor.submitAndWait(ptr, waitNr);
+    }
+
+    @Override
     public int errno() {
         return Os.errno();
     }
@@ -59,14 +64,14 @@ public class IOUringFacadeImpl implements IOUringFacade {
             available = false;
         } else {
             String kernelVersion = IOUringAccessor.kernelVersion();
-            available = isIOUringAvailable(kernelVersion);
+            available = isAvailableOn(kernelVersion);
         }
     }
 
     /**
      * io_uring is available since kernel 5.1.
      */
-    static boolean isIOUringAvailable(String kernelVersion) {
+    static boolean isAvailableOn(String kernelVersion) {
         final String[] versionParts = kernelVersion.split("\\.");
         if (versionParts.length < 3) {
             return false;
