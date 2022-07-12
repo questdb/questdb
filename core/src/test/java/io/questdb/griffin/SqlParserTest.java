@@ -5600,6 +5600,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    @Ignore
+    // not yet implemented, taking the non-correlated sub-query out as a join
+    // will duplicate column X that optimiser needs to deal with
     public void testCorrelatedSubQueryCross() throws Exception {
         assertQuery(
                 "select-virtual (select-choose x from (select [x] from a)) y, x from (select [x] from a)",
