@@ -24,6 +24,9 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
+import org.jetbrains.annotations.TestOnly;
+
 import java.io.Closeable;
 
 import static io.questdb.std.IOUringAccessor.*;
@@ -31,6 +34,7 @@ import static io.questdb.std.IOUringAccessor.*;
 public final class IOUring implements Closeable {
 
     private final long ringPtr;
+    private final int ringFd;
 
     private final long sqesPtr;
     private final long sqKheadPtr;
@@ -51,11 +55,13 @@ public final class IOUring implements Closeable {
     public IOUring(IOUringFacade facade, int capacity) {
         assert Numbers.isPow2(capacity);
         this.facade = facade;
-        this.ringPtr = facade.create(capacity);
-        if (ringPtr < 0) {
-            // TODO: use CairoException
-            throw new RuntimeException("Could not create io_uring instance: " + ringPtr);
+        final long res = facade.create(capacity);
+        if (res < 0) {
+            throw CairoException.instance((int) -res).put("Cannot create io_uring instance");
         }
+        this.ringPtr = res;
+
+        this.ringFd = Unsafe.getUnsafe().getInt(ringPtr + RING_FD_OFFSET);
 
         this.sqesPtr = Unsafe.getUnsafe().getLong(ringPtr + SQ_SQES_OFFSET);
         this.sqKheadPtr = Unsafe.getUnsafe().getLong(ringPtr + SQ_KHEAD_OFFSET);
@@ -70,7 +76,7 @@ public final class IOUring implements Closeable {
         final long cqMaskPtr = Unsafe.getUnsafe().getLong(ringPtr + CQ_KRING_MASK_OFFSET);
         this.cqKringMask = Unsafe.getUnsafe().getInt(cqMaskPtr);
 
-        // TODO use Files.bumpFileCount of ring fd
+        Files.bumpFileCount(ringFd);
     }
 
     @Override
@@ -79,11 +85,32 @@ public final class IOUring implements Closeable {
             return;
         }
         facade.close(ringPtr);
+        Files.decrementFileCount(ringFd);
         closed = true;
     }
 
+    /**
+     * Submits pending sqes, if any.
+     *
+     * @return number of submitted sqes.
+     */
     public int submit() {
         return facade.submit(ringPtr);
+    }
+
+    /**
+     * Submits pending sqes, if any, and blocks until at least one operation result
+     * becomes available as a cqe.
+     *
+     * @return number of submitted sqes.
+     */
+    public int submitAndWait() {
+        return facade.submitAndWait(ringPtr, 1);
+    }
+
+    @TestOnly
+    long enqueueNop() {
+        return enqueueSqe(IORING_OP_NOP, 0, 0, 0, 0);
     }
 
     public long enqueueRead(long fd, long offset, long bufPtr, int len) {
