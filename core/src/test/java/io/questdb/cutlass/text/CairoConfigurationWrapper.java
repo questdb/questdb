@@ -428,6 +428,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getReplaceFunctionMaxBufferLength() {
+        return conf.getReplaceFunctionMaxBufferLength();
+    }
+
+    @Override
     public CharSequence getRoot() {
         return conf.getRoot();
     }
