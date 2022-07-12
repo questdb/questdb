@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    if: github.repository == 'questdb/questdb' # Only run on PRs opened against main
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }} # Only run on non-forked PRs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@master
