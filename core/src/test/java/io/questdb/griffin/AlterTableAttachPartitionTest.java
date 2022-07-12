@@ -37,7 +37,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 
@@ -200,7 +199,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAttachFailsInvalidSepartorFormat() throws Exception {
+    public void testAttachFailsInvalidSeparatorFormat() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.MONTH)) {
 
@@ -333,7 +332,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         10);
 
                 long value = 0L;
-                writeToStrIndexFile(src, "2020-01-09", "str.i", value, 16L);
+                writeToStrIndexFile(src, "str.i", value, 16L);
 
                 assertSchemaMismatch(src, dst -> dst.col("str", ColumnType.STRING), "Variable size column has invalid data address value");
             }
@@ -354,11 +353,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         10);
 
                 long invalidValue = Long.MAX_VALUE;
-                writeToStrIndexFile(src, "2020-01-09", "str.i", invalidValue, 256L);
+                writeToStrIndexFile(src, "str.i", invalidValue, 256L);
                 assertSchemaMismatch(src, dst -> dst.col("str", ColumnType.STRING), "dataAddress=" + invalidValue);
 
                 invalidValue = -1;
-                writeToStrIndexFile(src, "2020-01-09", "str.i", invalidValue, 256L);
+                writeToStrIndexFile(src, "str.i", invalidValue, 256L);
                 assertSchemaMismatch(src, dst -> dst.col("str", ColumnType.STRING), "dataAddress=" + invalidValue);
             }
         });
@@ -422,7 +421,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-09",
                         2);
 
-                writeToStrIndexFile(src, "2020-01-09", "sym.d", -1L, 4L);
+                writeToStrIndexFile(src, "sym.d", -1L, 4L);
 
                 try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
                     createPopulateTable(
@@ -858,7 +857,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [0] Doesn't exist:");
+        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [0] path does not exist");
     }
 
     @Test
@@ -975,7 +974,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         tearDown();
     }
 
-    private void assertSchemaMismatch(TableModel src, AddColumn tm, String errorMessage) throws IOException, NumericException {
+    private void assertSchemaMismatch(TableModel src, AddColumn tm, String errorMessage) throws NumericException {
         try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY);
              Path path = new Path()) {
             dst.timestamp("ts")
@@ -1000,7 +999,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             TableModel dst,
             int countAdjustment,
             String... partitionList
-    ) throws SqlException, NumericException, IOException {
+    ) throws SqlException, NumericException {
         copyAttachPartition(src, dst, countAdjustment, false, partitionList);
     }
 
@@ -1010,7 +1009,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             int countAdjustment,
             boolean skipCopy,
             String... partitionList
-    ) throws IOException, SqlException, NumericException {
+    ) throws SqlException, NumericException {
         StringBuilder partitions = new StringBuilder();
         for (int i = 0; i < partitionList.length; i++) {
             if (i > 0) {
@@ -1090,16 +1089,16 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         );
     }
 
-    private void copyDirectory(Path from, Path to) throws IOException {
+    private void copyDirectory(Path from, Path to) {
         LOG.info().$("copying folder [from=").$(from).$(", to=").$(to).$(']').$();
         TestUtils.copyDirectory(from, to, DIR_MODE);
     }
 
-    private void copyPartitionToBackup(String src, String partitionFolder, String dst) throws IOException {
+    private void copyPartitionToBackup(String src, String partitionFolder, String dst) {
         copyPartitionToBackup(src, partitionFolder, dst, partitionFolder);
     }
 
-    private void copyPartitionToBackup(String src, String srcDir, String dst, String dstDir) throws IOException {
+    private void copyPartitionToBackup(String src, String srcDir, String dst, String dstDir) {
         try (Path p1 = new Path().of(configuration.getRoot()).concat(src).concat(srcDir).$();
              Path backup = new Path().of(configuration.getRoot())) {
 
@@ -1165,13 +1164,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         });
     }
 
-    private void writeToStrIndexFile(TableModel src, String partition, String columnFileName, long value, long offset) {
+    private void writeToStrIndexFile(TableModel src, String columnFileName, long value, long offset) {
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
         long fd = -1;
         long writeBuff = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try (Path path = new Path()) {
             // .i file
-            path.of(configuration.getRoot()).concat(src.getName()).concat(partition).concat(columnFileName).$();
+            path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat(columnFileName).$();
             fd = ff.openRW(path, CairoConfiguration.O_NONE);
             Unsafe.getUnsafe().putLong(writeBuff, value);
             ff.write(fd, writeBuff, Long.BYTES, offset);

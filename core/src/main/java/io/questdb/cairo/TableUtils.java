@@ -1160,7 +1160,7 @@ public final class TableUtils {
                     ff.close(fd);
                 }
             } else {
-                throw CairoException.instance(0).put("Doesn't exist: ").put(path);
+                throw CairoException.instance(0).put("path does not exist [path=").put(path).put(']');
             }
         } finally {
             path.trimTo(plen);

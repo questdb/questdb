@@ -728,6 +728,14 @@ public class TextImportTask {
 
                     i += additionalLines;
 
+                    if (bytesToRead > fileBufSize) {
+                        throw TextException
+                                .$("buffer overflow [path='").put(tmpPath)
+                                .put("', bytesToRead=").put(bytesToRead)
+                                .put(", fileBufSize=").put(fileBufSize)
+                                .put("]");
+                    }
+
                     long n = ff.read(fd, fileBufAddr, bytesToRead, offset);
                     if (n > 0) {
                         lexer.parse(fileBufAddr, fileBufAddr + n, Integer.MAX_VALUE, onFieldsPartitioned);
@@ -1085,7 +1093,10 @@ public class TextImportTask {
                                     cfg.getWriterFileOpenOpts()
                             )
                     ) {
-                        SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(columnIndex), reader, mem);//TODO: use result !
+                        // It is possible to skip symbol rewrite when symbols do not clash.
+                        // From our benchmarks rewriting symbols take a tiny fraction of time compared to everything else
+                        // so that we don't need to optimise this yet.
+                        SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(columnIndex), reader, mem);
                     }
                 }
             }

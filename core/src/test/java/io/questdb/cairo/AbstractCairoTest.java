@@ -72,6 +72,7 @@ public class AbstractCairoTest {
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
+    protected static int sqlCopyBufferSize = 1024 * 1024;
     protected static FilesFacade ff;
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
@@ -378,6 +379,7 @@ public class AbstractCairoTest {
         columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
+        sqlCopyBufferSize = 1024*1024;
     }
 
     protected static void configureForBackups() throws IOException {

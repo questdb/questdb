@@ -42,7 +42,6 @@ import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.io.File;
@@ -144,7 +143,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         MessageBus bus = cairoEngine.getMessageBus();
         RingQueue<TextImportTask> queue = bus.getTextImportQueue();
         if (queue.getCycle() < 1) {
-            throw TextImportException.instance(TextImportTask.PHASE_SETUP,"Parallel import queue size can't be zero!");
+            throw TextImportException.instance(TextImportTask.PHASE_SETUP,"Parallel import queue size cannot be zero!");
         }
 
         this.cairoEngine = cairoEngine;
@@ -390,7 +389,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
                 writer.attachPartition(timestamp, false);
             } catch (CairoException e) {
-                throw TextImportException.instance(TextImportTask.PHASE_ATTACH_PARTITIONS,"Can't attach partition ").put(partitionDirName).put(". ").put(e.getMessage());
+                throw TextImportException.instance(
+                        TextImportTask.PHASE_ATTACH_PARTITIONS,"could not attach [partition='").put(partitionDirName).put("', msg=").put(e.getMessage()).put(']');
             }
         }
 
@@ -530,11 +530,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         Path workDirPath = tmpPath.of(importRoot).slash$();
         int errno = ff.mkdir(workDirPath, configuration.getMkDirMode());
         if (errno != 0) {
-            throw CairoException.instance(errno).put("Can't create import work dir ").put(workDirPath).put(" errno=").put(errno);
+            throw CairoException.instance(errno).put("could not create temporary import directory `").put(workDirPath).put("` errno=").put(errno);
         }
 
         createdWorkDir = true;
-        LOG.info().$("created import dir [path='").$(workDirPath).I$();
+        LOG.info().$("temporary import directory [path='").$(workDirPath).I$();
     }
 
     //returns list with N chunk boundaries
@@ -960,7 +960,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 phaseEpilogue(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE);
                 return writer;
             } else {
-                throw TextException.$("Can't read from file path='").put(inputFilePath).put("' to analyze structure");
+                throw TextException.$("could not read from file '").put(inputFilePath).put("' to analyze structure");
             }
         } catch (CairoException | TextException e) {
             throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, e.getMessage());
@@ -980,7 +980,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             throw CairoException.instance(0).put("cannot determine text structure");
         }
         if (partitionBy == PartitionBy.NONE) {
-            throw CairoException.instance(-1).put("partition by unit can't be NONE for parallel import");
+            throw CairoException.instance(0).put("partition strategy for parallel import cannot be NONE");
         }
 
         if (partitionBy < 0) {
@@ -1224,7 +1224,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
             return new File(c.toString()).getCanonicalPath().replace(File.separatorChar, '/');
         } catch (IOException e) {
-            LOG.error().$("Can't normalize [path='").$(c).$("', message=").$(e.getMessage()).I$();
+            LOG.error().$("could not normalize [path='").$(c).$("', message=").$(e.getMessage()).I$();
             return null;
         }
     }
