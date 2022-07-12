@@ -26,7 +26,10 @@ package io.questdb.std;
 
 public class IOUringAccessor {
 
+    static final byte IORING_OP_NOP = 0;
     static final byte IORING_OP_READ = 22;
+
+    static final short RING_FD_OFFSET;
 
     static final short SQ_KHEAD_OFFSET;
     static final short SQ_KTAIL_OFFSET;
@@ -54,6 +57,8 @@ public class IOUringAccessor {
     static final short CQE_RES_OFFSET;
 
     static {
+        RING_FD_OFFSET = getRingFdOffset();
+
         final short sqOffset = getSqOffset();
         SQ_KHEAD_OFFSET = (short) (sqOffset + getSqKheadOffset());
         SQ_KTAIL_OFFSET = (short) (sqOffset + getSqKtailOffset());
@@ -89,6 +94,10 @@ public class IOUringAccessor {
     static native void close(long ptr);
 
     static native int submit(long ptr);
+
+    static native int submitAndWait(long ptr, int waitNr);
+
+    static native short getRingFdOffset();
 
     static native short getSqOffset();
 

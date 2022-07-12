@@ -44,7 +44,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_IOUringAccessor_create
     struct io_uring *ring = malloc(sizeof(struct io_uring));
     int ret = io_uring_queue_init(capacity, ring, 0);
     if (ret < 0) {
-        return -1;
+        free(ring);
+        return (jlong) ret;
     }
     return (jlong) ring;
 }
@@ -60,6 +61,17 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_IOUringAccessor_submit
         (JNIEnv *e, jclass cl, jlong ptr) {
     struct io_uring *ring = (struct io_uring *) ptr;
     return (jint) io_uring_submit(ring);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_IOUringAccessor_submitAndWait
+        (JNIEnv *e, jclass cl, jlong ptr, jint waitNr) {
+    struct io_uring *ring = (struct io_uring *) ptr;
+    return (jint) io_uring_submit_and_wait(ring, (int) waitNr);
+}
+
+JNIEXPORT jshort JNICALL Java_io_questdb_std_IOUringAccessor_getRingFdOffset
+        (JNIEnv *e, jclass cl) {
+    return (jshort) offsetof(struct io_uring, ring_fd);
 }
 
 // io_uring_sq
