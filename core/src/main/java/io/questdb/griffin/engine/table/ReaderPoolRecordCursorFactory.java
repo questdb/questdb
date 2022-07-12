@@ -38,13 +38,11 @@ import java.util.Map;
 public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final RecordMetadata METADATA;
 
-    private final CairoConfiguration configuration;
-    private final SqlExecutionContext sqlExecutionContext;
+    private final CairoEngine cairoEngine;
 
-    public ReaderPoolRecordCursorFactory(CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public ReaderPoolRecordCursorFactory(CairoEngine cairoEngine) {
         super(METADATA);
-        this.configuration = configuration;
-        this.sqlExecutionContext = sqlExecutionContext;
+        this.cairoEngine = cairoEngine;
     }
 
     @Override
@@ -85,7 +83,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             allocationIndex = 0;
             poolEntry = null;
             tableName = null;
-            Map<CharSequence, ReaderPool.Entry> readerPoolEntries = sqlExecutionContext.getCairoEngine().getReaderPoolEntries();
+            Map<CharSequence, ReaderPool.Entry> readerPoolEntries = cairoEngine.getReaderPoolEntries();
             iterator = readerPoolEntries.entrySet().iterator();
         }
 
@@ -187,7 +185,6 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
             @Override
             public long getLong(int col) {
-                assert col == 1 || col == 3;
                 if (col == 1) {
                     return owner;
                 } else if (col == 3) {

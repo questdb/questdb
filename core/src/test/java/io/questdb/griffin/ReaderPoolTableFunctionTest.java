@@ -28,11 +28,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.Chars;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.test.tools.TestUtils;
@@ -72,7 +74,7 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
             executeTx(tableName);
         }
 
-        int readerAcquisitionCount = 10;
+        int readerAcquisitionCount = ReaderPool.ENTRY_SIZE * 2;
         long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
         long threadId = Thread.currentThread().getId();
         long allReadersAcquiredTime = acquireReaderAndRun(tableName, readerAcquisitionCount, () -> {
@@ -84,39 +86,122 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
         assertReaderPool(readerAcquisitionCount, recordValidator(allReadersAcquiredTime, tableName, -1, 4));
     }
 
-    private static ReaderPoolRowValidator recordValidator(long startTime, CharSequence expectedTableName, long expectedOwner, long expectedTxn) {
+    @Test
+    public void testMultipleTables() throws Exception {
+        // create a table
+        try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
+        }
+        try (TableModel tm = new TableModel(configuration, "tab2", PartitionBy.NONE)) {
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
+        }
+
+        int readerAcquisitionCount = ReaderPool.ENTRY_SIZE * 2;
+        long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
+        long threadId = Thread.currentThread().getId();
+
+        long allReadersAcquiredTime = acquireReaderAndRun("tab1", readerAcquisitionCount, () -> {
+            return acquireReaderAndRun("tab2", readerAcquisitionCount, () -> {
+                assertReaderPool(readerAcquisitionCount * 2, anyOf(
+                        recordValidator(startTime, "tab1", threadId, 1),
+                        recordValidator(startTime, "tab2", threadId, 1))
+                );
+                return MicrosecondClockImpl.INSTANCE.getTicks();
+            });
+        });
+
+        // all readers should be released. there should have a timestamp set >= timestamp when all readers were acquired
+        assertReaderPool(readerAcquisitionCount * 2, anyOf(
+                recordValidator(allReadersAcquiredTime, "tab1", -1, 1),
+                recordValidator(allReadersAcquiredTime, "tab2", -1, 1))
+        );
+    }
+
+    @Test
+    public void testEmptyPool() throws SqlException {
+        assertSql("select * from reader_pool()", "table\towner\ttimestamp\ttxn\n");
+    }
+
+    @Test
+    public void testMetadata() throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile("select * from reader_pool()", sqlExecutionContext).getRecordCursorFactory()) {
+            RecordMetadata metadata = factory.getMetadata();
+            Assert.assertEquals(4, metadata.getColumnCount());
+            Assert.assertEquals("table", metadata.getColumnName(0));
+            Assert.assertEquals("owner", metadata.getColumnName(1));
+            Assert.assertEquals("timestamp", metadata.getColumnName(2));
+            Assert.assertEquals("txn", metadata.getColumnName(3));
+            Assert.assertEquals(ColumnType.STRING, metadata.getColumnType(0));
+            Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(1));
+            Assert.assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType(2));
+            Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(3));
+        }
+    }
+
+    @Test
+    public void testFactoryDoesNotSupportRandomAccess() throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile("select * from reader_pool()", sqlExecutionContext).getRecordCursorFactory()) {
+            Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
+        }
+    }
+
+    @Test
+    public void testCursorDoesHaveUpfrontSize() throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile("select * from reader_pool()", sqlExecutionContext).getRecordCursorFactory();
+        RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertEquals(-1, cursor.size());
+        }
+    }
+
+    private static ReaderPoolRowValidator recordValidator(long startTime, CharSequence applicableTableName, long expectedOwner, long expectedTxn) {
         return (table, owner, txn, timestamp) -> {
-            // todo: should this be weaker? what is there is a maintenance job reading an internal table?
-            // perhaps we should skip all records not matching the expected table name?
-            TestUtils.assertEquals(expectedTableName, table);
+            if (!Chars.equals(table, applicableTableName)) {
+                return false;
+            }
+            TestUtils.assertEquals(applicableTableName, table);
             Assert.assertEquals(expectedOwner, owner);
             Assert.assertEquals(expectedTxn, txn);
             assertTimestampBetween(timestamp, startTime, MicrosecondClockImpl.INSTANCE.getTicks());
+            return true;
         };
+    }
+
+    private static ReaderPoolRowValidator anyOf(ReaderPoolRowValidator validator1, ReaderPoolRowValidator validator2) {
+        return (table, owner, txn, timestamp) -> validator1.validate(table, owner, txn, timestamp) || validator2.validate(table, owner, txn, timestamp);
     }
 
     @Nullable
     private static void assertReaderPool(int expectedRowCount, ReaderPoolRowValidator validator) throws Exception {
-        try (RecordCursorFactory factory = compiler.compile("select * from reader_pool order by table", sqlExecutionContext).getRecordCursorFactory();
+        try (RecordCursorFactory factory = compiler.compile("select * from reader_pool() order by table", sqlExecutionContext).getRecordCursorFactory();
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             RecordMetadata metadata = factory.getMetadata();
             int i = 0;
             Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                i++;
                 CharSequence table = record.getStr(metadata.getColumnIndex("table"));
                 long owner = record.getLong(metadata.getColumnIndex("owner"));
                 long txn = record.getLong(metadata.getColumnIndex("txn"));
                 long timestamp = record.getTimestamp(metadata.getColumnIndex("timestamp"));
-                validator.validate(table, owner, txn, timestamp);
+                if (validator.validate(table, owner, txn, timestamp)) {
+                    i++;
+                }
             }
-            // todo: should this be a weaker comparison? what is a reader gets evicted?
             Assert.assertEquals(expectedRowCount, i);
         }
     }
 
+    /**
+     * Validate a given reader pool entry
+     *
+     * When validator is not applicable for given entry then returns false.
+     * When validator is applicable and a record passes validation then returns true.
+     * When validator is applicable and a record does not pass validation then throw AssertionError
+     *
+     */
     private interface ReaderPoolRowValidator {
-        void validate(CharSequence table, long owner, long txn, long timestamp);
+        boolean validate(CharSequence table, long owner, long txn, long timestamp);
     }
 
     private static void assertTimestampBetween(long timestamp, long lowerBoundInc, long upperBoundInc) {
