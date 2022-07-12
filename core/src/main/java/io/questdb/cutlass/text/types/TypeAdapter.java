@@ -39,7 +39,7 @@ public interface TypeAdapter {
 
     void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception;
 
-    default void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink ignored) throws Exception {
+    default void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink utf8Sink) throws Exception {
         write(row, column, value);
     }
 }

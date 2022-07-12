@@ -382,4 +382,8 @@ public interface CairoConfiguration {
     boolean isSqlJitDebugEnabled();
 
     boolean isSqlParallelFilterEnabled();
+
+    default IOUringFacade getIOURingFacade() {
+        return IOUringFacadeImpl.INSTANCE;
+    }
 }

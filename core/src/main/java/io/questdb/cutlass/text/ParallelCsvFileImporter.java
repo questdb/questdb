@@ -363,7 +363,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         });
 
         int taskIds = 0;
-        for (int i = 0; i < workerSums.length; i++) {
+        for (int i = 0, n= workerSums.length; i < n; i++) {
             if (workerSums[i] != 0) {
                 taskIds++;
             }
@@ -714,12 +714,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void phaseEpilogue(byte phase) {
         throwErrorIfNotOk();
         long endMs = getCurrentTimeMs();
-        LOG.info().$("finished [phase=`").$(phase).$("`, file=`").$(inputFilePath).$("`, duration=").$((endMs - startMs) / 1000).$('s').I$();
+        LOG.info()
+                .$("finished [phase=").$(phase)
+                .$(", file=`").$(inputFilePath)
+                .$("`, duration=").$((endMs - startMs) / 1000).$('s')
+                .I$();
         updateStatus(phase, TextImportTask.STATUS_FINISHED, null);
     }
 
     private void phasePrologue(byte phase) {
-        LOG.info().$("started [phase=`").$(phase).$("`, file=`").$(inputFilePath).$('`').I$();
+        LOG.info().$("started  [phase=").$(phase).$(", file=`").$(inputFilePath).$('`').I$();
         updateStatus(phase, TextImportTask.STATUS_STARTED, null);
         startMs = getCurrentTimeMs();
     }

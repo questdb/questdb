@@ -70,10 +70,10 @@ public class DateUtf8Adapter extends AbstractTypeAdapter implements Mutable {
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink sink) throws Exception {
-        sink.clear();
-        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), sink);
-        row.putDate(column, format.parse(sink, locale));
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink utf8Sink) throws Exception {
+        utf8Sink.clear();
+        TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
+        row.putDate(column, format.parse(utf8Sink, locale));
     }
 
     public DateUtf8Adapter of(DateFormat format, DateLocale locale) {

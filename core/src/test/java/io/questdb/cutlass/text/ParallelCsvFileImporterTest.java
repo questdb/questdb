@@ -37,6 +37,7 @@ import io.questdb.std.str.Path;
 import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -47,9 +48,7 @@ import java.util.*;
 import static org.hamcrest.CoreMatchers.*;
 
 public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
-
     private static final Rnd rnd = new Rnd();
-
     @Before
     public void before() throws IOException {
         rnd.reset();
@@ -969,6 +968,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFailsOnDataImportIO() throws Exception {
+        Assume.assumeFalse(configuration.getIOURingFacade().isAvailable());
+
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public long read(long fd, long buf, long len, long offset) {

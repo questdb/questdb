@@ -38,16 +38,13 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> implements Closeable {
-
     private static final int INDEX_MERGE_LIST_CAPACITY = 64;
-
     private TextLexer textLexer;
     private CsvFileIndexer indexer;
     private DirectCharSink utf8Sink;
     private DirectLongList mergeIndexes;
     private Path tmpPath1;
     private Path tmpPath2;
-
     private final long fileBufAddr;
     private long fileBufSize;
 
