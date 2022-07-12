@@ -814,6 +814,13 @@ public class TextImportTask {
                             addr += lineLength;
                         } else {
                             // we are out of ring capacity or our buffer is exhausted
+                            if (cc == 0) {
+                                throw TextException
+                                        .$("buffer overflow [path='").put(tmpPath)
+                                        .put("', lineLength=").put(lineLength)
+                                        .put(", fileBufSize=").put(fileBufSize)
+                                        .put("]");
+                            }
                             consumeURing(lexer, fileBufAddr, offsets, ring, cc);
 
                             cc = 0;
