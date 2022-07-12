@@ -96,7 +96,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                     return false;
                 }
                 owner = poolEntry.getOwnerVolatile(allocationIndex);
-                timestamp = poolEntry.getReleaseTimeVolatile(allocationIndex);
+                timestamp = poolEntry.getReleaseOrAcquireTimeVolatile(allocationIndex);
                 reader = poolEntry.getReaderVolatile(allocationIndex);
                 allocationIndex++;
             } while (reader == null);
@@ -107,6 +107,8 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         private boolean selectPoolEntry() {
             for (;;) {
                 if (poolEntry == null) {
+                    // either we just started the iteration or the last Entry did not have
+                    // anything chained. let's advance in the CHM iterator
                     assert allocationIndex == 0;
                     if (!iterator.hasNext()) {
                         return false;
@@ -116,9 +118,12 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                     poolEntry = mapEntry.getValue();
                     return true;
                 } else if (allocationIndex == ReaderPool.ENTRY_SIZE) {
+                    // we exhausted all slots in the current Entry
+                    // let's see if there is another Entry chained
                     poolEntry = poolEntry.getNext();
                     allocationIndex = 0;
                 } else {
+                    // the current entry still has slots to inspect
                     return true;
                 }
             }

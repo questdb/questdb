@@ -81,6 +81,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         do {
             for (int i = 0; i < ENTRY_SIZE; i++) {
                 if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
+                    Unsafe.arrayPutOrdered(e.releaseOrAcquireTimes, i, clock.getTicks());
                     // got lock, allocate if needed
                     R r = e.getReader(i);
                     if (r == null) {
@@ -113,7 +114,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         LOG.info().$('\'').utf8(name).$("' born free").$();
                         return r;
                     }
-
                     LOG.debug().$('\'').utf8(name).$("' is assigned [at=").$(e.index).$(':').$(i).$(", thread=").$(thread).$(']').$();
                     return r;
                 }
@@ -241,10 +241,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
                     R r;
-                    if (deadline > Unsafe.arrayGetVolatile(e.releaseTimes, i) && (r = e.getReader(i)) != null) {
+                    if (deadline > Unsafe.arrayGetVolatile(e.releaseOrAcquireTimes, i) && (r = e.getReader(i)) != null) {
                         if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
                             // check if deadline violation still holds
-                            if (deadline > e.releaseTimes[i]) {
+                            if (deadline > e.releaseOrAcquireTimes[i]) {
                                 removed = true;
                                 closeReader(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
                             }
@@ -325,7 +325,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             notifyListener(thread, name, PoolListener.EV_RETURN, e.index, index);
 
             // release the entry for anyone to pick up
-            e.releaseTimes[index] = clock.getTicks();
+            e.releaseOrAcquireTimes[index] = clock.getTicks();
             Unsafe.arrayPutOrdered(e.allocations, index, UNALLOCATED);
             final boolean closed = isClosed();
 
@@ -339,7 +339,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
     public static final class Entry {
         final long[] allocations = new long[ENTRY_SIZE];
-        final long[] releaseTimes = new long[ENTRY_SIZE];
+        final long[] releaseOrAcquireTimes = new long[ENTRY_SIZE];
         final Object[] readers = new Object[ENTRY_SIZE];
         final int index;
         volatile long lockOwner = -1L;
@@ -350,7 +350,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         public Entry(int index, long currentMicros) {
             this.index = index;
             Arrays.fill(allocations, UNALLOCATED);
-            Arrays.fill(releaseTimes, currentMicros);
+            Arrays.fill(releaseOrAcquireTimes, currentMicros);
         }
 
         public long getOwnerVolatile(int pos) {
@@ -358,9 +358,9 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             return Unsafe.arrayGetVolatile(allocations, pos);
         }
 
-        public long getReleaseTimeVolatile(int pos) {
+        public long getReleaseOrAcquireTimeVolatile(int pos) {
             assert pos >= 0 && pos <= ENTRY_SIZE;
-            return Unsafe.arrayGetVolatile(releaseTimes, pos);
+            return Unsafe.arrayGetVolatile(releaseOrAcquireTimes, pos);
         }
 
         public R getReader(int pos) {
