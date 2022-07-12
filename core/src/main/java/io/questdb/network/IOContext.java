@@ -34,8 +34,5 @@ public interface IOContext extends Closeable {
 
     boolean invalid();
 
-    default void dumpBuffer() {
-    }
-
     IODispatcher<?> getDispatcher();
 }
