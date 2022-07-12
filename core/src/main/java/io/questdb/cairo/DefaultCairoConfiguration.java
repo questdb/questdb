@@ -464,6 +464,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getReplaceFunctionMaxBufferLength() {
+        return 1024 * 1024;
+    }
+
+    @Override
     public int getRndFunctionMemoryMaxPages() {
         return 128;
     }

@@ -28,6 +28,25 @@ import io.questdb.griffin.AbstractGriffinTest;
 import org.junit.Test;
 
 public class LeftFunctionFactoryTest extends AbstractGriffinTest {
+
+    @Test
+    public void testWhenCountIsZeroThenReturnsEmptyStringOrNull() throws Exception {
+        assertQuery(
+                "k\tleft\n" +
+                        "JWC\t\n" +
+                        "WHYRX\t\n" +
+                        "HNRX\t\n" +
+                        "SXUX\t\n" +
+                        "\t\n",
+                "select k, left(k,0) from x",
+                "create table x as (select rnd_str(3,5,1) k from long_sequence(5))",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
     @Test
     public void testSimple() throws Exception {
         assertQuery(

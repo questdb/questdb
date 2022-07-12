@@ -261,6 +261,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long columnPurgeRetryDelay;
     private final boolean sqlParallelFilterEnabled;
     private final int cairoPageFrameReduceShardCount;
+    private final int replaceFunctionBufferMaxSize;
     private int lineUdpDefaultPartitionBy;
     private int httpMinNetConnectionLimit;
     private boolean httpMinNetConnectionHint;
@@ -829,6 +830,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3QuickSortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, false);
             this.rndFunctionMemoryPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_RND_MEMORY_PAGE_SIZE, 8192));
             this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 128));
+            this.replaceFunctionBufferMaxSize = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_REPLACE_BUFFER_MAX_SIZE, 1024 * 1024));
             this.sqlAnalyticStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE, 1024 * 1024));
             this.sqlAnalyticStoreMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES, Integer.MAX_VALUE));
             this.sqlAnalyticRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE, 512 * 1024));
@@ -2229,6 +2231,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRndFunctionMemoryPageSize() {
             return rndFunctionMemoryPageSize;
+        }
+
+        @Override
+        public int getReplaceFunctionMaxBufferLength() {
+            return replaceFunctionBufferMaxSize;
         }
 
         @Override
