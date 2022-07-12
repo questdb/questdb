@@ -172,6 +172,14 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             }
 
             @Override
+            public CharSequence getStrB(int col) {
+                // CharSequence are mutable, but in this case CharSequences were used as map keys
+                // hence I don't assume they would be mutable
+                // todo: explore what happens when a table is renamed
+                return getStr(col);
+            }
+
+            @Override
             public long getTimestamp(int col) {
                 assert col == 2;
                 return timestamp;
