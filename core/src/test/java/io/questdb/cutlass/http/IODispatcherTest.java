@@ -168,38 +168,6 @@ public class IODispatcherTest {
                 });
     }
 
-    @Test
-    public void copyQueryReturnsErrorMessageWhenValidationFails() throws Exception {
-        final String baseDir = new File("./src/test/resources/csv/").getAbsolutePath();
-        CairoConfiguration configuration = new DefaultCairoConfiguration(baseDir) {
-            @Override
-            public CharSequence getInputRoot() {
-                return baseDir;
-            }
-
-            @Override
-            public CharSequence getInputWorkRoot() {
-                return temp.getRoot().getAbsolutePath();
-            }
-        };
-
-        new HttpQueryTestBuilder()
-                .withTempFolder(temp)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .run(configuration, engine -> {
-                    new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                            "GET /query?query=copy%20test%20from%20%27test-quotes-small.csv%27%20with%20parallel%3B%20 HTTP/1.1\r\n",
-                            SendAndReceiveRequestBuilder.responseWithCode("400 Bad request") +
-                                    "93\r\n" +
-                                    "{\"query\":\"copy test from 'test-quotes-small.csv' with parallel; \",\"error\":\"partition by unit must be set when importing to new table\",\"position\":0}\r\n"
-                                    + "00\r\n"
-                                    + "\r\n"
-                    );
-                });
-    }
-
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
