@@ -410,7 +410,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getParallelImportRequestWaitTimeout() {
-        return 300_000L;
+        return 3_000_000L;
     }
 
     @Override
