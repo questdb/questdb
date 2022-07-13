@@ -385,8 +385,8 @@ public interface CairoConfiguration {
 
     boolean isSqlParallelFilterEnabled();
 
-    default IOUringFacade getIOURingFacade() {
-        return IOUringFacadeImpl.INSTANCE;
+    default IOURingFacade getIOURingFacade() {
+        return IOURingFacadeImpl.INSTANCE;
     }
 
     long getParallelImportRequestWaitTimeout();

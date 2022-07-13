@@ -24,7 +24,7 @@
 
 package io.questdb.std;
 
-public interface IOUringFacade {
+public interface IOURingFacade {
 
     boolean isAvailable();
 
@@ -37,4 +37,6 @@ public interface IOUringFacade {
     int submitAndWait(long ptr, int waitNr);
 
     int errno();
+
+    IOURing newInstance(int capacity);
 }
