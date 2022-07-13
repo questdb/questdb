@@ -22,17 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.griffin.engine.functions.table;
 
-import org.jetbrains.annotations.TestOnly;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.table.TableWriterMetricsRecordCursorFactory;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface Counter extends Scrapable {
-
-    default void inc() {
-        add(1);
+public class TableWriterMetricsFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "table_write_metrics()";
     }
 
-    void add(long value);
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new CursorFunction(
+                new TableWriterMetricsRecordCursorFactory());
+    }
 
-    long get();
+
 }
