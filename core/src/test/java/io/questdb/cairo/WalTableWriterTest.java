@@ -27,14 +27,13 @@ package io.questdb.cairo;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.util.HashSet;
 
 import static org.junit.Assert.assertEquals;
 
@@ -65,7 +64,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
             Rnd rnd = new Rnd();
             try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts, rnd, walWriter, 0, true);
+                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
@@ -88,10 +87,10 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                     WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
             ) {
 
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts, rnd, walWriter1, 0, true);
+                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts, rnd, walWriter1, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts + rowsToInsertTotal * tsIncrement, rnd, walWriter2, 0, true);
+                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts + rowsToInsertTotal * tsIncrement, rnd, walWriter2, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
@@ -115,16 +114,51 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             ) {
 
                 long start = ts;
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, start, rnd, walWriter1, 0, false);
+                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, start, rnd, walWriter1, false);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
                 start = ts + rowsToInsertTotal * tsIncrement;
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, 2 * rowsToInsertTotal, tsIncrement, start, rnd, walWriter2, 0, false);
+                addRowsToWalAndApplyToTable(tableName, tableCopyName, 2 * rowsToInsertTotal, tsIncrement, start, rnd, walWriter2, false);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
                 start = ts + 3 * rowsToInsertTotal * tsIncrement;
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, start, rnd, walWriter1, 1, false);
+                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, start, rnd, walWriter1, false);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testRandomInOutOfOrderMultipleWalInserts() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTableAllTypes";
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement;
+            long ts = Os.currentTimeMicros();
+
+            Rnd rnd = new Rnd();
+            try (
+                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                    WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+
+                long start = ts;
+                WalWriter[] writers = new WalWriter[]{ walWriter1, walWriter2, walWriter3 };
+
+                for(int i = 0; i < 20; i++) {
+                    boolean inOrder = rnd.nextBoolean();
+                    WalWriter walWriter = writers[rnd.nextInt(3)];
+                    int rowCount = rnd.nextInt(1000);
+                    tsIncrement = rnd.nextLong(Timestamps.MINUTE_MICROS);
+
+                    addRowsToWalAndApplyToTable(tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, inOrder);
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                    start += rowCount * tsIncrement;
+                }
             }
         });
     }
@@ -152,7 +186,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void addRowsToWalAndApplyToTable(String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, int walTxn, boolean inOrder) {
+    private void addRowsToWalAndApplyToTable(String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
         try (
                 TableWriter copyWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableCopyName, "test")
         ) {
@@ -182,7 +216,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 path.of(configuration.getRoot()).concat(tableWriter.getTableName()).concat(walWriter.getWalName());
                 WalEventCursor waleCursor = wre.of(path, path.length(), 0, WalWriter.WAL_FORMAT_VERSION);
 
-                for(int i = 0; i < walTxn + 1; i++) {
+                while(waleCursor.tryHasNext()) {
                     Assert.assertTrue(waleCursor.hasNext());
                 }
 

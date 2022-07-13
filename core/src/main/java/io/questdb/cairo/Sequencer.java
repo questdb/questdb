@@ -27,6 +27,8 @@ package io.questdb.cairo;
 import java.io.Closeable;
 
 public interface Sequencer extends Closeable {
+    String SEQ_DIR = "seq";
+
     long NO_TXN = Long.MIN_VALUE;
 
     void open();

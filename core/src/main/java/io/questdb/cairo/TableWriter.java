@@ -1866,16 +1866,18 @@ public class TableWriter implements Closeable {
         return index;
     }
 
-    private boolean addSymbolsFromWal(SymbolMapDiff symbolMapDiff, int symbolIndex, IntList symbolMap, int cleanSymbolCount) {
+    private boolean addSymbolsFromWal(SymbolMapDiff symbolMapDiff, int symbolIndex, IntList symbolMap) {
+        final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
+        symbolMap.setPos(symbolMapDiff.getSize());
+        final MapWriter mapWriter = denseSymbolMapWriters.get(symbolIndex);
         boolean identical = true;
-        MapWriter mapWriter = denseSymbolMapWriters.get(symbolIndex);
 
         SymbolMapDiffEntry entry;
         while ((entry = symbolMapDiff.nextEntry()) != null) {
             final CharSequence symbolValue = entry.getSymbol();
             final int newKey = mapWriter.put(symbolValue);
             identical &= newKey == entry.getKey();
-            symbolMap.extendAndSet(entry.getKey() - cleanSymbolCount, newKey);
+            symbolMap.setQuick(entry.getKey() - cleanSymbolCount, newKey);
         }
         return identical;
     }
@@ -4474,8 +4476,7 @@ public class TableWriter implements Closeable {
                 throw CairoException.instance(0).put("WAL column and table writer column types don't match");
             }
 
-            int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
-            boolean identical = addSymbolsFromWal(symbolMapDiff, sym++, symbolMap, cleanSymbolCount);
+            boolean identical = addSymbolsFromWal(symbolMapDiff, sym++, symbolMap);
 
             if (!identical) {
                 MemoryCR symbolColumnSrc = o3ColumnSources.getQuick(getPrimaryColumnIndex(columnIndex));
@@ -4500,20 +4501,15 @@ public class TableWriter implements Closeable {
                     o3ColumnOverrides.setQuick(getPrimaryColumnIndex(columnIndex), symbolColumnDest);
                 }
 
+                final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
                 for (long rowId = rowLo; rowId < rowHi; rowId++) {
                     long offset = rowId << 2;
-                    int symKey = symbolColumnSrc.getInt(offset);
 
+                    int symKey = symbolColumnSrc.getInt(offset);
                     if (symKey >= cleanSymbolCount) {
-                        int newSymKey = symbolMap.getQuick(symKey - cleanSymbolCount);
-                        if (newSymKey == 0) {
-                            int i = 0;
-                        }
-                        symbolColumnDest.putInt(offset, newSymKey);
-                    } else {
-                        // Null values are negative, no need to map
-                        symbolColumnDest.putInt(offset, symKey);
+                        symKey = symbolMap.getQuick(symKey - cleanSymbolCount);
                     }
+                    symbolColumnDest.putInt(offset, symKey);
                 }
             }
         }
@@ -4678,11 +4674,16 @@ public class TableWriter implements Closeable {
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
         if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
 
-            if (Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)) {
-                // Do not remove detached partitions
+            if (
+                    Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)
+                            || Chars.startsWith(fileNameSink, WalWriter.WAL_NAME_BASE)
+                            || Chars.startsWith(fileNameSink, Sequencer.SEQ_DIR)
+            ) {
+                // Do not remove detached partitions, wals and sequencer directories
                 // They are probably about to be attached.
                 return;
             }
+
             try {
                 long txn = 0;
                 int txnSep = Chars.indexOf(fileNameSink, '.');

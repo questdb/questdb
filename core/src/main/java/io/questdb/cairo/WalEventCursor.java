@@ -47,6 +47,10 @@ public class WalEventCursor {
         this.eventMem = eventMem;
     }
 
+    public boolean tryHasNext() {
+        return nextOffset < memSize && eventMem.getInt(nextOffset) != END_OF_EVENTS;
+    }
+
     public boolean hasNext() {
         offset = nextOffset;
         int length = readInt();

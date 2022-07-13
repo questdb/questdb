@@ -35,7 +35,6 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TableUtils.WAL_INDEX_FILE_NAME;
 
 public class SequencerImpl implements Sequencer {
-    private static final String SEQ_DIR = "seq";
 
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
 
