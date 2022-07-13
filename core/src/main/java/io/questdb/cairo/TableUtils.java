@@ -482,7 +482,7 @@ public final class TableUtils {
                 case '*':
                 case '%':
                 case '~':
-                case '\u0000':
+                case '\u0000': // Control characters
                 case '\u0001':
                 case '\u0002':
                 case '\u0003':
@@ -491,9 +491,10 @@ public final class TableUtils {
                 case '\u0006':
                 case '\u0007':
                 case '\u0008':
-                case '\u0009': // Control characters, except \n
+                case '\u0009':
                 case '\u000B':
                 case '\u000c':
+                case '\n':
                 case '\r':
                 case '\u000e':
                 case '\u000f':
@@ -540,7 +541,7 @@ public final class TableUtils {
                 case '*':
                 case '%':
                 case '~':
-                case '\u0000':
+                case '\u0000':  // Control characters
                 case '\u0001':
                 case '\u0002':
                 case '\u0003':
@@ -549,13 +550,14 @@ public final class TableUtils {
                 case '\u0006':
                 case '\u0007':
                 case '\u0008':
-                case '\u0009': // Control characters, except \n.
-                case '\u000B': // New line allowed for compatibility, there are tests to make sure it works
+                case '\u0009':
+                case '\u000B':
                 case '\u000c':
                 case '\r':
                 case '\u000e':
                 case '\u000f':
                 case '\u007f':
+                case '\n':
                 case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
                     return false;
             }

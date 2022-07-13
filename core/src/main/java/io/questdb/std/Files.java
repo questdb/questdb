@@ -86,6 +86,14 @@ public final class Files {
         return fd;
     }
 
+    /**
+     * close(fd) should be used instead of this method in most cases.
+     */
+    public static void decrementFileCount(long fd) {
+        assert auditClose(fd);
+        OPEN_FILE_COUNT.decrementAndGet();
+    }
+
     public static long ceilPageSize(long size) {
         return ((size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
     }

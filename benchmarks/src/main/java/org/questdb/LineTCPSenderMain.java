@@ -49,7 +49,7 @@ public class LineTCPSenderMain {
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
         String tab = "weather"+k;
-        try (LineTcpSender sender = new LineTcpSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
+        try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             for (int i = 0; i < count; i++) {
                 sender.metric(tab);
                 sender

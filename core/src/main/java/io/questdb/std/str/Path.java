@@ -59,11 +59,8 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public static void clearThreadLocals() {
-        Misc.free(PATH.get());
-        PATH.remove();
-
-        Misc.free(PATH2.get());
-        PATH2.remove();
+        Misc.free(PATH);
+        Misc.free(PATH2);
     }
 
     public static Path getThreadLocal(CharSequence root) {

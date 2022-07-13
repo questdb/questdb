@@ -27,6 +27,7 @@ package io.questdb.std.str;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -77,17 +78,10 @@ public class PathTest {
     }
 
     @Test
-    public void testSimple() {
-        TestUtils.assertEquals("xyz", path.of("xyz").$());
-    }
-
-    @Test
-    public void testZeroEnd() throws Exception {
-        File dir = temp.newFolder("a", "b", "c");
-        File f = new File(dir, "f.txt");
-        Assert.assertTrue(f.createNewFile());
-
-        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat("a").concat("b").concat("c").concat("f.txt").$()));
+    public void testPathThreadLocalDoesNotAllocateOnRelease() {
+        final long count = Unsafe.getMallocCount();
+        Path.clearThreadLocals();
+        Assert.assertEquals(count, Unsafe.getMallocCount());
     }
 
     @Test
@@ -139,7 +133,21 @@ public class PathTest {
             TestUtils.assertEquals("hello", path);
 
             path.chop$().concat("next");
-            TestUtils.assertEquals("hello" + Files.SEPARATOR  + "next", path);
+            TestUtils.assertEquals("hello" + Files.SEPARATOR + "next", path);
         }
+    }
+
+    @Test
+    public void testSimple() {
+        TestUtils.assertEquals("xyz", path.of("xyz").$());
+    }
+
+    @Test
+    public void testZeroEnd() throws Exception {
+        File dir = temp.newFolder("a", "b", "c");
+        File f = new File(dir, "f.txt");
+        Assert.assertTrue(f.createNewFile());
+
+        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat("a").concat("b").concat("c").concat("f.txt").$()));
     }
 }

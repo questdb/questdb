@@ -68,7 +68,7 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public int getConnectionPoolInitialCapacity() {
-        return 64;
+        return 4;
     }
 
     @Override

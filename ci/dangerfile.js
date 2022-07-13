@@ -18,12 +18,12 @@ const supportedTypes = [
 function validatePrTitle() {
   const prTitleRegex = new RegExp(`^(${supportedTypes.join("|")})(\(.+\))?\:.*`)
 
-  const { draft, title } = danger.github.pr
-  if (draft || title.match(prTitleRegex)) {
+  const { title } = danger.github.pr
+  if (title.match(prTitleRegex)) {
     return
   }
 
-  warn(
+  fail(
     [
       "Please update the PR title.",
       "It should match this format: *type*: *description*",

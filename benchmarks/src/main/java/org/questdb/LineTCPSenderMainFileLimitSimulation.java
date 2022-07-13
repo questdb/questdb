@@ -97,7 +97,7 @@ public class LineTCPSenderMainFileLimitSimulation {
         int port = 9009;
         int bufferCapacity = 8 * 1024;
 
-        try (LineTcpSender sender = new LineTcpSender(Net.parseIPv4(hostid4v4), port, bufferCapacity)) {
+        try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4(hostid4v4), port, bufferCapacity)) {
 //            fillDates(rnd, sender);
 
             long ts = Os.currentTimeNanos();
