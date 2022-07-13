@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.5)
 project(questdb)
 
+include(ExternalProject)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -89,7 +91,7 @@ elseif (UNIX)
                 src/main/c/freebsd/accept.c
                 src/main/c/freebsd/files.c
         )
-    else (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
+    else (CMAKE_SYSTEM_NAME MATCHES "Linux")
         MESSAGE("Building for GNU/Linux")
         include_directories($ENV{JAVA_HOME}/include/linux/)
         if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
@@ -106,6 +108,7 @@ elseif (UNIX)
                 src/main/c/linux/affinity.c
                 src/main/c/linux/accept.c
                 src/main/c/linux/files.c
+                src/main/c/linux/io_uring.c
         )
 
     endif (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
@@ -153,7 +156,7 @@ FetchContent_Declare(
 )
 
 FetchContent_GetProperties(asmjit)
-if(NOT asmjit_POPULATED)
+if (NOT asmjit_POPULATED)
     FetchContent_Populate(asmjit)
 endif()
 include("${asmjit_SOURCE_DIR}/CMakeLists.txt")
@@ -174,9 +177,33 @@ if(JIT_TEST)
 endif()
 
 #zlib
+
 set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
 
 include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
+
+#liburing
+
+if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+    MESSAGE("Downloading io_uring")
+    ExternalProject_Add(
+            liburing_git
+            GIT_REPOSITORY http://github.com/axboe/liburing.git
+            GIT_TAG liburing-2.2
+            BUILD_IN_SOURCE 1
+            BUILD_BYPRODUCTS "<SOURCE_DIR>/src/liburing.a"
+            BUILD_COMMAND make "CC=${CMAKE_C_COMPILER}" "CXX=${CMAKE_CXX_COMPILER}" "AR=${CMAKE_AR}" "RANLIB=${CMAKE_RANLIB}"
+            CONFIGURE_COMMAND ""
+            INSTALL_COMMAND ""
+            TEST_COMMAND ""
+            LOG_BUILD ON
+    )
+    ExternalProject_Get_Property(liburing_git SOURCE_DIR)
+    add_library(liburing INTERFACE)
+    add_dependencies(liburing liburing_git)
+    target_include_directories(liburing INTERFACE ${SOURCE_DIR}/src/include)
+    target_link_libraries(liburing INTERFACE ${SOURCE_DIR}/src/liburing.a)
+endif ()
 
 # ZLIB_SRCS is defined in Zlib Cmake config
 add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS} ${ASMJIT_SRC})
@@ -188,6 +215,11 @@ set(RELEASE_OPTIONS "-O3")
 
 list(APPEND DEBUG_OPTIONS  "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
 list(APPEND RELEASE_OPTIONS  "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
+
+if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+    target_link_libraries(questdb liburing)
+    add_dependencies(questdb liburing)
+endif ()
 
 if (AARCH64)
 

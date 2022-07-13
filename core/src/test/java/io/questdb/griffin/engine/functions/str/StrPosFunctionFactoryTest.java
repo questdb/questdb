@@ -138,9 +138,9 @@ public class StrPosFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testConstantNull() throws Exception {
         assertQuery(
-                "pos1\tpos2\tpos3\n" +
-                        "NaN\tNaN\tNaN\n",
-                "select strpos(null,'a') pos1, strpos(null,'abc') pos2, strpos('a',null) pos3",
+                "pos1\tpos2\tpos3\tpos4\n" +
+                        "NaN\tNaN\tNaN\tNaN\n",
+                "select strpos(null,'a') pos1, strpos(null,'abc') pos2, strpos('a',null) pos3, strpos(null,null) pos4",
                 null,
                 null,
                 true,

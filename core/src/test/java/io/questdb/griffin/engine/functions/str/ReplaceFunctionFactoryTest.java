@@ -24,20 +24,25 @@
 
 package io.questdb.griffin.engine.functions.str;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
+import org.hamcrest.CoreMatchers;
+import org.hamcrest.MatcherAssert;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ReplaceFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
     @Test
     public void testNullTerm() throws SqlException {
-        call("abc", null, "x").andAssert("abc");
+        call("abc", null, "x").andAssert(null);
     }
 
     @Test
     public void testNullReplacement() throws SqlException {
-        call("abbbc", "bbb", null).andAssert("ac");
+        call("abbbc", "bbb", null).andAssert(null);
     }
 
     @Test
@@ -69,6 +74,72 @@ public class ReplaceFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testReplacementEnd() throws SqlException {
         call("hello xx ok", "ok", "better").andAssert("hello xx better");
     }
+
+    @Test
+    public void testReplaceSingleTermOccurrence() throws SqlException {
+        call("motorhead", "x", "y").andAssert("motorhead");
+        call("motorhead", "head", "bike").andAssert("motorbike");
+        call("motorhead", "head", "h").andAssert("motorh");
+        call("motorhead", "motor", "m").andAssert("mhead");
+    }
+
+    @Test
+    public void testReplaceMoreThanOneTermOccurrence() throws SqlException {
+        call("", "a", "b").andAssert("");
+        call("", "a", "").andAssert("");
+        call("", "", "").andAssert("");
+        call("", "", "b").andAssert("");
+
+        call("aa", "a", "b").andAssert("bb");
+        call("aac", "a", "b").andAssert("bbc");
+        call("aac", "a", "bb").andAssert("bbbbc");
+        call("aac", "c", "ddd").andAssert("aaddd");
+
+        call("aac", "a", "").andAssert("c");
+        call("aac", "c", "").andAssert("aa");
+        call("bbb", "b", "").andAssert("");
+        call("bbb", "X", "").andAssert("bbb");
+
+        call("bbb", "", "").andAssert("bbb");
+        call("bbb", "", "aaa").andAssert("bbb");
+        call("bbb", "bbbc", "aaa").andAssert("bbb");
+    }
+
+    @Test
+    public void testReplaceWithAnyNullArgReturnsNull() throws SqlException {
+        call(null, null, null).andAssert(null);
+        call(null, "b", "c").andAssert(null);
+        call(null, "b", null).andAssert(null);
+        call(null, null, "c").andAssert(null);
+        call("a", null, "c").andAssert(null);
+        call("a", "b", null).andAssert(null);
+        call("a", null, null).andAssert(null);
+    }
+
+    @Test
+    public void testWhenSingleCallExceedsMaxLengthExceptionIsThrown() throws SqlException {
+        try {
+            call(multiply("a", 100), "a", multiply("a", 100000)).andAssert(null);
+            Assert.fail();
+        } catch (CairoException e) {
+            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("breached memory limit set for replace(SSS)"));
+        }
+    }
+
+    @Test
+    public void testWhenChainedCallsExceedsMaxLengthExceptionIsThrown() {
+        assertFailure("[-1] breached memory limit set for replace(SSS) [maxLength=1048576, requiredLength=1048580]",
+                "select replace(replace(replace(replace( 'aaaaaaaaaaaaaaaaaaaa', 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa')");
+    }
+
+    StringBuilder multiply(String s, int times) {
+        StringBuilder sb = new StringBuilder(s.length() * times);
+        for (int i = 0; i < times; i++) {
+            sb.append(s);
+        }
+        return sb;
+    }
+
 
     @Override
     protected FunctionFactory getFunctionFactory() {

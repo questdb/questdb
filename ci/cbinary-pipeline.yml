@@ -74,6 +74,7 @@ stages:
               workingDirectory: core
               cmakeArgs:
                 -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake
+                -DARM_TOOLCHAIN_PATH=/usr/bin/
                 -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True
                 -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
             displayName: "CMAKE Linux arm"
