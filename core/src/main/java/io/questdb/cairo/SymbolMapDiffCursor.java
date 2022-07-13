@@ -24,12 +24,6 @@
 
 package io.questdb.cairo;
 
-public interface SymbolMapDiff {
-    int getCleanSymbolCount();
-
-    int getColumnIndex();
-
-    int getSize();
-
-    SymbolMapDiffEntry nextEntry();
+public interface SymbolMapDiffCursor {
+    SymbolMapDiff nextSymbolMapDiff();
 }

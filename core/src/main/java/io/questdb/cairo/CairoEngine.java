@@ -276,10 +276,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             CharSequence tableName,
             CharSequence walName,
             int segmentId,
-            IntList walSymbolCounts,
             long walRowCount
     ) {
-        return new WalReader(configuration, tableName, walName, segmentId, walSymbolCounts, walRowCount);
+        return new WalReader(configuration, tableName, walName, segmentId, walRowCount);
     }
 
     public TableReader getReaderForStatement(SqlExecutionContext executionContext, CharSequence tableName, CharSequence statement) {

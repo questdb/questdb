@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
@@ -35,18 +35,17 @@ import static io.questdb.cairo.TableUtils.*;
 
 class WalWriterEvents implements Closeable {
     private final FilesFacade ff;
-    private final MemoryMAR eventMem = Vm.getMARInstance();
-
-    private IntList startSymbolCounts;
-    private ObjList<MapWriter> symbolMapWriters;
+    private final MemoryMARW eventMem = Vm.getMARWInstance();
+    private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
+    private IntList initialSymbolCounts;
 
     WalWriterEvents(FilesFacade ff) {
         this.ff = ff;
     }
 
-    void of(IntList startSymbolCounts, ObjList<MapWriter> symbolMapWriters) {
-        this.startSymbolCounts = startSymbolCounts;
-        this.symbolMapWriters = symbolMapWriters;
+    void of(ObjList<CharSequenceIntHashMap> txnSymbolMaps, IntList initialSymbolCounts) {
+        this.txnSymbolMaps = txnSymbolMaps;
+        this.initialSymbolCounts = initialSymbolCounts;
     }
 
     @Override
@@ -60,26 +59,36 @@ class WalWriterEvents implements Closeable {
     }
 
     private void writeSymbolMapDiffs() {
-        for (int i = 0; i < startSymbolCounts.size(); i++) {
-            final int startSymbolCount = startSymbolCounts.get(i);
-            if (startSymbolCount > -1) {
-                final MapWriter symbolMapWriter = symbolMapWriters.get(i);
-                final int symbolCount = symbolMapWriter.getSymbolCount();
-                if (symbolCount > startSymbolCount) {
-                    eventMem.putInt(i);
-                    for (int j = startSymbolCount; j < symbolCount; j++) {
-                        eventMem.putInt(j);
-                        eventMem.putStr(symbolMapWriter.valueOf(j));
-                    }
-                    eventMem.putInt(SymbolMapDiff.END_OF_SYMBOL_ENTRIES);
-                    startSymbolCounts.setQuick(i, symbolCount);
+        int columns = txnSymbolMaps.size();
+        for (int i = 0; i < columns; i++) {
+            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
+            int initialCount = initialSymbolCounts.get(i);
+
+            if (initialCount > 0 || (initialCount > -1L && symbolMap.size() > 0)) {
+                eventMem.putInt(i);
+                eventMem.putInt(initialCount);
+
+                int size = symbolMap.size();
+                eventMem.putInt(size);
+
+                for (int j = 0; j < size; j++) {
+                    CharSequence symbol = symbolMap.keys().getQuick(j);
+                    int value = symbolMap.get(symbol);
+
+                    eventMem.putInt(value);
+                    eventMem.putStr(symbol);
                 }
+
+                eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES);
+                initialSymbolCounts.setQuick(i, initialCount + size);
+                symbolMap.clear();
             }
         }
-        eventMem.putInt(SymbolMapDiff.END_OF_SYMBOL_DIFFS);
+        eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
     void data(long txn, long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+        long startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.DATA);
         eventMem.putLong(startRowID);
@@ -88,27 +97,32 @@ class WalWriterEvents implements Closeable {
         eventMem.putLong(maxTimestamp);
         eventMem.putBool(outOfOrder);
         writeSymbolMapDiffs();
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
     }
 
     void addColumn(long txn, int columnIndex, CharSequence columnName, int columnType) {
+        long startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.ADD_COLUMN);
         eventMem.putInt(columnIndex);
         eventMem.putStr(columnName);
         eventMem.putInt(columnType);
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
     }
 
     void removeColumn(long txn, int columnIndex) {
+        long startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.REMOVE_COLUMN);
         eventMem.putInt(columnIndex);
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
     }
 
     private void init() {
         eventMem.putInt(WalWriter.WAL_FORMAT_VERSION);
-    }
-
-    void end() {
-        eventMem.putLong(WalEventCursor.END_OF_EVENTS);
+        eventMem.putInt(-1);
     }
 }

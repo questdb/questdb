@@ -151,16 +151,12 @@ public class WalDataRecord implements Record, Sinkable {
 
     @Override
     public CharSequence getSym(int col) {
-        final long offset = recordIndex * Integer.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getSymbolMapReader(col).valueOf(reader.getColumn(absoluteColumnIndex).getInt(offset));
+        return reader.getSymbolValue(col, getInt(col));
     }
 
     @Override
     public CharSequence getSymB(int col) {
-        final long offset = recordIndex * Integer.BYTES;
-        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getSymbolMapReader(col).valueBOf(reader.getColumn(absoluteColumnIndex).getInt(offset));
+        return getSym(col);
     }
 
     @Override
@@ -203,6 +199,7 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     // only for tests
+    @SuppressWarnings("SameParameterValue")
     long getDesignatedTimestampRowId(int col) {
         final long offset = 2 * recordIndex * Long.BYTES + Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);

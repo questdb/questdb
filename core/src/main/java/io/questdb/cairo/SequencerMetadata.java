@@ -66,7 +66,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
         try (MemoryMR metaMem = Vm.getMRInstance()) {
             openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
             columnNameIndexMap.clear();
-            loadSequencerMetadata(metaMem, columnMetadata, columnNameIndexMap, WalWriter.WAL_FORMAT_VERSION);
+            loadSequencerMetadata(metaMem, columnMetadata, columnNameIndexMap);
             schemaVersion = metaMem.getInt(SEQ_META_OFFSET_SCHEMA_VERSION);
             columnCount = metaMem.getInt(SEQ_META_OFFSET_COLUMN_COUNT);
             timestampIndex = metaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);

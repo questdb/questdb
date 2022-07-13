@@ -47,12 +47,12 @@ public class WalDataCursor implements RecordCursor {
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return reader.getSymbolTable(columnIndex);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return reader.newSymbolTable(columnIndex);
+        throw new UnsupportedOperationException();
     }
 
     @Override

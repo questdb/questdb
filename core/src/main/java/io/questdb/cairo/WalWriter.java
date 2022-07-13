@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.model.IntervalUtils;
@@ -35,11 +34,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.SingleCharCharSequence;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
 import static io.questdb.cairo.TableUtils.*;
 
 public class WalWriter implements Closeable {
@@ -50,9 +49,9 @@ public class WalWriter implements Closeable {
     };
     private final TableDescriptor tableDescriptor = new TableDescriptorImpl();
     private final ObjList<MemoryMA> columns;
-    private final ObjList<MapWriter> symbolMapWriters;
-    private final ObjList<MapWriter> denseSymbolMapWriters;
-    private final IntList startSymbolCounts = new IntList();
+    private final ObjList<SymbolMapReader> symbolMapReaders;
+    private final IntList initialSymbolCounts = new IntList();
+    private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
     private final MillisecondClock millisecondClock;
     private final Path path;
     private final LongList rowValueIsNotNull = new LongList();
@@ -103,14 +102,13 @@ public class WalWriter implements Closeable {
             sequencer.populateDescriptor(tableDescriptor);
             columnCount = tableDescriptor.getColumnCount();
             columns = new ObjList<>(columnCount * 2);
-            symbolMapWriters = new ObjList<>(columnCount);
-            denseSymbolMapWriters = new ObjList<>(columnCount);
             nullSetters = new ObjList<>(columnCount);
 
+            symbolMapReaders = new ObjList<>();
             metadata = new WalWriterMetadata(ff);
             metadata.of(tableDescriptor);
             events = new WalWriterEvents(ff);
-            events.of(startSymbolCounts, symbolMapWriters);
+            events.of(symbolMaps, initialSymbolCounts);
 
             configureColumns();
             openNewSegment();
@@ -153,7 +151,7 @@ public class WalWriter implements Closeable {
             metadata.addColumn(index, name, type);
             configureColumn(index, type);
             columnCount++;
-            configureSymbolMapWriter(index, name, type, null);
+            configureSymbolMapWriter(index, name, 0, COLUMN_NAME_TXN_NONE);
 
             final long txn = sequencer.addColumn(index, name, type, walId, segmentId);
             events.addColumn(txn, index, name, type);
@@ -326,7 +324,10 @@ public class WalWriter implements Closeable {
 
     private void configureColumns() {
         for (int i = 0; i < columnCount; i++) {
-            configureColumn(i, metadata.getColumnType(i));
+            int columnType = metadata.getColumnType(i);
+            if (columnType > 0) {
+                configureColumn(i, columnType);
+            }
         }
     }
 
@@ -335,51 +336,102 @@ public class WalWriter implements Closeable {
         // what if the wal is created on a node where the table itself is not present?
         // maybe copying symbols from existing table is not the best or sequencer needs an API for it
         // but then sequencer will have to keep track of all symbol tables
+        int columnReaderIndex = 0;
         try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
             for (int i = 0; i < columnCount; i++) {
-                configureSymbolMapWriter(i, descriptor.getColumnName(i), descriptor.getColumnType(i), reader.getSymbolMapReader(i));
+                int columnType = metadata.getColumnType(i);
+                if (!ColumnType.isSymbol(columnType)) {
+                    // maintain sparse list of symbol writers
+                    symbolMapReaders.extendAndSet(i, null);
+                    initialSymbolCounts.extendAndSet(i, -1);
+                    symbolMaps.extendAndSet(i,null);
+                } else {
+                    SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnReaderIndex);
+                    int symbolCount = symbolMapReader.getSymbolCount();
+                    long columnNameTxn = reader.getColumnVersionReader().getDefaultColumnNameTxn(i);
+                    configureSymbolMapWriter(i, descriptor.getColumnName(i), symbolCount, columnNameTxn);
+                }
+
+                if (columnType > 0) {
+                    columnReaderIndex++;
+                }
             }
         }
     }
 
-    private void configureSymbolMapWriter(int columnIndex, CharSequence columnName, int columnType, SymbolMapReader symbolMapReader) {
-        if (!ColumnType.isSymbol(columnType)) {
-            // maintain sparse list of symbol writers
-            symbolMapWriters.extendAndSet(columnIndex, NullMapWriter.INSTANCE);
-            startSymbolCounts.add(-1);
+    private void configureSymbolMapWriter(int columnWriterIndex, CharSequence columnName, int symbolCount, long columnNameTxm) {
+        if (symbolCount == 0) {
+            symbolMapReaders.extendAndSet(columnWriterIndex, EmptySymbolMapReader.INSTANCE);
+            initialSymbolCounts.extendAndSet(columnWriterIndex, 0);
+            symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
             return;
         }
 
-        createSymbolMapFiles(
-                ff,
-                symbolMapMem,
-                path.trimTo(rootLen),
-                columnName,
-                COLUMN_NAME_TXN_NONE,
-                configuration.getDefaultSymbolCapacity(), // take this from metadata
-                configuration.getDefaultSymbolCacheFlag() // take this from metadata
-        );
+        // Copy or hard link symbol map files.
+        FilesFacade ff = configuration.getFilesFacade();
+        Path tempPath = Path.PATH.get();
+        tempPath.of(configuration.getRoot()).concat(tableName);
+        int tempPathTripLen = tempPath.length();
 
-        final SymbolMapWriter symbolMapWriter = new SymbolMapWriter(
-                configuration,
-                path.trimTo(rootLen),
-                columnName,
-                COLUMN_NAME_TXN_NONE,
-                0,
-                denseSymbolMapWriters.size(),
-                SymbolValueCountCollector.NOOP
-        );
-
-        if (symbolMapReader != null) {
-            // copy symbols from main table to wal
-            for (int i = 0; i < symbolMapReader.getSymbolCount(); i++) {
-                symbolMapWriter.put(symbolMapReader.valueOf(i));
-            }
+        path.trimTo(rootLen);
+        TableUtils.offsetFileName(tempPath, columnName, columnNameTxm);
+        TableUtils.offsetFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        if (-1 == ff.hardLink(tempPath.$(), path.$())) {
+            throw CairoException.instance(ff.errno()).put("failed to link offset file [from=")
+                    .put(tempPath)
+                    .put(", to=")
+                    .put(path)
+                    .put(']');
         }
 
-        symbolMapWriters.extendAndSet(columnIndex, symbolMapWriter);
-        denseSymbolMapWriters.add(symbolMapWriter);
-        startSymbolCounts.add(symbolMapWriter.getSymbolCount());
+        tempPath.trimTo(tempPathTripLen);
+        path.trimTo(rootLen);
+        TableUtils.charFileName(tempPath, columnName, columnNameTxm);
+        TableUtils.charFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        if (-1 == ff.hardLink(tempPath.$(), path.$())) {
+            throw CairoException.instance(ff.errno()).put("failed to link char file [from=")
+                    .put(tempPath)
+                    .put(", to=")
+                    .put(path)
+                    .put(']');
+        }
+
+        tempPath.trimTo(tempPathTripLen);
+        path.trimTo(rootLen);
+        BitmapIndexUtils.keyFileName(tempPath, columnName, columnNameTxm);
+        BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        if (-1 == ff.hardLink(tempPath.$(), path.$())) {
+            throw CairoException.instance(ff.errno()).put("failed to link key file [from=")
+                    .put(tempPath)
+                    .put(", to=")
+                    .put(path)
+                    .put(']');
+        }
+
+        tempPath.trimTo(tempPathTripLen);
+        path.trimTo(rootLen);
+        BitmapIndexUtils.valueFileName(tempPath, columnName, columnNameTxm);
+        BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
+        if (-1 == ff.hardLink(tempPath.$(), path.$())) {
+            throw CairoException.instance(ff.errno()).put("failed to link value file [from=")
+                    .put(tempPath)
+                    .put(", to=")
+                    .put(path)
+                    .put(']');
+        }
+
+        path.trimTo(rootLen);
+        SymbolMapReader symbolMapReader = new SymbolMapReaderImpl(
+                configuration,
+                path,
+                columnName,
+                COLUMN_NAME_TXN_NONE,
+                symbolCount
+        );
+
+        symbolMapReaders.extendAndSet(columnWriterIndex, symbolMapReader);
+        symbolMaps.extendAndSet(columnWriterIndex, new CharSequenceIntHashMap(8, 0.5, SymbolTable.VALUE_NOT_FOUND));
+        initialSymbolCounts.add(symbolCount);
     }
 
     private void doClose(boolean truncate) {
@@ -419,16 +471,7 @@ public class WalWriter implements Closeable {
     }
 
     private void freeSymbolMapWriters() {
-        if (denseSymbolMapWriters != null) {
-            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                Misc.free(denseSymbolMapWriters.getQuick(i));
-            }
-            denseSymbolMapWriters.clear();
-        }
-
-        if (symbolMapWriters != null) {
-            symbolMapWriters.clear();
-        }
+        Misc.freeObjList(symbolMapReaders);
     }
 
     private MemoryMA getPrimaryColumn(int column) {
@@ -441,8 +484,8 @@ public class WalWriter implements Closeable {
         return columns.getQuick(getSecondaryColumnIndex(column));
     }
 
-    MapWriter getSymbolMapWriter(int columnIndex) {
-        return symbolMapWriters.getQuick(columnIndex);
+    SymbolMapReader getSymbolMapReader(int columnIndex) {
+        return symbolMapReaders.getQuick(columnIndex);
     }
 
     private void lock() {
@@ -527,7 +570,6 @@ public class WalWriter implements Closeable {
 
     private void closeCurrentSegment() {
         commit();
-        events.end();
     }
 
     private void openNewSegment() {
@@ -538,17 +580,21 @@ public class WalWriter implements Closeable {
             rowValueIsNotNull.fill(0, columnCount, -1);
             final int segmentPathLen = createSegmentDir();
 
-            int liveColumnCount = 0;
             for (int i = 0; i < columnCount; i++) {
                 int type = metadata.getColumnType(i);
+
                 if (type > 0) {
-                    liveColumnCount++;
                     final CharSequence name = metadata.getColumnName(i);
                     openColumnFiles(name, i, segmentPathLen);
+
+                    if (type == ColumnType.SYMBOL && symbolMapReaders.size() > 0) {
+                        final SymbolMapReader reader = symbolMapReaders.getQuick(i);
+                        initialSymbolCounts.setQuick(i, reader.getSymbolCount());
+                    }
                 }
             }
 
-            metadata.openMetaFile(path, segmentPathLen, liveColumnCount);
+            metadata.openMetaFile(path, segmentPathLen, columnCount);
             events.openEventFile(path, segmentPathLen);
             segmentStartMillis = millisecondClock.getTicks();
             LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
@@ -591,18 +637,8 @@ public class WalWriter implements Closeable {
     }
 
     private void removeSymbolMapWriter(int index) {
-        final MapWriter writer = symbolMapWriters.getAndSetQuick(index, NullMapWriter.INSTANCE);
-        if (writer != null && writer != NullMapWriter.INSTANCE) {
-            int symColIndex = denseSymbolMapWriters.remove(writer);
-            // Shift all subsequent symbol indexes by 1 back
-            while (symColIndex < denseSymbolMapWriters.size()) {
-                MapWriter w = denseSymbolMapWriters.getQuick(symColIndex);
-                w.setSymbolIndexInTxWriter(symColIndex);
-                symColIndex++;
-            }
-            Misc.free(writer);
-        }
-        startSymbolCounts.setQuick(index, -1);
+        Misc.free(symbolMapReaders.getAndSetQuick(index, null));
+        initialSymbolCounts.setQuick(index, -1);
     }
 
     private void rowAppend(ObjList<Runnable> activeNullSetters, long rowTimestamp) {
@@ -841,14 +877,35 @@ public class WalWriter implements Closeable {
 
         @Override
         public void putSym(int columnIndex, CharSequence value) {
-            getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
-            setRowValueNotNull(columnIndex);
+            SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
+            if (symbolMapReader != null) {
+
+                int key = symbolMapReader.keyOf(value);
+                if (key == SymbolTable.VALUE_NOT_FOUND) {
+                    if (value != null) {
+                        // Add it to in-memory symbol map
+                        int initialSymCount = initialSymbolCounts.get(columnIndex);
+                        CharSequenceIntHashMap symbolMap = symbolMaps.getQuick(columnIndex);
+                        key = symbolMap.get(value);
+                        if (key == SymbolTable.VALUE_NOT_FOUND) {
+                            key = initialSymCount + symbolMap.size();
+                            symbolMap.put(value, key);
+                        }
+                    } else {
+                        key = SymbolTable.VALUE_IS_NULL;
+                    }
+                }
+                getPrimaryColumn(columnIndex).putInt(key);
+                setRowValueNotNull(columnIndex);
+            } else {
+                throw new UnsupportedOperationException();
+            }
         }
 
         @Override
         public void putSym(int columnIndex, char value) {
-            getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
-            setRowValueNotNull(columnIndex);
+            CharSequence str = SingleCharCharSequence.get(value);
+            putSym(columnIndex, str);
         }
 
         @Override

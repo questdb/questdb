@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -38,8 +36,9 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.WalTxnType.DATA;
 
-public class WalReader implements Closeable, SymbolTableSource {
+public class WalReader implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalReader.class);
 
     private final FilesFacade ff;
@@ -51,15 +50,13 @@ public class WalReader implements Closeable, SymbolTableSource {
     private final WalEventCursor eventCursor;
     private final String tableName;
     private final String walName;
-    private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
-    private final CairoConfiguration configuration;
+    private final ObjList<IntObjHashMap<CharSequence>> symbolMaps = new ObjList<>();
     private final long segmentId;
     private final long rowCount;
     private final ObjList<MemoryMR> columns;
     private final int columnCount;
 
-    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, IntList walSymbolCounts, long rowCount) {
-        this.configuration = configuration;
+    public WalReader(CairoConfiguration configuration, CharSequence tableName, CharSequence walName, long segmentId, long rowCount) {
         this.tableName = Chars.toString(tableName);
         this.walName = Chars.toString(walName);
         this.segmentId = segmentId;
@@ -75,9 +72,9 @@ public class WalReader implements Closeable, SymbolTableSource {
             metadata.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION);
             columnCount = metadata.getColumnCount();
             events = new WalReaderEvents(ff);
-            eventCursor = events.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION);
             LOG.debug().$("open [table=").$(tableName).I$();
-            openSymbolMaps(walSymbolCounts);
+            openSymbolMaps(metadata, events.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION), configuration);
+            eventCursor = events.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION);
 
             final int capacity = 2 * columnCount + 2;
             columns = new ObjList<>(capacity);
@@ -91,13 +88,8 @@ public class WalReader implements Closeable, SymbolTableSource {
         }
     }
 
-    static int getPrimaryColumnIndex(int index) {
-        return index * 2 + 2;
-    }
-
     @Override
     public void close() {
-        freeSymbolMapReaders();
         Misc.free(events);
         Misc.free(metadata);
         Misc.freeObjList(columns);
@@ -109,16 +101,12 @@ public class WalReader implements Closeable, SymbolTableSource {
         return columns.getQuick(absoluteIndex);
     }
 
-    public String getTableName() {
-        return tableName;
+    public String getColumnName(int columnIndex) {
+        return metadata.getColumnName(columnIndex);
     }
 
-    public String getWalName() {
-        return walName;
-    }
-
-    public int getTimestampIndex() {
-        return metadata.getTimestampIndex();
+    public int getColumnType(int columnIndex) {
+        return metadata.getColumnType(columnIndex);
     }
 
     public WalDataCursor getDataCursor() {
@@ -128,6 +116,23 @@ public class WalReader implements Closeable, SymbolTableSource {
 
     public WalEventCursor getEventCursor() {
         return eventCursor;
+    }
+
+    public CharSequence getSymbolValue(int col, int key) {
+        var symbolMap = symbolMaps.getQuick(col);
+        return symbolMap.get(key);
+    }
+
+    public String getTableName() {
+        return tableName;
+    }
+
+    public int getTimestampIndex() {
+        return metadata.getTimestampIndex();
+    }
+
+    public String getWalName() {
+        return walName;
     }
 
     public long openSegment() {
@@ -147,75 +152,46 @@ public class WalReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void openSegmentColumns() {
-        for (int i = 0; i < columnCount; i++) {
-            loadColumnAt(i);
-        }
+    public long size() {
+        return rowCount;
+    }
+
+    static int getPrimaryColumnIndex(int index) {
+        return index * 2 + 2;
+    }
+
+    int getColumnCount() {
+        return columnCount;
     }
 
     private void loadColumnAt(int columnIndex) {
         final int pathLen = path.length();
         try {
-            final CharSequence name = metadata.getColumnName(columnIndex);
-            final int primaryIndex = getPrimaryColumnIndex(columnIndex);
-            final int secondaryIndex = primaryIndex + 1;
-            final MemoryMR primaryMem = columns.getQuick(primaryIndex);
-
             final int columnType = metadata.getColumnType(columnIndex);
-            if (ColumnType.isVariableLength(columnType)) {
-                long columnSize = (rowCount + 1) << 3;
-                TableUtils.iFile(path.trimTo(pathLen), name);
-                MemoryMR secondaryMem = columns.getQuick(secondaryIndex);
-                secondaryMem = openOrCreateMemory(path, columns, secondaryIndex, secondaryMem, columnSize);
-                columnSize = secondaryMem.getLong(rowCount << 3);
-                TableUtils.dFile(path.trimTo(pathLen), name);
-                openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnSize);
-            } else {
-                long columnSize = rowCount << ColumnType.pow2SizeOf(columnType);
-                TableUtils.dFile(path.trimTo(pathLen), name);
-                openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnIndex == getTimestampIndex() ? columnSize << 1 : columnSize);
-                Misc.free(columns.getAndSetQuick(secondaryIndex, null));
+            if (columnType > 0) {
+                final CharSequence name = metadata.getColumnName(columnIndex);
+                final int primaryIndex = getPrimaryColumnIndex(columnIndex);
+                final int secondaryIndex = primaryIndex + 1;
+                final MemoryMR primaryMem = columns.getQuick(primaryIndex);
+
+                if (ColumnType.isVariableLength(columnType)) {
+                    long columnSize = (rowCount + 1) << 3;
+                    TableUtils.iFile(path.trimTo(pathLen), name);
+                    MemoryMR secondaryMem = columns.getQuick(secondaryIndex);
+                    secondaryMem = openOrCreateMemory(path, columns, secondaryIndex, secondaryMem, columnSize);
+                    columnSize = secondaryMem.getLong(rowCount << 3);
+                    TableUtils.dFile(path.trimTo(pathLen), name);
+                    openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnSize);
+                } else {
+                    long columnSize = rowCount << ColumnType.pow2SizeOf(columnType);
+                    TableUtils.dFile(path.trimTo(pathLen), name);
+                    openOrCreateMemory(path, columns, primaryIndex, primaryMem, columnIndex == getTimestampIndex() ? columnSize << 1 : columnSize);
+                    Misc.free(columns.getAndSetQuick(secondaryIndex, null));
+                }
             }
         } finally {
             path.trimTo(pathLen);
         }
-    }
-
-    public long size() {
-        return rowCount;
-    }
-
-    public String getColumnName(int columnIndex) {
-        return metadata.getColumnName(columnIndex);
-    }
-
-    public int getColumnType(int columnIndex) {
-        return metadata.getColumnType(columnIndex);
-    }
-
-    public SymbolMapReader getSymbolMapReader(int columnIndex) {
-        return symbolMapReaders.getQuiet(columnIndex);
-    }
-
-    @Override
-    public StaticSymbolTable getSymbolTable(int columnIndex) {
-        return getSymbolMapReader(columnIndex);
-    }
-
-    @Override
-    public StaticSymbolTable newSymbolTable(int columnIndex) {
-        return getSymbolMapReader(columnIndex).newSymbolTableView();
-    }
-
-    private void freeSymbolMapReaders() {
-        for (int i = 0, n = symbolMapReaders.size(); i < n; i++) {
-            Misc.free(symbolMapReaders.getQuick(i));
-        }
-        symbolMapReaders.clear();
-    }
-
-    int getColumnCount() {
-        return columnCount;
     }
 
     @NotNull
@@ -235,18 +211,54 @@ public class WalReader implements Closeable, SymbolTableSource {
         return mem;
     }
 
-    private void openSymbolMaps(IntList walSymbolCounts) {
-        int symbolMapIndex = 0;
+    private void openSegmentColumns() {
         for (int i = 0; i < columnCount; i++) {
-            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
-                // symbol map index array is sparse
-                symbolMapReaders.extendAndSet(i, new SymbolMapReaderImpl(
-                        configuration,
-                        path,
-                        metadata.getColumnName(i),
-                        COLUMN_NAME_TXN_NONE,
-                        walSymbolCounts.get(symbolMapIndex++)
-                ));
+            loadColumnAt(i);
+        }
+    }
+
+    private void openSymbolMaps(WalReaderMetadata metadata, WalEventCursor eventCursor, CairoConfiguration configuration) {
+        while (eventCursor.hasNext()) {
+            if (eventCursor.getType() == DATA) {
+                WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                SymbolMapDiff symbolDiff = dataInfo.nextSymbolMapDiff();
+                while (symbolDiff != null) {
+                    int cleanSymbolCount = symbolDiff.getCleanSymbolCount();
+                    int columnIndex = symbolDiff.getColumnIndex();
+                    final IntObjHashMap<CharSequence> symbolMap;
+
+                    if (symbolMaps.size() <= columnIndex || symbolMaps.getQuick(columnIndex) == null) {
+                        symbolMap = new IntObjHashMap<>();
+                        if (cleanSymbolCount > 0) {
+                            try (
+                                    SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl(
+                                            configuration,
+                                            path,
+                                            this.metadata.getColumnName(columnIndex),
+                                            COLUMN_NAME_TXN_NONE,
+                                            cleanSymbolCount
+                                    )
+                            ) {
+
+                                for (int key = 0; key < cleanSymbolCount; key++) {
+                                    CharSequence symbol = symbolMapReader.valueOf(key);
+                                    symbolMap.put(key, String.valueOf(symbol));
+                                }
+                            }
+                        }
+                        symbolMaps.extendAndSet(columnIndex, symbolMap);
+                    } else {
+                        symbolMap = symbolMaps.getQuick(columnIndex);
+                    }
+
+                    var entry = symbolDiff.nextEntry();
+                    while (entry != null) {
+                        symbolMap.put(entry.getKey(), String.valueOf(entry.getSymbol()));
+                        entry = symbolDiff.nextEntry();
+                    }
+
+                    symbolDiff = dataInfo.nextSymbolMapDiff();
+                }
             }
         }
     }

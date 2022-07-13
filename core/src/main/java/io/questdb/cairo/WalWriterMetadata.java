@@ -77,7 +77,6 @@ class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
     void removeColumn(int columnIndex) {
         final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         deletedMeta.markDeleted();
-        columnNameIndexMap.remove(deletedMeta.getName());
     }
 
     void openMetaFile(Path path, int pathLen, int liveColumnCount) {
@@ -87,10 +86,8 @@ class WalWriterMetadata extends BaseRecordMetadata implements Closeable {
         metaMem.putInt(timestampIndex);
         for (int i = 0; i < columnCount; i++) {
             final int type = getColumnType(i);
-            if (type > 0) {
-                metaMem.putInt(type);
-                metaMem.putStr(getColumnName(i));
-            }
+            metaMem.putInt(type);
+            metaMem.putStr(getColumnName(i));
         }
     }
 }

@@ -1008,13 +1008,11 @@ public final class TableUtils {
     static void loadSequencerMetadata(
             MemoryMR metaMem,
             ObjList<TableColumnMetadata> columnMetadata,
-            LowerCaseCharSequenceIntHashMap nameIndex,
-            int expectedVersion
+            LowerCaseCharSequenceIntHashMap nameIndex
     ) {
         try {
             final long memSize = checkMemSize(metaMem, SEQ_META_OFFSET_COLUMNS);
-            validateMetaVersion(metaMem, SEQ_META_OFFSET_WAL_VERSION, expectedVersion);
-            final int schemaVersion = getSchemaVersion(metaMem, SEQ_META_OFFSET_SCHEMA_VERSION);
+            validateMetaVersion(metaMem, SEQ_META_OFFSET_WAL_VERSION, WalWriter.WAL_FORMAT_VERSION);
             final int columnCount = getColumnCount(metaMem, SEQ_META_OFFSET_COLUMN_COUNT);
             final int timestampIndex = getTimestampIndex(metaMem, SEQ_META_OFFSET_TIMESTAMP_INDEX, columnCount);
 
@@ -1093,7 +1091,7 @@ public final class TableUtils {
 
     private static int getColumnType(MemoryMR metaMem, long memSize, long offset, int columnIndex) {
         final int type = getInt(metaMem, memSize, offset);
-        if (ColumnType.sizeOf(type) == -1) {
+        if (type >= 0 && ColumnType.sizeOf(type) == -1) {
             throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(columnIndex).put(']');
         }
         return type;

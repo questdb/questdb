@@ -41,17 +41,25 @@ public class WalEventCursor {
     private long offset = Integer.BYTES; // skip wal meta version
     private long txn = END_OF_EVENTS;
     private byte type = NONE;
+    private long nextOffset = Integer.BYTES;
 
     public WalEventCursor(MemoryMR eventMem) {
         this.eventMem = eventMem;
     }
 
     public boolean hasNext() {
+        offset = nextOffset;
+        int length = readInt();
+        if (length < 1) {
+            // EOF
+            return false;
+        }
+        nextOffset = length + nextOffset;
+
         txn = readLong();
         if (txn == END_OF_EVENTS) {
             return false;
         }
-
         type = readByte();
         switch (type) {
             case DATA:
@@ -71,7 +79,7 @@ public class WalEventCursor {
 
     public void reset() {
         memSize = eventMem.size();
-        offset = Integer.BYTES; // skip wal meta version
+        nextOffset = Integer.BYTES; // skip wal meta version
         txn = END_OF_EVENTS;
         type = WalTxnType.NONE;
     }
@@ -105,9 +113,8 @@ public class WalEventCursor {
         return type;
     }
 
-    public class DataInfo {
-        private final SymbolMapDiff symbolMapDiff = new SymbolMapDiff(WalEventCursor.this);
-
+    public class DataInfo implements SymbolMapDiffCursor {
+        private final SymbolMapDiffImpl symbolMapDiff = new SymbolMapDiffImpl(WalEventCursor.this);
         private long startRowID;
         private long endRowID;
         private long minTimestamp;
@@ -222,18 +229,21 @@ public class WalEventCursor {
         return value;
     }
 
-    SymbolMapDiff readNextSymbolMapDiff(SymbolMapDiff symbolMapDiff) {
+    SymbolMapDiff readNextSymbolMapDiff(SymbolMapDiffImpl symbolMapDiff) {
         final int columnIndex = readInt();
-        symbolMapDiff.of(columnIndex);
-        if (columnIndex == SymbolMapDiff.END_OF_SYMBOL_DIFFS) {
+        if (columnIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
             return null;
         }
+        final int cleanTableSymbolCount = readInt();
+        final int size = readInt();
+
+        symbolMapDiff.of(columnIndex, cleanTableSymbolCount, size);
         return symbolMapDiff;
     }
 
-    SymbolMapDiff.Entry readNextSymbolMapDiffEntry(SymbolMapDiff.Entry entry) {
+    SymbolMapDiffImpl.Entry readNextSymbolMapDiffEntry(SymbolMapDiffImpl.Entry entry) {
         final int key = readInt();
-        if (key == SymbolMapDiff.END_OF_SYMBOL_ENTRIES) {
+        if (key == SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES) {
             entry.clear();
             return null;
         }
