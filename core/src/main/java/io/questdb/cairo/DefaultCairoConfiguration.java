@@ -409,6 +409,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getParallelImportRequestWaitTimeout() {
+        return 300_000L;
+    }
+
+    @Override
+    public int getParallelImportRequestQueueCapacity() {
+        return 8;
+    }
+
+    @Override
     public int getPageFrameReduceQueueCapacity() {
         return 32;
     }

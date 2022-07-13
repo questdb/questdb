@@ -315,7 +315,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long maxHttpQueryResponseRowLimit;
     private boolean interruptOnClosedConnection;
     private long parallelImportMaxIndexChunkSize;
-    private int parallelImportQueueCapacity;
+    private final int parallelImportQueueCapacity;
     private int pgNetConnectionLimit;
     private boolean pgNetConnectionHint;
     private int pgNetBindIPv4Address;
@@ -405,6 +405,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
     private final boolean simulateCrashEnabled;
+    private final long parallelImportRequestWaitTimeout;
+    private final int parallelImportRequestQueueCapacity;
 
     public PropServerConfiguration(
             String root,
@@ -980,6 +982,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
+            this.parallelImportRequestWaitTimeout = getLong(properties, env, PropertyKey.PARALLEL_IMPORT_REQ_WAIT_TIMEOUT_MICRO, 300_000L);
+            this.parallelImportRequestQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.PARALLEL_IMPORT_REQ_QUEUE_CAPACITY, 8));
         }
     }
 
@@ -2186,6 +2190,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelFilterEnabled() {
             return sqlParallelFilterEnabled;
+        }
+
+        @Override
+        public long getParallelImportRequestWaitTimeout() {
+            return parallelImportRequestWaitTimeout;
+        }
+
+        @Override
+        public int getParallelImportRequestQueueCapacity() {
+            return parallelImportRequestQueueCapacity;
         }
 
         @Override

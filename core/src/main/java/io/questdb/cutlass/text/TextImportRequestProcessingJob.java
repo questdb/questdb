@@ -1,0 +1,152 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cutlass.text;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Misc;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.Closeable;
+import java.io.IOException;
+
+public class TextImportRequestProcessingJob extends SynchronizedJob implements Closeable {
+    private static final Log LOG = LogFactory.getLog(TextImportRequestProcessingJob.class);
+
+    private final RingQueue<TextImportRequestTask> requestProcessingQueue;
+    private final Sequence requestProcessingSubSeq;
+    private final CairoEngine engine;
+    private final int workerCount;
+    private final CharSequence statusTableName;
+    private final MicrosecondClock clock;
+    private TableWriter writer;
+    private SqlCompiler sqlCompiler;
+    private SqlExecutionContextImpl sqlExecutionContext;
+    private TextImportRequestTask task;
+    private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
+
+    public TextImportRequestProcessingJob(
+            final CairoEngine engine,
+            int workerCount,
+            @Nullable FunctionFactoryCache functionFactoryCache
+    ) throws SqlException {
+        this.engine = engine;
+        this.workerCount = workerCount;
+        this.requestProcessingQueue = engine.getMessageBus().getTextImportRequestProcessingQueue();
+        this.requestProcessingSubSeq = engine.getMessageBus().getTextImportRequestProcessingSubSeq();
+
+        CairoConfiguration configuration = engine.getConfiguration();
+        this.clock = configuration.getMicrosecondClock();
+        this.statusTableName = configuration.getSystemTableNamePrefix() + "parallel_text_import_log";
+
+        this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
+        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+        this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
+        //todo: cleanup the table
+        this.sqlCompiler.compile(
+                "CREATE TABLE IF NOT EXISTS \"" + statusTableName + "\" (" +
+                        "ts timestamp, " + // 0
+                        "table symbol, " + // 1
+                        "file symbol, " + // 2
+                        "stage symbol, " + // 3
+                        "status symbol, " + // 4
+                        "message string" + // 5
+                        ") timestamp(ts) partition by DAY",
+                sqlExecutionContext
+        );
+        this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
+    }
+
+    @Override
+    public void close() throws IOException {
+        this.writer = Misc.free(this.writer);
+        this.sqlCompiler = Misc.free(sqlCompiler);
+        this.sqlExecutionContext = Misc.free(sqlExecutionContext);
+    }
+
+    @Override
+    protected boolean runSerially() {
+        long cursor = requestProcessingSubSeq.next();
+        if (cursor > -1) {
+            task = requestProcessingQueue.get(cursor);
+            ParallelCsvFileImporter loader = new ParallelCsvFileImporter(engine, workerCount, task.getCancellationToken());
+            try {
+                loader.of(
+                        task.getTableName(),
+                        task.getFileName(),
+                        task.getPartitionBy(),
+                        task.getDelimiter(),
+                        task.getTimestampColumnName(),
+                        task.getTimestampFormat(),
+                        task.isHeaderFlag()
+                );
+                loader.setStatusReporter(updateStatusRef);
+                loader.process();
+            } catch (TextImportException e) {
+                updateStatus(e.getPhase(),
+                        e.isCancelled() ? TextImportTask.STATUS_CANCELLED : TextImportTask.STATUS_FAILED, e.getMessage()
+                );
+            } finally {
+                requestProcessingSubSeq.done(cursor);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void updateStatus(byte phase, byte status, final CharSequence msg) {
+        if (writer != null) {
+            try {
+                TableWriter.Row row = writer.newRow(clock.getTicks());
+                row.putSym(1, task.getTableName());
+                row.putSym(2, task.getFileName());
+                row.putSym(3, TextImportTask.getPhaseName(phase));
+                row.putSym(4, TextImportTask.getStatusName(status));
+                row.putStr(5, msg);
+                row.append();
+
+                writer.commit();
+            } catch (Throwable th) {
+                LOG.error().$("error saving to parallel import log, unable to insert")
+                        .$(", releasing writer and stop updating log [table=").$(statusTableName)
+                        .$(", error=").$(th)
+                        .I$();
+                writer = Misc.free(writer);
+            }
+        }
+    }
+}

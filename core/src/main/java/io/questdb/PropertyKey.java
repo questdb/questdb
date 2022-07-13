@@ -360,7 +360,9 @@ public enum PropertyKey {
     CAIRO_MAX_FILE_NAME_LENGTH("cairo.max.file.name.length"),
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
-    CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation");
+    CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
+    PARALLEL_IMPORT_REQ_WAIT_TIMEOUT_MICRO("parallel.import.request.wait.timeout.micro"),
+    PARALLEL_IMPORT_REQ_QUEUE_CAPACITY("parallel.import.request.queue.capacity");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

@@ -430,7 +430,15 @@ public final class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "COPY is disabled ['cairo.sql.copy.root' is not set?]");
         }
         ExpressionNode tableName = expectExpr(lexer);
-        CharSequence tok = tok(lexer, "'from' or 'to'");
+        CharSequence tok = tok(lexer, "'from' or 'to' or 'cancel'");
+
+        if (isCancelKeyword(tok)) {
+            CopyModel model = copyModelPool.next();
+            model.setCancel(true);
+            model.setParallel(true);
+            model.setTableName(tableName);
+            return model;
+        }
 
         if (isFromKeyword(tok)) {
             final ExpressionNode fileName = expectExpr(lexer);

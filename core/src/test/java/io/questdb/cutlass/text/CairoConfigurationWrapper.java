@@ -781,4 +781,14 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     public boolean isSqlParallelFilterEnabled() {
         return conf.isSqlParallelFilterEnabled();
     }
+
+    @Override
+    public long getParallelImportRequestWaitTimeout() {
+        return conf.getParallelImportRequestWaitTimeout();
+    }
+
+    @Override
+    public int getParallelImportRequestQueueCapacity() {
+        return conf.getParallelImportRequestQueueCapacity();
+    }
 }

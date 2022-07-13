@@ -388,4 +388,8 @@ public interface CairoConfiguration {
     default IOUringFacade getIOURingFacade() {
         return IOUringFacadeImpl.INSTANCE;
     }
+
+    long getParallelImportRequestWaitTimeout();
+
+    int getParallelImportRequestQueueCapacity();
 }

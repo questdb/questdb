@@ -44,10 +44,15 @@ import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.Sequence;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -55,6 +60,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.Objects;
 import java.util.ServiceLoader;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -114,7 +120,7 @@ public class SqlCompiler implements Closeable {
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
-
+    private final SCSequence textImportResponseSubSeq = new SCSequence();
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
         this(engine, null, null);
@@ -863,6 +869,9 @@ public class SqlCompiler implements Closeable {
         Misc.free(renamePath);
         Misc.free(textLoader);
         Misc.free(rebuildIndex);
+
+        textImportResponseSubSeq.clear();
+        messageBus.getTextImportResponseFanOut().remove(textImportResponseSubSeq);
     }
 
     @NotNull
@@ -1877,64 +1886,144 @@ public class SqlCompiler implements Closeable {
 
     private void copyTable(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
         try {
-            int len = configuration.getSqlCopyBufferSize();
-            long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-            try {
-                final CharSequence name = GenericLexer.assertNoDots(GenericLexer.unquote(model.getFileName().token), model.getFileName().position);
+            int workerCount = executionContext.getWorkerCount();
+            ExpressionNode fileNameNode = model.getFileName();
+            final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
+            if (model.isParallel()) {
+                if (workerCount < 1) {
+                    throw SqlException.$(0, "Invalid worker count set [value=").put(workerCount).put("]");
+                }
 
-                if (model.isParallel()) {
+                MessageBus bus = executionContext.getMessageBus();
+                RingQueue<TextImportRequestTask> queue = bus.getTextImportRequestCollectingQueue();
+                if (queue.getCycle() < 1) {
+                    throw SqlException.$(0, "Parallel import requests queue size can't be zero!");
+                }
+                long correlationId = TextImportRequestTask.newTaskCorrelationId();
+                long timeout = configuration.getParallelImportRequestWaitTimeout();
+                if (model.isCancel()) {
+                    addTextImportRequest(correlationId, timeout, model, null);
+                } else {
                     if (model.getTimestampFormat() == null) {
                         model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
                     }
                     if (model.getDelimiter() < 0) {
                         model.setDelimiter((byte) ',');
                     }
+                    addTextImportRequest(correlationId, timeout, model, fileName);
+                }
+                awaitTextImportResponse(correlationId, timeout);
+                return;
+            }
 
-                    try (ParallelCsvFileImporter loader = new ParallelCsvFileImporter(executionContext.getCairoEngine(), executionContext.getWorkerCount(), executionContext.getCircuitBreaker())) {
-                        loader.of(model.getTableName().token, name, model.getPartitionBy(), model.getDelimiter(), model.getTimestampColumnName(), model.getTimestampFormat(), model.isHeader(), model.getAtomicity());
-                        loader.process();
-                    }
-
-                    return;
+            int len = configuration.getSqlCopyBufferSize();
+            long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+            setupTextLoaderFromModel(model);
+            path.of(configuration.getInputRoot()).concat(fileName).$();
+            long fd = ff.openRO(path);
+            try {
+                if (fd == -1) {
+                    throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
                 }
 
-                path.of(configuration.getInputRoot()).concat(name).$();
-                long fd = ff.openRO(path);
-                try {
-                    if (fd == -1) {
-                        throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
-                    }
-
-                    long fileLen = ff.length(fd);
-                    long n = ff.read(fd, buf, len, 0);
-                    if (n > 0) {
-                        textLoader.setForceHeaders(model.isHeader());
-                        textLoader.setSkipRowsWithExtraValues(false);
-                        textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
-                        textLoader.setState(TextLoader.LOAD_DATA);
-                        int read;
-                        while (n < fileLen) {
-                            read = (int) ff.read(fd, buf, len, n);
-                            if (read < 1) {
-                                throw SqlException.$(model.getFileName().position, "could not read file [errno=").put(ff.errno()).put(']');
-                            }
-                            textLoader.parse(buf, buf + read, executionContext.getCairoSecurityContext());
-                            n += read;
+                long fileLen = ff.length(fd);
+                long n = ff.read(fd, buf, len, 0);
+                if (n > 0) {
+                    textLoader.setForceHeaders(model.isHeader());
+                    textLoader.setSkipRowsWithExtraValues(false);
+                    textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
+                    textLoader.setState(TextLoader.LOAD_DATA);
+                    int read;
+                    while (n < fileLen) {
+                        read = (int) ff.read(fd, buf, len, n);
+                        if (read < 1) {
+                            throw SqlException.$(model.getFileName().position, "could not read file [errno=").put(ff.errno()).put(']');
                         }
-                        textLoader.wrapUp();
+                        textLoader.parse(buf, buf + read, executionContext.getCairoSecurityContext());
+                        n += read;
                     }
-                } finally {
-                    ff.close(fd);
+                    textLoader.wrapUp();
                 }
             } finally {
+                ff.close(fd);
                 textLoader.clear();
                 Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
             }
-
             LOG.info().$("copied").$();
         } catch (TextImportException | TextException e) {
             LOG.error().$((Throwable) e).$();
             throw SqlException.$(0, e.getMessage());
+        }
+    }
+
+    private void addTextImportRequest(long correlationId, long timeout, CopyModel model, @Nullable CharSequence fileName) throws SqlException {
+        final MicrosecondClock clock = configuration.getMicrosecondClock();
+        final long start = clock.getTicks();
+        final Sequence textImportPubSeq = messageBus.getTextImportRequestCollectingPubSeq();
+        final RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestCollectingQueue();
+        final FanOut textImportResponseFanOut = messageBus.getTextImportResponseFanOut();
+        while (true) {
+            long cursor = textImportPubSeq.next();
+            if (cursor < 0) {
+                if (clock.getTicks() - start > timeout) {
+                    throw SqlException.$(0, "Parallel import request timeout.");
+                }
+                Os.pause();
+                continue;
+            }
+
+            TextImportRequestTask task = textImportRequestQueue.get(cursor);
+            task.setCorrelationId(correlationId);
+            CharSequence tableName = GenericLexer.unquote(model.getTableName().token);
+            if (model.isCancel()) {
+                task.ofCancel(Objects.toString(tableName, null));
+            } else {
+                assert fileName != null;
+                task.of(Objects.toString(tableName, null),
+                        Objects.toString(fileName, null),
+                        model.isHeader(),
+                        Objects.toString(model.getTimestampColumnName(), null),
+                        model.getDelimiter(),
+                        Objects.toString(model.getTimestampFormat(), null),
+                        model.getPartitionBy());
+            }
+
+            textImportResponseFanOut.and(textImportResponseSubSeq);
+            textImportPubSeq.done(cursor);
+            return;
+        }
+    }
+
+    private void awaitTextImportResponse(long correlationId, long timeout) throws SqlException {
+        final MicrosecondClock clock = configuration.getMicrosecondClock();
+        final FanOut textImportResponseFanOut = messageBus.getTextImportResponseFanOut();
+        final RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestCollectingQueue();
+
+        final long start = clock.getTicks();
+        while (true) {
+            long seq = textImportResponseSubSeq.next();
+            if (seq < 0) {
+                if (clock.getTicks() - start > timeout) {
+                    throw SqlException.$(0, "Parallel import ack timeout.");
+                }
+                Os.pause();
+                continue;
+            }
+
+            boolean statusReceived = false;
+            try {
+                TextImportRequestTask task = textImportRequestQueue.get(seq);
+                if (task.getCorrelationId() == correlationId) {
+                    statusReceived = true;
+                }
+            } finally {
+                textImportResponseSubSeq.done(seq);
+                if (statusReceived) {
+                    textImportResponseFanOut.remove(textImportResponseSubSeq);
+                    textImportResponseSubSeq.clear();
+                }
+            }
+            break;
         }
     }
 
@@ -2133,8 +2222,8 @@ public class SqlCompiler implements Closeable {
 
     @NotNull
     private CompiledQuery executeCopy(SqlExecutionContext executionContext, CopyModel executionModel) throws SqlException {
-        setupTextLoaderFromModel(executionModel);
-        if (Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
+        if (!executionModel.isCancel() && Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
+            setupTextLoaderFromModel(executionModel);
             return compiledQuery.ofCopyRemote(textLoader);
         }
         copyTable(executionContext, executionModel);
