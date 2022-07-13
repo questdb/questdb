@@ -27,7 +27,11 @@ package io.questdb.griffin;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.TextImportRequestCollectingJob;
+import io.questdb.cutlass.text.TextImportRequestProcessingJob;
 import io.questdb.griffin.model.CopyModel;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Os;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
@@ -36,6 +40,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
 
 import static org.junit.Assert.*;
 
@@ -319,35 +324,46 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyIntoExistingTable() throws Exception {
-        assertMemoryLeak(() -> {
+        ParallelCopyRunnable stmt = () -> {
             compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
             compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW; ", sqlExecutionContext);
+        };
 
-            assertQuotesTableContent();
-        });
+        ParallelCopyRunnable test = this::assertQuotesTableContent;
+
+        testParallelCopy(stmt, test);
     }
 
     @Test
     public void testParallelCopyIntoNewTable() throws Exception {
-        assertMemoryLeak(() -> {
+        ParallelCopyRunnable stmt = () -> {
             compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+        };
 
-            assertQuotesTableContent();
-        });
+        ParallelCopyRunnable test = this::assertQuotesTableContent;
+
+        testParallelCopy(stmt, test);
     }
 
     @Test
     public void testParallelCopyThrowsExceptionWhenValidationFails() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
-                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT; ", sqlExecutionContext);
-            } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("partition by unit must be set when importing to new table"));
-            }
-        });
+        ParallelCopyRunnable stmt = () -> {
+            compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT; ", sqlExecutionContext);
+        };
+
+        ParallelCopyRunnable test = () -> {
+            assertQuery("message\n" +
+                            "partition by unit must be set when importing to new table\n",
+                    "select message from __sysparallel_text_import_log limit -1",
+                    null,
+                    true
+            );
+        };
+
+        testParallelCopy(stmt, test);
     }
 
     @Test
@@ -416,6 +432,33 @@ public class CopyTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testWhenWorkIsTheSameAsDataDirThenParallelCopyThrowsException() throws Exception {
+        String inputRootTmp = inputRoot;
+        String inputWorkRootTmp = inputWorkRoot;
+
+        inputRoot = new File(".").getAbsolutePath();
+        inputWorkRoot = temp.getRoot().getAbsolutePath();
+
+        ParallelCopyRunnable stmt = () -> {
+            compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
+        };
+
+        ParallelCopyRunnable test = () -> {
+            assertQuery("message\ncannot remove work dir because it points to one of main instance directories\n",
+                    "select left(message, 76) message from __sysparallel_text_import_log limit -1",
+                    null,
+                    true
+            );
+        };
+
+        testParallelCopy(stmt, test);
+
+        inputRoot = inputRootTmp;
+        inputWorkRoot = inputWorkRootTmp;
+    }
+
     private void assertQuotesTableContent() throws SqlException {
         assertQuery("line\tts\td\tdescription\n" +
                         "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
@@ -440,5 +483,48 @@ public class CopyTest extends AbstractGriffinTest {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, true, true);
         }
+    }
+
+    private Thread createJobThread(SynchronizedJob job, CountDownLatch latch) {
+        return new Thread(() -> {
+            while (latch.getCount() > 0) {
+                if (job.run(0)) {
+                    latch.countDown();
+                }
+                Os.sleep(1);
+            }
+        });
+    }
+
+    private void testParallelCopy(ParallelCopyRunnable statement, ParallelCopyRunnable test) throws Exception {
+        assertMemoryLeak(() -> {
+            CountDownLatch processed = new CountDownLatch(1);
+            CountDownLatch requested = new CountDownLatch(1);
+
+            try (TextImportRequestProcessingJob processingJob = new TextImportRequestProcessingJob(engine, 1, null)) {
+                TextImportRequestCollectingJob collectingJob = new TextImportRequestCollectingJob(engine);
+
+                Thread processingThread = createJobThread(processingJob, processed);
+                Thread collectingThread = createJobThread(collectingJob, requested);
+
+                processingThread.start();
+                collectingThread.start();
+
+                statement.run();
+
+                requested.await();
+                processed.await();
+
+                test.run();
+
+                processingThread.join();
+                collectingThread.join();
+            }
+        });
+    }
+
+    @FunctionalInterface
+    interface ParallelCopyRunnable {
+        void run() throws Exception;
     }
 }
