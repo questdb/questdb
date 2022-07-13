@@ -36,8 +36,12 @@ import java.util.Iterator;
 import java.util.Map;
 
 public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final RecordMetadata METADATA;
+    private static final int TABLE_COLUMN_INDEX = 0;
+    private static final int OWNER_COLUMN_INDEX = 1;
+    private static final int TIMESTAMP_COLUMN_INDEX = 2;
+    private static final int TXN_COLUMN_INDEX = 3;
 
+    private static final RecordMetadata METADATA;
     private final CairoEngine cairoEngine;
 
     public ReaderPoolRecordCursorFactory(CairoEngine cairoEngine) {
@@ -59,10 +63,10 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("table", 1, ColumnType.STRING))
-                .add(new TableColumnMetadata("owner", 1, ColumnType.LONG))
-                .add(new TableColumnMetadata("timestamp", 1, ColumnType.TIMESTAMP))
-                .add(new TableColumnMetadata("txn", 1, ColumnType.LONG));
+        metadata.add(TABLE_COLUMN_INDEX, new TableColumnMetadata("table", 1, ColumnType.STRING))
+                .add(OWNER_COLUMN_INDEX, new TableColumnMetadata("owner", 1, ColumnType.LONG))
+                .add(TIMESTAMP_COLUMN_INDEX, new TableColumnMetadata("timestamp", 1, ColumnType.TIMESTAMP))
+                .add(TXN_COLUMN_INDEX, new TableColumnMetadata("txn", 1, ColumnType.LONG));
         METADATA = metadata;
     }
 
@@ -168,7 +172,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         private class ReaderPoolEntryRecord implements Record {
             @Override
             public CharSequence getStr(int col) {
-                assert col == 0;
+                assert col == TABLE_COLUMN_INDEX;
                 return tableName;
             }
 
@@ -182,15 +186,15 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
             @Override
             public long getTimestamp(int col) {
-                assert col == 2;
+                assert col == TIMESTAMP_COLUMN_INDEX;
                 return timestamp;
             }
 
             @Override
             public long getLong(int col) {
                 switch (col) {
-                    case 1: return owner;
-                    case 3: return txn;
+                    case OWNER_COLUMN_INDEX: return owner;
+                    case TXN_COLUMN_INDEX: return txn;
                     default: throw CairoException.instance(0).put("unsupported column number. [column=").put(col).put("]");
                 }
             }
