@@ -779,7 +779,9 @@ public class TextImportTask {
                 final long count = size / (2 * Long.BYTES);
 
                 int ringCapacity = 32;
-                IntList offsets = new IntList();
+                LongList offsets = new LongList();
+                long sqeMin = 0;
+                long sqeMax = -1;
                 try (IOUring ring = new IOUring(rf, ringCapacity)) {
                     long addr = fileBufAddr;
                     long lim = fileBufAddr + fileBufSize;
@@ -793,13 +795,13 @@ public class TextImportTask {
                         // schedule reads until we either run out of ring capacity or
                         // our read buffer size
                         if (cc < ringCapacity && addr + lineLength < lim) {
-                            long id = ring.enqueueRead(
+                            sqeMax = ring.enqueueRead(
                                     fd,
                                     offset,
                                     addr,
                                     lineLength
                             );
-                            if (id == -1) {
+                            if (sqeMax == -1) {
                                 throw TextException
                                         .$("could not read from file [path='").put(tmpPath)
                                         .put("', errno=").put(ff.errno())
@@ -807,8 +809,7 @@ public class TextImportTask {
                                         .put("]");
                             }
 
-                            // the file buffer it not huge, offsets in this buffer should fit signed int32
-                            offsets.add((int) (addr - fileBufAddr));
+                            offsets.add(addr - fileBufAddr, lineLength);
 
                             cc++;
                             addr += lineLength;
@@ -821,17 +822,18 @@ public class TextImportTask {
                                         .put(", fileBufSize=").put(fileBufSize)
                                         .put("]");
                             }
-                            consumeURing(lexer, fileBufAddr, offsets, ring, cc);
+                            consumeURing(sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
 
                             cc = 0;
                             addr = fileBufAddr;
                             offsets.clear();
+                            sqeMin = sqeMax + 1;
                         }
                     } // for
                     // check if something is enqueued
 
                     if (cc > 0) {
-                        consumeURing(lexer, fileBufAddr, offsets, ring, cc);
+                        consumeURing(sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
                     }
 
                     lexer.parseLast();
@@ -845,24 +847,48 @@ public class TextImportTask {
         }
 
         private void consumeURing(
+                long sqeMin,
                 TextLexer lexer,
                 long fileBufAddr,
-                IntList offsets,
+                LongList offsets,
                 IOUring ring,
-                int cc
+                int cc,
+                Path tmpPath
         ) {
             int submitted = ring.submit();
             assert submitted == cc;
 
+            long nextCqe = sqeMin;
+            int writtenMax = -1;
             // consume submitted tasks
             for (int j = 0; j < submitted; j++) {
                 while (!ring.nextCqe()) {
                     Os.pause();
                 }
 
-                long a = fileBufAddr + offsets.getQuick(j);
-                lexer.parse(a, a + ring.getCqeRes(), Integer.MAX_VALUE, onFieldsPartitioned);
+                long cqe = ring.getCqeId();
+                if (cqe == nextCqe) {
+                    // only parse lines in order of submissions
+                    nextCqe++;
+                    writtenMax = j;
+                    parseLineAndWrite(lexer, fileBufAddr, offsets, j);
+                } else if (cqe < 0) {
+                    throw TextException.$("u-ring error [path='").put(tmpPath)
+                            .put("', cqe=").put(-cqe)
+                            .put("]");
+                }
             }
+
+            // if reads came out of order, the writtenMax + 1 should be less than submitted
+            for (int j = writtenMax + 1; j < submitted; j++) {
+                parseLineAndWrite(lexer, fileBufAddr, offsets, j);
+            }
+        }
+
+        private void parseLineAndWrite(TextLexer lexer, long fileBufAddr, LongList offsets, int j) {
+            final long lo = fileBufAddr + offsets.getQuick(j * 2);
+            final long hi = lo + offsets.getQuick(j * 2 + 1);
+            lexer.parse(lo, hi, Integer.MAX_VALUE, onFieldsPartitioned);
         }
 
         private void mergePartitionIndexAndImportData(

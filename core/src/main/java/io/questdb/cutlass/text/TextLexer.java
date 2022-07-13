@@ -170,7 +170,12 @@ public class TextLexer implements Closeable, Mutable {
     }
 
     private void extraField(int fieldIndex) {
-        LogRecord logRecord = LOG.error().$("extra fields [table=").$(tableName).$(", fieldIndex=").$(fieldIndex).$(", fieldMax=").$(fieldMax).$("]\n\t").$(lineCount).$(" -> ");
+        LogRecord logRecord = LOG.error()
+                .$("extra fields [table=").$(tableName)
+                .$(", fieldIndex=").$(fieldIndex)
+                .$(", fieldMax=").$(fieldMax)
+                .$("]\n\t").$(lineCount)
+                .$(" -> ");
         for (int i = 0, n = fields.size(); i < n; i++) {
             if (i > 0) {
                 logRecord.$(',');
