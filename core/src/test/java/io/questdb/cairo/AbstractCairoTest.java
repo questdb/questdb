@@ -320,7 +320,7 @@ public class AbstractCairoTest {
 
             @Override
             public RostiAllocFacade getRostiAllocFacade() {
-                return rostiAllocFacade != null? rostiAllocFacade : super.getRostiAllocFacade();
+                return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
             }
         };
         engine = new CairoEngine(configuration, metrics);

@@ -607,7 +607,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Assert.assertTrue(Files.rename(other, path));
 
                 // reattach old version
-//                engine.releaseAllWriters();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'");
                 assertContent(
                         "l\ti\tts\n" +
@@ -731,15 +730,25 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         4);
 
                 // insert data, which will create the partition again
+                String timestampDay = "2022-06-02";
+                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T23:59:59.999999Z");
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
 
-                    TableWriter.Row row = writer.newRow(TimestampFormatUtils.parseTimestamp("2022-06-05T00:00:00.000000Z"));
+                    TableWriter.Row row = writer.newRow(timestamp);
                     row.putLong(0, 137L);
                     row.putInt(1, 137);
                     row.append();
 
                     // structural change
                     writer.addColumn("new_column", ColumnType.INT);
+
+                    row = writer.newRow(timestamp);
+                    row.putLong(0, 33L);
+                    row.putInt(1, 33);
+                    row.putInt(3, 33);
+                    row.append();
+
+                    writer.commit();
                 }
                 assertContent(
                         "l\ti\tts\tnew_column\n" +
@@ -749,23 +758,24 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
                                 "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
                                 "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                                "137\t137\t2022-06-02T23:59:59.999999Z\tNaN\n" +
+                                "33\t33\t2022-06-02T23:59:59.999999Z\t33\n" +
                                 "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
                                 "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
                                 "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
                                 "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
                                 "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
-                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n" +
-                                "137\t137\t2022-06-05T00:00:00.000000Z\tNaN\n",
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
                         tableName
                 );
 
                 // drop the partition
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 // insert data, which will create the partition again
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
 
-                    TableWriter.Row row = writer.newRow(TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z"));
+                    TableWriter.Row row = writer.newRow(timestamp);
                     row.putLong(0, 25160L);
                     row.putInt(1, 25160);
                     row.putInt(3, 25160);
@@ -773,19 +783,51 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.commit();
                 }
 
+                assertContent(
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "25160\t25160\t2022-06-02T23:59:59.999999Z\t25160\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
+                );
+
                 // hide the detached partition
-                path.of(configuration.getDetachedRoot()).concat(tableName).concat("2022-06-01.detached").$();
-                other.of(configuration.getDetachedRoot()).concat(tableName).concat("2022-06-01.detached.hide").$();
+                path.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay + ".detached").$();
+                other.of(configuration.getDetachedRoot()).concat(tableName).concat(timestampDay + ".detached.hide").$();
                 Assert.assertTrue(Files.rename(path, other));
                 // drop the latest version of the partition
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-                compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 // resurface the hidden detached partition
                 Assert.assertTrue(Files.rename(other, path));
 
                 // reattach old version
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+
+                assertContent(
+                        "l\ti\tts\tnew_column\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\tNaN\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\tNaN\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\tNaN\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\tNaN\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\tNaN\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\tNaN\n" +
+                                "137\t137\t2022-06-02T23:59:59.999999Z\tNaN\n" +
+                                "33\t33\t2022-06-02T23:59:59.999999Z\t33\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\tNaN\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\tNaN\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\tNaN\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\tNaN\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\tNaN\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\tNaN\n",
+                        tableName
+                );
             }
         });
     }

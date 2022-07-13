@@ -44,6 +44,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -99,6 +100,7 @@ public class TableWriter implements Closeable {
     private final int fileOperationRetryCount;
     private final String tableName;
     private final TableWriterMetadata metadata;
+    private final TableReaderMetadata detachedMetadata;
     private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
@@ -234,6 +236,7 @@ public class TableWriter implements Closeable {
         this.rootLen = path.length();
         this.detachedPath = new Path().of(configuration.getDetachedRoot()).concat(tableName);
         this.detachedRootLen = detachedPath.length();
+        this.detachedMetadata = new TableReaderMetadata(ff);
         try {
             if (lock) {
                 lock();
@@ -645,13 +648,14 @@ public class TableWriter implements Closeable {
                 return PARTITION_ALREADY_ATTACHED;
             }
 
+            boolean metadataChecked = false;
             if (!ff.exists(path)) {
                 setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
                 detachedPath.put(DETACHED_DIR_MARKER).$();
                 if (ff.exists(detachedPath)) {
 
-                    // check metadata
-                    checkDetachedMetadataOnPartitionAttach(timestamp);
+                    // check metadata, the files may not exist, for backwards compatibility
+                    metadataChecked = checkDetachedMetadataOnPartitionAttach(timestamp);
 
                     if (ff.rename(detachedPath, path)) {
                         rollbackRename = true;
@@ -678,10 +682,12 @@ public class TableWriter implements Closeable {
                         commit();
                     }
 
-                    attachPartitionCheckFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
+                    if (ColumnType.VERSION < 427 && !metadataChecked) {
+                        // this check is for backwards compatibility
+                        attachPartitionCheckFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
+                    }
                     long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
-                    long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + 8);
-
+                    long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + Long.BYTES);
                     assert timestamp <= minPartitionTimestamp && minPartitionTimestamp <= maxPartitionTimestamp;
 
                     long nextMinTimestamp = Math.min(minPartitionTimestamp, txWriter.getMinTimestamp());
@@ -806,7 +812,7 @@ public class TableWriter implements Closeable {
                 return StatusCode.PARTITION_FOLDER_CANNOT_RENAME;
             }
 
-            // copy metadata file
+            // copy metadata (_meta) file to detached folder
             path.trimTo(rootLen).concat(META_FILE_NAME);
             detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME);
             int rollbackRename = 0;
@@ -822,7 +828,7 @@ public class TableWriter implements Closeable {
                         .$();
                 rollbackRename = 1;
             } else {
-                // copy column versions file
+                // copy column versions (_cv) file to detached folder
                 path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME);
                 detachedPath.trimTo(detachedPathLen).concat(COLUMN_VERSION_FILE_NAME);
                 if (-1 == ff.copy(path.$(), detachedPath.$())) {
@@ -839,19 +845,19 @@ public class TableWriter implements Closeable {
                 }
             }
 
+            // check rollback
             if (rollbackRename > 0) {
                 StatusCode statusCode = StatusCode.PARTITION_CANNOT_COPY_META;
-                if (rollbackRename == 2) {
-                    detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME).$();
-                    if (!ff.remove(detachedPath)) { // remove .detached/_meta
-                        LOG.error()
-                                .$("cannot remove [errno=").$(ff.errno())
-                                .$(", path=").$(detachedPath)
-                                .I$();
-                    }
+                // remove metadata (_meta) file from detached folder
+                detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME).$();
+                if (!ff.remove(detachedPath)) { // remove .detached/_meta
+                    LOG.error()
+                            .$("cannot remove [errno=").$(ff.errno())
+                            .$(", path=").$(detachedPath)
+                            .I$();
                 }
 
-                // undo rename
+                // undo folder rename
                 setPathForPartition(path, rootLen, partitionBy, timestamp, partitionVersion);
                 setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
                 detachedPath.put(DETACHED_DIR_MARKER);
@@ -866,6 +872,7 @@ public class TableWriter implements Closeable {
                 return statusCode;
             }
 
+            // all good, commit
             commitDetachPartition(timestamp, minTimestamp);
             return StatusCode.OK;
         } finally {
@@ -1955,8 +1962,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private void checkDetachedMetadataOnPartitionAttach(long timestamp) {
-        TableReaderMetadata detachedMetadata = null;
+    private boolean checkDetachedMetadataOnPartitionAttach(long timestamp) {
         try {
             // _meta
             other.of(detachedPath).concat(META_FILE_NAME).$();
@@ -1967,10 +1973,9 @@ public class TableWriter implements Closeable {
                         .$(other)
                         .$(']')
                         .$();
-                return;
+                return false;
             }
-
-            detachedMetadata = new TableReaderMetadata(ff, other);
+            detachedMetadata.deferredInit(other, ColumnType.VERSION);
             if (metadata.getId() != detachedMetadata.getId()) {
                 throw CairoException.detachedMetadataMismatch("id");
             }
@@ -1979,6 +1984,9 @@ public class TableWriter implements Closeable {
             }
             if (metadata.getTimestampIndex() != detachedMetadata.getTimestampIndex()) {
                 throw CairoException.detachedMetadataMismatch("timestamp_index");
+            }
+            if (partitionBy != detachedMetadata.getPartitionBy()) {
+                throw CairoException.detachedMetadataMismatch("partition_by");
             }
             int columnCount = metadata.getColumnCount();
             if (columnCount != detachedMetadata.getColumnCount()) {
@@ -2010,24 +2018,27 @@ public class TableWriter implements Closeable {
                         .$(other)
                         .$(']')
                         .$();
-                return;
+                return false;
             }
-
             if (detachedColumnVersionReader == null) {
                 detachedColumnVersionReader = new ColumnVersionReader();
             }
             detachedColumnVersionReader.ofRO(ff, other);
-            boolean hasChanges = false;
-            for (int i = 0; i < columnCount; i++) {
-                long detachedTop = detachedColumnVersionReader.getColumnTopQuick(timestamp, i);
-                long top = columnVersionWriter.getColumnTopQuick(timestamp, i);
-                if (detachedTop > top) {
-                    columnVersionWriter.upsertColumnTop(timestamp, i, detachedTop);
-                    hasChanges = true;
+            detachedColumnVersionReader.readSafe(MicrosecondClockImpl.INSTANCE, Long.MAX_VALUE);
+            LongList detachedEntries = detachedColumnVersionReader.getCachedList();
+            LongList entries = columnVersionWriter.getCachedList();
+            for (int i = 0, limit = detachedEntries.size(); i < limit; i += 4) {
+                long partitionTimestamp = detachedEntries.getQuick(i);
+                if (timestamp == partitionTimestamp) {
+                    assert timestamp == entries.getQuick(i);
+                    int columnIndex = (int) detachedEntries.getQuick(i + 1);
+                    assert columnIndex == entries.getQuick(i+1);
+                    long columnTop = detachedEntries.getQuick(i + 3);
+                    if (columnTop != entries.getQuick(i+3)) {
+                        long columnNameTxn = detachedEntries.getQuick(i + 2);
+                        columnVersionWriter.upsert(timestamp, columnIndex, columnNameTxn, columnTop);
+                    }
                 }
-            }
-            if (hasChanges) {
-                columnVersionWriter.commit();
             }
             if (!ff.remove(other)) {
                 LOG.info()
@@ -2036,9 +2047,9 @@ public class TableWriter implements Closeable {
                         .$(']')
                         .$();
             }
+            return true;
         } finally {
             other.trimTo(rootLen);
-            Misc.free(detachedMetadata);
         }
     }
 
@@ -2572,6 +2583,7 @@ public class TableWriter implements Closeable {
         Misc.free(todoMem);
         Misc.free(columnVersionWriter);
         Misc.free(detachedColumnVersionReader);
+        Misc.free(detachedMetadata);
         updateOperator = Misc.free(updateOperator);
         Misc.free(o3ColumnTopSink);
         Misc.free(commandQueue);
@@ -2749,7 +2761,7 @@ public class TableWriter implements Closeable {
         long ts = this.txWriter.getMaxTimestamp();
         if (ts > Numbers.LONG_NaN) {
             final int columnIndex = metadata.getColumnIndex(columnName);
-            try (final MemoryMR roMem = indexMem) {
+            try (indexer; MemoryMR roMem = indexMem) {
                 // Index last partition separately
                 for (int i = 0, n = txWriter.getPartitionCount() - 1; i < n; i++) {
 
@@ -2782,8 +2794,6 @@ public class TableWriter implements Closeable {
                         }
                     }
                 }
-            } finally {
-                indexer.close();
             }
         }
     }
