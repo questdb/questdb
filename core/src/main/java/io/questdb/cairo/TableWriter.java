@@ -4468,48 +4468,50 @@ public class TableWriter implements Closeable {
         ObjList<MemoryCR> o3ColumnOverrides = null;
         IntList symbolMap = new IntList();
 
-        SymbolMapDiff symbolMapDiff;
-        while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
-            int columnIndex = symbolMapDiff.getColumnIndex();
-            if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-                // TODO: throw specific WAL exception
-                throw CairoException.instance(0).put("WAL column and table writer column types don't match");
-            }
-
-            boolean identical = addSymbolsFromWal(symbolMapDiff, sym++, symbolMap);
-
-            if (!identical) {
-                MemoryCR symbolColumnSrc = o3ColumnSources.getQuick(getPrimaryColumnIndex(columnIndex));
-
-                final MemoryCARW symbolColumnDest;
-                if (symbolColumnSrc instanceof MemoryCARW) {
-                    // The column is already in RAM, so we rewrite it
-                    symbolColumnDest = (MemoryCARW) symbolColumnSrc;
-                } else {
-                    // Column is read-only mapped memory, so we need to take in RAM column and remap values into it
-                    if (o3ColumnOverrides == null) {
-                        // Copy list of columns to change symbol columns to be from RAM columns and
-                        // other to be mapped memory
-                        o3ColumnOverrides = new ObjList<>(o3ColumnSources.size());
-                        for (int c = 0; c < o3ColumnSources.size(); c++) {
-                            o3ColumnOverrides.add(o3ColumnSources.getQuick(c));
-                        }
-                    }
-
-                    symbolColumnDest = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-                    symbolColumnDest.jumpTo(rowHi << 2);
-                    o3ColumnOverrides.setQuick(getPrimaryColumnIndex(columnIndex), symbolColumnDest);
+        if (symbolMapDiffCursor != null) {
+            SymbolMapDiff symbolMapDiff;
+            while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
+                int columnIndex = symbolMapDiff.getColumnIndex();
+                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+                    // TODO: throw specific WAL exception
+                    throw CairoException.instance(0).put("WAL column and table writer column types don't match");
                 }
 
-                final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
-                for (long rowId = rowLo; rowId < rowHi; rowId++) {
-                    long offset = rowId << 2;
+                boolean identical = addSymbolsFromWal(symbolMapDiff, sym++, symbolMap);
 
-                    int symKey = symbolColumnSrc.getInt(offset);
-                    if (symKey >= cleanSymbolCount) {
-                        symKey = symbolMap.getQuick(symKey - cleanSymbolCount);
+                if (!identical) {
+                    MemoryCR symbolColumnSrc = o3ColumnSources.getQuick(getPrimaryColumnIndex(columnIndex));
+
+                    final MemoryCARW symbolColumnDest;
+                    if (symbolColumnSrc instanceof MemoryCARW) {
+                        // The column is already in RAM, so we rewrite it
+                        symbolColumnDest = (MemoryCARW) symbolColumnSrc;
+                    } else {
+                        // Column is read-only mapped memory, so we need to take in RAM column and remap values into it
+                        if (o3ColumnOverrides == null) {
+                            // Copy list of columns to change symbol columns to be from RAM columns and
+                            // other to be mapped memory
+                            o3ColumnOverrides = new ObjList<>(o3ColumnSources.size());
+                            for (int c = 0; c < o3ColumnSources.size(); c++) {
+                                o3ColumnOverrides.add(o3ColumnSources.getQuick(c));
+                            }
+                        }
+
+                        symbolColumnDest = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+                        symbolColumnDest.jumpTo(rowHi << 2);
+                        o3ColumnOverrides.setQuick(getPrimaryColumnIndex(columnIndex), symbolColumnDest);
                     }
-                    symbolColumnDest.putInt(offset, symKey);
+
+                    final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
+                    for (long rowId = rowLo; rowId < rowHi; rowId++) {
+                        long offset = rowId << 2;
+
+                        int symKey = symbolColumnSrc.getInt(offset);
+                        if (symKey >= cleanSymbolCount) {
+                            symKey = symbolMap.getQuick(symKey - cleanSymbolCount);
+                        }
+                        symbolColumnDest.putInt(offset, symKey);
+                    }
                 }
             }
         }
