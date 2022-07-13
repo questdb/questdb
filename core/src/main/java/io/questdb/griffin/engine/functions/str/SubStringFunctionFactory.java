@@ -29,11 +29,13 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -45,16 +47,22 @@ public class SubStringFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(final int position, final ObjList<Function> args, IntList argPositions, final CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(final int position, final ObjList<Function> args, IntList argPositions, final CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function strFunc = args.getQuick(0);
         final Function startFunc = args.getQuick(1);
         final Function lenFunc = args.getQuick(2);
+        if (strFunc.isNullConstant()
+                || startFunc.isConstant() && startFunc.getInt(null) == Numbers.INT_NaN
+                || lenFunc.isConstant() && lenFunc.getInt(null) == Numbers.INT_NaN) {
+            return StrConstant.NULL;
+        }
         if (lenFunc.isConstant()) {
             int len = lenFunc.getInt(null);
-            if (len < 0) {  // Numbers.INT_NaN = Integer.MIN_VALUE is also involved
-                return StrConstant.NULL;
+            if (len < 0) {
+                throw SqlException.$(position, "negative substring length is not allowed");
+            } else if (len == 0) {
+                return StrConstant.EMPTY;
             }
-            // on len = 0, still return null if str is null
         }
         return new SubStringFunc(strFunc, startFunc, lenFunc);
     }
@@ -68,10 +76,15 @@ public class SubStringFunctionFactory implements FunctionFactory {
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
+        private final boolean isSimplifiable;
+
         public SubStringFunc(Function strFunc, Function startFunc, Function lenFunc) {
             this.strFunc = strFunc;
             this.startFunc = startFunc;
             this.lenFunc = lenFunc;
+
+            this.isSimplifiable = startFunc.isConstant() && lenFunc.isConstant()
+                    && startFunc.getInt(null) + lenFunc.getInt(null) < 1;
         }
 
         @Override
@@ -102,34 +115,47 @@ public class SubStringFunctionFactory implements FunctionFactory {
         @Override
         public int getStrLen(final Record rec) {
             int strLen = strFunc.getStrLen(rec);
-            int start = Math.max(1, startFunc.getInt(rec));
+            int rawStart = startFunc.getInt(rec);
             int len = lenFunc.getInt(rec);
-            if (strLen == TableUtils.NULL_LEN || len < 0) {
+            if (strLen == TableUtils.NULL_LEN
+                    || rawStart == Numbers.INT_NaN
+                    || len == Numbers.INT_NaN) {
                 return TableUtils.NULL_LEN;
             }
-            if (len == 0 || start > strLen) {
+
+            int start = Math.max(0, rawStart - 1);
+            if (len == 0
+                    || start > strLen
+                    || rawStart + len < 1) {
                 return 0;
             }
-            return Math.min(strLen - start + 1, len);
+            int end = Math.min(strLen, rawStart + len - 1);
+            return Math.max(0, end - start);
         }
 
         @Nullable
         private StringSink getStr0(Record rec, StringSink sink) {
             CharSequence str = strFunc.getStr(rec);
-            if (str == null) {
+            if (str == null || isSimplifiable) {
                 return null;
             }
+            int rawStart = startFunc.getInt(rec);
             int len = lenFunc.getInt(rec);
-            if (len < 0) {  // Numbers.INT_NaN = Integer.MIN_VALUE is also involved
+            if (rawStart == Numbers.INT_NaN || len == Numbers.INT_NaN) {
                 return null;
             }
+            if (len < 0) {
+                throw new RuntimeException("negative substring length is not allowed");
+            }
+
             sink.clear();
-            int start = Math.max(1, startFunc.getInt(rec));
-            int end = Math.min(str.length(), start - 1 + len);
-            if (len == 0 || start > end) {
+            int start = Math.max(0, rawStart - 1);
+            int end = Math.min(str.length(), rawStart + len - 1);
+            if (len == 0 || start >= end) {
                 return sink;
             }
-            sink.put(str, start - 1, end);
+
+            sink.put(str, start, end);
             return sink;
         }
     }

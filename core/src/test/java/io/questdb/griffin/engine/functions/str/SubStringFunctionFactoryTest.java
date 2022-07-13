@@ -25,9 +25,12 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.Numbers;
 import org.junit.Test;
+
+import static org.junit.Assert.fail;
 
 public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
@@ -40,18 +43,23 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testSimple() throws Exception {
         assertQuery(
                 "k\tsubstring\tlength\n" +
-                        "JWCPSWHYRXPEHNRX\tNRX\t3\n" +
-                        "SXUXIBBTGPGWFFYU\tFYU\t3\n" +
-                        "YYQEHBHFOWLPDXYSBEO\tXYSBEO\t6\n" +
-                        "JSHRUEDRQQUL\t\t0\n" +
+                        "JWCPSWHYRXPEHNRXGZSXUXIB\tNRXGZS\t6\n" +
+                        "GPGWFFYUDE\t\t0\n" +
+                        "QEHBHFOWLPDXYSBEOUOJSH\tSBEOUO\t6\n" +
+                        "EDRQQULOFJGETJRSZSRY\tJRSZSR\t6\n" +
+                        "BVTMHGOOZZVDZJMYICCXZ\tJMYICC\t6\n" +
+                        "ICWEKGHVUVSDOTSEDYYCTGQ\tTSEDYY\t6\n" +
+                        "YXWCKYLSUWDSWUGSH\tUGSH\t4\n" +
+                        "NVTIQBZXIOVIKJSMSSUQSR\tJSMSSU\t6\n" +
                         "\t\t-1\n" +  // null
-                        "GETJRSZSRYRFBVTMHGOO\tVTMHGO\t6\n" +
-                        "VDZJMYICCXZOUIC\tIC\t2\n" +
-                        "KGHVUVSDOTSEDYYCTGQO\tYYCTGQ\t6\n" +
+                        "VVSJOJIPHZEPIHVLTO\tHVLTO\t5\n" +
+                        "JUMLGLHMLLEOY\t\t0\n" +
                         "\t\t-1\n" +  // null
-                        "WCKYLSUWDSWUGSH\tSH\t2\n",
+                        "IPZIMNZZRMFMBEZG\tEZG\t3\n" +
+                        "VDKFLOPJOXPKRGIIHY\tGIIHY\t5\n" +
+                        "OQMYSSMPGLUOHNZHZS\tNZHZS\t5\n",
                 "select k, substring(k,14,6), length(substring(k,14,6)) from x",
-                "create table x as (select rnd_str(10,20,1) k from long_sequence(10))",
+                "create table x as (select rnd_str(10,25,1) k from long_sequence(15))",
                 null,
                 true,
                 true,
@@ -66,21 +74,35 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testInvalidLength() throws Exception {
-        call("foo", 3, -1).andAssert(null);
-        call("foo", 3, Numbers.INT_NaN).andAssert(null);
-    }
-
-    @Test
-    public void testZeroLength() throws Exception {
+    public void testZeroOrInvalidLength() throws Exception {
         call("foo", 3, 0).andAssert("");
         call(null, 3, 0).andAssert(null);
+        call("foo", 3, Numbers.INT_NaN).andAssert(null);
+
+        try {
+            call("foo", 3, -1).andAssert(null);
+            fail("non-const negative len is not allowed");
+        } catch (RuntimeException e) {
+            // negative substring length is not allowed
+        }
+
+        try {
+            assertQuery(
+                    null,
+                    "select substring('foo',1,-6)",
+                    null,
+                    true
+            );
+            fail("const negative len is not allowed");
+        } catch (SqlException e) {
+            // negative substring length is not allowed
+        }
     }
 
     @Test
     public void testNonPositiveStart() throws Exception {
-        call("foo", -3, 1).andAssert("f");
-        call("foo", -3, 0).andAssert("");
+        call("foo", -3, 4).andAssert("");
+        call("foo", -3, 5).andAssert("f");
         call(null, -3, 0).andAssert(null);
     }
 
@@ -89,6 +111,7 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call("foo", 10, 1).andAssert("");
         call("foo", 10, 10).andAssert("");
         call("foo", 1, 10).andAssert("foo");
+        call(null, 2, 4).andAssert(null);
     }
 
 }
