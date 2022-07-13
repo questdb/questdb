@@ -35,15 +35,16 @@ import io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory;
 import io.questdb.griffin.engine.table.ReaderPoolRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.Callable;
+
+import static org.junit.Assert.assertTrue;
 
 public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
     @Test
@@ -86,8 +87,40 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
                 return MicrosecondClockImpl.INSTANCE.getTicks();
             });
 
-            // all readers should be released. there should have a timestamp set >= timestamp when all readers were acquired
+            // all readers should be released. they should have a timestamp set >= timestamp when all readers were acquired
             assertReaderPool(readerAcquisitionCount, recordValidator(allReadersAcquiredTime, tableName, -1, 4));
+        });
+    }
+
+    @Test
+    public void testReleaseAcquisitionTimeRecorded() throws Exception {
+        assertMemoryLeak(() -> {
+            // create a table
+            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
+                tm.timestamp("ts").col("ID", ColumnType.INT);
+                createPopulateTable(tm, 20, "2020-01-01", 1);
+            }
+
+            long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
+            long threadId = Thread.currentThread().getId();
+            // first check reader acquisition set a timestamp
+            // the timestamp has to be greater or equals to clock before a reader was acquired
+            long allReadersAcquiredTime = acquireReaderAndRun("tab1", 1, () -> {
+                assertReaderPool(1, recordValidator(startTime, "tab1", threadId, 1));
+                return waitUntilClockProgress(MicrosecondClockImpl.INSTANCE);
+            });
+
+            // check table reader timestamp was updated when it was returned to the pool
+            assertTrue(allReadersAcquiredTime > startTime);
+            assertReaderPool(1, recordValidator(allReadersAcquiredTime, "tab1", -1, 1));
+
+            // acquire again and check timestamp made progress
+            // this is to make sure time is updated on re-acquisition too
+            long before2ndAcquireTime = waitUntilClockProgress(MicrosecondClockImpl.INSTANCE);
+            acquireReaderAndRun("tab1", 1, () -> {
+                assertReaderPool(1, recordValidator(before2ndAcquireTime, "tab1", threadId, 1));
+                return waitUntilClockProgress(MicrosecondClockImpl.INSTANCE);
+            });
         });
     }
 
@@ -110,7 +143,7 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
 
             long allReadersAcquiredTime = acquireReaderAndRun("tab1", readerAcquisitionCount, () -> {
                 return acquireReaderAndRun("tab2", readerAcquisitionCount, () -> {
-                    assertReaderPool(readerAcquisitionCount * 2, anyOf(
+                    assertReaderPool(readerAcquisitionCount * 2, eitherOf(
                             recordValidator(startTime, "tab1", threadId, 1),
                             recordValidator(startTime, "tab2", threadId, 1))
                     );
@@ -119,7 +152,7 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
             });
 
             // all readers should be released. there should have a timestamp set >= timestamp when all readers were acquired
-            assertReaderPool(readerAcquisitionCount * 2, anyOf(
+            assertReaderPool(readerAcquisitionCount * 2, eitherOf(
                     recordValidator(allReadersAcquiredTime, "tab1", -1, 1),
                     recordValidator(allReadersAcquiredTime, "tab2", -1, 1))
             );
@@ -153,10 +186,9 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
             try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab1");
                  RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
                  RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
-                while (readerPoolCursor.hasNext()) {
-                } //exhaust the cursor
+                exhaustCursor(readerPoolCursor);
                 readerPoolCursor.toTop();
-                Assert.assertTrue(readerPoolCursor.hasNext());
+                assertTrue(readerPoolCursor.hasNext());
             }
         });
     }
@@ -175,7 +207,7 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testRandomAccess() throws Exception {
+    public void testRandomAccessUnsupported() throws Exception {
         assertMemoryLeak(() -> {
             try (RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
                  RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
@@ -228,6 +260,7 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
     private static ReaderPoolRowValidator recordValidator(long startTime, CharSequence applicableTableName, long expectedOwner, long expectedTxn) {
         return (table, owner, txn, timestamp) -> {
             if (!Chars.equals(table, applicableTableName)) {
+                // this record belongs to another table, skip it
                 return false;
             }
             TestUtils.assertEquals(applicableTableName, table);
@@ -238,11 +271,19 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
         };
     }
 
-    private static ReaderPoolRowValidator anyOf(ReaderPoolRowValidator validator1, ReaderPoolRowValidator validator2) {
-        return (table, owner, txn, timestamp) -> validator1.validate(table, owner, txn, timestamp) || validator2.validate(table, owner, txn, timestamp);
+    /**
+     * Combine two validator. Returns true when either validator returns true. It's short-circuiting. This means:
+     * 1. When the first validation returns true then the 2nd validator won't be called at all
+     * 2. When the first validation throws then the exception is propagated to a caller and the 2nd validator won't be called at all
+     *
+     * @param firstValidator first validator
+     * @param secondValidator second validator
+     * @return true if the first or the 2nd validator returns true and the 1st validator does not throw an exception
+     */
+    private static ReaderPoolRowValidator eitherOf(ReaderPoolRowValidator firstValidator, ReaderPoolRowValidator secondValidator) {
+        return (table, owner, txn, timestamp) -> firstValidator.validate(table, owner, txn, timestamp) || secondValidator.validate(table, owner, txn, timestamp);
     }
 
-    @Nullable
     private static void assertReaderPool(int expectedRowCount, ReaderPoolRowValidator validator) throws Exception {
         try (RecordCursorFactory factory = compiler.compile("select * from reader_pool() order by table", sqlExecutionContext).getRecordCursorFactory();
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -264,7 +305,6 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
 
     /**
      * Validate a given reader pool entry
-     *
      * When validator is not applicable for given entry then returns false.
      * When validator is applicable and a record passes validation then returns true.
      * When validator is applicable and a record does not pass validation then throw AssertionError
@@ -275,8 +315,8 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
     }
 
     private static void assertTimestampBetween(long timestamp, long lowerBoundInc, long upperBoundInc) {
-        Assert.assertTrue("timestamp < lower bound. [timestamp=" + timestamp + ", lower-bound="+lowerBoundInc + "]", timestamp >= lowerBoundInc);
-        Assert.assertTrue("timestamp > upper bound. [timestamp=" + timestamp + ", upper-bound="+upperBoundInc + "]", timestamp <= upperBoundInc);
+        assertTrue("timestamp < lower bound. [timestamp=" + timestamp + ", lower-bound="+lowerBoundInc + "]", timestamp >= lowerBoundInc);
+        assertTrue("timestamp > upper bound. [timestamp=" + timestamp + ", upper-bound="+upperBoundInc + "]", timestamp <= upperBoundInc);
     }
 
     private static void executeTx(CharSequence tableName) throws SqlException {
@@ -290,10 +330,9 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
      * @param depth how many readers to acquire before running a task
      * @param callable a task to run after a desired number of readers were acquired
      * @return timestamp when all readers were acquired
-     * @param <T>
-     * @throws Exception
+     * @throws Exception on error and then the task throws an exception
      */
-    private <T> T acquireReaderAndRun(String tableName, int depth, Callable<T> callable) throws Exception {
+    private long acquireReaderAndRun(String tableName, int depth, Callable<Long> callable) throws Exception {
         if (depth == 0) {
             return callable.call();
         }
@@ -301,4 +340,18 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
             return acquireReaderAndRun(tableName, depth - 1, callable);
         }
     }
+
+    private static long waitUntilClockProgress(MicrosecondClock clock) {
+        long start = clock.getTicks();
+        long now;
+        do {
+            now = clock.getTicks();
+        } while (now <= start);
+        return now;
+    }
+
+    private static void exhaustCursor(RecordCursor cursor) {
+        while (cursor.hasNext()) {};
+    }
+
 }
