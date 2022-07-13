@@ -2761,7 +2761,7 @@ public class TableWriter implements Closeable {
         long ts = this.txWriter.getMaxTimestamp();
         if (ts > Numbers.LONG_NaN) {
             final int columnIndex = metadata.getColumnIndex(columnName);
-            try (indexer; MemoryMR roMem = indexMem) {
+            try (MemoryMR roMem = indexMem) {
                 // Index last partition separately
                 for (int i = 0, n = txWriter.getPartitionCount() - 1; i < n; i++) {
 
@@ -2794,6 +2794,8 @@ public class TableWriter implements Closeable {
                         }
                     }
                 }
+            } finally {
+                indexer.close();
             }
         }
     }
