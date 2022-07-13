@@ -32,6 +32,7 @@ import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory;
+import io.questdb.griffin.engine.table.ReaderPoolRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
@@ -128,6 +129,45 @@ public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
     public void testCursorNotRuntimeConstant() throws Exception {
         try (Function cursorFunction = new ReaderPoolFunctionFactory().newInstance(0, new ObjList<>(), new IntList(), configuration, sqlExecutionContext)) {
             Assert.assertFalse(cursorFunction.isRuntimeConstant());
+        }
+    }
+
+    @Test
+    public void testToTop() throws Exception {
+        try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
+        }
+
+        try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab1");
+             RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+             RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
+            while (readerPoolCursor.hasNext()) {} //exhaust the cursor
+            readerPoolCursor.toTop();
+            Assert.assertTrue(readerPoolCursor.hasNext());
+        }
+    }
+
+    @Test
+    public void testRecordBNotImplemented() throws Exception {
+        try (RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+             RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
+            readerPoolCursor.getRecordB();
+            Assert.fail("RecordB is not expected to be implemented");
+        } catch (UnsupportedOperationException e) {
+            TestUtils.assertContains(e.getMessage(), "RecordB");
+        }
+    }
+
+    @Test
+    public void testRandomAccess() throws Exception {
+        try (RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+             RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
+            Record record = readerPoolCursor.getRecord();
+            readerPoolCursor.recordAt(record, 0);
+            Assert.fail("Random access is not expected to be implemented");
+        } catch (UnsupportedOperationException e) {
+            TestUtils.assertContains(e.getMessage(), "Random access");
         }
     }
 

@@ -144,12 +144,12 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
         @Override
         public Record getRecordB() {
-            throw new UnsupportedOperationException("not implemented");
+            throw new UnsupportedOperationException("RecordB not implemented");
         }
 
         @Override
         public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException("not implemented");
+            throw new UnsupportedOperationException("Random access not implemented");
         }
 
         @Override
