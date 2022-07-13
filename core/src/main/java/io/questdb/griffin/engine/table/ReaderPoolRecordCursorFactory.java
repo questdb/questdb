@@ -88,12 +88,18 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
                 if (!selectPoolEntry()) {
                     return false;
                 }
+                // Volatile read because the owner is set by other thread(s).
+                // It ensures everything the other thread wrote to other fields before (volatile) writing the 'owner'
+                // will become visible too (Synchronizes-With Order).
+                // This does not imply the individual fields will be consistent. Why? There are other threads modifying
+                // entries concurrently with us reading them. So e.g. the 'reader' field can be changed after we read
+                // 'owner'. So what's the point of volatile read? It ensures we don't read arbitrary stale data.
                 owner = poolEntry.getOwnerVolatile(allocationIndex);
-                timestamp = poolEntry.getReleaseOrAcquireTimeVolatile(allocationIndex);
-                reader = poolEntry.getReaderVolatile(allocationIndex);
+                timestamp = poolEntry.getReleaseOrAcquireTime(allocationIndex);
+                reader = poolEntry.getReader(allocationIndex);
                 allocationIndex++;
             } while (reader == null);
-            txn = reader.getTxnVolatile();
+            txn = reader.getTxn();
             return true;
         }
 

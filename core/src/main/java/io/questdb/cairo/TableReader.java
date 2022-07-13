@@ -49,7 +49,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = 2;
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = 3;
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
-    private static final long TXN_OFFSET = Unsafe.getFieldOffset(TableReader.class, "txn");
     private final FilesFacade ff;
     private final Path path;
     private final int partitionBy;
@@ -74,8 +73,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int columnCount;
     private int columnCountShl;
     private long rowCount;
-    // txn has to be updated via getLongVolatile() or putOrderedLong() only as other threads read it
-    private long txn;
+    private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private boolean txnAcquired = false;
 
@@ -84,7 +82,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName, @Nullable MessageBus messageBus) {
-        Unsafe.getUnsafe().putOrderedLong(this, TXN_OFFSET, TableUtils.INITIAL_TXN);
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
@@ -698,12 +695,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
     }
 
-    long getTxn() {
+    public long getTxn() {
         return txn;
-    }
-
-    public long getTxnVolatile() {
-        return Unsafe.getUnsafe().getLongVolatile(this, TXN_OFFSET);
     }
 
     TxnScoreboard getTxnScoreboard() {
@@ -923,7 +916,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // good, very stable, congrats
                 long txn = txFile.getTxn();
                 releaseTxn();
-                Unsafe.getUnsafe().putOrderedLong(this, TXN_OFFSET, txn);
+                this.txn = txn;
 
                 if (acquireTxn()) {
                     this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();

@@ -39,8 +39,6 @@ public final class Unsafe {
     public static final long INT_SCALE;
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
-    public static final long OBJECT_OFFSET;
-    public static final long OBJECT_SCALE;
     static final AtomicLong MEM_USED = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
@@ -65,8 +63,6 @@ public final class Unsafe {
             LONG_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(long[].class);
             LONG_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(long[].class));
 
-            OBJECT_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(Object[].class);
-            OBJECT_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(Object[].class));
             //#if jdk.version!=8
             OVERRIDE = AccessibleObject_override_fieldOffset();
             implAddExports = Module.class.getDeclaredMethod("implAddExports", String.class, Module.class);
@@ -152,16 +148,6 @@ public final class Unsafe {
     public static void arrayPutOrdered(long[] array, int index, long value) {
         assert index > -1 && index < array.length;
         Unsafe.getUnsafe().putOrderedLong(array, LONG_OFFSET + ((long) index << LONG_SCALE), value);
-    }
-
-    public static Object arrayGetVolatile(Object[] array, int index) {
-        assert index > -1 && index < array.length;
-        return Unsafe.getUnsafe().getObjectVolatile(array, OBJECT_OFFSET + ((long) index << OBJECT_SCALE));
-    }
-
-    public static void arrayPutOrdered(Object[] array, int index, Object value) {
-        assert index > -1 && index < array.length;
-        Unsafe.getUnsafe().putOrderedObject(array, OBJECT_OFFSET + ((long) index << OBJECT_SCALE), value);
     }
 
     public static long calloc(long size, int memoryTag) {
