@@ -37,6 +37,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.jetbrains.annotations.Nullable;
@@ -58,7 +59,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
     private SqlExecutionContextImpl sqlExecutionContext;
     private TextImportRequestTask task;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
-
+    private final LongList partitionsToRemove = new LongList();
     public TextImportRequestProcessingJob(
             final CairoEngine engine,
             int workerCount,
@@ -76,7 +77,6 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
         this.sqlCompiler = new SqlCompiler(engine, functionFactoryCache, null);
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(AllowAllCairoSecurityContext.INSTANCE, null, null);
-        //todo: cleanup the table
         this.sqlCompiler.compile(
                 "CREATE TABLE IF NOT EXISTS \"" + statusTableName + "\" (" +
                         "ts timestamp, " + // 0
@@ -89,6 +89,16 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
                 sqlExecutionContext
         );
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
+
+        final int N = 2; //todo: add config option
+        partitionsToRemove.clear();
+        for (int i = writer.getPartitionCount() - N; i > -1; i--) {
+            partitionsToRemove.add(writer.getPartitionTimestamp(i));
+        }
+
+        for (int i = 0, sz = partitionsToRemove.size(); i < sz; i++) {
+            writer.removePartition(partitionsToRemove.getQuick(i));
+        }
     }
 
     @Override
@@ -103,8 +113,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
         long cursor = requestProcessingSubSeq.next();
         if (cursor > -1) {
             task = requestProcessingQueue.get(cursor);
-            ParallelCsvFileImporter loader = new ParallelCsvFileImporter(engine, workerCount, task.getCancellationToken());
-            try {
+            try (ParallelCsvFileImporter loader = new ParallelCsvFileImporter(engine, workerCount, task.getCancellationToken())) {
                 loader.of(
                         task.getTableName(),
                         task.getFileName(),
