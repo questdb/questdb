@@ -52,7 +52,9 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        return new ReaderPoolCursor();
+        ReaderPoolCursor readerPoolCursor = new ReaderPoolCursor();
+        readerPoolCursor.of(cairoEngine.getReaderPoolEntries());
+        return readerPoolCursor;
     }
 
     static {
@@ -64,7 +66,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         METADATA = metadata;
     }
 
-    private class ReaderPoolCursor implements RecordCursor {
+    private static class ReaderPoolCursor implements RecordCursor {
         private Iterator<Map.Entry<CharSequence, ReaderPool.Entry>> iterator;
         private ReaderPool.Entry poolEntry;
         private int allocationIndex = 0;
@@ -73,18 +75,11 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
         private long timestamp;
         private long txn;
         private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
+        private Map<CharSequence, ReaderPool.Entry> readerPoolEntries;
 
-        public ReaderPoolCursor() {
-            of();
-        }
-
-
-        public void of() {
-            allocationIndex = 0;
-            poolEntry = null;
-            tableName = null;
-            Map<CharSequence, ReaderPool.Entry> readerPoolEntries = cairoEngine.getReaderPoolEntries();
-            iterator = readerPoolEntries.entrySet().iterator();
+        public void of(Map<CharSequence, ReaderPool.Entry> readerPoolEntries) {
+            this.readerPoolEntries = readerPoolEntries;
+            toTop();
         }
 
         private boolean tryAdvance() {
@@ -129,7 +124,6 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
         @Override
         public void close() {
-            //todo
         }
 
         @Override
@@ -154,7 +148,10 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
         @Override
         public void toTop() {
-            of();
+            iterator = readerPoolEntries.entrySet().iterator();
+            allocationIndex = 0;
+            poolEntry = null;
+            tableName = null;
         }
 
         @Override
@@ -185,12 +182,10 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
 
             @Override
             public long getLong(int col) {
-                if (col == 1) {
-                    return owner;
-                } else if (col == 3) {
-                    return txn;
-                } else {
-                    throw CairoException.instance(0).put("unsupported column number. [column=").put(col).put("]");
+                switch (col) {
+                    case 1: return owner;
+                    case 3: return txn;
+                    default: throw CairoException.instance(0).put("unsupported column number. [column=").put(col).put("]");
                 }
             }
         }
