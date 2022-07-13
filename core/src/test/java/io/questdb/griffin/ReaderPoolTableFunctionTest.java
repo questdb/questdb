@@ -47,159 +47,182 @@ import java.util.concurrent.Callable;
 
 public class ReaderPoolTableFunctionTest extends AbstractGriffinTest {
     @Test
-    public void testSmoke() throws SqlException, NumericException {
-        try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-            tm.timestamp("ts").col("ID", ColumnType.INT);
-            createPopulateTable(tm, 2, "2020-01-01", 1);
-        }
+    public void testSmoke() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
+                tm.timestamp("ts").col("ID", ColumnType.INT);
+                createPopulateTable(tm, 2, "2020-01-01", 1);
+            }
 
-        assertSql("select * from tab1", "ts\tID\n" +
-                "2020-01-01T00:00:00.000000Z\t1\n" +
-                "2020-01-01T00:00:00.000000Z\t2\n");
+            assertSql("select * from tab1", "ts\tID\n" +
+                    "2020-01-01T00:00:00.000000Z\t1\n" +
+                    "2020-01-01T00:00:00.000000Z\t2\n");
 
-        assertSql("select table, owner, txn from reader_pool", "table\towner\ttxn\n" +
-                "tab1\t-1\t1\n");
+            assertSql("select table, owner, txn from reader_pool", "table\towner\ttxn\n" +
+                    "tab1\t-1\t1\n");
+        });
     }
 
     @Test
     public void testRecursiveAcquireAndRelease() throws Exception {
-        String tableName = "tab1";
-        // create a table
-        try (TableModel tm = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-            tm.timestamp("ts").col("ID", ColumnType.INT);
-            createPopulateTable(tm, 20, "2020-01-01", 1);
-        }
+        assertMemoryLeak(() -> {
+            String tableName = "tab1";
+            // create a table
+            try (TableModel tm = new TableModel(configuration, tableName, PartitionBy.NONE)) {
+                tm.timestamp("ts").col("ID", ColumnType.INT);
+                createPopulateTable(tm, 20, "2020-01-01", 1);
+            }
 
-        // add 3 more transactions
-        for (int i = 0; i < 3; i++) {
-            executeTx(tableName);
-        }
+            // add 3 more transactions
+            for (int i = 0; i < 3; i++) {
+                executeTx(tableName);
+            }
 
-        int readerAcquisitionCount = ReaderPool.ENTRY_SIZE * 2;
-        long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
-        long threadId = Thread.currentThread().getId();
-        long allReadersAcquiredTime = acquireReaderAndRun(tableName, readerAcquisitionCount, () -> {
-            assertReaderPool(readerAcquisitionCount, recordValidator(startTime, "tab1", threadId, 4));
-            return MicrosecondClockImpl.INSTANCE.getTicks();
+            int readerAcquisitionCount = ReaderPool.ENTRY_SIZE * 2;
+            long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
+            long threadId = Thread.currentThread().getId();
+            long allReadersAcquiredTime = acquireReaderAndRun(tableName, readerAcquisitionCount, () -> {
+                assertReaderPool(readerAcquisitionCount, recordValidator(startTime, "tab1", threadId, 4));
+                return MicrosecondClockImpl.INSTANCE.getTicks();
+            });
+
+            // all readers should be released. there should have a timestamp set >= timestamp when all readers were acquired
+            assertReaderPool(readerAcquisitionCount, recordValidator(allReadersAcquiredTime, tableName, -1, 4));
         });
-
-        // all readers should be released. there should have a timestamp set >= timestamp when all readers were acquired
-        assertReaderPool(readerAcquisitionCount, recordValidator(allReadersAcquiredTime, tableName, -1, 4));
     }
 
     @Test
     public void testMultipleTables() throws Exception {
-        // create a table
-        try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-            tm.timestamp("ts").col("ID", ColumnType.INT);
-            createPopulateTable(tm, 20, "2020-01-01", 1);
-        }
-        try (TableModel tm = new TableModel(configuration, "tab2", PartitionBy.NONE)) {
-            tm.timestamp("ts").col("ID", ColumnType.INT);
-            createPopulateTable(tm, 20, "2020-01-01", 1);
-        }
+        assertMemoryLeak(() -> {
+            // create a table
+            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
+                tm.timestamp("ts").col("ID", ColumnType.INT);
+                createPopulateTable(tm, 20, "2020-01-01", 1);
+            }
+            try (TableModel tm = new TableModel(configuration, "tab2", PartitionBy.NONE)) {
+                tm.timestamp("ts").col("ID", ColumnType.INT);
+                createPopulateTable(tm, 20, "2020-01-01", 1);
+            }
 
-        int readerAcquisitionCount = ReaderPool.ENTRY_SIZE * 2;
-        long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
-        long threadId = Thread.currentThread().getId();
+            int readerAcquisitionCount = ReaderPool.ENTRY_SIZE * 2;
+            long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
+            long threadId = Thread.currentThread().getId();
 
-        long allReadersAcquiredTime = acquireReaderAndRun("tab1", readerAcquisitionCount, () -> {
-            return acquireReaderAndRun("tab2", readerAcquisitionCount, () -> {
-                assertReaderPool(readerAcquisitionCount * 2, anyOf(
-                        recordValidator(startTime, "tab1", threadId, 1),
-                        recordValidator(startTime, "tab2", threadId, 1))
-                );
-                return MicrosecondClockImpl.INSTANCE.getTicks();
+            long allReadersAcquiredTime = acquireReaderAndRun("tab1", readerAcquisitionCount, () -> {
+                return acquireReaderAndRun("tab2", readerAcquisitionCount, () -> {
+                    assertReaderPool(readerAcquisitionCount * 2, anyOf(
+                            recordValidator(startTime, "tab1", threadId, 1),
+                            recordValidator(startTime, "tab2", threadId, 1))
+                    );
+                    return MicrosecondClockImpl.INSTANCE.getTicks();
+                });
             });
-        });
 
-        // all readers should be released. there should have a timestamp set >= timestamp when all readers were acquired
-        assertReaderPool(readerAcquisitionCount * 2, anyOf(
-                recordValidator(allReadersAcquiredTime, "tab1", -1, 1),
-                recordValidator(allReadersAcquiredTime, "tab2", -1, 1))
-        );
+            // all readers should be released. there should have a timestamp set >= timestamp when all readers were acquired
+            assertReaderPool(readerAcquisitionCount * 2, anyOf(
+                    recordValidator(allReadersAcquiredTime, "tab1", -1, 1),
+                    recordValidator(allReadersAcquiredTime, "tab2", -1, 1))
+            );
+        });
     }
 
     @Test
-    public void testEmptyPool() throws SqlException {
-        assertSql("select * from reader_pool()", "table\towner\ttimestamp\ttxn\n");
+    public void testEmptyPool() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("select * from reader_pool()", "table\towner\ttimestamp\ttxn\n");
+        });
     }
 
     @Test
     public void testCursorNotRuntimeConstant() throws Exception {
-        try (Function cursorFunction = new ReaderPoolFunctionFactory().newInstance(0, new ObjList<>(), new IntList(), configuration, sqlExecutionContext)) {
-            Assert.assertFalse(cursorFunction.isRuntimeConstant());
-        }
+        assertMemoryLeak(() -> {
+            try (Function cursorFunction = new ReaderPoolFunctionFactory().newInstance(0, new ObjList<>(), new IntList(), configuration, sqlExecutionContext)) {
+                Assert.assertFalse(cursorFunction.isRuntimeConstant());
+            }
+        });
     }
 
     @Test
     public void testToTop() throws Exception {
-        try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-            tm.timestamp("ts").col("ID", ColumnType.INT);
-            createPopulateTable(tm, 20, "2020-01-01", 1);
-        }
+        assertMemoryLeak(() -> {
+            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
+                tm.timestamp("ts").col("ID", ColumnType.INT);
+                createPopulateTable(tm, 20, "2020-01-01", 1);
+            }
 
-        try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab1");
-             RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
-             RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
-            while (readerPoolCursor.hasNext()) {} //exhaust the cursor
-            readerPoolCursor.toTop();
-            Assert.assertTrue(readerPoolCursor.hasNext());
-        }
+            try (TableReader ignored = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, "tab1");
+                 RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+                 RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
+                while (readerPoolCursor.hasNext()) {
+                } //exhaust the cursor
+                readerPoolCursor.toTop();
+                Assert.assertTrue(readerPoolCursor.hasNext());
+            }
+        });
     }
 
     @Test
     public void testRecordBNotImplemented() throws Exception {
-        try (RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
-             RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
-            readerPoolCursor.getRecordB();
-            Assert.fail("RecordB is not expected to be implemented");
-        } catch (UnsupportedOperationException e) {
-            TestUtils.assertContains(e.getMessage(), "RecordB");
-        }
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+                 RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
+                readerPoolCursor.getRecordB();
+                Assert.fail("RecordB is not expected to be implemented");
+            } catch (UnsupportedOperationException e) {
+                TestUtils.assertContains(e.getMessage(), "RecordB");
+            }
+        });
     }
 
     @Test
     public void testRandomAccess() throws Exception {
-        try (RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
-             RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
-            Record record = readerPoolCursor.getRecord();
-            readerPoolCursor.recordAt(record, 0);
-            Assert.fail("Random access is not expected to be implemented");
-        } catch (UnsupportedOperationException e) {
-            TestUtils.assertContains(e.getMessage(), "Random access");
-        }
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+                 RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
+                Record record = readerPoolCursor.getRecord();
+                readerPoolCursor.recordAt(record, 0);
+                Assert.fail("Random access is not expected to be implemented");
+            } catch (UnsupportedOperationException e) {
+                TestUtils.assertContains(e.getMessage(), "Random access");
+            }
+        });
     }
 
     @Test
-    public void testMetadata() throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile("select * from reader_pool()", sqlExecutionContext).getRecordCursorFactory()) {
-            RecordMetadata metadata = factory.getMetadata();
-            Assert.assertEquals(4, metadata.getColumnCount());
-            Assert.assertEquals("table", metadata.getColumnName(0));
-            Assert.assertEquals("owner", metadata.getColumnName(1));
-            Assert.assertEquals("timestamp", metadata.getColumnName(2));
-            Assert.assertEquals("txn", metadata.getColumnName(3));
-            Assert.assertEquals(ColumnType.STRING, metadata.getColumnType(0));
-            Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(1));
-            Assert.assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType(2));
-            Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(3));
-        }
+    public void testMetadata() throws Exception {
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile("select * from reader_pool()", sqlExecutionContext).getRecordCursorFactory()) {
+                RecordMetadata metadata = factory.getMetadata();
+                Assert.assertEquals(4, metadata.getColumnCount());
+                Assert.assertEquals("table", metadata.getColumnName(0));
+                Assert.assertEquals("owner", metadata.getColumnName(1));
+                Assert.assertEquals("timestamp", metadata.getColumnName(2));
+                Assert.assertEquals("txn", metadata.getColumnName(3));
+                Assert.assertEquals(ColumnType.STRING, metadata.getColumnType(0));
+                Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(1));
+                Assert.assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType(2));
+                Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(3));
+            }
+        });
     }
 
     @Test
-    public void testFactoryDoesNotSupportRandomAccess() throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile("select * from reader_pool()", sqlExecutionContext).getRecordCursorFactory()) {
-            Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
-        }
+    public void testFactoryDoesNotSupportRandomAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile("select * from reader_pool()", sqlExecutionContext).getRecordCursorFactory()) {
+                Assert.assertFalse(factory.recordCursorSupportsRandomAccess());
+            }
+        });
     }
 
     @Test
-    public void testCursorDoesHaveUpfrontSize() throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile("select * from reader_pool()", sqlExecutionContext).getRecordCursorFactory();
-        RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertEquals(-1, cursor.size());
-        }
+    public void testCursorDoesHaveUpfrontSize() throws Exception {
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile("select * from reader_pool()", sqlExecutionContext).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertEquals(-1, cursor.size());
+            }
+        });
     }
 
     private static ReaderPoolRowValidator recordValidator(long startTime, CharSequence applicableTableName, long expectedOwner, long expectedTxn) {
