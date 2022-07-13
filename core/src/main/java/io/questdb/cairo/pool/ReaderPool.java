@@ -354,17 +354,14 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         }
 
         public long getOwnerVolatile(int pos) {
-            assert pos >= 0 && pos < ENTRY_SIZE;
             return Unsafe.arrayGetVolatile(allocations, pos);
         }
 
         public long getReleaseOrAcquireTime(int pos) {
-            assert pos >= 0 && pos < ENTRY_SIZE;
             return releaseOrAcquireTimes[pos];
         }
 
         public R getReader(int pos) {
-            assert pos >= 0 && pos <= ENTRY_SIZE;
             return (R) readers[pos];
         }
 
