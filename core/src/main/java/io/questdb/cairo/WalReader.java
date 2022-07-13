@@ -73,7 +73,7 @@ public class WalReader implements Closeable {
             columnCount = metadata.getColumnCount();
             events = new WalReaderEvents(ff);
             LOG.debug().$("open [table=").$(tableName).I$();
-            openSymbolMaps(metadata, events.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION), configuration);
+            openSymbolMaps(events.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION), configuration);
             eventCursor = events.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION);
 
             final int capacity = 2 * columnCount + 2;
@@ -119,7 +119,7 @@ public class WalReader implements Closeable {
     }
 
     public CharSequence getSymbolValue(int col, int key) {
-        var symbolMap = symbolMaps.getQuick(col);
+        IntObjHashMap<CharSequence> symbolMap = symbolMaps.getQuick(col);
         return symbolMap.get(key);
     }
 
@@ -217,7 +217,7 @@ public class WalReader implements Closeable {
         }
     }
 
-    private void openSymbolMaps(WalReaderMetadata metadata, WalEventCursor eventCursor, CairoConfiguration configuration) {
+    private void openSymbolMaps(WalEventCursor eventCursor, CairoConfiguration configuration) {
         while (eventCursor.hasNext()) {
             if (eventCursor.getType() == DATA) {
                 WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -251,7 +251,7 @@ public class WalReader implements Closeable {
                         symbolMap = symbolMaps.getQuick(columnIndex);
                     }
 
-                    var entry = symbolDiff.nextEntry();
+                    SymbolMapDiffEntry entry = symbolDiff.nextEntry();
                     while (entry != null) {
                         symbolMap.put(entry.getKey(), String.valueOf(entry.getSymbol()));
                         entry = symbolDiff.nextEntry();
