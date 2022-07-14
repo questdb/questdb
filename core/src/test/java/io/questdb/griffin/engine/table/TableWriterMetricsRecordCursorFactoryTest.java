@@ -27,33 +27,113 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
+import io.questdb.cairo.TableWriterMetrics;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
+
+import java.util.Objects;
+
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertTrue;
 
 public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTest {
 
     @Test
-    public void testEmptyAndDisabled() throws Exception {
-        try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory();
-             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            assertCursor("total-commits\to3commits\trollbacks\tcommitted-rows\tphysically-written-rows\n" +
-                    "0\t0\t0\t0\t0\n", cursor, factory.getMetadata(), true);
-        }
+    public void testSanity() throws Exception {
+        // we want to make sure metrics are enabled by default
+        assertTrue(metrics.isEnabled());
+        assertTrue(engine.getMetrics().isEnabled());
+
+        MetricsSnapshot metricsSnapshot = snapshotMetrics();
+        assertMetricsCursorEquals(metricsSnapshot);
     }
 
     @Test
-    public void testSimple() throws Exception {
-        int rows = 10;
+    public void testMakingProgress() throws Exception {
+        MetricsSnapshot metricsBefore = snapshotMetrics();
+        assertMetricsCursorEquals(metricsBefore);
+
         try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
             tm.timestamp("ts").col("ID", ColumnType.INT);
-            createPopulateTable(tm, rows, "2020-01-01", 1);
+            createPopulateTable(tm, 1, "2020-01-01", 1);
         }
+        MetricsSnapshot metricsAfter = snapshotMetrics();
+        assertNotEquals(metricsBefore, metricsAfter);
 
+        assertMetricsCursorEquals(metricsAfter);
+    }
+
+    @Test
+    public void testSql() throws Exception{
+        assertSql("select * from table_write_metrics()", toExpectedTableContent(snapshotMetrics()));
+    }
+
+    private void assertMetricsCursorEquals(MetricsSnapshot metricsSnapshot) throws Exception {
         try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory();
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            assertCursor("total-commits\to3commits\trollbacks\tcommitted-rows\tphysically-written-rows\n" +
-                    "1\t0\t0\t" + rows + "\t" + rows + "\n", cursor, factory.getMetadata(), true);
+            assertCursor(toExpectedTableContent(metricsSnapshot), cursor, factory.getMetadata(), true);
         }
+    }
+
+    private static String toExpectedTableContent(MetricsSnapshot metricsSnapshot) {
+        StringBuilder sb = new StringBuilder("total-commits\to3commits\trollbacks\tcommitted-rows\tphysically-written-rows\n")
+                .append(metricsSnapshot.commitCount).append('\t')
+                .append(metricsSnapshot.o3CommitCount).append('\t')
+                .append(metricsSnapshot.rollbackCount).append('\t')
+                .append(metricsSnapshot.committedRows).append('\t')
+                .append(metricsSnapshot.physicallyWrittenRows).append('\n');
+        return sb.toString();
+    }
+
+    private static class MetricsSnapshot {
+        private final long commitCount;
+        private final long committedRows;
+        private final long o3CommitCount;
+        private final long rollbackCount;
+        private final long physicallyWrittenRows;
+
+        private MetricsSnapshot(long commitCount, long committedRows, long o3CommitCount, long rollbackCount, long physicallyWrittenRows) {
+            this.commitCount = commitCount;
+            this.committedRows = committedRows;
+            this.o3CommitCount = o3CommitCount;
+            this.rollbackCount = rollbackCount;
+            this.physicallyWrittenRows = physicallyWrittenRows;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            MetricsSnapshot that = (MetricsSnapshot) o;
+            return commitCount == that.commitCount && committedRows == that.committedRows && o3CommitCount == that.o3CommitCount && rollbackCount == that.rollbackCount && physicallyWrittenRows == that.physicallyWrittenRows;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(commitCount, committedRows, o3CommitCount, rollbackCount, physicallyWrittenRows);
+        }
+
+        @Override
+        public String toString() {
+            return "MetricsSnapshot{" +
+                    "commitCount=" + commitCount +
+                    ", committedRows=" + committedRows +
+                    ", o3CommitCount=" + o3CommitCount +
+                    ", rollbackCount=" + rollbackCount +
+                    ", physicallyWrittenRows=" + physicallyWrittenRows +
+                    '}';
+        }
+    }
+
+    private static MetricsSnapshot snapshotMetrics() {
+        TableWriterMetrics writerMetrics = engine.getMetrics().tableWriter();
+        return new MetricsSnapshot(writerMetrics.getCommitCount(),
+                writerMetrics.getCommittedRows(),
+                writerMetrics.getO3CommitCount(),
+                writerMetrics.getRollbackCount(),
+                writerMetrics.getPhysicallyWrittenRows()
+        );
     }
 }

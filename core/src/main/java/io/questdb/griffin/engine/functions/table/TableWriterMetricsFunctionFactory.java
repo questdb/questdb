@@ -44,6 +44,4 @@ public class TableWriterMetricsFunctionFactory implements FunctionFactory {
         return new CursorFunction(
                 new TableWriterMetricsRecordCursorFactory());
     }
-
-
 }
