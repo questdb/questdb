@@ -791,4 +791,9 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     public int getParallelImportRequestQueueCapacity() {
         return conf.getParallelImportRequestQueueCapacity();
     }
+
+    @Override
+    public int getParallelImportStatusLogKeepLastNDays() {
+        return conf.getParallelImportStatusLogKeepLastNDays();
+    }
 }

@@ -675,6 +675,41 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    public void testBacklogTableCleanup() throws Exception {
+        for (int i = 0; i < 6; i++) {
+            testStatusLogCleanup(5, i);
+        }
+    }
+
+    private void testStatusLogCleanup(int daysToGenerate, int daysToKeep) throws SqlException, IOException {
+        String backlogTableName = configuration.getSystemTableNamePrefix() + "parallel_text_import_log";
+        compiler.compile("create table " + backlogTableName + " as " +
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000000) ts," +
+                " rnd_symbol(5,4,4,3) table," +
+                " rnd_symbol(5,4,4,3) file," +
+                " rnd_symbol(5,4,4,3) stage," +
+                " rnd_symbol(5,4,4,3) status," +
+                " rnd_str(5,4,4,3) message" +
+                " from" +
+                " long_sequence(" + daysToGenerate + ")" +
+                ") timestamp(ts) partition by DAY", sqlExecutionContext);
+
+        parallelImportStatusLogKeepNDays = daysToKeep;
+        try (TextImportRequestProcessingJob job = new TextImportRequestProcessingJob(engine, 1, null)) {
+
+        }
+        assertQuery("count\n"+ daysToKeep +"\n",
+                "select count() from " + backlogTableName,
+                null,
+                false,
+                true
+        );
+        compiler.compile("drop table " + backlogTableName, sqlExecutionContext);
+    }
+
     private void assertIndexChunks(int workerCount, String fileName, IndexChunk... expectedChunks) throws Exception {
         assertIndexChunks(workerCount, "yyyy-MM-ddTHH:mm:ss.SSSZ", PartitionBy.DAY, fileName, expectedChunks);
     }

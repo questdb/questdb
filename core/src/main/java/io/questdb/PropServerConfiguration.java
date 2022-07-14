@@ -407,6 +407,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean simulateCrashEnabled;
     private final long parallelImportRequestWaitTimeout;
     private final int parallelImportRequestQueueCapacity;
+    private final int parallelImportStatusLogKeepLastNDays;
 
     public PropServerConfiguration(
             String root,
@@ -984,6 +985,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
             this.parallelImportRequestWaitTimeout = getLong(properties, env, PropertyKey.PARALLEL_IMPORT_REQ_WAIT_TIMEOUT_MICRO, 3_000_000L);
             this.parallelImportRequestQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.PARALLEL_IMPORT_REQ_QUEUE_CAPACITY, 8));
+            this.parallelImportStatusLogKeepLastNDays = Numbers.ceilPow2(getInt(properties, env, PropertyKey.PARALLEL_IMPORT_STATUS_LOG_KEEP_LAST_N_DAYS, 3));
         }
     }
 
@@ -2200,6 +2202,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParallelImportRequestQueueCapacity() {
             return parallelImportRequestQueueCapacity;
+        }
+
+        @Override
+        public int getParallelImportStatusLogKeepLastNDays() {
+            return parallelImportStatusLogKeepLastNDays;
         }
 
         @Override

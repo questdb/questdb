@@ -95,6 +95,7 @@ public class AbstractCairoTest {
     protected static int pageFrameReduceQueueCapacity = -1;
     protected static int columnVersionTaskPoolCapacity = -1;
     protected static RostiAllocFacade rostiAllocFacade = null;
+    protected static int parallelImportStatusLogKeepNDays = -1;
 
     @Rule
     public TestName testName = new TestName();
@@ -318,6 +319,11 @@ public class AbstractCairoTest {
             @Override
             public int getColumnPurgeTaskPoolCapacity() {
                 return columnVersionTaskPoolCapacity >= 0 ? columnVersionTaskPoolCapacity : super.getColumnPurgeTaskPoolCapacity();
+            }
+
+            @Override
+            public int getParallelImportStatusLogKeepLastNDays() {
+                return parallelImportStatusLogKeepNDays >= 0 ? parallelImportStatusLogKeepNDays : super.getParallelImportStatusLogKeepLastNDays();
             }
 
             @Override

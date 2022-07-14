@@ -59,7 +59,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
     private SqlExecutionContextImpl sqlExecutionContext;
     private TextImportRequestTask task;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
-    private final LongList partitionsToRemove = new LongList();
+
     public TextImportRequestProcessingJob(
             final CairoEngine engine,
             int workerCount,
@@ -90,14 +90,23 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
         );
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
 
-        final int N = 2; //todo: add config option
-        partitionsToRemove.clear();
-        for (int i = writer.getPartitionCount() - N; i > -1; i--) {
-            partitionsToRemove.add(writer.getPartitionTimestamp(i));
-        }
+        cleanupStatusLog(writer, configuration.getParallelImportStatusLogKeepLastNDays());
+    }
 
-        for (int i = 0, sz = partitionsToRemove.size(); i < sz; i++) {
-            writer.removePartition(partitionsToRemove.getQuick(i));
+    void cleanupStatusLog(final TableWriter writer, int keepPartitionCount) {
+        if (keepPartitionCount <= 0) {
+            writer.truncate();
+            return;
+        }
+        if (writer.getPartitionCount() > 0) {
+            final LongList partitionsToRemove = new LongList();
+            for (int i = writer.getPartitionCount() - keepPartitionCount - 1; i > -1; i--) {
+                partitionsToRemove.add(writer.getPartitionTimestamp(i));
+            }
+
+            for (int i = 0, sz = partitionsToRemove.size(); i < sz; i++) {
+                writer.removePartition(partitionsToRemove.getQuick(i));
+            }
         }
     }
 

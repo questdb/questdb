@@ -362,7 +362,8 @@ public enum PropertyKey {
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
     CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
     PARALLEL_IMPORT_REQ_WAIT_TIMEOUT_MICRO("parallel.import.request.wait.timeout.micro"),
-    PARALLEL_IMPORT_REQ_QUEUE_CAPACITY("parallel.import.request.queue.capacity");
+    PARALLEL_IMPORT_REQ_QUEUE_CAPACITY("parallel.import.request.queue.capacity"),
+    PARALLEL_IMPORT_STATUS_LOG_KEEP_LAST_N_DAYS("parallel.import.status.log.keep.last.n.days");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

@@ -357,7 +357,7 @@ public class CopyTest extends AbstractGriffinTest {
         ParallelCopyRunnable test = () -> {
             assertQuery("message\n" +
                             "partition by unit must be set when importing to new table\n",
-                    "select message from __sysparallel_text_import_log limit -1",
+                    "select message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
                     null,
                     true
             );
@@ -447,7 +447,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         ParallelCopyRunnable test = () -> {
             assertQuery("message\ncannot remove work dir because it points to one of main instance directories\n",
-                    "select left(message, 76) message from __sysparallel_text_import_log limit -1",
+                    "select left(message, 76) message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
                     null,
                     true
             );

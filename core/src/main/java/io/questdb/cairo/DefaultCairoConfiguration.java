@@ -419,6 +419,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getParallelImportStatusLogKeepLastNDays() {
+        return 3;
+    }
+
+    @Override
     public int getPageFrameReduceQueueCapacity() {
         return 32;
     }

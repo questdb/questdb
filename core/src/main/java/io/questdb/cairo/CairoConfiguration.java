@@ -392,4 +392,6 @@ public interface CairoConfiguration {
     long getParallelImportRequestWaitTimeout();
 
     int getParallelImportRequestQueueCapacity();
+
+    int getParallelImportStatusLogKeepLastNDays();
 }
