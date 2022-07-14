@@ -49,6 +49,7 @@ import java.util.*;
 
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     private static final Rnd rnd = new Rnd();
@@ -1308,7 +1309,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWhenImportFailsWhenMovingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
+    public void testWhenImportFailsWhileMovingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
@@ -1328,7 +1329,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWhenImportFailsWhenAttachingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
+    public void testWhenImportFailsWhileAttachingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ path) {
@@ -1879,6 +1880,195 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testImportFileFailsWhenIntermediateTableDirectoryIsMangled() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.endsWith(path, "tableName_0")) {
+                    return true;
+                }
+                return super.exists(path);
+            }
+        };
+
+        testImportThrowsException(ff, "tableName", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=PARTITION_IMPORT, msg=`name is reserved [tableName=tableName_0]`]");
+    }
+
+    @Test
+    public void testImportFileFailsWhenIntermediateTableDirectoryExistAndCantBeDeleted() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.endsWith(path, "tableName_0")) {
+                    return true;
+                } else if (Chars.endsWith(path, "tableName_0" + File.separator + "_txn")) {
+                    return true;
+                }
+                return super.exists(path);
+            }
+
+            @Override
+            public int rmdir(Path name) {
+                if (Chars.endsWith(name, "tableName_0")) {
+                    return -1;
+                }
+                return super.rmdir(name);
+            }
+        };
+
+        testImportThrowsException(ff, "tableName", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "import failed [phase=PARTITION_IMPORT, msg=`[-1] Table remove failed [tableName=tableName_0]`]");
+    }
+
+    @Test
+    public void testImportFileFailsWhenWorkDirectoryExistAndCantBeDeleted() throws Exception {
+        FilesFacade ff = new FilesFacadeImpl() {
+            final String tempDir = inputWorkRoot + File.separator + "tableName";
+
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.equals(path, tempDir)) {
+                    return true;
+                }
+
+                return super.exists(path);
+            }
+
+            @Override
+            public int rmdir(Path name) {
+                if (Chars.equals(name, tempDir)) {
+                    return -1;
+                }
+                return super.rmdir(name);
+            }
+        };
+
+        testImportThrowsException(ff, "tableName", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not remove work dir");
+    }
+
+    @Test
+    public void testImportFileFailsWhenImportingTextIntoBinaryColumn() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
+
+            compiler.compile("create table tab ( ts timestamp, line string, d double, description binary ) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount(), null)) {
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true);
+                indexer.process();
+            } catch (Exception e) {
+                assertThat(e.getMessage(), containsString("cannot import text into BINARY column [index=3]"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileSetsDateColumnToNullIfCsvStructureCheckCantDetectACommonFormat() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
+
+            compiler.compile("create table tab ( line string, ts timestamp, d date, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount(), null)) {
+                indexer.of("tab", "test-quotes-small.csv", PartitionBy.DAY, (byte) ',', "ts", null, true);
+                indexer.process();
+            }
+
+            assertQuery("line\tts\td\ttxt\n" +
+                            "line1\t2022-05-10T11:52:00.000000Z\t\tsome text\r\nspanning two lines\n" +
+                            "line2\t2022-05-11T11:52:00.000000Z\t\tsome text\r\nspanning \r\nmany \r\nmany \r\nmany \r\nlines\n" +
+                            "line3\t2022-05-11T11:52:00.001000Z\t\tsingle line text without quotes\n",
+                    "select * from tab", null, "ts", true, true, true);
+        });
+    }
+
+    @Test
+    public void testImportFileFailsWhenTargetTableNameIsInvalid() throws Exception {
+        testImportThrowsException(FilesFacadeImpl.INSTANCE, "../t", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "[0] invalid table name [table=../t]");
+    }
+
+    @Test
+    public void testImportFileFailsWhenWorkDirCantBeCreated() throws Exception {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
+            final String w = inputWorkRoot + File.separator + "tab123";
+
+            @Override
+            public int mkdir(Path path, int mode) {
+                if (Chars.contains(path, "tab123")) {
+                    return -1;
+                }
+                return super.mkdir(path, mode);
+            }
+        };
+
+        testImportThrowsException(ff, "tab123", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "could not create temporary import directory");
+    }
+
+    @Test
+    public void testImportFileFailsWhenIntermediateFilesCantBeMovedToTargetDirForUnexpectedReason() throws Exception {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                return Files.FILES_RENAME_ERR_OTHER;
+            }
+        };
+
+        testImportThrowsException(ff, "tab123", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "Cannot copy partition file");
+    }
+
+    @Test
+    public void testImportFileFailsWhenIntermediateFilesCantBeMovedAndTargetDirCantBeCreated() throws Exception {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                return Files.FILES_RENAME_ERR_EXDEV;
+            }
+
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Chars.contains(path, "dbRoot" + File.separator + "tab123" + File.separator + "1970-06")) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+
+        testImportThrowsException(ff, "tab123", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "Cannot create partition directory");
+    }
+
+    @Test
+    public void testImportFileFailsWhenIntermediateFilesCantBeMovedOrCopied() throws Exception {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                return Files.FILES_RENAME_ERR_EXDEV;
+            }
+
+            @Override
+            public int copy(LPSZ from, LPSZ to) {
+                if (Chars.contains(from, "tab123")) {
+                    return -1;
+                }
+                return super.copy(from, to);
+            }
+        };
+
+        testImportThrowsException(ff, "tab123", "test-quotes-big.csv", PartitionBy.MONTH, "ts", null, "Cannot copy partition file");
+    }
+
+    @Test
+    public void testImportIsCancelled() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext) -> {
+            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
+            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount(), () -> true)) {
+                indexer.of("tableName", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true);
+                indexer.process();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("import cancelled [phase=BOUNDARY_CHECK, msg=`Cancelled`]"));
+            }
+        });
+    }
+
+    @Test
     public void testImportFileWithHeaderButWrongTypeOfTimestampColumn() throws Exception {
         testImportThrowsException("test-quotes-big.csv", PartitionBy.MONTH, "d", null, "column no=2, name='d' is not a timestamp");
     }
@@ -1889,15 +2079,19 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     private void testImportThrowsException(String fileName, int partitionBy, String tsCol, String tsFormat, String expectedError) throws Exception {
-        executeWithPool(4, 8, (CairoEngine engine1, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext1) -> {
+        testImportThrowsException(FilesFacadeImpl.INSTANCE, "tableName", fileName, partitionBy, tsCol, tsFormat, expectedError);
+    }
+
+    private void testImportThrowsException(FilesFacade ff, String tableName, String fileName, int partitionBy, String tsCol, String tsFormat, String expectedError) throws Exception {
+        executeWithPool(4, 8, ff, (CairoEngine engine1, SqlCompiler compiler1, SqlExecutionContext sqlExecutionContext1) -> {
             inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine1, sqlExecutionContext1.getWorkerCount(), null)) {
-                indexer.of("tableName", fileName, partitionBy, (byte) ',', tsCol, tsFormat, true);
+                indexer.of(tableName, fileName, partitionBy, (byte) ',', tsCol, tsFormat, true);
                 indexer.process();
                 Assert.fail("exception expected");
             } catch (Exception e) {
-                Assert.assertEquals(expectedError, e.getMessage());
+                MatcherAssert.assertThat(e.getMessage(), containsString(expectedError));
             }
         });
     }
@@ -1907,7 +2101,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table someTable ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by DAY;", sqlExecutionContext);
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount(), null)) {
-                indexer.of("someTable", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                indexer.of("someTable", "test-quotes-big.csv", PartitionBy.MONTH, (byte) -1, "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
@@ -2112,7 +2306,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWhenRenameIsBrokenImportStillWorks() throws Exception {
+    public void testWhenRenameBreaksBecauseTempFilesAreOnDifferentFSThanDbDirThenImportStillWorks() throws Exception {
         FilesFacade brokenRename = new FilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {

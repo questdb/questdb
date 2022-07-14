@@ -41,6 +41,8 @@ import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 
 import static org.junit.Assert.*;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.CoreMatchers.containsString;
 
 public class CopyTest extends AbstractGriffinTest {
 
@@ -53,6 +55,22 @@ public class CopyTest extends AbstractGriffinTest {
             throw new RuntimeException(e);
         }
         AbstractGriffinTest.setUpStatic();
+    }
+
+    @Test
+    public void testSequentialCopyDoesntAcceptNewKeywords() {
+        assertFailsWith("copy x from 'somefile.csv' with partition by HOUR ;", "invalid option used for non-parallel import (timestamp, format or partition by)");
+        assertFailsWith("copy x from 'somefile.csv' with timestamp 'ts' ;", "invalid option used for non-parallel import (timestamp, format or partition by)");
+        assertFailsWith("copy x from 'somefile.csv' with format 'XYZ';", "invalid option used for non-parallel import (timestamp, format or partition by)");
+    }
+
+    private void assertFailsWith(String sql, String message) {
+        try {
+            compiler.compile(sql, sqlExecutionContext);
+            Assert.fail();
+        } catch (SqlException e) {
+            assertThat(e.getMessage(), containsString(message));
+        }
     }
 
     @Test

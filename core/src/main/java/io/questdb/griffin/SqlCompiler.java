@@ -1916,6 +1916,12 @@ public class SqlCompiler implements Closeable {
                 return;
             }
 
+            if (model.getTimestampColumnName() != null ||
+                    model.getTimestampFormat() != null ||
+                    model.getPartitionBy() != -1) {
+                throw SqlException.$(-1, "invalid option used for non-parallel import (timestamp, format or partition by)");
+            }
+
             int len = configuration.getSqlCopyBufferSize();
             long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             setupTextLoaderFromModel(model);

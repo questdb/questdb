@@ -203,8 +203,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 case TableUtils.TABLE_EXISTS:
                     int errno;
                     if ((errno = ff.rmdir(path)) != 0) {
-                        LOG.error().$("remove failed [tableName='").utf8(tableName).$("', error=").$(errno).$(']').$();
-                        throw CairoException.instance(errno).put("Table remove failed");
+                        LOG.error().$("remove failed [tableName='").utf8(tableName).$("',path='").utf8(path).$(", error=").$(errno).$(']').$();
+                        throw CairoException.instance(errno).put("Table remove failed [tableName=").put(tableName).put("]");
                     }
                 case TableUtils.TABLE_DOES_NOT_EXIST:
                     try (MemoryMARW memory = Vm.getMARWInstance()) {
@@ -530,7 +530,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         Path workDirPath = tmpPath.of(importRoot).slash$();
         int errno = ff.mkdir(workDirPath, configuration.getMkDirMode());
         if (errno != 0) {
-            throw CairoException.instance(errno).put("could not create temporary import directory `").put(workDirPath).put("` errno=").put(errno);
+            throw CairoException.instance(errno).put("could not create temporary import directory [path='").put(workDirPath).put("', errno=").put(errno).put("]");
         }
 
         createdWorkDir = true;
@@ -806,26 +806,24 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     dstPath.trimTo(dstPlen).concat(partitionName).slash$();
 
                     int res = ff.rename(srcPath, dstPath);
-                    if (res != Files.FILES_RENAME_ERR_OK) {
-                        if (res == Files.FILES_RENAME_ERR_EXDEV) {
-                            LOG.info().$(srcPath).$(" and ").$(dstPath).$(" are not on the same mounted filesystem. Partitions will be copied.").$();
+                    if (res == Files.FILES_RENAME_ERR_EXDEV) {
+                        LOG.info().$(srcPath).$(" and ").$(dstPath).$(" are not on the same mounted filesystem. Partitions will be copied.").$();
 
-                            if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
-                                throw TextException.$("Cannot create partition directory [path='").put(dstPath).put("',errno=").put(ff.errno()).put(']');
-                            }
-
-                            ff.iterateDir(srcPath, (long name, int type) -> {
-                                if (type == Files.DT_FILE) {
-                                    srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
-                                    dstPath.trimTo(dstPlen).concat(partitionName).concat(name).$();
-                                    if (ff.copy(srcPath, dstPath) < 0) {
-                                        throw TextException.$("Cannot copy partition file [to='").put(dstPath).put("',errno=").put(ff.errno()).put(']');
-                                    }
-                                }
-                            });
-                        } else {
-                            throw CairoException.instance(ff.errno()).put("Cannot copy partition file [to=").put(dstPath).put(']');
+                        if (ff.mkdirs(dstPath, configuration.getMkDirMode()) != 0) {
+                            throw TextException.$("Cannot create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                         }
+
+                        ff.iterateDir(srcPath, (long name, int type) -> {
+                            if (type == Files.DT_FILE) {
+                                srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
+                                dstPath.trimTo(dstPlen).concat(partitionName).concat(name).$();
+                                if (ff.copy(srcPath, dstPath) < 0) {
+                                    throw TextException.$("Cannot copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                                }
+                            }
+                        });
+                    } else if (res != Files.FILES_RENAME_ERR_OK) {
+                        throw CairoException.instance(ff.errno()).put("Cannot copy partition file [to=").put(dstPath).put(']');
                     }
                 }
             }
@@ -1200,7 +1198,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
             int errno = ff.rmdir(workDirPath);
             if (errno != 0) {
-                throw TextException.$("could not remove [path='").put(workDirPath).put("', errno=").put(errno).put(']');
+                throw TextException.$("could not remove work dir [path='").put(workDirPath).put("', errno=").put(errno).put(']');
             }
         }
     }
@@ -1322,7 +1320,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
             final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
             if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
-                throw TextException.$("column no=").put(timestampIndex).put(", name='").put(timestampColumn).put("' is not a timestamp");
+                throw TextException.$("column no=").put(timestampIndex)
+                        .put(", name='").put(timestampColumn).put("' is not a timestamp");
             }
         }
     }
