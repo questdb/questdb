@@ -35,6 +35,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -2292,6 +2293,18 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         MatcherAssert.assertThat(tasks, equalTo(2));
     }
 
+    @Test
+    public void testParallelCopyCollectingQueueCapacity() throws Exception {
+        executeWithPool(1, 0, 0, FilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try {
+                compiler.compile("copy xy from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Parallel import requests queue size can't be zero!"));
+            }
+        });
+    }
+
     static ObjList<IndexChunk> list(IndexChunk... chunks) {
         ObjList<IndexChunk> result = new ObjList<>(chunks.length);
         for (IndexChunk chunk : chunks) {
@@ -2327,12 +2340,20 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             int queueCapacity,
             TextImportRunnable runnable
     ) throws Exception {
-        executeWithPool(workerCount, queueCapacity, FilesFacadeImpl.INSTANCE, runnable);
+        executeWithPool(workerCount, queueCapacity, configuration.getParallelImportRequestQueueCapacity(), FilesFacadeImpl.INSTANCE, runnable);
     }
-
     protected void executeWithPool(
             int workerCount,
             int queueCapacity,
+            FilesFacade ff,
+            TextImportRunnable runnable
+    ) throws Exception {
+        executeWithPool(workerCount, queueCapacity, configuration.getParallelImportRequestQueueCapacity(), ff, runnable);
+    }
+    protected void executeWithPool(
+            int workerCount,
+            int queueCapacity,
+            int requestQueueCapacity,
             FilesFacade ff,
             TextImportRunnable runnable
     ) throws Exception {
@@ -2379,6 +2400,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     @Override
                     public int getParallelImportQueueCapacity() {
                         return queueCapacity;
+                    }
+
+                    @Override
+                    public int getParallelImportRequestQueueCapacity() {
+                        return requestQueueCapacity;
                     }
 
                     @Override

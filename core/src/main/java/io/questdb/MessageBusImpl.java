@@ -202,7 +202,7 @@ public class MessageBusImpl implements MessageBus {
                 .then(textImportRequestCollectingPubSeq);
 
         this.textImportRequestProcessingQueue = new RingQueue<>(TextImportRequestTask::new, 1);
-        this.textImportRequestProcessingPubSeq = new SPSequence((textImportRequestProcessingQueue.getCycle()));
+        this.textImportRequestProcessingPubSeq = new SPSequence(textImportRequestProcessingQueue.getCycle());
         this.textImportRequestProcessingSubSeq = new SCSequence();
         textImportRequestProcessingPubSeq.then(textImportRequestProcessingSubSeq).then(textImportRequestProcessingPubSeq);
     }

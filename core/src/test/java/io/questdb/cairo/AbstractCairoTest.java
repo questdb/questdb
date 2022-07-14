@@ -385,6 +385,7 @@ public class AbstractCairoTest {
         rostiAllocFacade = null;
         sqlCopyBufferSize = 1024 * 1024;
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
+        parallelImportStatusLogKeepNDays = -1;
     }
 
     protected static void configureForBackups() throws IOException {

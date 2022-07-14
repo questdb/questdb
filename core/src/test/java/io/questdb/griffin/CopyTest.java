@@ -26,9 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.TextImportRequestCollectingJob;
-import io.questdb.cutlass.text.TextImportRequestProcessingJob;
+import io.questdb.cutlass.text.*;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Os;
@@ -332,7 +330,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         ParallelCopyRunnable test = this::assertQuotesTableContent;
 
-        testParallelCopy(stmt, test);
+        testParallelCopy(stmt, test, 1, 1);
     }
 
     @Test
@@ -344,7 +342,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         ParallelCopyRunnable test = this::assertQuotesTableContent;
 
-        testParallelCopy(stmt, test);
+        testParallelCopy(stmt, test, 1, 1);
     }
 
     @Test
@@ -363,7 +361,7 @@ public class CopyTest extends AbstractGriffinTest {
             );
         };
 
-        testParallelCopy(stmt, test);
+        testParallelCopy(stmt, test, 1, 1);
     }
 
     @Test
@@ -453,10 +451,60 @@ public class CopyTest extends AbstractGriffinTest {
             );
         };
 
-        testParallelCopy(stmt, test);
+        testParallelCopy(stmt, test, 1, 1);
 
         inputRoot = inputRootTmp;
         inputWorkRoot = inputWorkRootTmp;
+    }
+
+    @Test
+    public void testParallelCopyWithoutCollectingProcessingJobs() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Parallel import ack timeout"));
+            }
+            drainQueues();
+        });
+    }
+
+    private void drainQueues() throws Exception {
+        try (TextImportRequestProcessingJob processingJob = new TextImportRequestProcessingJob(engine, 1, null)) {
+            TextImportRequestCollectingJob collectingJob = new TextImportRequestCollectingJob(engine);
+            while (collectingJob.run(0)) ;
+            while (processingJob.run(0)) ;
+        }
+    }
+
+    @Test
+    public void testParallelCopyRejectSecondReq() throws Exception {
+        ParallelCopyRunnable stmt = () -> {
+            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+            // this one should be rejected
+            try {
+                compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Parallel import request rejected"));
+            }
+            try {
+                compiler.compile("copy x cancel", sqlExecutionContext);
+            } catch (Exception e) {
+                Assert.fail();
+            }
+        };
+
+        ParallelCopyRunnable test = () -> {
+            assertQuery("status\nCANCELLED\n",
+                    "select status from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                    null,
+                    true
+            );
+        };
+        testParallelCopy(stmt, test, 1, 3);
     }
 
     private void assertQuotesTableContent() throws SqlException {
@@ -496,11 +544,12 @@ public class CopyTest extends AbstractGriffinTest {
         });
     }
 
-    private void testParallelCopy(ParallelCopyRunnable statement, ParallelCopyRunnable test) throws Exception {
+    private void testParallelCopy(ParallelCopyRunnable statement, ParallelCopyRunnable test, int maxProcessed, int maxRequested) throws Exception {
         assertMemoryLeak(() -> {
-            CountDownLatch processed = new CountDownLatch(1);
-            CountDownLatch requested = new CountDownLatch(1);
+            CountDownLatch processed = new CountDownLatch(maxProcessed);
+            CountDownLatch requested = new CountDownLatch(maxRequested);
 
+            compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log" , sqlExecutionContext);
             try (TextImportRequestProcessingJob processingJob = new TextImportRequestProcessingJob(engine, 1, null)) {
                 TextImportRequestCollectingJob collectingJob = new TextImportRequestCollectingJob(engine);
 
@@ -520,6 +569,7 @@ public class CopyTest extends AbstractGriffinTest {
                 processingThread.join();
                 collectingThread.join();
             }
+            drainQueues();
         });
     }
 

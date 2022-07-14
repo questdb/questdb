@@ -2015,6 +2015,9 @@ public class SqlCompiler implements Closeable {
                 TextImportRequestTask task = textImportRequestQueue.get(seq);
                 if (task.getCorrelationId() == correlationId) {
                     statusReceived = true;
+                    if (task.getStatus() == TextImportTask.STATUS_FAILED) {
+                        throw SqlException.$(0, "Parallel import request rejected.");
+                    }
                 }
             } finally {
                 textImportResponseSubSeq.done(seq);
