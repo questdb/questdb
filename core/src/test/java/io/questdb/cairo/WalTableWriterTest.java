@@ -26,7 +26,10 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractGriffinTest;
-import io.questdb.std.*;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.Files;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -129,6 +132,66 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testPartitionOverflowAppend() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTableAllTypes";
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement = Timestamps.SECOND_MICROS;
+            long ts = IntervalUtils.parseFloorPartialDate("2022-07-14T00:00:00");
+            int rowCount = (int) (Files.PAGE_SIZE / 32);
+            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+
+            Rnd rnd = new Rnd(265199847250666L, 1657725097300L);
+
+            try (
+                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+
+                long start = ts;
+                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+
+                start += rowCount * tsIncrement + 1;
+                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testPartitionOverflowMerge() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testTableAllTypes";
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement = Timestamps.SECOND_MICROS;
+            long ts = IntervalUtils.parseFloorPartialDate("2022-07-14T00:00:00");
+            int rowCount = (int) (Files.PAGE_SIZE / 32);
+            ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
+
+            Rnd rnd = new Rnd(265199847250666L, 1657725097300L);
+
+            try (
+                    WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+
+                long start = ts;
+                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+
+                start += rowCount * tsIncrement - 2 * Timestamps.SECOND_MICROS;
+                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    @Test
     public void testRandomInOutOfOrderMultipleWalInserts() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testTableAllTypes";
@@ -137,8 +200,8 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
             long tsIncrement;
             long ts = Os.currentTimeMicros();
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
-            Rnd rnd = new Rnd();
             try (
                     WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
                     WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
@@ -148,40 +211,52 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 long start = ts;
                 WalWriter[] writers = new WalWriter[]{ walWriter1, walWriter2, walWriter3 };
 
-                for(int i = 0; i < 20; i++) {
+                for(int i = 0; i < 5; i++) {
                     boolean inOrder = rnd.nextBoolean();
-                    WalWriter walWriter = writers[rnd.nextInt(3)];
-                    int rowCount = rnd.nextInt(1000);
+                    int walIndex = rnd.nextInt(3);
+                    WalWriter walWriter = writers[walIndex];
+                    int rowCount = rnd.nextInt(1000) + 2;
                     tsIncrement = rnd.nextLong(Timestamps.MINUTE_MICROS);
 
+                    LOG.infoW().$("generating wall [")
+                            .$("iteration:").$(i)
+                            .$(", walIndex: ").$(walIndex)
+                            .$(", inOrder: ").$(inOrder)
+                            .$(" rowCount: ").$(rowCount)
+                            .$(" tsIncrement: ").$(tsIncrement)
+                            .I$();
+
                     addRowsToWalAndApplyToTable(tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, inOrder);
+
+                    LOG.info().$("verifying wall [").$("iteration:").$(i).I$();
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                    start += rowCount * tsIncrement;
+                    start += rowCount * tsIncrement + 1;
                 }
             }
         });
     }
 
     private void addRowRwAllTypes(TableWriter.Row row, int i, CharSequence symbol) {
-        row.putInt(0, i);
-        row.putByte(1, (byte) i);
-        row.putLong(2, i);
-        row.putLong256(3, i, i + 1, i + 2, i + 3);
-        row.putDouble(4, i + .5);
-        row.putFloat(5, i + .5f);
-        row.putShort(6, (short) i);
-        row.putTimestamp(7, i);
-        row.putChar(8, (char) (65 + i % 26));
-        row.putBool(9, i % 2 == 0);
-        row.putDate(10, i);
-        row.putStr(11, String.valueOf(i));
-        row.putGeoHash(12, i); // geo byte
-        row.putGeoHash(13, i); // geo int
-        row.putGeoHash(14, i); // geo short
-        row.putGeoHash(15, i); // geo long
-        row.putStr(16, (char) (65 + i % 26));
-        row.putSym(17, symbol);
+        int col = 0;
+        row.putInt(col++, i);
+        row.putByte(col++, (byte) i);
+        row.putLong(col++, i);
+        row.putLong256(col++, i, i + 1, i + 2, i + 3);
+        row.putDouble(col++, i + .5);
+        row.putFloat(col++, i + .5f);
+        row.putShort(col++, (short) i);
+        row.putTimestamp(col++, i);
+        row.putChar(col++, (char) (65 + i % 26));
+        row.putBool(col++, i % 2 == 0);
+        row.putDate(col++, i);
+        row.putStr(col++, String.valueOf(i));
+        row.putGeoHash(col++, i); // geo byte
+        row.putGeoHash(col++, i); // geo int
+        row.putGeoHash(col++, i); // geo short
+        row.putGeoHash(col++, i); // geo long
+        row.putStr(col++, (char) (65 + i % 26));
+        row.putSym(col, symbol);
         row.append();
     }
 

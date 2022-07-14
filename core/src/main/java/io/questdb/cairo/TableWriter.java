@@ -1009,6 +1009,7 @@ public class TableWriter implements Closeable {
             long o3TimestampMax,
             SymbolMapDiffCursor mapDiffCursor
     ) {
+        this.lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
         long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
         final int columnCount = metadata.getColumnCount();
         ObjList<MemoryCR> mappedColumns = new ObjList<>(columnCount * 2);
