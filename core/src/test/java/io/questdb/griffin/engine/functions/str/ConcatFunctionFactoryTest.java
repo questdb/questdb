@@ -70,4 +70,13 @@ public class ConcatFunctionFactoryTest extends AbstractGriffinTest {
             );
         });
     }
+
+    @Test
+    public void testNull() throws Exception {
+        assertSql(
+                "select concat('foo', null, 1.2)",
+                "concat\n" +
+                        "foo1.2\n"
+        );
+    }
 }
