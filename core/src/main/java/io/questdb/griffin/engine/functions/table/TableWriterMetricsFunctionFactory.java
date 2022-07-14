@@ -36,7 +36,7 @@ import io.questdb.std.ObjList;
 public class TableWriterMetricsFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "table_write_metrics()";
+        return "table_writer_metrics()";
     }
 
     @Override

@@ -24,12 +24,20 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.Metrics;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableModel;
 import io.questdb.cairo.TableWriterMetrics;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
@@ -67,7 +75,25 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
 
     @Test
     public void testSql() throws Exception{
-        assertSql("select * from table_write_metrics()", toExpectedTableContent(snapshotMetrics()));
+        assertSql("select * from table_writer_metrics()", toExpectedTableContent(snapshotMetrics()));
+    }
+
+    @Test
+    public void testDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine localEngine = new CairoEngine(configuration, Metrics.disabled());
+            SqlCompiler localCompiler = new SqlCompiler(localEngine, null, snapshotAgent);
+                 SqlExecutionContextImpl localSqlExecutionContext = new SqlExecutionContextImpl(localEngine, 1)
+                         .with(
+                                 AllowAllCairoSecurityContext.INSTANCE,
+                                 new BindVariableServiceImpl(configuration),
+                                 null,
+                                 -1,
+                                 null)) {
+                MetricsSnapshot metricsWhenDisabled = new MetricsSnapshot(-1, -1, -1, -1, -1);
+                TestUtils.assertSql(localCompiler, localSqlExecutionContext, "select * from table_writer_metrics()", new StringSink(), toExpectedTableContent(metricsWhenDisabled));
+            }
+        });
     }
 
     private void assertMetricsCursorEquals(MetricsSnapshot metricsSnapshot) throws Exception {

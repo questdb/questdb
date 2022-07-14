@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -44,6 +45,7 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
     private static final int ROLLBACKS_COLUMN_INDEX = 2;
     private static final int COMMITTED_ROWS_COLUMN_INDEX = 3;
     private static final int PHYSICALLY_WRITTEN_ROWS_COLUMN_INDEX = 4;
+    private static final int METRICS_DISABLED = -1;
     private final TableWriterMetricsRecordCursor cursor;
 
     public TableWriterMetricsRecordCursorFactory() {
@@ -58,7 +60,7 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(executionContext.getCairoEngine().getMetrics().tableWriter());
+        cursor.of(executionContext.getCairoEngine().getMetrics());
         return cursor;
     }
 
@@ -82,12 +84,21 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
         private long committedRows;
         private long physicallyWrittenRows;
 
-        public void of(TableWriterMetrics tableWriterMetrics) {
-            totalCommits = tableWriterMetrics.getCommitCount();
-            o3commits = tableWriterMetrics.getO3CommitCount();
-            rollbacks = tableWriterMetrics.getRollbackCount();
-            committedRows = tableWriterMetrics.getCommittedRows();
-            physicallyWrittenRows = tableWriterMetrics.getPhysicallyWrittenRows();
+        public void of(Metrics metrics) {
+            TableWriterMetrics tableWriterMetrics = metrics.tableWriter();
+            if (metrics.isEnabled()) {
+                totalCommits = tableWriterMetrics.getCommitCount();
+                o3commits = tableWriterMetrics.getO3CommitCount();
+                rollbacks = tableWriterMetrics.getRollbackCount();
+                committedRows = tableWriterMetrics.getCommittedRows();
+                physicallyWrittenRows = tableWriterMetrics.getPhysicallyWrittenRows();
+            } else {
+                totalCommits = METRICS_DISABLED;
+                o3commits = METRICS_DISABLED;
+                rollbacks = METRICS_DISABLED;
+                committedRows = METRICS_DISABLED;
+                physicallyWrittenRows = METRICS_DISABLED;
+            }
         }
 
         @Override
