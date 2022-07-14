@@ -587,6 +587,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory,
             io.questdb.griffin.engine.functions.table.TouchTableFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableWriterMetricsFunctionFactory,
+            io.questdb.griffin.engine.functions.table.MemoryMetricsFunctionFactory,
 
             // first
             io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
