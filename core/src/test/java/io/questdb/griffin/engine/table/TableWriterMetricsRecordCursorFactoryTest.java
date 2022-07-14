@@ -82,10 +82,9 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
     public void testDisabled() throws Exception {
         assertMemoryLeak(() -> {
             try (CairoEngine localEngine = new CairoEngine(configuration, Metrics.disabled());
-            SqlCompiler localCompiler = new SqlCompiler(localEngine, null, snapshotAgent);
-                 SqlExecutionContextImpl localSqlExecutionContext = new SqlExecutionContextImpl(localEngine, 1)
-                         .with(
-                                 AllowAllCairoSecurityContext.INSTANCE,
+                SqlCompiler localCompiler = new SqlCompiler(localEngine, null, snapshotAgent);
+                SqlExecutionContextImpl localSqlExecutionContext = new SqlExecutionContextImpl(localEngine, 1)
+                         .with(AllowAllCairoSecurityContext.INSTANCE,
                                  new BindVariableServiceImpl(configuration),
                                  null,
                                  -1,
@@ -94,6 +93,14 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
                 TestUtils.assertSql(localCompiler, localSqlExecutionContext, "select * from table_writer_metrics()", new StringSink(), toExpectedTableContent(metricsWhenDisabled));
             }
         });
+    }
+
+    @Test
+    public void testCursor() throws Exception{
+        try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory();
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            assertCursor(toExpectedTableContent(snapshotMetrics()), false, true, true, false, cursor, factory.getMetadata(), false);
+        }
     }
 
     private void assertMetricsCursorEquals(MetricsSnapshot metricsSnapshot) throws Exception {
