@@ -46,6 +46,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
         testApplyOutOfOrder(100_000);
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void compareTables(String expected, String actual) throws SqlException {
         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expected, actual, LOG);
     }
@@ -91,6 +92,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
                 " from long_sequence(" + count1 + ")";
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void testApplyInOrder(int pointsMultiplier) throws Exception {
         assertMemoryLeak(() -> {
             long tsIncrement = 100 * 60 * 1_000_000L / pointsMultiplier;
@@ -141,6 +143,7 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void testApplyOutOfOrder(int pointsMultiplier) throws Exception {
         assertMemoryLeak(() -> {
             long tsIncrement = 100 * 60 * 1_000_000L / pointsMultiplier;
@@ -194,6 +197,6 @@ public class WriteApplyLogTest extends AbstractGriffinTest {
     }
 
     private void applyWal(TableWriter writer, Path walPath, int rowLo, int count1, boolean inOrder, long timestampLo, long timestampHi) {
-        writer.processWalCommit(walPath, "", inOrder, rowLo, count1, timestampLo, timestampHi, null);
+        writer.processWalCommit(walPath, -1L, inOrder, rowLo, count1, timestampLo, timestampHi, null);
     }
 }

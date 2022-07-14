@@ -71,12 +71,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             // before out of order partition update happens
             updatePartitionSizeByTimestamp(maxTimestamp, transientRowCount);
         }
-        recordStructureVersion++;
     }
 
     public void bumpStructureVersion(ObjList<? extends SymbolCountProvider> denseSymbolMapWriters) {
         recordStructureVersion++;
-        ++structureVersion;
+        structureVersion++;
         commit(CommitMode.NOSYNC, denseSymbolMapWriters);
     }
 
@@ -191,7 +190,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
-        recordStructureVersion++;
         this.minTimestamp = minTimestamp;
         this.maxTimestamp = maxTimestamp;
         finishPartitionSizeUpdate();
@@ -244,7 +242,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void openFirstPartition(long timestamp) {
         txPartitionCount = 1;
-        updateAttachedPartitionSizeByTimestamp(timestamp, 0, txn - 1);
+        updateAttachedPartitionSizeByTimestamp(timestamp, 0L, txn - 1);
     }
 
     public void removeAttachedPartitions(long timestamp) {
@@ -342,7 +340,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void updatePartitionSizeByIndex(int partitionIndex, long partitionTimestampLo, long rowCount) {
-        recordStructureVersion++;
         updateAttachedPartitionSizeByIndex(partitionIndex, partitionTimestampLo, rowCount, txn - 1);
     }
 
@@ -456,6 +453,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         } else if (extensionListener != null) {
             extensionListener.onTableExtended(partitionTimestamp);
         }
+        recordStructureVersion++;
         initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn, -1);
     }
 

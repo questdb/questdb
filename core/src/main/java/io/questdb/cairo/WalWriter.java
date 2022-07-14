@@ -119,6 +119,10 @@ public class WalWriter implements Closeable {
         }
     }
 
+    public long getSegment() {
+        return segmentId;
+    }
+
     public void setRollStrategy(WalWriterRollStrategy rollStrategy) {
         this.rollStrategy = rollStrategy;
     }

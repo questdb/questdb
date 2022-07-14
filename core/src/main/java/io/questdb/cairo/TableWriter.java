@@ -289,6 +289,7 @@ public class TableWriter implements Closeable {
             this.partitionCeilMethod = PartitionBy.getPartitionCeilMethod(partitionBy);
             if (PartitionBy.isPartitioned(partitionBy)) {
                 partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(partitionBy);
+                partitionTimestampHi = txWriter.getLastPartitionTimestamp();
             } else {
                 partitionDirFmt = null;
             }
@@ -1000,7 +1001,7 @@ public class TableWriter implements Closeable {
 
     public boolean processO3Append(
             Path walPath,
-            CharSequence segment,
+            long segmentId,
             int timestampIndex,
             boolean ordered,
             long rowLo,
@@ -1014,7 +1015,9 @@ public class TableWriter implements Closeable {
         final int columnCount = metadata.getColumnCount();
         ObjList<MemoryCR> mappedColumns = new ObjList<>(columnCount * 2);
         int walRootPathLen = walPath.length();
-        walPath.concat(segment);
+        if (segmentId > -1L) {
+            walPath.slash().put(segmentId);
+        }
         int walPathLen = walPath.length();
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -1124,7 +1127,7 @@ public class TableWriter implements Closeable {
 
     public void processWalCommit(
             Path walPath,
-            CharSequence segment,
+            long segmentId,
             boolean inOrder,
             long rowLo,
             long rowHi,
@@ -1132,7 +1135,12 @@ public class TableWriter implements Closeable {
             long o3TimestampMax,
             SymbolMapDiffCursor mapDiffCursor
     ) {
-        if (processO3Append(walPath, segment, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor)) {
+        if (inTransaction()) {
+            throw CairoException.instance(0).put("cannot process WAL while in transaction");
+        }
+
+        txWriter.beginPartitionSizeUpdate();
+        if (processO3Append(walPath, segmentId, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor)) {
             return;
         }
 
@@ -5172,7 +5180,7 @@ public class TableWriter implements Closeable {
         throw e;
     }
 
-    void setAppendPosition(final long position, boolean doubleAllocate) {
+    private void setAppendPosition(final long position, boolean doubleAllocate) {
         for (int i = 0; i < columnCount; i++) {
             // stop calculating oversize as soon as we find first over-sized column
             setColumnSize(i, position, doubleAllocate);

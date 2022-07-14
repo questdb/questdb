@@ -55,86 +55,9 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testReadAndWriteAllTypes() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "testTableAllTypes";
-            final String tableCopyName = tableName + "_copy";
-            createTableAndCopy(tableName, tableCopyName);
-
-            final int rowsToInsertTotal = 100;
-            final long tsIncrement = 1000;
-            long ts = Os.currentTimeMicros();
-
-            Rnd rnd = new Rnd();
-            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts, rnd, walWriter, true);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
-            }
-        });
-    }
-
-    @Test
-    public void testReadAndWriteFrom2WallsInOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "testTableAllTypes";
-            final String tableCopyName = tableName + "_copy";
-            createTableAndCopy(tableName, tableCopyName);
-
-            final int rowsToInsertTotal = 100;
-            final long tsIncrement = 1000;
-            long ts = Os.currentTimeMicros();
-
-            Rnd rnd = new Rnd();
-            try (
-                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
-                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
-            ) {
-
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts, rnd, walWriter1, true);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
-
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts + rowsToInsertTotal * tsIncrement, rnd, walWriter2, true);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
-            }
-        });
-    }
-
-    @Test
-    public void testReadAndWriteFrom2WallsOutOfOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "testTableAllTypes";
-            final String tableCopyName = tableName + "_copy";
-            createTableAndCopy(tableName, tableCopyName);
-
-            final int rowsToInsertTotal = 100;
-            final long tsIncrement = 1000;
-            long ts = Os.currentTimeMicros();
-
-            Rnd rnd = new Rnd();
-            try (
-                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
-                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
-            ) {
-
-                long start = ts;
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, start, rnd, walWriter1, false);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
-
-                start = ts + rowsToInsertTotal * tsIncrement;
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, 2 * rowsToInsertTotal, tsIncrement, start, rnd, walWriter2, false);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
-
-                start = ts + 3 * rowsToInsertTotal * tsIncrement;
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowsToInsertTotal, tsIncrement, start, rnd, walWriter1, false);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
-            }
-        });
-    }
-
-    @Test
     public void testPartitionOverflowAppend() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = "testTableAllTypes";
+            final String tableName = testName.getMethodName();
             final String tableCopyName = tableName + "_copy";
             createTableAndCopy(tableName, tableCopyName);
 
@@ -142,20 +65,19 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             long ts = IntervalUtils.parseFloorPartialDate("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
-
-            Rnd rnd = new Rnd(265199847250666L, 1657725097300L);
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
                     WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
             ) {
 
                 long start = ts;
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
 
                 start += rowCount * tsIncrement + 1;
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
+                addRowsToWalAndApplyToTable(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
@@ -164,7 +86,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     @Test
     public void testPartitionOverflowMerge() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = "testTableAllTypes";
+            final String tableName = testName.getMethodName();
             final String tableCopyName = tableName + "_copy";
             createTableAndCopy(tableName, tableCopyName);
 
@@ -172,20 +94,19 @@ public class WalTableWriterTest extends AbstractGriffinTest {
             long ts = IntervalUtils.parseFloorPartialDate("2022-07-14T00:00:00");
             int rowCount = (int) (Files.PAGE_SIZE / 32);
             ts += (Timestamps.SECOND_MICROS * (60 * 60 - rowCount - 10));
-
-            Rnd rnd = new Rnd(265199847250666L, 1657725097300L);
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
                     WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
             ) {
 
                 long start = ts;
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
 
                 start += rowCount * tsIncrement - 2 * Timestamps.SECOND_MICROS;
-                addRowsToWalAndApplyToTable(tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
+                addRowsToWalAndApplyToTable(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
         });
@@ -194,12 +115,13 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     @Test
     public void testRandomInOutOfOrderMultipleWalInserts() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = "testTableAllTypes";
+            final String tableName = testName.getMethodName();
             final String tableCopyName = tableName + "_copy";
             createTableAndCopy(tableName, tableCopyName);
 
             long tsIncrement;
-            long ts = Os.currentTimeMicros();
+            long now = Os.currentTimeMicros();
+            LOG.info().$("now :").$(now).$();
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             try (
@@ -208,12 +130,12 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                     WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
             ) {
 
-                long start = ts;
-                WalWriter[] writers = new WalWriter[]{ walWriter1, walWriter2, walWriter3 };
+                long start = now;
+                WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3, null};
 
-                for(int i = 0; i < 5; i++) {
+                for (int i = 0; i < 5; i++) {
                     boolean inOrder = rnd.nextBoolean();
-                    int walIndex = rnd.nextInt(3);
+                    int walIndex = rnd.nextInt(writers.length);
                     WalWriter walWriter = writers[walIndex];
                     int rowCount = rnd.nextInt(1000) + 2;
                     tsIncrement = rnd.nextLong(Timestamps.MINUTE_MICROS);
@@ -226,7 +148,7 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                             .$(" tsIncrement: ").$(tsIncrement)
                             .I$();
 
-                    addRowsToWalAndApplyToTable(tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, inOrder);
+                    addRowsToWalAndApplyToTable(i, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, inOrder);
 
                     LOG.info().$("verifying wall [").$("iteration:").$(i).I$();
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -237,7 +159,147 @@ public class WalTableWriterTest extends AbstractGriffinTest {
         });
     }
 
-    private void addRowRwAllTypes(TableWriter.Row row, int i, CharSequence symbol) {
+    @Test
+    public void testRandomInOutOfOrderOverlappingInserts() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement;
+            long now = Os.currentTimeMicros();
+            LOG.info().$("now :").$(now).$();
+            long ts = 1657816077895390L;//now;
+            Rnd rnd = new Rnd(300984185140125L, 1657816077895L);// TestUtils.generateRandom(LOG);
+
+            int releaseWriterSeed = 3;
+            int overlapSeed = 3;
+
+            try (
+                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                    WalWriter walWriter3 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+
+                long start = ts;
+                WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3, null};
+
+                for (int i = 0; i < 20; i++) {
+                    boolean inOrder = rnd.nextBoolean();
+                    int walIndex = rnd.nextInt(writers.length);
+                    WalWriter walWriter = writers[walIndex];
+                    int rowCount = rnd.nextInt(10000) + 1;
+                    int partitions = rnd.nextInt(3) + 1;
+                    tsIncrement = partitions * Timestamps.HOUR_MICROS / rowCount;
+                    long tsOffset = rnd.nextLong(2 * Timestamps.HOUR_MICROS);
+                    int sign = rnd.nextInt(overlapSeed);
+                    tsOffset *= sign == 0 ? -1 : 1;
+                    start += tsOffset;
+
+                    LOG.infoW().$("generating wall [")
+                            .$("iteration:").$(i)
+                            .$(", walIndex: ").$(walIndex)
+                            .$(", inOrder: ").$(inOrder)
+                            .$(" rowCount: ").$(rowCount)
+                            .$(", tsIncrement: ").$(tsIncrement)
+                            .$(", tsOffset: ").$(tsOffset)
+                            .I$();
+
+                    if (rnd.nextInt(releaseWriterSeed) == 0) {
+                        // Close writer
+                        LOG.info().$("=== releasing writers ===").$();
+                        engine.releaseInactive();
+                    }
+
+                    addRowsToWalAndApplyToTable(i, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, inOrder);
+
+                    LOG.info().$("verifying wall [").$("iteration:").$(i).I$();
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                    start += rowCount * tsIncrement + 1;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReadAndWriteAllTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            final int rowsToInsertTotal = 100;
+            final long tsIncrement = 1000;
+            long ts = Os.currentTimeMicros();
+
+            Rnd rnd = new Rnd();
+            try (WalWriter walWriter = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts, rnd, walWriter, true);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testReadAndWriteFrom2WallsInOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            final int rowsToInsertTotal = 100;
+            final long tsIncrement = 1000;
+            long ts = Os.currentTimeMicros();
+
+            Rnd rnd = new Rnd();
+            try (
+                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts, rnd, walWriter1, true);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                addRowsToWalAndApplyToTable(1, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts + rowsToInsertTotal * tsIncrement, rnd, walWriter2, true);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testReadAndWriteFrom2WallsOutOfOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            createTableAndCopy(tableName, tableCopyName);
+
+            final int rowsToInsertTotal = 100;
+            final long tsIncrement = 1000;
+            long ts = Os.currentTimeMicros();
+
+            Rnd rnd = new Rnd();
+            try (
+                    WalWriter walWriter1 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName);
+                    WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
+            ) {
+
+                long start = ts;
+                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, start, rnd, walWriter1, false);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                start = ts + rowsToInsertTotal * tsIncrement;
+                addRowsToWalAndApplyToTable(1, tableName, tableCopyName, 2 * rowsToInsertTotal, tsIncrement, start, rnd, walWriter2, false);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                start = ts + 3 * rowsToInsertTotal * tsIncrement;
+                addRowsToWalAndApplyToTable(2, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, start, rnd, walWriter1, false);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+            }
+        });
+    }
+
+    private void addRowRwAllTypes(int iteration, TableWriter.Row row, int i, CharSequence symbol, String rndStr) {
         int col = 0;
         row.putInt(col++, i);
         row.putByte(col++, (byte) i);
@@ -245,12 +307,12 @@ public class WalTableWriterTest extends AbstractGriffinTest {
         row.putLong256(col++, i, i + 1, i + 2, i + 3);
         row.putDouble(col++, i + .5);
         row.putFloat(col++, i + .5f);
-        row.putShort(col++, (short) i);
+        row.putShort(col++, (short) iteration);
         row.putTimestamp(col++, i);
         row.putChar(col++, (char) (65 + i % 26));
         row.putBool(col++, i % 2 == 0);
         row.putDate(col++, i);
-        row.putStr(col++, String.valueOf(i));
+        row.putStr(col++, rndStr);
         row.putGeoHash(col++, i); // geo byte
         row.putGeoHash(col++, i); // geo int
         row.putGeoHash(col++, i); // geo short
@@ -261,11 +323,11 @@ public class WalTableWriterTest extends AbstractGriffinTest {
     }
 
     @SuppressWarnings("SameParameterValue")
-    private void addRowsToWalAndApplyToTable(String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
+    private void addRowsToWalAndApplyToTable(int iteration, String tableName, String tableCopyName, int rowsToInsertTotal, long tsIncrement, long startTs, Rnd rnd, WalWriter walWriter, boolean inOrder) {
         try (
-                TableWriter copyWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableCopyName, "test")
+                TableWriter copyWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableCopyName, "test");
+                TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply wal")
         ) {
-            assertEquals(tableName, walWriter.getTableName());
             if (!inOrder) {
                 startTs += (rowsToInsertTotal - 1) * tsIncrement;
                 tsIncrement = -tsIncrement;
@@ -273,41 +335,54 @@ public class WalTableWriterTest extends AbstractGriffinTest {
 
             for (int i = 0; i < rowsToInsertTotal; i++) {
                 String symbol = rnd.nextInt(10) == 5 ? null : rnd.nextString(rnd.nextInt(9) + 1);
-                addRowRwAllTypes(walWriter.newRow(startTs), i, symbol);
-                addRowRwAllTypes(copyWriter.newRow(startTs), i, symbol);
+                String rndStr = rnd.nextInt(10) == 5 ? null : rnd.nextString(20);
+
+                long rowTs = startTs;
+//                if (!inOrder && i > 3 && i < rowsToInsertTotal - 3) {
+//                    // Add jitter to the timestamps to randomise things even more.
+//                    rowTs += rnd.nextLong(2 * tsIncrement);
+//                }
+
+                TableWriter.Row walRow = walWriter != null ? walWriter.newRow(rowTs) : tableWriter.newRow(startTs);
+                addRowRwAllTypes(iteration, walRow, i, symbol, rndStr);
+                addRowRwAllTypes(iteration, copyWriter.newRow(rowTs), i, symbol, rndStr);
                 startTs += tsIncrement;
             }
 
             copyWriter.commit();
-            walWriter.commit();
+            if (walWriter != null) {
+                walWriter.commit();
 
-            assertEquals("WalWriter{name=" + tableName + "}", walWriter.toString());
 
-            try (
-                    TableWriter tableWriter = engine.getWriter(sqlExecutionContext.getCairoSecurityContext(), tableName, "apply wal");
-                    Path path = new Path();
-                    WalReaderEvents wre = new WalReaderEvents(configuration.getFilesFacade())
-            ) {
-                path.of(configuration.getRoot()).concat(tableWriter.getTableName()).concat(walWriter.getWalName());
-                WalEventCursor waleCursor = wre.of(path, path.length(), 0, WalWriter.WAL_FORMAT_VERSION);
+                assertEquals("WalWriter{name=" + tableName + "}", walWriter.toString());
 
-                while(waleCursor.tryHasNext()) {
-                    Assert.assertTrue(waleCursor.hasNext());
+                try (
+                        Path path = new Path();
+                        WalReaderEvents wre = new WalReaderEvents(configuration.getFilesFacade())
+                ) {
+                    path.of(configuration.getRoot()).concat(tableWriter.getTableName()).concat(walWriter.getWalName());
+                    WalEventCursor waleCursor = wre.of(path, path.length(), 0, WalWriter.WAL_FORMAT_VERSION);
+
+                    while (waleCursor.tryHasNext()) {
+                        Assert.assertTrue(waleCursor.hasNext());
+                    }
+
+                    WalEventCursor.DataInfo dataInfo = waleCursor.getDataInfo();
+                    Assert.assertEquals(inOrder, !dataInfo.isOutOfOrder());
+
+                    tableWriter.processWalCommit(
+                            path,
+                            walWriter.getSegment(),
+                            !dataInfo.isOutOfOrder(),
+                            dataInfo.getStartRowID(),
+                            dataInfo.getEndRowID(),
+                            dataInfo.getMinTimestamp(),
+                            dataInfo.getMaxTimestamp() + 1,
+                            dataInfo
+                    );
                 }
-
-                WalEventCursor.DataInfo dataInfo = waleCursor.getDataInfo();
-                Assert.assertEquals(inOrder, !dataInfo.isOutOfOrder());
-
-                tableWriter.processWalCommit(
-                        path,
-                        "0",
-                        !dataInfo.isOutOfOrder(),
-                        dataInfo.getStartRowID(),
-                        dataInfo.getEndRowID(),
-                        dataInfo.getMinTimestamp(),
-                        dataInfo.getMaxTimestamp() + 1,
-                        dataInfo
-                );
+            } else {
+                tableWriter.commit();
             }
         }
     }
