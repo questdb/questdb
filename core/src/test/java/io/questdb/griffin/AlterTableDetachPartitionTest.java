@@ -287,6 +287,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         tableName
                 );
 
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertContent(expected, tableName);
             }
@@ -317,6 +319,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         .$();
                 Assert.assertTrue(Files.remove(path));
 
+                engine.releaseAllWriters();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertContent(
                         "ts\ti\tl\n" +
@@ -808,6 +811,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Assert.assertTrue(Files.rename(other, path));
 
                 // reattach old version
+                engine.releaseAllWriters();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 assertContent(
@@ -938,6 +942,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 // detach partitions and override detached metadata with broken metadata
+                engine.releaseAllWriters();
                 compile(
                         "ALTER TABLE " + brokenTableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
                         sqlExecutionContext
@@ -962,6 +967,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Assert.assertTrue(Files.copy(other, path) >= 0);
 
                 // attempt to reattach
+                engine.releaseAllWriters();
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
                         expectedErrorMessage
@@ -971,8 +977,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     private static void assertContent(String expected, String tableName) throws Exception {
-        engine.releaseAllWriters();
         engine.releaseAllReaders();
+        engine.releaseAllWriters();
         assertQuery(expected, tableName, null, "ts", true, false, true);
     }
 
