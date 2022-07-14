@@ -34,10 +34,7 @@ import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Rnd;
-import io.questdb.std.RostiAllocFacade;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -73,6 +70,7 @@ public class AbstractCairoTest {
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
     protected static int sqlCopyBufferSize = 1024 * 1024;
+    protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
     protected static FilesFacade ff;
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
@@ -328,7 +326,7 @@ public class AbstractCairoTest {
 
             @Override
             public RostiAllocFacade getRostiAllocFacade() {
-                return rostiAllocFacade != null? rostiAllocFacade : super.getRostiAllocFacade();
+                return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
             }
         };
         engine = new CairoEngine(configuration, metrics);
@@ -385,7 +383,8 @@ public class AbstractCairoTest {
         columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
-        sqlCopyBufferSize = 1024*1024;
+        sqlCopyBufferSize = 1024 * 1024;
+        ioURingFacade = IOURingFacadeImpl.INSTANCE;
     }
 
     protected static void configureForBackups() throws IOException {

@@ -594,9 +594,10 @@ public class TextImportTask {
             assert submitted == cc;
 
             long nextCqe = sqeMin;
-            int writtenMax = -1;
+            int writtenMax = 0;
             // consume submitted tasks
             for (int j = 0; j < submitted; j++) {
+
                 while (!ring.nextCqe()) {
                     Os.pause();
                 }
@@ -610,13 +611,13 @@ public class TextImportTask {
                 if (ring.getCqeId() == nextCqe) {
                     // only parse lines in order of submissions
                     nextCqe++;
-                    writtenMax = j;
-                    parseLineAndWrite(lexer, fileBufAddr, offsets, j);
+                    parseLineAndWrite(lexer, fileBufAddr, offsets, writtenMax);
+                    writtenMax++;
                 }
             }
 
             // if reads came out of order, the writtenMax + 1 should be less than submitted
-            for (int j = writtenMax + 1; j < submitted; j++) {
+            for (int j = writtenMax; j < submitted; j++) {
                 parseLineAndWrite(lexer, fileBufAddr, offsets, j);
             }
         }
@@ -1004,7 +1005,7 @@ public class TextImportTask {
                             try {
                                 size = ff.length(fd);
                                 if (size < 1) {
-                                    throw TextException.$("Index chunk is empty [path='").put(partitionPath).put(']');
+                                    throw TextException.$("index chunk is empty [path='").put(partitionPath).put(']');
                                 }
                                 address = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_PARALLEL_IMPORT);
                                 mergeIndexes.add(address);
