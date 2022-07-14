@@ -31,7 +31,7 @@ import java.io.Closeable;
 
 import static io.questdb.std.IOUringAccessor.*;
 
-public final class IOURingImpl implements IOURing {
+public class IOURingImpl implements IOURing {
 
     private final long ringPtr;
     private final int ringFd;

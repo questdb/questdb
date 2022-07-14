@@ -26,8 +26,9 @@ package io.questdb.std;
 
 import io.questdb.cairo.BinarySearch;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.TestOnly;
 
-import java.util.Arrays;
+import java.util.*;
 
 public class LongList implements Mutable, LongVec {
     private static final int DEFAULT_ARRAY_SIZE = 16;
@@ -187,6 +188,29 @@ public class LongList implements Mutable, LongVec {
                 scanUpBlock(shl, value, low, high + 1) :
                 scanDownBlock(shl, value, low, high + 1);
     }
+
+    @TestOnly
+    public void shuffle(Rnd rnd, int sh) {
+        // sh is a power of 2 to indicate number of
+        // values stored per virtual "slot". E.g. if
+        // we store two values at a time, we want to shuffle pairs
+        int size = size() >> sh;
+        for (int i = size; i > 1; i--) {
+            swap(i - 1, rnd.nextInt(i), sh);
+        }
+    }
+
+    public void swap(int i, int j, int shl) {
+        int k = 1 << shl;
+        for (int k1 = 0; k1 < k; k1++) {
+            final int ii = (i << shl) + k1;
+            final int ji = (j << shl) + k1;
+            final long jv = getQuick(ji);
+            setQuick(ji, getQuick(ii));
+            setQuick(ii, jv);
+        }
+    }
+
 
     public void clear() {
         pos = 0;
