@@ -86,6 +86,7 @@ public final class TableWriterMetricsRecordCursorFactory extends AbstractRecordC
 
         public void of(Metrics metrics) {
             TableWriterMetrics tableWriterMetrics = metrics.tableWriter();
+            recordEmitted = false;
             if (metrics.isEnabled()) {
                 totalCommits = tableWriterMetrics.getCommitCount();
                 o3commits = tableWriterMetrics.getO3CommitCount();

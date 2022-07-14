@@ -38,7 +38,6 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 import java.util.Objects;
@@ -91,6 +90,20 @@ public class TableWriterMetricsRecordCursorFactoryTest extends AbstractGriffinTe
                                  null)) {
                 MetricsSnapshot metricsWhenDisabled = new MetricsSnapshot(-1, -1, -1, -1, -1);
                 TestUtils.assertSql(localCompiler, localSqlExecutionContext, "select * from table_writer_metrics()", new StringSink(), toExpectedTableContent(metricsWhenDisabled));
+            }
+        });
+    }
+
+    @Test
+    public void testOneFactoryToMultipleCursors() throws Exception {
+        int cursorCount = 10;
+        assertMemoryLeak(() -> {
+            try (TableWriterMetricsRecordCursorFactory factory = new TableWriterMetricsRecordCursorFactory()) {
+                for (int i = 0; i < cursorCount; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        assertCursor(toExpectedTableContent(snapshotMetrics()), false, true, true, false, cursor, factory.getMetadata(), false);
+                    }
+                }
             }
         });
     }
