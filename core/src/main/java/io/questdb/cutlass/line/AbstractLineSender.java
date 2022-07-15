@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line;
 
 import io.questdb.cairo.TableUtils;
+import io.questdb.client.Sender;
 import io.questdb.cutlass.line.tcp.AuthDb;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
