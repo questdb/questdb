@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.client;
 
+import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.tcp.AbstractLineTcpReceiverTest;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.test.tools.TestUtils;
