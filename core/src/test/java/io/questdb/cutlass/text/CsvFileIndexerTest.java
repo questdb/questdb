@@ -32,6 +32,7 @@ import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectCharSink;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Before;
@@ -39,6 +40,9 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.CoreMatchers.*;
 
 import static io.questdb.cutlass.text.ParallelCsvFileImporterTest.*;
 
@@ -98,11 +102,66 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
                 chunk("2022-05-11/0_2", 1652269920001000L, 185));
     }
 
+    @Test
+    public void testIndexFileFailsWhenItCantCreatePartitionDirectory() {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
+            final String partition = "2022-05-10" + File.separator;
+
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.endsWith(path, partition)) {
+                    return false;
+                }
+                return super.exists(path);
+            }
+
+            @Override
+            public int mkdir(Path path, int mode) {
+                if (Chars.endsWith(path, partition)) {
+                    return -1;
+                }
+                return super.mkdir(path, mode);
+            }
+        };
+
+        assertFailureFor(ff, "test-quotes-small.csv", 1, "Couldn't create partition dir ");
+    }
+
+    @Test
+    public void testIndexFileFailsWhenIndexFileAlreadyExists() {
+        FilesFacadeImpl ff = new FilesFacadeImpl() {
+            final String partition = "2022-05-10" + File.separator + "0_1";
+
+            @Override
+            public boolean exists(LPSZ path) {
+                if (Chars.endsWith(path, partition)) {
+                    return true;
+                }
+                return super.exists(path);
+            }
+        };
+
+        assertFailureFor(ff, "test-quotes-small.csv", 1, "index file already exists");
+    }
+
+    public void assertFailureFor(FilesFacade ff, String fileName, int timestampIndex, String errorMessage) {
+        try {
+            assertChunksFor(ff, fileName, 10, timestampIndex, 16);
+            Assert.fail();
+        } catch (Exception e) {
+            assertThat(e.getMessage(), containsString(errorMessage));
+        }
+    }
+
     private void assertChunksFor(String fileName, long bufSize, int timestampIndex, IndexChunk... chunks) throws Exception {
         assertChunksFor(fileName, bufSize, timestampIndex, -1, chunks);
     }
 
     private void assertChunksFor(String fileName, long bufSize, int timestampIndex, int chunkSize, IndexChunk... chunks) throws Exception {
+        assertChunksFor(FilesFacadeImpl.INSTANCE, fileName, bufSize, timestampIndex, chunkSize, chunks);
+    }
+
+    private void assertChunksFor(FilesFacade ff2, String fileName, long bufSize, int timestampIndex, int chunkSize, IndexChunk... chunks) throws Exception {
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
         assertMemoryLeak(() -> {
             long bufAddr = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
@@ -114,6 +173,11 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
                         return chunkSize;
                     }
                     return super.getMaxImportIndexChunkSize();
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    return ff2 != null ? ff2 : ff;
                 }
             };
 

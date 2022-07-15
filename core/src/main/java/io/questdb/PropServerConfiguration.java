@@ -997,7 +997,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    boolean pathEquals(PropertyKey key, String p1, String p2) throws ServerConfigurationException {
+    boolean pathEquals(PropertyKey key, String p1, String p2) {
         try {
             if (p1 == null || p2 == null) {
                 return false;
@@ -1006,7 +1006,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             return new File(p1).getCanonicalPath().replace(File.separatorChar, '/')
                     .equals(new File(p2).getCanonicalPath().replace(File.separatorChar, '/'));
         } catch (IOException e) {
-            throw new ServerConfigurationException("Can't validate configuration property [key=" + key.getPropertyPath() + ",value=" + p2 + "]");
+            log.info().$("Can't validate configuration property [key=").$(key.getPropertyPath())
+                    .$(", value=").$(p2).$("]");
+            return false;
         }
     }
 

@@ -372,10 +372,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void attachPartitions(TableWriter writer) throws TextImportException {
-        if (partitions.size() == 0) {
-            throw TextImportException.instance(TextImportTask.PHASE_ATTACH_PARTITIONS,"No partitions to attach found");
-        }
-
         phasePrologue(TextImportTask.PHASE_ATTACH_PARTITIONS);
 
         for (int i = 0, sz = partitions.size(); i < sz; i++) {
@@ -509,7 +505,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         LongList rows = stage.getImportedRows();
 
         for (int i = 0, n = rows.size(); i < n; i += 2) {
-            partitions.get((int) rows.get(i)).importedRows = rows.get(i + 1);//partition will be ignored in later stages
+            partitions.get((int) rows.get(i)).importedRows = rows.get(i + 1);
         }
     }
 
@@ -1029,17 +1025,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     writer = openWriterAndOverrideImportMetadata(names, types, cairoSecurityContext, typeManager);
 
                     if (writer.getRowCount() > 0) {
-                        throw CairoException.instance(0).put("target table must be empty [table=").put(tableName).put(']');
+                        throw TextException.$("target table must be empty [table=").put(tableName).put(']');
                     }
 
                     CharSequence designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                     int designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                     if (PartitionBy.isPartitioned(partitionBy) && partitionBy != writer.getPartitionBy()) {
-                        throw CairoException.instance(-1).put("declared partition by unit doesn't match table's");
+                        throw TextException.$("declared partition by unit doesn't match table's");
                     }
                     partitionBy = writer.getPartitionBy();
                     if (!PartitionBy.isPartitioned(partitionBy)) {
-                        throw CairoException.instance(-1).put("target table is not partitioned");
+                        throw TextException.$("target table is not partitioned");
                     }
                     validate(names, types, designatedTimestampColumnName, designatedTimestampIndex);
                     targetTableStructure.of(tableName, names, types, timestampIndex, partitionBy);
@@ -1194,7 +1190,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 throw TextException.$("cannot remove work dir because it points to one of main instance directories [path='").put(workDirPath).put("'] .");
             }
 
-            LOG.info().$("removing import directory path='").$(workDirPath).$("'").$();
+            LOG.info().$("removing import directory [path='").$(workDirPath).$("']").$();
 
             int errno = ff.rmdir(workDirPath);
             if (errno != 0) {
@@ -1306,7 +1302,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         } else if (timestampColumn != null) {
             timestampIndex = names.indexOf(timestampColumn);
             if (timestampIndex == NO_INDEX) {
-                throw TextException.$("invalid timestamp column '").put(timestampColumn).put('\'');
+                throw TextException.$("invalid timestamp column [name='").put(timestampColumn).put("']");
             }
         } else {
             timestampIndex = names.indexOf(designatedTimestampColumnName);
@@ -1320,8 +1316,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final TypeAdapter timestampAdapter = types.getQuick(timestampIndex);
             final int typeTag = ColumnType.tagOf(timestampAdapter.getType());
             if ((typeTag != ColumnType.LONG && typeTag != ColumnType.TIMESTAMP) || timestampAdapter == BadTimestampAdapter.INSTANCE) {
-                throw TextException.$("column no=").put(timestampIndex)
-                        .put(", name='").put(timestampColumn).put("' is not a timestamp");
+                throw TextException.$("column is not a timestamp [no=").put(timestampIndex)
+                        .put(", name='").put(timestampColumn).put("']");
             }
         }
     }

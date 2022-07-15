@@ -1439,7 +1439,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportWithSkipRowAtomicityImportsNoRowsWhenNonTimestampColumnCantBeParsed() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab ( ts timestamp, line symbol, description double, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            compiler.compile("create table tab ( ts timestamp, line symbol, description double, d double, s symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount(), null)) {
                 indexer.of("tab", "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, Atomicity.SKIP_ROW);
@@ -1862,7 +1862,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileWithoutHeader() throws Exception {
-        testImportThrowsException("test-quotes-oneline.csv", PartitionBy.MONTH, "ts", null, "column no=1, name='ts' is not a timestamp");
+        testImportThrowsException("test-quotes-oneline.csv", PartitionBy.MONTH, "ts", null, "column is not a timestamp [no=1, name='ts']");
     }
 
     @Test
@@ -1957,6 +1957,22 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
             } catch (Exception e) {
                 assertThat(e.getMessage(), containsString("cannot import text into BINARY column [index=3]"));
+            }
+        });
+    }
+
+    @Test
+    public void testImportFileFailsWhenTimestampColumnIsMissingInInputFile() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            inputRoot = new File("./src/test/resources/csv/").getAbsolutePath();
+
+            compiler.compile("create table tab ( tstmp timestamp, line string, d double, description string ) timestamp(tstmp) partition by day;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount(), null)) {
+                indexer.of("tab", "test-quotes-big.csv", PartitionBy.DAY, (byte) ',', "ts", null, true);
+                indexer.process();
+            } catch (Exception e) {
+                assertThat(e.getMessage(), containsString("invalid timestamp column [name='ts']"));
             }
         });
     }
@@ -2070,7 +2086,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportFileWithHeaderButWrongTypeOfTimestampColumn() throws Exception {
-        testImportThrowsException("test-quotes-big.csv", PartitionBy.MONTH, "d", null, "column no=2, name='d' is not a timestamp");
+        testImportThrowsException("test-quotes-big.csv", PartitionBy.MONTH, "d", null, "column is not a timestamp [no=2, name='d']");
     }
 
     @Test
@@ -2105,7 +2121,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertEquals("[-1] declared partition by unit doesn't match table's", e.getMessage());
+                Assert.assertEquals("declared partition by unit doesn't match table's", e.getMessage());
             }
         });
     }
@@ -2119,7 +2135,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertEquals("[-1] target table is not partitioned", e.getMessage());
+                Assert.assertEquals("target table is not partitioned", e.getMessage());
             }
         });
     }
@@ -2133,7 +2149,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertEquals("[-1] target table is not partitioned", e.getMessage());
+                Assert.assertEquals("target table is not partitioned", e.getMessage());
             }
         });
     }
@@ -2203,7 +2219,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
-                TestUtils.assertEquals("[0] target table must be empty [table=t]", e.getFlyweightMessage());
+                TestUtils.assertEquals("target table must be empty [table=t]", e.getFlyweightMessage());
             }
         });
     }
@@ -2217,7 +2233,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
-                Assert.assertEquals("column no=0, name='' is not a timestamp", e.getMessage());
+                Assert.assertEquals("column is not a timestamp [no=0, name='']", e.getMessage());
             }
         });
     }
@@ -2463,6 +2479,23 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                             "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
                             "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
                     "select line, ts, d, description from " + tableName + " limit -10",
+                    "ts", true, false, true);
+        });
+    }
+
+    @Test
+    public void testImportFileSkipsLinesLongerThan65kChars() throws Exception {
+        executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table tab ( ts timestamp, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+
+            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount(), null)) {
+                indexer.setMinChunkSize(10);
+                indexer.of("tab", "test-row-over-65k.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSZ", true);
+                indexer.process();
+            }
+            assertQuery("ts\tdescription\n" +
+                            "2022-05-11T11:52:00.000000Z\tb\n",
+                    "select * from tab",
                     "ts", true, false, true);
         });
     }

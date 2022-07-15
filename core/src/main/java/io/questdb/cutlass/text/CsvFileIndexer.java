@@ -196,7 +196,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
         long lineStartOffset = lastLineStart;
         long length = offset + ptr - lo - lastLineStart;
         if (length >= (1L << 16)) {
-            throw TextException.$("Row exceeds maximum length for parallel import ").put(1 << 16);
+            LOG.error().$("row exceeds maximum line length (65k) for parallel import [line=").$(lineCount)
+                    .$(", length=").$(length).I$();
+            errorCount++;
+            return;
         }
 
         //second long stores: 
@@ -264,7 +267,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             if (ff.exists(path)) {
                 throw TextException.$("index file already exists [path=").put(path).put(']');
             } else {
-                LOG.debug().$("created import index file ").$(path).$();
+                LOG.debug().$("created import index file [path='").$(path).$("']").$();
             }
 
             this.memory.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
@@ -298,7 +301,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         if (!ff.exists(path)) {
             int result = ff.mkdir(path, dirMode);
             if (result != 0 && !ff.exists(path)) {//ignore because other worker might've created it 
-                LOG.error().$("Couldn't create partition dir=").$(path).$();
+                throw TextException.$("Couldn't create partition dir [path='").put(path).put("']");
             }
         }
 
