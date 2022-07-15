@@ -98,6 +98,7 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<TextImportRequestTask> textImportRequestProcessingQueue;
     private final SPSequence textImportRequestProcessingPubSeq;
     private final SCSequence textImportRequestProcessingSubSeq;
+    private final SCSequence textImportRequestProcessingComplSeq;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -204,7 +205,8 @@ public class MessageBusImpl implements MessageBus {
         this.textImportRequestProcessingQueue = new RingQueue<>(TextImportRequestTask::new, 1);
         this.textImportRequestProcessingPubSeq = new SPSequence(textImportRequestProcessingQueue.getCycle());
         this.textImportRequestProcessingSubSeq = new SCSequence();
-        textImportRequestProcessingPubSeq.then(textImportRequestProcessingSubSeq).then(textImportRequestProcessingPubSeq);
+        this.textImportRequestProcessingComplSeq = new SCSequence();
+        textImportRequestProcessingPubSeq.then(textImportRequestProcessingSubSeq).then(textImportRequestProcessingComplSeq).then(textImportRequestProcessingPubSeq);
     }
 
     @Override
@@ -452,6 +454,11 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getTextImportRequestProcessingSubSeq() {
         return textImportRequestProcessingSubSeq;
+    }
+
+    @Override
+    public Sequence getTextImportRequestProcessingComplSeq() {
+        return textImportRequestProcessingComplSeq;
     }
 
     @Override

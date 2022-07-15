@@ -131,6 +131,8 @@ public interface MessageBus extends Closeable {
 
     Sequence getTextImportRequestProcessingSubSeq();
 
+    Sequence getTextImportRequestProcessingComplSeq();
+
     FanOut getTextImportResponseFanOut();
 
 }

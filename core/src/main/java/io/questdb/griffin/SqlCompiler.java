@@ -2021,8 +2021,17 @@ public class SqlCompiler implements Closeable {
                 TextImportRequestTask task = textImportRequestQueue.get(seq);
                 if (task.getCorrelationId() == correlationId) {
                     statusReceived = true;
-                    if (task.getStatus() == TextImportTask.STATUS_FAILED) {
-                        throw SqlException.$(0, "Parallel import request rejected.");
+                    byte status = task.getStatus();
+                    if (status != TextImportRequestTask.STATUS_ACK) {
+                        if (task.isCancel()) {
+                            if (status == TextImportRequestTask.STATUS_REJ_ACTIVE_CANCEL) {
+                                throw SqlException.$(0, "Another cancel request is in progress.");
+                            } else {
+                                throw SqlException.$(0, "There is no active import to cancel.");
+                            }
+                        } else {
+                            throw SqlException.$(0, "Another import request is in progress.");
+                        }
                     }
                 }
             } finally {

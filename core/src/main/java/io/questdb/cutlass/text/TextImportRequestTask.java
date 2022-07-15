@@ -30,6 +30,10 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class TextImportRequestTask implements Mutable {
+    public static final byte STATUS_ACK = 0;
+    public static final byte STATUS_REJ = 1;
+    public static final byte STATUS_REJ_ACTIVE_CANCEL = 3;
+
     private static final AtomicLong taskCorrelationIdGen = new AtomicLong();
 
     private String tableName;

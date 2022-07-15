@@ -280,6 +280,11 @@ public class MessageBusStub implements MessageBus {
     }
 
     @Override
+    public Sequence getTextImportRequestProcessingComplSeq() {
+        return null;
+    }
+
+    @Override
     public FanOut getTextImportResponseFanOut() {
         return null;
     }

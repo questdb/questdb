@@ -506,7 +506,7 @@ public class CopyTest extends AbstractGriffinTest {
                 compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Parallel import request rejected"));
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Another import request is in progress"));
             }
             try {
                 compiler.compile("copy x cancel", sqlExecutionContext);

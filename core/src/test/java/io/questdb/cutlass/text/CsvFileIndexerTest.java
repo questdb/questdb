@@ -186,7 +186,7 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
 
                 long length = ff.length(Path.getThreadLocal(inputRoot).concat(fileName).$());
 
-                indexer.of(fileName, inputWorkRoot, 0, PartitionBy.DAY, (byte) ',', timestampIndex, getAdapter("yyyy-MM-ddTHH:mm:ss.SSSZ", sink), true, Atomicity.SKIP_COL);
+                indexer.of(fileName, inputWorkRoot, 0, PartitionBy.DAY, (byte) ',', timestampIndex, getAdapter("yyyy-MM-ddTHH:mm:ss.SSSZ", sink), true, Atomicity.SKIP_COL, null);
                 indexer.index(0, length, 0, new LongList(), bufAddr, bufSize);
                 indexer.parseLast();
 

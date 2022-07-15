@@ -28,14 +28,17 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
+import org.jetbrains.annotations.Nullable;
 
 public class TextImportRequestCollectingJob extends SynchronizedJob {
     private final RingQueue<TextImportRequestTask> requestCollectingQueue;
     private final Sequence requestCollectingSubSeq;
     private final RingQueue<TextImportRequestTask> requestProcessingQueue;
     private final Sequence requestProcessingPubSeq;
+    private final Sequence requestProcessingComplSeq;
 
     private final CancellationToken cancellationToken = new CancellationToken();
+    private @Nullable CharSequence activeTaskName;
 
     public TextImportRequestCollectingJob(final CairoEngine engine) {
         MessageBus messageBus = engine.getMessageBus();
@@ -43,16 +46,31 @@ public class TextImportRequestCollectingJob extends SynchronizedJob {
         this.requestCollectingSubSeq = messageBus.getTextImportRequestCollectingSubSeq();
         this.requestProcessingQueue = messageBus.getTextImportRequestProcessingQueue();
         this.requestProcessingPubSeq = messageBus.getTextImportRequestProcessingPubSeq();
+        this.requestProcessingComplSeq = messageBus.getTextImportRequestProcessingComplSeq();
     }
 
     @Override
     protected boolean runSerially() {
+        long completionCursor = requestProcessingComplSeq.next();
+        if (completionCursor > -1) {
+            requestProcessingComplSeq.done(completionCursor);
+            // reset on import complete
+            activeTaskName = null;
+        }
         long collectingCursor = requestCollectingSubSeq.next();
         if (collectingCursor > -1) {
             TextImportRequestTask collectingTask = requestCollectingQueue.get(collectingCursor);
-            collectingTask.setStatus(TextImportTask.STATUS_STARTED);
             if (collectingTask.isCancel()) {
-                cancellationToken.cancel();
+                if (activeTaskName == null) {
+                    //there is no active import is in progress
+                    collectingTask.setStatus(TextImportRequestTask.STATUS_REJ);
+                } else if (cancellationToken.isCanceled()) {
+                    //another cancel is in progress
+                    collectingTask.setStatus(TextImportRequestTask.STATUS_REJ_ACTIVE_CANCEL);
+                } else {
+                    cancellationToken.cancel();
+                    collectingTask.setStatus(TextImportRequestTask.STATUS_ACK);
+                }
             } else {
                 long processingCursor = requestProcessingPubSeq.next();
                 if (processingCursor > -1) {
@@ -60,9 +78,11 @@ public class TextImportRequestCollectingJob extends SynchronizedJob {
                     cancellationToken.reset();
                     processingTask.setCancellationToken(cancellationToken);
                     processingTask.copyFrom(collectingTask);
+                    activeTaskName = collectingTask.getFileName();
                     requestProcessingPubSeq.done(processingCursor);
+                    collectingTask.setStatus(TextImportRequestTask.STATUS_ACK);
                 } else {
-                    collectingTask.setStatus(TextImportTask.STATUS_FAILED);
+                    collectingTask.setStatus(TextImportRequestTask.STATUS_REJ);
                 }
             }
             requestCollectingSubSeq.done(collectingCursor);

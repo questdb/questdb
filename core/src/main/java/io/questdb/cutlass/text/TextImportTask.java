@@ -71,7 +71,7 @@ public class TextImportTask {
     private final BuildSymbolColumnIndexStage buildSymbolColumnIndexStage = new BuildSymbolColumnIndexStage();
     private byte phase;
     private int index;
-    private ExecutionCircuitBreaker circuitBreaker;
+    private @Nullable ExecutionCircuitBreaker circuitBreaker;
     private byte status;
     private @Nullable CharSequence errorMessage;
 
@@ -223,12 +223,8 @@ public class TextImportTask {
             this.status = STATUS_STARTED;
             this.errorMessage = null;
 
-            if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
-                this.status = STATUS_CANCELLED;
-                this.errorMessage = "Cancelled";
-                LOG.error().$("Import cancelled in ").$(getPhaseName(phase)).$(" phase.").$();
-                return false;
-            }
+            throwIfCancelled();
+
             if (phase == PHASE_BOUNDARY_CHECK) {
                 countQuotesStage.run(fileBufAddr, fileBufSize);
             } else if (phase == PHASE_INDEXING) {
@@ -246,6 +242,11 @@ public class TextImportTask {
             }
 
             LOG.debug().$("finished [phase=").$(getPhaseName(phase)).$(",index=").$(index).I$();
+        } catch (TextImportException e) {
+            this.status = STATUS_CANCELLED;
+            this.errorMessage = e.getMessage();
+            LOG.error().$("Import cancelled in ").$(getPhaseName(e.getPhase())).$(" phase.").$();
+            return false;
         } catch (Throwable t) {
             LOG.error()
                     .$("could not import [phase=").$(getPhaseName(phase))
@@ -259,7 +260,19 @@ public class TextImportTask {
         return true;
     }
 
-    public void setCircuitBreaker(ExecutionCircuitBreaker circuitBreaker) {
+    private void throwIfCancelled() throws TextImportException {
+        if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
+            throw getCancelException();
+        }
+    }
+
+    private TextImportException getCancelException() {
+        TextImportException ex = TextImportException.instance(this.phase, "Cancelled");
+        ex.setCancelled(true);
+        return ex;
+    }
+
+    public void setCircuitBreaker(@Nullable ExecutionCircuitBreaker circuitBreaker) {
         this.circuitBreaker = circuitBreaker;
     }
 
@@ -387,7 +400,7 @@ public class TextImportTask {
         }
     }
 
-    public static class BuildPartitionIndexStage {
+    public class BuildPartitionIndexStage {
         private final LongList partitionKeysAndSizes = new LongList();//stores partition key and size for all indexed partitions
         private long chunkStart;
         private long chunkEnd;
@@ -455,16 +468,21 @@ public class TextImportTask {
 
         public void run(CsvFileIndexer indexer, long fileBufAddr, long fileBufSize) throws TextException {
             try {
-                indexer.of(inputFileName, importRoot, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader, atomicity);
+                indexer.of(inputFileName, importRoot, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader, atomicity, circuitBreaker);
                 indexer.index(chunkStart, chunkEnd, lineNumber, partitionKeysAndSizes, fileBufAddr, fileBufSize);
+            } catch (TextException e) {
+                if (indexer.isCancelled()) {
+                    throw getCancelException();
+                } else {
+                    throw e;
+                }
             } finally {
                 indexer.clear();
             }
         }
     }
 
-    public static class ImportPartitionDataStage {
-        private static final Log LOG = LogFactory.getLog(ImportPartitionDataStage.class);//todo: use shared instance
+    public class ImportPartitionDataStage {
         private final StringSink tableNameSink = new StringSink();
         private final LongList importedRows = new LongList();
         private CairoEngine cairoEngine;
@@ -547,6 +565,8 @@ public class TextImportTask {
 
                 try {
                     for (int i = lo; i < hi; i++) {
+                        throwIfCancelled();
+
                         lexer.clear();
                         errors = 0;
 
@@ -702,6 +722,8 @@ public class TextImportTask {
                     long lim = fileBufAddr + fileBufSize;
                     int cc = 0;
                     for (long i = 0; i < count; i++) {
+                        throwIfCancelled();
+
                         long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
                         int lineLength = (int) (lengthAndOffset >>> 48);
                         // the offset is used by the callback to report errors
@@ -785,6 +807,8 @@ public class TextImportTask {
                 int additionalLines;
 
                 for (long i = 0; i < count; i++) {
+                    throwIfCancelled();
+
                     long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
                     long lineLength = lengthAndOffset >>> 48;
                     offset = lengthAndOffset & MASK;
@@ -863,7 +887,6 @@ public class TextImportTask {
             long mergedIndexSize = -1;
             long mergeIndexAddr = -1;
             long fd = -1;
-
             try {
                 mergedIndexSize = openIndexChunks(ff, partitionPath, unmergedIndexes, partitionLen);
 

@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.vm.MemoryPMARImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cutlass.text.types.TimestampAdapter;
@@ -40,6 +41,7 @@ import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -138,6 +140,12 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private long sortBufferPtr;
     private long sortBufferLength;
+    private @Nullable ExecutionCircuitBreaker circuitBreaker;
+    private boolean cancelled = false;
+
+    public boolean isCancelled() {
+        return cancelled;
+    }
 
     public CsvFileIndexer(CairoConfiguration configuration) {
         final TextConfiguration textConfiguration = configuration.getTextConfiguration();
@@ -168,7 +176,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
             int timestampIndex,
             TimestampAdapter adapter,
             boolean ignoreHeader,
-            int atomicity
+            int atomicity,
+            @Nullable ExecutionCircuitBreaker circuitBreaker
     ) {
         this.inputFileName = inputFileName;
         this.importRoot = importRoot;
@@ -185,6 +194,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.index = index;
         this.failOnTsError = (atomicity == Atomicity.SKIP_ALL);
         this.timestampValue = Long.MIN_VALUE;
+        this.circuitBreaker = circuitBreaker;
     }
 
     public void indexLine(long ptr, long lo) throws TextException {
@@ -356,6 +366,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         this.failOnTsError = false;
         this.path.trimTo(0);
+        this.circuitBreaker = null;
+        this.cancelled = false;
     }
 
     private void sortAndCloseOutputFiles() {
@@ -604,6 +616,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         try {
             do {
+                if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
+                    this.cancelled = true;
+                    throw TextException.$("Cancelled");
+                }
                 long leftToRead = Math.min(chunkHi - offset, fileBufSize);
                 read = (int) ff.read(fd, fileBufAddr, leftToRead, offset);
                 if (read < 1) {
