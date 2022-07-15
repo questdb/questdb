@@ -25,7 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.Sender;
+import io.questdb.client.Sender;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
 import org.junit.Rule;

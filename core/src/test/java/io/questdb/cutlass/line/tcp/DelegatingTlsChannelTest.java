@@ -25,11 +25,9 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cutlass.line.LineChannel;
-import io.questdb.cutlass.line.Sender;
+import io.questdb.client.Sender;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
-
-import java.io.IOException;
 
 
 public class DelegatingTlsChannelTest {
