@@ -1142,8 +1142,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void process() throws TextImportException {
         long startMs = getCurrentTimeMs();
 
-        final long fd = TableUtils.openRO(ff, inputFilePath, LOG);
+        long fd = -1;
         try {
+            fd = TableUtils.openRO(ff, inputFilePath, LOG);
             long length = ff.length(fd);
             if (length < 1) {
                 throw TextImportException.instance(TextImportTask.PHASE_SETUP, "ignored empty input file [file='").put(inputFilePath).put(']');
@@ -1175,7 +1176,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             // these are the leftovers that also need to be converted
             throw TextImportException.instance(TextImportTask.PHASE_CLEANUP, e.getMessage());
         } finally {
-            ff.close(fd);
+            if (fd != -1) {
+                ff.close(fd);
+            }
         }
 
         long endMs = getCurrentTimeMs();
