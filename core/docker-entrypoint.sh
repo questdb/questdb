@@ -13,6 +13,7 @@ find_and_own_dir() {
     fi
 }
 
+
 # Temporary only
 # Most of the users will have the data mounted under /root/.questdb as default
 # we will run as root for them until they change the mount to /var/lib/questdb or someting else
