@@ -410,6 +410,10 @@ public class ServerMain {
 
     private static void setPublicVersion(String publicDir, String version) throws IOException {
         File f = new File(publicDir, VERSION_TXT);
+        File publicFolder = f.getParentFile();
+        if (!publicFolder.exists()) {
+            publicFolder.mkdirs();
+        }
         try (FileOutputStream fos = new FileOutputStream(f)) {
             byte[] buf = version.getBytes();
             fos.write(buf, 0, buf.length);
