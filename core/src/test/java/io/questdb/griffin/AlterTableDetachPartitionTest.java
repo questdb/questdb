@@ -723,7 +723,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Assert.assertTrue(Files.remove(path));
 
                 releaseAllReadersAndWriters();
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
+                try {
+                    compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
+                } catch (Throwable t) {
+                    System.out.printf("REASON: %s%n", t.getMessage());
+                    t.printStackTrace();
+                    return;
+                }
                 assertContent(
                         "ts\ti\tl\n" +
                                 "2022-06-01T07:11:59.900000Z\t1\t1\n" +
