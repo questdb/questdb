@@ -279,8 +279,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 assertContent(expected, tableName);
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
+                releaseAllReadersAndWriters();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertContent(expected, tableName);
             }
@@ -316,6 +315,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         tableName
                 );
 
+                engine.releaseAllWriters();
                 long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
                 long timestamp2 = TimestampFormatUtils.parseTimestamp("2022-06-01T09:59:59.999999Z");
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
@@ -340,8 +340,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     Assert.assertFalse(writer.inTransaction());
                 }
 
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
+                releaseAllReadersAndWriters();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
                 assertContent(
                         "l\ti\tts\tnew_column\n" +
@@ -397,6 +396,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 String timestampDay = "2022-06-01";
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                engine.releaseAllWriters();
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                     writer.removeColumn("new_column");
                     writer.detachPartition(timestamp);
@@ -445,8 +445,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
                 // insert data, which will create the partition again
+                engine.releaseAllWriters();
                 String timestampDay = "2022-06-01";
-                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay+"T00:00:00.000000Z");
+                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
                 long timestamp2 = TimestampFormatUtils.parseTimestamp("2022-06-01T09:59:59.999999Z");
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
 
@@ -481,6 +482,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 dropCurrentVersionOfPartition(tableName, timestampDay);
 
                 // reattach old version
+                releaseAllReadersAndWriters();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'");
                 assertContent(
                         "l\ti\tts\n" +
@@ -535,7 +537,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
                 // insert data, which will create the partition again
-                engine.releaseAllReaders();
                 engine.releaseAllWriters();
                 String timestampDay = "2022-06-01";
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
@@ -600,6 +601,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         4);
 
                 // insert data, which will create the partition again
+                engine.releaseAllWriters();
                 String timestampDay = "2022-06-02";
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T23:59:59.999999Z");
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
@@ -668,10 +670,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         tableName
                 );
 
-                dropCurrentVersionOfPartition(tableName,timestampDay);
+                dropCurrentVersionOfPartition(tableName, timestampDay);
 
                 // reattach old version
-                engine.releaseAllWriters();
+                releaseAllReadersAndWriters();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 assertContent(
@@ -720,7 +722,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         .$();
                 Assert.assertTrue(Files.remove(path));
 
-                engine.releaseAllWriters();
+                releaseAllReadersAndWriters();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertContent(
                         "ts\ti\tl\n" +
@@ -910,7 +912,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 // detach partitions and override detached metadata with broken metadata
-                engine.releaseAllWriters();
+                releaseAllReadersAndWriters();
                 compile(
                         "ALTER TABLE " + brokenTableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'",
                         sqlExecutionContext
@@ -1006,11 +1008,15 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         other.of(configuration.getDetachedRoot()).concat(tableName).concat(partitionName + ".detached.hide").$();
         Assert.assertTrue(Files.rename(path, other));
         // drop the latest version of the partition
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
+        releaseAllReadersAndWriters();
         compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
         // resurface the hidden detached partition
         Assert.assertTrue(Files.rename(other, path));
+    }
+
+    private static void releaseAllReadersAndWriters() {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
     }
 
     private void assertFailedDetachOperation(String tableName, String operation, String errorMsg) throws Exception {
@@ -1039,15 +1045,13 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     private static void assertContent(String expected, String tableName) throws Exception {
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
+        releaseAllReadersAndWriters();
         assertQuery(expected, tableName, null, "ts", true, false, true);
     }
 
     private void assertFailure(String operation, String errorMsg) {
         try {
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
+            releaseAllReadersAndWriters();
             compile(operation, sqlExecutionContext);
             Assert.fail();
         } catch (SqlException e) {
