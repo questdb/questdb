@@ -93,6 +93,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.join;
     exports io.questdb.griffin.engine.ops;
     exports io.questdb.cairo.sql.async;
+    exports io.questdb.client;
 
     provides FunctionFactory with
             // test functions
@@ -586,6 +587,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory,
             io.questdb.griffin.engine.functions.table.TouchTableFunctionFactory,
+            io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory,
 
             // first
             io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,

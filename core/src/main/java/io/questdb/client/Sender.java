@@ -22,8 +22,11 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.line;
+package io.questdb.client;
 
+import io.questdb.cutlass.line.LineChannel;
+import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.cutlass.line.tcp.AuthDb;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;

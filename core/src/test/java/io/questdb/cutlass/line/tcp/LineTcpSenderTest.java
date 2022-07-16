@@ -29,7 +29,7 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.cutlass.line.Sender;
+import io.questdb.client.Sender;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
