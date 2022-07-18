@@ -39,7 +39,10 @@ import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -59,6 +62,8 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
     private SqlExecutionContextImpl sqlExecutionContext;
     private TextImportRequestTask task;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
+    private final Rnd rnd = new Rnd();
+    private final StringSink idSink = new StringSink();
 
     public TextImportRequestProcessingJob(
             final CairoEngine engine,
@@ -80,11 +85,12 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
         this.sqlCompiler.compile(
                 "CREATE TABLE IF NOT EXISTS \"" + statusTableName + "\" (" +
                         "ts timestamp, " + // 0
-                        "table symbol, " + // 1
-                        "file symbol, " + // 2
-                        "stage symbol, " + // 3
-                        "status symbol, " + // 4
-                        "message string" + // 5
+                        "id symbol, " + // 1
+                        "table symbol, " + // 2
+                        "file symbol, " + // 3
+                        "stage symbol, " + // 4
+                        "status symbol, " + // 5
+                        "message string" + // 6
                         ") timestamp(ts) partition by DAY",
                 sqlExecutionContext
         );
@@ -121,6 +127,8 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
     protected boolean runSerially() {
         long cursor = requestProcessingSubSeq.next();
         if (cursor > -1) {
+            idSink.clear();
+            Numbers.appendHex(idSink, rnd.nextPositiveLong(), true);
             task = requestProcessingQueue.get(cursor);
             try (ParallelCsvFileImporter loader = new ParallelCsvFileImporter(engine, workerCount, task.getCancellationToken())) {
                 loader.of(
@@ -150,13 +158,13 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
         if (writer != null) {
             try {
                 TableWriter.Row row = writer.newRow(clock.getTicks());
-                row.putSym(1, task.getTableName());
-                row.putSym(2, task.getFileName());
-                row.putSym(3, TextImportTask.getPhaseName(phase));
-                row.putSym(4, TextImportTask.getStatusName(status));
-                row.putStr(5, msg);
+                row.putSym(1, idSink);
+                row.putSym(2, task.getTableName());
+                row.putSym(3, task.getFileName());
+                row.putSym(4, TextImportTask.getPhaseName(phase));
+                row.putSym(5, TextImportTask.getStatusName(status));
+                row.putStr(6, msg);
                 row.append();
-
                 writer.commit();
             } catch (Throwable th) {
                 LOG.error().$("error saving to parallel import log, unable to insert")
