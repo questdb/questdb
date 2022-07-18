@@ -710,6 +710,15 @@ public class TextImportTask {
                 utf8Sink.clear();
                 fd = TableUtils.openRO(ff, tmpPath, LOG);
 
+                final long len = ff.length(fd);
+                if (len == -1) {
+                    throw CairoException.instance(ff.errno()).put(
+                            "could not get length of file [path=").put(tmpPath)
+                            .put(']');
+                }
+
+                ff.fadvise(fd, 0, len, Files.POSIX_FADV_RANDOM);
+
                 final long MASK = ~((255L) << 56 | (255L) << 48);
                 final long count = size / (2 * Long.BYTES);
 
@@ -800,6 +809,15 @@ public class TextImportTask {
                 tmpPath.of(configuration.getInputRoot()).concat(inputFileName).$();
                 utf8Sink.clear();
                 fd = TableUtils.openRO(ff, tmpPath, LOG);
+
+                final long len = ff.length(fd);
+                if (len == -1) {
+                    throw CairoException.instance(ff.errno()).put(
+                                    "could not get length of file [path=").put(tmpPath)
+                            .put(']');
+                }
+
+                ff.fadvise(fd, 0, len, Files.POSIX_FADV_RANDOM);
 
                 final long MASK = ~((255L) << 56 | (255L) << 48);
                 final long count = size / (2 * Long.BYTES);

@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
@@ -677,6 +678,14 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         path.of(inputRoot).slash().concat(inputFileName).$();
         this.fd = TableUtils.openRO(ff, path, LOG);
+
+        long len = ff.length(fd);
+        if (len == -1) {
+            throw CairoException.instance(ff.errno()).put(
+                            "could not get length of file [path=").put(path)
+                    .put(']');
+        }
+        ff.fadvise(fd, 0, len, Files.POSIX_FADV_SEQUENTIAL);
     }
 
     public void sort(final long srcFd, long srcSize) {
