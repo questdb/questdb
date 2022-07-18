@@ -50,6 +50,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.pool.WriterPool.OWNERSHIP_REASON_NONE;
@@ -207,6 +208,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     @TestOnly
     public int getBusyReaderCount() {
         return readerPool.getBusyCount();
+    }
+
+    public Map<CharSequence, ReaderPool.Entry> getReaderPoolEntries() {
+        return readerPool.entries();
     }
 
     @TestOnly
