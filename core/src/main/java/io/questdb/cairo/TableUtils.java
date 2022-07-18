@@ -666,7 +666,19 @@ public final class TableUtils {
             long newSize,
             int mapMode,
             int memoryTag) {
-        final long page = ff.mremap(fd, prevAddress, prevSize, newSize, 0, mapMode, memoryTag);
+        return mremap(ff, fd, prevAddress, prevSize, newSize, 0L, mapMode, memoryTag);
+    }
+
+    public static long mremap(
+            FilesFacade ff,
+            long fd,
+            long prevAddress,
+            long prevSize,
+            long newSize,
+            long offset,
+            int mapMode,
+            int memoryTag) {
+        final long page = ff.mremap(fd, prevAddress, prevSize, newSize, offset, mapMode, memoryTag);
         if (page == FilesFacade.MAP_FAILED) {
             int errno = ff.errno();
             // Closing memory will truncate size to current append offset.

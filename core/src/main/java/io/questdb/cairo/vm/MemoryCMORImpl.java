@@ -26,44 +26,21 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryCMOR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 
-//contiguous mapped readable 
-public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
-    private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
-    protected int memoryTag = MemoryTag.MMAP_DEFAULT;
+// Contiguous mapped with offset readable memory
+public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
+    private static final Log LOG = LogFactory.getLog(MemoryCMORImpl.class);
+    private long mapFileOffset;
 
-    public MemoryCMRImpl(FilesFacade ff, LPSZ name, long size, int memoryTag) {
-        of(ff, name, 0, size, memoryTag);
+    public MemoryCMORImpl() {
     }
 
-    public MemoryCMRImpl() {
-    }
-
-    @Override
-    public void close() {
-        if (pageAddress != 0) {
-            ff.munmap(pageAddress, size, memoryTag);
-            this.size = 0;
-            this.pageAddress = 0;
-        }
-        if (fd != -1) {
-            ff.close(fd);
-            LOG.debug().$("closed [fd=").$(fd).$(']').$();
-            fd = -1;
-        }
-    }
-
-    @Override
-    public boolean isMapped(long offset, long len) {
-        return offset + len <= size();
-    }
 
     @Override
     public void extend(long newSize) {
@@ -71,32 +48,70 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             setSize0(newSize);
         }
     }
+    @Override
+    public void growToFileSize() {
+        long length = getFilesFacade().length(getFd());
+        if (length < 0) {
+            throw CairoException.instance(ff.errno()).put("could not get length fd: ").put(fd);
+        }
+
+        extend(length - mapFileOffset);
+    }
+
+    @Override
+    public void ofOffset(FilesFacade ff, LPSZ name, long lo, long hi, int memoryTag, long opts) {
+        this.memoryTag = memoryTag;
+        openFile(ff, name);
+        if (hi < 0) {
+            hi = ff.length(fd);
+            if (hi < 0) {
+                close();
+                throw CairoException.instance(ff.errno()).put("could not get length: ").put(name);
+            }
+        }
+
+        assert hi >= lo : "hi : " + hi + " lo : " + lo;
+
+        if (hi > lo) {
+            this.mapFileOffset = Files.PAGE_SIZE * (lo / Files.PAGE_SIZE);
+            this.size = hi - mapFileOffset;
+            map(ff, name, this.size, this.mapFileOffset);
+        } else {
+            this.size = 0;
+        }
+    }
+
+    @Override
+    public long addressOf(long offset) {
+        assert offset - mapFileOffset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        return pageAddress + offset - mapFileOffset;
+    }
 
     @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
-        this.memoryTag = memoryTag;
-        openFile(ff, name);
-        if (size < 0) {
-            size = ff.length(fd);
-            if (size < 0) {
-                throw CairoException.instance(ff.errno()).put("Could not get length: ").put(name);
-            }
-        }
-        map(ff, name, size);
+        ofOffset(ff, name, 0L, size, memoryTag, opts);
     }
 
-    protected void map(FilesFacade ff, LPSZ name, final long size) {
+    @Override
+    public long getOffset() {
+        return mapFileOffset;
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        mapFileOffset = 0;
+    }
+
+    protected void map(FilesFacade ff, LPSZ name, final long size, final long mapOffset) {
         this.size = size;
         if (size > 0) {
             try {
-                this.pageAddress = TableUtils.mapRO(ff, fd, size, memoryTag);
+                this.pageAddress = TableUtils.mapRO(ff, fd, size, mapOffset, memoryTag);
             } catch (Throwable e) {
                 close();
                 throw e;
             }
-        } else {
-            assert size > -1;
-            this.pageAddress = 0;
         }
 
         // ---------------V leave a space here for alignment with open log message
@@ -112,10 +127,10 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private void setSize0(long newSize) {
         try {
             if (size > 0) {
-                pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, Files.MAP_RO, memoryTag);
+                pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, mapFileOffset, Files.MAP_RO, memoryTag);
             } else {
                 assert pageAddress == 0;
-                pageAddress = TableUtils.mapRO(ff, fd, newSize, memoryTag);
+                pageAddress = TableUtils.mapRO(ff, fd, newSize, mapFileOffset, memoryTag);
             }
             size = newSize;
         } catch (Throwable e) {

@@ -338,12 +338,12 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 String rndStr = rnd.nextInt(10) == 5 ? null : rnd.nextString(20);
 
                 long rowTs = startTs;
-//                if (!inOrder && i > 3 && i < rowsToInsertTotal - 3) {
-//                    // Add jitter to the timestamps to randomise things even more.
-//                    rowTs += rnd.nextLong(2 * tsIncrement);
-//                }
+                if (!inOrder && i > 3 && i < rowsToInsertTotal - 3) {
+                    // Add jitter to the timestamps to randomise things even more.
+                    rowTs += rnd.nextLong(2 * tsIncrement);
+                }
 
-                TableWriter.Row walRow = walWriter != null ? walWriter.newRow(rowTs) : tableWriter.newRow(startTs);
+                TableWriter.Row walRow = walWriter != null ? walWriter.newRow(rowTs) : tableWriter.newRow(rowTs);
                 addRowRwAllTypes(iteration, walRow, i, symbol, rndStr);
                 addRowRwAllTypes(iteration, copyWriter.newRow(rowTs), i, symbol, rndStr);
                 startTs += tsIncrement;

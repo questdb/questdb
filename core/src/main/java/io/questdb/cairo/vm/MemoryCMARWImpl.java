@@ -72,7 +72,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void truncate() {
-        grownLength = 0;
         if (pageAddress != 0) {
             // try to remap to min size
             final long fileSize = ff.length(fd);
@@ -145,7 +144,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
             fd = -1;
         }
-        grownLength = 0;
         size = 0;
         ff = null;
     }
@@ -285,7 +283,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         size = newSize;
         lim = pageAddress + newSize;
         appendAddress = pageAddress + offset;
-        grownLength = newSize;
     }
 
     protected void map(FilesFacade ff, @Nullable CharSequence name, long size, int memoryTag) {

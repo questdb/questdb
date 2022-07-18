@@ -74,6 +74,7 @@ public class TableWriter implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     private static final Runnable NOOP = () -> {
     };
+    private static final ObjectFactory<MemoryCMOR> GET_MEMORY_CMOR = Vm::getMemoryCMOR;
     final ObjList<MemoryMA> columns;
     private final ObjList<MapWriter> symbolMapWriters;
     private final ObjList<MapWriter> denseSymbolMapWriters;
@@ -192,6 +193,9 @@ public class TableWriter implements Closeable {
     private long commitInterval;
     private UpdateOperator updateOperator;
     private DropIndexOperator dropIndexOperator;
+    private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
+    private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
+
 
     public TableWriter(
             CairoConfiguration configuration,
@@ -311,6 +315,7 @@ public class TableWriter implements Closeable {
             commandSubSeq = new SCSequence();
             commandPubSeq = new MPSequence(commandQueue.getCycle());
             commandPubSeq.then(commandSubSeq).then(commandPubSeq);
+            walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, columnCount);
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -1013,12 +1018,12 @@ public class TableWriter implements Closeable {
         this.lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
         long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
         final int columnCount = metadata.getColumnCount();
-        ObjList<MemoryCR> mappedColumns = new ObjList<>(columnCount * 2);
         int walRootPathLen = walPath.length();
         if (segmentId > -1L) {
             walPath.slash().put(segmentId);
         }
         int walPathLen = walPath.length();
+        walMappedColumns.clear();
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int type = metadata.getColumnType(columnIndex);
@@ -1030,10 +1035,10 @@ public class TableWriter implements Closeable {
                 }
 
                 if (!ColumnType.isVariableLength(type)) {
-                    MemoryCMRImpl primary = new MemoryCMRImpl();
+                    MemoryCMOR primary = walColumnMemoryPool.pop();
 
                     dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    primary.ofShift(
+                    primary.ofOffset(
                             configuration.getFilesFacade(),
                             walPath,
                             rowLo << sizeBitsPow2,
@@ -1043,15 +1048,15 @@ public class TableWriter implements Closeable {
                     );
                     walPath.trimTo(walPathLen);
 
-                    mappedColumns.add(primary);
-                    mappedColumns.add(null);
+                    walMappedColumns.add(primary);
+                    walMappedColumns.add(null);
                 } else {
                     sizeBitsPow2 = 3;
-                    MemoryCMRImpl fixed = new MemoryCMRImpl();
-                    MemoryCMRImpl var = new MemoryCMRImpl();
+                    MemoryCMOR fixed = walColumnMemoryPool.pop();
+                    MemoryCMOR var = walColumnMemoryPool.pop();
 
                     iFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    fixed.ofShift(
+                    fixed.ofOffset(
                             configuration.getFilesFacade(),
                             walPath,
                             rowLo << sizeBitsPow2,
@@ -1064,7 +1069,7 @@ public class TableWriter implements Closeable {
                     long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
                     long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
                     dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    var.ofShift(
+                    var.ofOffset(
                             configuration.getFilesFacade(),
                             walPath,
                             varOffset,
@@ -1074,17 +1079,17 @@ public class TableWriter implements Closeable {
                     );
                     walPath.trimTo(walPathLen);
 
-                    mappedColumns.add(var);
-                    mappedColumns.add(fixed);
+                    walMappedColumns.add(var);
+                    walMappedColumns.add(fixed);
                 }
             } else {
-                mappedColumns.add(null);
+                walMappedColumns.add(null);
             }
         }
 
         try {
-            o3ColumnSources = mappedColumns;
-            MemoryCR walTimestampColumn = mappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
+            o3ColumnSources = walMappedColumns;
+            MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
             long timestampAddr;
             long o3Lo = rowLo;
             long o3Hi = rowHi;
@@ -1119,7 +1124,13 @@ public class TableWriter implements Closeable {
         } finally {
             finishO3Append(0L);
             o3ColumnSources = o3Columns;
-            Misc.freeObjList(mappedColumns);
+            for(int col = 0, n = walMappedColumns.size(); col < n; col++) {
+                MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
+                if (mappedColumnMem != null) {
+                    Misc.free(mappedColumnMem);
+                    walColumnMemoryPool.push(mappedColumnMem);
+                }
+            }
         }
 
         return finishO3Commit(partitionTimestampHiLimit);
