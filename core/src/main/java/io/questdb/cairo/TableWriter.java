@@ -146,6 +146,8 @@ public class TableWriter implements Closeable {
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
     private final MPSequence commandPubSeq;
+    private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
+    private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
     private ObjList<Runnable> o3NullSetters;
     private ObjList<Runnable> o3NullSetters2;
     private ObjList<MemoryCARW> o3Columns;
@@ -193,8 +195,6 @@ public class TableWriter implements Closeable {
     private long commitInterval;
     private UpdateOperator updateOperator;
     private DropIndexOperator dropIndexOperator;
-    private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
-    private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
 
 
     public TableWriter(
@@ -1124,7 +1124,7 @@ public class TableWriter implements Closeable {
         } finally {
             finishO3Append(0L);
             o3ColumnSources = o3Columns;
-            for(int col = 0, n = walMappedColumns.size(); col < n; col++) {
+            for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
                 MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
                 if (mappedColumnMem != null) {
                     Misc.free(mappedColumnMem);
