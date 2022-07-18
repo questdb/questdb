@@ -719,7 +719,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void phasePrologue(byte phase) {
-        LOG.info().$("started  [phase=").$(phase).$(", file=`").$(inputFilePath).$('`').I$();
+        LOG.info().$("started  [phase=").$(phase).$(", file=`").$(inputFilePath).$('`').$(", workerCount=").$(workerCount).I$();
         updateStatus(phase, TextImportTask.STATUS_STARTED, null);
         startMs = getCurrentTimeMs();
     }
@@ -729,7 +729,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 .$("mis-detected [table=").$(tableName)
                 .$(", column=").$(i)
                 .$(", type=").$(ColumnType.nameOf(type))
-                .$(']').$();
+                .$(", workerCount=").$(workerCount)
+                .I$();
     }
 
     private void mergeSymbolTables(final TableWriter writer) throws TextImportException {
