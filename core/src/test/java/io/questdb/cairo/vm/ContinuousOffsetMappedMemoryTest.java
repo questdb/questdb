@@ -118,7 +118,7 @@ public class ContinuousOffsetMappedMemoryTest {
                         }
                     };
 
-                    memoryROffset.ofOffset(ff, path, 10 * 4096, 11 * 4096, MemoryTag.NATIVE_DEFAULT);
+                    memoryROffset.ofOffset(ff, path, Files.PAGE_SIZE - 10, 2 * Files.PAGE_SIZE + 10, MemoryTag.NATIVE_DEFAULT);
                     try {
                         memoryROffset.growToFileSize();
                         Assert.fail();
