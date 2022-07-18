@@ -62,7 +62,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
     private SqlExecutionContextImpl sqlExecutionContext;
     private TextImportRequestTask task;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
-    private final Rnd rnd = new Rnd();
+    private final Rnd rnd;
     private final StringSink idSink = new StringSink();
 
     public TextImportRequestProcessingJob(
@@ -95,7 +95,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
                 sqlExecutionContext
         );
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
-
+        this.rnd = new Rnd(this.clock.getTicks(), this.clock.getTicks());
         cleanupStatusLog(writer, configuration.getParallelImportStatusLogKeepLastNDays());
     }
 
