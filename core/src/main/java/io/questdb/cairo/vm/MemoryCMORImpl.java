@@ -37,15 +37,16 @@ import io.questdb.std.str.LPSZ;
 public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     private static final Log LOG = LogFactory.getLog(MemoryCMORImpl.class);
     private long mapFileOffset;
+    private long offset;
 
     public MemoryCMORImpl() {
     }
 
     @Override
-    public void extend(long newSize) {
-        if (newSize > size) {
-            setSize0(newSize);
-        }
+    public void close() {
+        super.close();
+        mapFileOffset = 0;
+        offset = 0;
     }
 
     @Override
@@ -56,6 +57,24 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         }
 
         extend(length - mapFileOffset);
+    }
+
+    @Override
+    public void extend(long newSize) {
+        if (newSize > size) {
+            setSize0(newSize + offset - mapFileOffset);
+        }
+    }
+
+    @Override
+    public long addressOf(long offset) {
+        assert offset - mapFileOffset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        return pageAddress + offset - mapFileOffset;
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
+        ofOffset(ff, name, 0L, size, memoryTag, opts);
     }
 
     @Override
@@ -73,6 +92,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         assert hi >= lo : "hi : " + hi + " lo : " + lo;
 
         if (hi > lo) {
+            this.offset = lo;
             this.mapFileOffset = Files.PAGE_SIZE * (lo / Files.PAGE_SIZE);
             this.size = hi - mapFileOffset;
             map(ff, name, this.size, this.mapFileOffset);
@@ -82,25 +102,13 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     }
 
     @Override
-    public long addressOf(long offset) {
-        assert offset - mapFileOffset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
-        return pageAddress + offset - mapFileOffset;
-    }
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
-        ofOffset(ff, name, 0L, size, memoryTag, opts);
-    }
-
-    @Override
     public long getOffset() {
-        return mapFileOffset;
+        return offset;
     }
 
     @Override
-    public void close() {
-        super.close();
-        mapFileOffset = 0;
+    public long size() {
+        return size + mapFileOffset - offset;
     }
 
     protected void map(FilesFacade ff, LPSZ name, final long size, final long mapOffset) {

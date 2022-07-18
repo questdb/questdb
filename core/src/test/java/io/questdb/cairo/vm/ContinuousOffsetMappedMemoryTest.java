@@ -53,8 +53,8 @@ public class ContinuousOffsetMappedMemoryTest {
             path.concat(testName.getMethodName());
 
             TestUtils.assertMemoryLeak(() -> {
-                long appendCount = 3 * Files.PAGE_SIZE;
-                createPopulateFile(ff, path, appendCount);
+                long appendCount = 3 * Files.PAGE_SIZE / 8L;
+                createFile(ff, path, appendCount, false);
 
                 try (
                         MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
@@ -74,8 +74,8 @@ public class ContinuousOffsetMappedMemoryTest {
             path.concat(testName.getMethodName());
 
             TestUtils.assertMemoryLeak(() -> {
-                long appendCount = 5 * Files.PAGE_SIZE - 1;
-                createPopulateFile(ff, path, appendCount);
+                long appendCount = 5 * Files.PAGE_SIZE / 8L - 1;
+                createFile(ff, path, appendCount, false);
 
                 try (
                         MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
@@ -152,8 +152,8 @@ public class ContinuousOffsetMappedMemoryTest {
             path.concat(testName.getMethodName());
 
             TestUtils.assertMemoryLeak(() -> {
-                long appendCount = 5 * Files.PAGE_SIZE - 1;
-                createPopulateFile(ff, path, appendCount);
+                long appendCount = 5 * Files.PAGE_SIZE / 8L - 1;
+                createFile(ff, path, appendCount, true);
 
                 try (
                         MemoryCMRImpl memoryR = new MemoryCMRImpl();
@@ -161,6 +161,8 @@ public class ContinuousOffsetMappedMemoryTest {
                 ) {
                     memoryR.of(ff, path, Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
                     long fileSize = memoryR.size();
+
+
                     Rnd rnd = new Rnd();
                     for (int i = 0; i < 10; i++) {
                         long lo = rnd.nextLong(appendCount / 2) * 8L;
@@ -168,8 +170,8 @@ public class ContinuousOffsetMappedMemoryTest {
                         memoryROffset.ofOffset(ff, path, lo, fileSize / 2, MemoryTag.NATIVE_DEFAULT);
                         Assert.assertEquals(fileSize / 2, memoryROffset.size() + memoryROffset.getOffset());
 
-                        memoryROffset.extend(fileSize);
-                        Assert.assertEquals(fileSize, memoryROffset.size());
+                        memoryROffset.extend(fileSize - lo);
+                        Assert.assertEquals(fileSize, memoryROffset.getOffset() + memoryROffset.size());
 
                         Assert.assertEquals(lo, memoryR.getLong(lo));
                         Assert.assertEquals(lo, memoryROffset.getLong(lo));
@@ -186,7 +188,7 @@ public class ContinuousOffsetMappedMemoryTest {
 
             TestUtils.assertMemoryLeak(() -> {
                 long appendCount = 3 * Files.PAGE_SIZE / 8L;
-                createPopulateFile(ff, path, appendCount);
+                createFile(ff, path, appendCount, false);
 
                 try (
                         MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
@@ -210,8 +212,8 @@ public class ContinuousOffsetMappedMemoryTest {
             path.concat(testName.getMethodName());
 
             TestUtils.assertMemoryLeak(() -> {
-                long appendCount = 5 * Files.PAGE_SIZE;
-                createPopulateFile(ff, path, appendCount);
+                long appendCount = 3 * Files.PAGE_SIZE / 8L;
+                createFile(ff, path, appendCount, true);
 
                 try (
                         MemoryCMRImpl memoryR = new MemoryCMRImpl();
@@ -241,7 +243,7 @@ public class ContinuousOffsetMappedMemoryTest {
         }
     }
 
-    private void createPopulateFile(FilesFacade ff, Path path, long appendCount) {
+    private void createFile(FilesFacade ff, Path path, long appendCount, boolean writeData) {
         if (!ff.touch(path.$())) {
             Assert.fail("Failed to create file " + ff.errno());
         } else {
@@ -252,10 +254,16 @@ public class ContinuousOffsetMappedMemoryTest {
 
         try (MemoryMARW memoryW = Vm.getMARWInstance()) {
             memoryW.of(ff, fd, testName.getMethodName(), 16, 0);
-            memoryW.jumpTo(0);
 
-            for (long i = 0; i < appendCount; i++) {
-                memoryW.putLong(i * 8L);
+            if (writeData) {
+                memoryW.jumpTo(0);
+
+
+                for (long i = 0; i < appendCount; i++) {
+                    memoryW.putLong(i * 8L);
+                }
+            } else {
+                memoryW.jumpTo(appendCount * 8L);
             }
         }
     }
