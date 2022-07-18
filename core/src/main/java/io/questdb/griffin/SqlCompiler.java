@@ -229,12 +229,6 @@ public class SqlCompiler implements Closeable {
         alterOperationBuilder = new AlterOperationBuilder();
     }
 
-    public static void putRowLong128(Record rec, int col, TableWriter.Row row) {
-        long hi = rec.getLong128Hi(col);
-        long lo = rec.getLong128Lo(col);
-        row.putLong128(1, hi, lo);
-    }
-
     // Creates data type converter.
     // INT and LONG NaN values are cast to their representation rather than Double or Float NaN.
     public static RecordToRowCopier assembleRecordToRowCopier(BytecodeAssembler asm, ColumnTypes from, RecordMetadata to, ColumnFilter toColumnFilter) {
