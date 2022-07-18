@@ -41,13 +41,13 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     public MemoryCMORImpl() {
     }
 
-
     @Override
     public void extend(long newSize) {
         if (newSize > size) {
             setSize0(newSize);
         }
     }
+
     @Override
     public void growToFileSize() {
         long length = getFilesFacade().length(getFd());

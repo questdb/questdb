@@ -148,6 +148,7 @@ public class TableWriter implements Closeable {
     private final MPSequence commandPubSeq;
     private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
     private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
+    private final IntList symbolRewriteMap = new IntList();
     private ObjList<Runnable> o3NullSetters;
     private ObjList<Runnable> o3NullSetters2;
     private ObjList<MemoryCARW> o3Columns;
@@ -1017,13 +1018,68 @@ public class TableWriter implements Closeable {
     ) {
         this.lastPartitionTimestamp = partitionFloorMethod.floor(partitionTimestampHi);
         long partitionTimestampHiLimit = partitionCeilMethod.ceil(partitionTimestampHi) - 1;
-        final int columnCount = metadata.getColumnCount();
         int walRootPathLen = walPath.length();
-        if (segmentId > -1L) {
-            walPath.slash().put(segmentId);
+
+        try {
+            if (segmentId > -1L) {
+                walPath.slash().put(segmentId);
+            }
+            mmapWalColumn(walPath, timestampIndex, rowLo, rowHi);
+
+            try {
+                o3ColumnSources = walMappedColumns;
+                MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
+                long timestampAddr;
+                long o3Lo = rowLo;
+                long o3Hi = rowHi;
+
+                if (!ordered) {
+                    final long timestampMemorySize = (rowHi - rowLo) << 4;
+                    o3TimestampMem.jumpTo(timestampMemorySize);
+                    long destTimestampAddr = o3TimestampMem.getAddress();
+                    Vect.memcpy(destTimestampAddr, walTimestampColumn.addressOf(rowLo << 4), timestampMemorySize);
+                    if (rowHi - rowLo > 600 || !o3QuickSortEnabled) {
+                        o3TimestampMemCpy.jumpTo(timestampMemorySize);
+                        Vect.radixSortLongIndexAscInPlace(destTimestampAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
+                    } else {
+                        Vect.quickSortLongIndexAscInPlace(destTimestampAddr, o3RowCount);
+                    }
+
+                    o3Sort(destTimestampAddr, timestampIndex, rowHi - rowLo);
+                    timestampAddr = destTimestampAddr;
+
+                    // Sorted data is now sorted in memory copy of the data from mmap files
+                    // Row indexes start from 0, not rowLo
+                    o3Hi = rowHi - rowLo;
+                    o3Lo = 0L;
+                } else {
+                    timestampAddr = walTimestampColumn.addressOf(0);
+                }
+
+                o3ColumnSources = remapWalSymbols(mapDiffCursor, o3Lo, o3Hi, walPath);
+                processO3Append(0L, timestampIndex, timestampAddr, o3Hi, o3TimestampMin, o3TimestampMax, !ordered, o3Lo);
+            } finally {
+                finishO3Append(0L);
+                o3ColumnSources = o3Columns;
+                for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
+                    MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
+                    if (mappedColumnMem != null) {
+                        Misc.free(mappedColumnMem);
+                        walColumnMemoryPool.push(mappedColumnMem);
+                    }
+                }
+            }
+
+            return finishO3Commit(partitionTimestampHiLimit);
+        } finally {
+            walPath.trimTo(walRootPathLen);
         }
-        int walPathLen = walPath.length();
+    }
+
+    private void mmapWalColumn(Path walPath, int timestampIndex, long rowLo, long rowHi) {
         walMappedColumns.clear();
+        int walPathLen = walPath.length();
+        final int columnCount = metadata.getColumnCount();
 
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int type = metadata.getColumnType(columnIndex);
@@ -1086,54 +1142,6 @@ public class TableWriter implements Closeable {
                 walMappedColumns.add(null);
             }
         }
-
-        try {
-            o3ColumnSources = walMappedColumns;
-            MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
-            long timestampAddr;
-            long o3Lo = rowLo;
-            long o3Hi = rowHi;
-
-            if (!ordered) {
-                final long timestampMemorySize = (rowHi - rowLo) << 4;
-                o3TimestampMem.jumpTo(timestampMemorySize);
-                long destTimestampAddr = o3TimestampMem.getAddress();
-                Vect.memcpy(destTimestampAddr, walTimestampColumn.addressOf(rowLo << 4), timestampMemorySize);
-                if (rowHi - rowLo > 600 || !o3QuickSortEnabled) {
-                    o3TimestampMemCpy.jumpTo(timestampMemorySize);
-                    Vect.radixSortLongIndexAscInPlace(destTimestampAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
-                } else {
-                    Vect.quickSortLongIndexAscInPlace(destTimestampAddr, o3RowCount);
-                }
-
-                o3Sort(destTimestampAddr, timestampIndex, rowHi - rowLo);
-                timestampAddr = destTimestampAddr;
-
-                // Sorted data is now sorted in memory copy of the data from mmap files
-                // Row indexes start from 0, not rowLo
-                o3Hi = rowHi - rowLo;
-                o3Lo = 0L;
-            } else {
-                timestampAddr = walTimestampColumn.addressOf(0);
-            }
-
-            walPath.trimTo(walRootPathLen);
-            o3ColumnSources = remapWalSymbols(mapDiffCursor, o3Lo, o3Hi);
-
-            processO3Append(0L, timestampIndex, timestampAddr, o3Hi, o3TimestampMin, o3TimestampMax, !ordered, o3Lo);
-        } finally {
-            finishO3Append(0L);
-            o3ColumnSources = o3Columns;
-            for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
-                MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
-                if (mappedColumnMem != null) {
-                    Misc.free(mappedColumnMem);
-                    walColumnMemoryPool.push(mappedColumnMem);
-                }
-            }
-        }
-
-        return finishO3Commit(partitionTimestampHiLimit);
     }
 
     public void processWalCommit(
@@ -1886,10 +1894,13 @@ public class TableWriter implements Closeable {
         return index;
     }
 
-    private boolean addSymbolsFromWal(SymbolMapDiff symbolMapDiff, int symbolIndex, IntList symbolMap) {
+    private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int denseSymbolIndex, IntList symbolMap) {
         final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
         symbolMap.setPos(symbolMapDiff.getSize());
-        final MapWriter mapWriter = denseSymbolMapWriters.get(symbolIndex);
+
+        // This is defensive coding. It validates that all the symbols used in WAL are set in SymbolMapDiff
+        symbolMap.setAll(symbolMapDiff.getSize(), -1);
+        final MapWriter mapWriter = denseSymbolMapWriters.get(denseSymbolIndex);
         boolean identical = true;
 
         SymbolMapDiffEntry entry;
@@ -3688,7 +3699,6 @@ public class TableWriter implements Closeable {
         }
 
         o3DoneLatch.await(queuedCount);
-
         swapO3ColumnsExcept(timestampIndex);
     }
 
@@ -4482,22 +4492,22 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private ReadOnlyObjList<? extends MemoryCR> remapWalSymbols(SymbolMapDiffCursor symbolMapDiffCursor, long rowLo, long rowHi) {
+    private ReadOnlyObjList<? extends MemoryCR> remapWalSymbols(SymbolMapDiffCursor symbolMapDiffCursor, long rowLo, long rowHi, Path walPath) {
         int sym = 0;
 
         ObjList<MemoryCR> o3ColumnOverrides = null;
-        IntList symbolMap = new IntList();
 
         if (symbolMapDiffCursor != null) {
             SymbolMapDiff symbolMapDiff;
             while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
                 int columnIndex = symbolMapDiff.getColumnIndex();
                 if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-                    // TODO: throw specific WAL exception
-                    throw CairoException.instance(0).put("WAL column and table writer column types don't match");
+                    // TODO: throw specific WAL exception to indicate that WAL transaction is invalid
+                    throw CairoException.instance(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
+                            .put(", walPath=").put(walPath)
+                            .put(']');
                 }
-
-                boolean identical = addSymbolsFromWal(symbolMapDiff, sym++, symbolMap);
+                boolean identical = createWalSymbolMapping(symbolMapDiff, sym++, symbolRewriteMap);
 
                 if (!identical) {
                     MemoryCR symbolColumnSrc = o3ColumnSources.getQuick(getPrimaryColumnIndex(columnIndex));
@@ -4528,7 +4538,18 @@ public class TableWriter implements Closeable {
 
                         int symKey = symbolColumnSrc.getInt(offset);
                         if (symKey >= cleanSymbolCount) {
-                            symKey = symbolMap.getQuick(symKey - cleanSymbolCount);
+                            int newKey = symbolRewriteMap.getQuick(symKey - cleanSymbolCount);
+                            if (newKey < 0) {
+                                // This symbol was not mapped in the WAL
+                                // The WAL is invalid
+                                // TODO: throw specific WAL exception to indicate that WAL transaction is invalid
+                                throw CairoException.instance(0).put("WAL symbol key not mapped [columnIndex=").put(columnIndex)
+                                        .put(", columnKey=").put(symKey)
+                                        .put(", walPath=").put(walPath)
+                                        .put(", walRowId=").put(rowId)
+                                        .put(']');
+                            }
+                            symKey = newKey;
                         }
                         symbolColumnDest.putInt(offset, symKey);
                     }
@@ -5309,7 +5330,7 @@ public class TableWriter implements Closeable {
         o3Columns = o3Columns2;
         o3Columns2 = temp;
 
-        // Swap timestamp column back, it's
+        // Swap timestamp column back, timestamp column is not sorted, it's the sort key.
         final int timestampMemoryIndex = getPrimaryColumnIndex(timestampIndex);
         o3Columns2.setQuick(
                 timestampMemoryIndex,

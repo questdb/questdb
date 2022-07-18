@@ -26,14 +26,13 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
-
-import java.io.File;
 
 public class ContinuousOffsetMappedMemoryTest {
     @ClassRule
@@ -45,7 +44,6 @@ public class ContinuousOffsetMappedMemoryTest {
 
     @BeforeClass
     public static void setUpClass() throws Exception {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
         root = temp.newFolder("dbRoot").getAbsolutePath();
     }
 
@@ -59,7 +57,7 @@ public class ContinuousOffsetMappedMemoryTest {
                 createPopulateFile(ff, path, appendCount);
 
                 try (
-                        var memoryROffset = new MemoryCMORImpl()
+                        MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
                 ) {
                     memoryROffset.ofOffset(ff, path, Files.PAGE_SIZE, Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
                     memoryROffset.extend(Files.PAGE_SIZE);
@@ -80,7 +78,7 @@ public class ContinuousOffsetMappedMemoryTest {
                 createPopulateFile(ff, path, appendCount);
 
                 try (
-                        var memoryROffset = new MemoryCMORImpl()
+                        MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
                 ) {
                     FilesFacade ff = new FilesFacadeImpl() {
                         @Override
@@ -158,11 +156,11 @@ public class ContinuousOffsetMappedMemoryTest {
                 createPopulateFile(ff, path, appendCount);
 
                 try (
-                        var memoryR = new MemoryCMRImpl();
-                        var memoryROffset = new MemoryCMORImpl()
+                        MemoryCMRImpl memoryR = new MemoryCMRImpl();
+                        MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
                 ) {
                     memoryR.of(ff, path, Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
-                    long fileSize = appendCount * 8L;
+                    long fileSize = memoryR.size();
                     Rnd rnd = new Rnd();
                     for (int i = 0; i < 10; i++) {
                         long lo = rnd.nextLong(appendCount / 2) * 8L;
@@ -191,7 +189,7 @@ public class ContinuousOffsetMappedMemoryTest {
                 createPopulateFile(ff, path, appendCount);
 
                 try (
-                        var memoryROffset = new MemoryCMORImpl()
+                        MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
                 ) {
                     memoryROffset.ofOffset(ff, path, Files.PAGE_SIZE, 2 * Files.PAGE_SIZE, MemoryTag.NATIVE_DEFAULT);
                     memoryROffset.extend(Files.PAGE_SIZE / 2);
@@ -212,12 +210,12 @@ public class ContinuousOffsetMappedMemoryTest {
             path.concat(testName.getMethodName());
 
             TestUtils.assertMemoryLeak(() -> {
-                long appendCount = 5 * Files.PAGE_SIZE - 1;
+                long appendCount = 5 * Files.PAGE_SIZE;
                 createPopulateFile(ff, path, appendCount);
 
                 try (
-                        var memoryR = new MemoryCMRImpl();
-                        var memoryROffset = new MemoryCMORImpl()
+                        MemoryCMRImpl memoryR = new MemoryCMRImpl();
+                        MemoryCMORImpl memoryROffset = new MemoryCMORImpl()
                 ) {
                     memoryR.of(ff, path, Files.PAGE_SIZE, -1L, MemoryTag.NATIVE_DEFAULT);
 
@@ -232,7 +230,7 @@ public class ContinuousOffsetMappedMemoryTest {
                     Rnd rnd = new Rnd();
                     for (int i = 0; i < 10; i++) {
                         long lo = rnd.nextLong(appendCount) * 8L;
-                        memoryROffset.ofOffset(ff, path, lo, appendCount - lo, MemoryTag.NATIVE_DEFAULT);
+                        memoryROffset.ofOffset(ff, path, lo, memoryR.size(), MemoryTag.NATIVE_DEFAULT);
                         Assert.assertEquals(memoryR.size(), memoryROffset.size() + memoryROffset.getOffset());
 
                         Assert.assertEquals(lo, memoryR.getLong(lo));
@@ -252,7 +250,7 @@ public class ContinuousOffsetMappedMemoryTest {
         long fd = ff.openRW(path, CairoConfiguration.O_NONE);
         Assert.assertTrue(fd > 0);
 
-        try (var memoryW = Vm.getMARWInstance()) {
+        try (MemoryMARW memoryW = Vm.getMARWInstance()) {
             memoryW.of(ff, fd, testName.getMethodName(), 16, 0);
             memoryW.jumpTo(0);
 

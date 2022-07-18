@@ -685,7 +685,7 @@ public final class TableUtils {
             // Since the failed resize can occur before append offset can be
             // explicitly set, we must assume that file size should be
             // equal to previous memory size
-            throw CairoException.instance(errno).put("could not remap file [previousSize=").put(prevSize).put(", newSize=").put(newSize).put(", fd=").put(fd).put(']');
+            throw CairoException.instance(errno).put("could not remap file [previousSize=").put(prevSize).put(", newSize=").put(newSize).put(", offset=").put(offset).put(", fd=").put(fd).put(']');
         }
         return page;
     }
