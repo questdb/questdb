@@ -79,14 +79,4 @@ public class NullMapWriter implements MapWriter {
     public void updateNullFlag(boolean flag) {
         throw new UnsupportedOperationException();
     }
-
-    @Override
-    public CharSequence valueOf(int key) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public CharSequence valueBOf(int key) {
-        throw new UnsupportedOperationException();
-    }
 }
