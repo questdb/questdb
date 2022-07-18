@@ -231,7 +231,7 @@ public class ServerMain {
             TextImportJob.assignToPool(cairoEngine.getMessageBus(), workerPool);
 
             TextImportRequestCollectingJob textImportRequestCollectingJob = new TextImportRequestCollectingJob(cairoEngine);
-            int parallelImportWorkerCount = Math.max(1, workerPool.getWorkerCount() - 2);//todo: how to calc available worker count?
+            int parallelImportWorkerCount = Math.max(1, workerPool.getWorkerCount() - 2); // save CPU resources for collecting and processing jobs
             TextImportRequestProcessingJob textImportRequestProcessingJob = new TextImportRequestProcessingJob(
                     cairoEngine,
                     parallelImportWorkerCount,
