@@ -89,7 +89,6 @@ public class ServerMain {
 
         LogFactory.configureFromSystemProperties(LogFactory.INSTANCE, null, rootDirectory);
         final Log log = LogFactory.getLog("server-main");
-        Unsafe.initLog();
 
         log.advisoryW().$("QuestDB server ")
                 .$(buildInformation.getQuestDbVersion())

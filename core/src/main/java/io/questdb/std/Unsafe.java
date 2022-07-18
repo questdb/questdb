@@ -24,8 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandles;
@@ -52,7 +50,6 @@ public final class Unsafe {
     //#endif
     private static final AnonymousClassDefiner anonymousClassDefiner;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
-    private static Log LOG;
 
     static {
         try {
@@ -143,10 +140,6 @@ public final class Unsafe {
     private Unsafe() {
     }
 
-    public static void initLog() {
-        LOG = LogFactory.getLog("unsafe-mem");
-    }
-
     public static long arrayGetVolatile(long[] array, int index) {
         assert index > -1 && index < array.length;
         return Unsafe.getUnsafe().getLongVolatile(array, LONG_OFFSET + ((long) index << LONG_SCALE));
@@ -226,12 +219,8 @@ public final class Unsafe {
             MALLOC_COUNT.incrementAndGet();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            if (LOG != null) {
-                LOG.errorW().$("Unsafe.malloc() OutOfMemoryError [mem_used=").$mem(MEM_USED.get())
-                        .$(", size=").$mem(size)
-                        .$(", memoryTag=").$(MemoryTag.nameOf(memoryTag))
-                        .I$();
-            }
+            System.err.println("Unsafe.malloc() OutOfMemoryError, mem_used=" + MEM_USED.get()
+                    + ", size=" + size + ", memoryTag=" + memoryTag);
             throw oom;
         }
     }
@@ -243,12 +232,8 @@ public final class Unsafe {
             REALLOC_COUNT.incrementAndGet();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            if (LOG != null) {
-                LOG.errorW().$("Unsafe.realloc() OutOfMemoryError [mem_used=").$mem(MEM_USED.get())
-                        .$(", old_size=").$mem(oldSize).$(", new_size=").$mem(newSize)
-                        .$(", memoryTag=").$(MemoryTag.nameOf(memoryTag))
-                        .I$();
-            }
+            System.err.println("Unsafe.realloc() OutOfMemoryError, mem_used=" + MEM_USED.get()
+                    + ", old_size=" + oldSize + ", new_size=" + newSize + ", memoryTag=" + memoryTag);
             throw oom;
         }
     }

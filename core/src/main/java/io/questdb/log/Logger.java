@@ -108,12 +108,6 @@ class Logger implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $mem(long memoryBytes) {
-        sink().putMem(memoryBytes);
-        return this;
-    }
-
-    @Override
     public LogRecord $(CharSequence sequence) {
         if (sequence == null) {
             sink().put("null");

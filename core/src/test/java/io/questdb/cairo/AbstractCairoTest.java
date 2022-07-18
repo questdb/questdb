@@ -329,7 +329,6 @@ public class AbstractCairoTest {
                 return rostiAllocFacade != null? rostiAllocFacade : super.getRostiAllocFacade();
             }
         };
-        Unsafe.initLog();
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
         messageBus = engine.getMessageBus();

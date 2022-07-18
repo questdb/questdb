@@ -161,11 +161,6 @@ public class MetricsScrapeBenchmark {
         }
 
         @Override
-        public CharSink putMem(long value) {
-            return this;
-        }
-
-        @Override
         public CharSink putQuoted(CharSequence cs) {
             return this;
         }

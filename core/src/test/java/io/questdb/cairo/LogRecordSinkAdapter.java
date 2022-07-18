@@ -121,12 +121,6 @@ public class LogRecordSinkAdapter extends AbstractCharSink {
     }
 
     @Override
-    public CharSink putMem(long bytes) {
-        line.$mem(bytes);
-        return this;
-    }
-
-    @Override
     public CharSink putQuoted(CharSequence cs) {
         line.$('\"').$(cs).I$();
         return this;
