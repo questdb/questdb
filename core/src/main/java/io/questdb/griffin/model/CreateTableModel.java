@@ -47,7 +47,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private int maxUncommittedRows;
     private long commitLag;
     private boolean ignoreIfExists = false;
-    private int writerMode;
+    private int writeMode;
 
     private CreateTableModel() {
     }
@@ -185,11 +185,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     @Override
     public int getWriteMode() {
-        return writerMode;
+        return writeMode;
     }
 
-    public void setWriteMode(int writerMode) {
-        this.writerMode = writerMode;
+    public void setWriteMode(int writeMode) {
+        this.writeMode = writeMode;
     }
 
     public void setCommitLag(long micros) {

@@ -540,10 +540,10 @@ public final class SqlParser {
                             try {
                                 writeMode = WriteMode.valueOf(expr.rhs.token);
                             } catch (UnsupportedOperationException ex) {
-                                throw SqlException.position(lexer.getPosition()).put(" unrecognized Write Mode ").put(expr.rhs.token);
+                                throw SqlException.position(lexer.getPosition()).put("unrecognized Write Mode '").put(expr.rhs.token).put('\'');
                             }
                             if (writeMode == WriteMode.WAL && !PartitionBy.isPartitioned(model.getPartitionBy())) {
-                                throw SqlException.position(lexer.getPosition()).put(" WAL Write Mode  can only be used on partitioned tables");
+                                throw SqlException.position(lexer.getPosition()).put("WAL Write Mode can only be used on partitioned tables");
                             }
                         } else {
                             throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");

@@ -48,7 +48,7 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "tables order by id desc",
+                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() order by id desc",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                         "2\ttable2\tts2\tNONE\t1000\t0\n" +
                         "1\ttable1\tts1\tDAY\t1000\t0\n"
@@ -67,7 +67,7 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "tables",
+                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                         "1\ttable1\tts1\tDAY\t83737\t28291\n"
         );
@@ -86,7 +86,7 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
         }
 
         assertSql(
-                "tables where name = 'table1'",
+                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables() where name = 'table1'",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                         "1\ttable1\tts1\tDAY\t1000\t0\n"
         );
@@ -132,7 +132,7 @@ public class TableListFunctionFactoryTest extends AbstractGriffinTest {
             filesFacade.remove(path);
         }
         assertSql(
-                "tables",
+                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                         "2\ttable2\tts2\tNONE\t1000\t0\n"
         );

@@ -33,7 +33,7 @@ import org.junit.Test;
 public class AlterTableWriteModeTest extends AbstractGriffinTest {
 
     @Test
-    public void testDefaultWriterMode() throws Exception {
+    public void testDefaultWriteMode() throws Exception {
         assertMemoryLeak(() -> {
             defaultTableWriteMode = WriteMode.WAL;
             createTableWrite("my_table_wal", null, "HOUR");
@@ -46,7 +46,7 @@ public class AlterTableWriteModeTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWriterModeAddIndex() throws Exception {
+    public void testWriteModeAddIndex() throws Exception {
         assertMemoryLeak(() -> {
             String alterSuffix = "ALTER COLUMN s ADD INDEX";
             checkWriteModeBeforeAfterAlter(alterSuffix);
@@ -54,7 +54,7 @@ public class AlterTableWriteModeTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWriterModeAndAlterLag() throws Exception {
+    public void testWriteModeAndAlterLag() throws Exception {
         assertMemoryLeak(() -> {
             String alterSuffix = "set param commitLag=100s";
             checkWriteModeBeforeAfterAlter(alterSuffix);
@@ -62,7 +62,7 @@ public class AlterTableWriteModeTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWriterModeAndRenameColumn() throws Exception {
+    public void testWriteModeAndRenameColumn() throws Exception {
         assertMemoryLeak(() -> {
             String alterSuffix = "rename column x to y";
             checkWriteModeBeforeAfterAlter(alterSuffix);
@@ -70,7 +70,61 @@ public class AlterTableWriteModeTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testWriterModeNonPartitionedTable() throws Exception {
+    public void testWriteModeNameInCreateAsSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table wm as (" +
+                    "select x, cast(x as timestamp) as ts " +
+                    "from long_sequence(2) " +
+                    ") timestamp(ts) partition by DAY with writeMode=WAL");
+
+            assertWriteMode("wm", WriteMode.WAL);
+        });
+    }
+
+    @Test
+    public void testWriteModeNameInCreateAsSelect2() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table wm as (" +
+                    "select x, cast(x as timestamp) as ts " +
+                    "from long_sequence(2) " +
+                    ") timestamp(ts) partition by DAY with writeMode=DIREcT");
+
+            assertWriteMode("wm", WriteMode.DIRECT);
+        });
+    }
+
+    @Test
+    public void testWriteModeNameInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                createTableWrite("my_table_wal", "NONE", "DAY");
+                Assert.fail("Exception expected");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(
+                        ex.getFlyweightMessage(),
+                        "unrecognized Write Mode 'NONE'"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testWriteModeNameInvalidEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                createTableWrite("my_table_wal", "", "DAY");
+                Assert.fail("Exception expected");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(
+                        ex.getFlyweightMessage(),
+                        "too few arguments for '='"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testWriteModeNonPartitionedTable() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 createTableWrite("my_table_wal", "WAL", "NONE");
@@ -78,7 +132,7 @@ public class AlterTableWriteModeTest extends AbstractGriffinTest {
             } catch (SqlException ex) {
                 TestUtils.assertContains(
                         ex.getFlyweightMessage(),
-                        "WAL Write Mode  can only be used on partitioned tables"
+                        "WAL Write Mode can only be used on partitioned tables"
                 );
             }
         });
@@ -100,6 +154,11 @@ public class AlterTableWriteModeTest extends AbstractGriffinTest {
         assertWriteMode("my_table_dir", WriteMode.DIRECT);
         compile("alter table my_table_dir " + alterSuffix, sqlExecutionContext);
         assertWriteMode("my_table_dir", WriteMode.DIRECT);
+
+        assertSql("select name, writeMode from tables() order by name",
+                "name\twriteMode\n" +
+                "my_table_dir\tDirect\n" +
+                "my_table_wal\tWAL\n");
     }
 
     private void createTableWrite(String tableName, String writeMode, String partitionBY) throws SqlException {
