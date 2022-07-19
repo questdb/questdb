@@ -20,16 +20,15 @@ import javax.swing.*;
 import java.awt.*;
 
 
-public class ConsolePanel extends JPanel {
+class ConsolePanel extends JPanel {
 
     private static final long serialVersionUID = 1L;
     private static final Font FONT = new Font("Monospaced", Font.BOLD, 14);
-    public static final Color FONT_COLOR = new Color(200, 50, 100);
+    private static final Color FONT_COLOR = new Color(200, 50, 100);
 
+    private final JTextPane textPane;
 
-    protected final JTextPane textPane;
-
-    public ConsolePanel() {
+    ConsolePanel() {
         super(new BorderLayout());
         textPane = new JTextPane();
         FontMetrics metrics = textPane.getFontMetrics(FONT);
@@ -44,7 +43,7 @@ public class ConsolePanel extends JPanel {
         add(new JScrollPane(textPane), BorderLayout.CENTER);
     }
 
-    public void display(String message) {
+    void display(String message) {
         textPane.setText(message);
         repaint();
     }

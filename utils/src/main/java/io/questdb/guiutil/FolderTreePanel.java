@@ -34,14 +34,13 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.function.Consumer;
 
-public class FolderTreePanel extends JPanel {
+class FolderTreePanel extends JPanel {
     private final JTree treeView;
     private final JFileChooser chooser;
     private final Consumer<File> onRootChange;
+    private File root;
 
-    private File dbRoot;
-
-    public FolderTreePanel(Consumer<File> onRootChange, Consumer<TreePath> onSelection) {
+    FolderTreePanel(Consumer<File> onRootChange, Consumer<TreePath> onSelection) {
         super(new BorderLayout());
         setBorder(BorderFactory.createRaisedBevelBorder());
 
@@ -64,7 +63,7 @@ public class FolderTreePanel extends JPanel {
         JButton setRootButton = new JButton("Set Root");
         setRootButton.addActionListener(e -> {
             if (FolderTreePanel.this.chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
-                setDbRoot(chooser.getSelectedFile());
+                setRoot(chooser.getSelectedFile());
             }
         });
         JButton refreshButton = new JButton("Reload All");
@@ -77,16 +76,35 @@ public class FolderTreePanel extends JPanel {
         add(scrollPane, BorderLayout.CENTER);
     }
 
-    public void setDbRoot(File dbRoot) {
-        this.dbRoot = dbRoot;
+    void setRoot(File root) {
+        this.root = root;
         reloadModel();
-        onRootChange.accept(this.dbRoot);
+        onRootChange.accept(this.root);
     }
 
     private void reloadModel() {
-        if (dbRoot != null) {
-            treeView.setModel(createModel(dbRoot));
+        if (root != null) {
+            treeView.setModel(createModel(root));
         }
+    }
+
+    static String formatItemName(String itemName, long size) {
+        if (size < 1024L) {
+            return size + " B";
+        }
+        int z = (63 - Long.numberOfLeadingZeros(size)) / 10;
+        return String.format("%s (%.1f %sB)",
+                itemName,
+                (double) size / (1L << (z * 10)),
+                " KMGTPE".charAt(z)
+        );
+    }
+
+    static String extractItemName(String withSize) {
+        if (withSize.endsWith("B)")) {
+            return withSize.substring(0, withSize.indexOf(" ("));
+        }
+        return withSize;
     }
 
     private static DefaultTreeModel createModel(File folder) {
@@ -112,24 +130,5 @@ public class FolderTreePanel extends JPanel {
             }
         }
         return folderNode;
-    }
-
-    public static String formatItemName(String itemName, long size) {
-        if (size < 1024L) {
-            return size + " B";
-        }
-        int z = (63 - Long.numberOfLeadingZeros(size)) / 10;
-        return String.format("%s (%.1f %sB)",
-                itemName,
-                (double) size / (1L << (z * 10)),
-                " KMGTPE".charAt(z)
-        );
-    }
-
-    public static String extractItemName(String withSize) {
-        if (withSize.endsWith("B)")) {
-            return withSize.substring(0, withSize.indexOf(" ("));
-        }
-        return withSize;
     }
 }

@@ -25,49 +25,350 @@
 package io.questdb.guiutil;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.*;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 
 import javax.swing.*;
 import javax.swing.tree.TreePath;
 
 import java.awt.*;
 import java.io.File;
+import java.util.function.Consumer;
 
 public class MetaExaminer {
 
-    private static final DateFormat DATE_FORMATTER = new TimestampFormatCompiler().compile(
-            "yyyy-MM-ddTHH:mm:ss.SSSz"
-    );
-
-    static {
-        // preload, which compiles the pattern and is costly, penalising startup time
-        DATE_FORMATTER.format(0, null, "Z", new StringSink());
-    }
-
     private final CairoConfiguration configuration = new DefaultCairoConfiguration("");
-    private int dbRootLen;
-    private final Path selectedPath = new Path();
-    private final Path auxPath = new Path();
+    private final FilesFacade ff = configuration.getFilesFacade();
     private final TableReaderMetadata metaReader = new TableReaderMetadata(FilesFacadeImpl.INSTANCE);
     private final TxReader txReader = new TxReader(FilesFacadeImpl.INSTANCE);
     private final ColumnVersionReader cvReader = new ColumnVersionReader();
-    private final StringSink messageBuilder = new StringSink();
+    private int rootLen;
+    private String potentialPartitionFolderName;
+    private final Path selectedPath = new Path();
+    private final Path auxPath = new Path();
     private final JFrame frame;
-    private final FolderTreePanel folderTreeView;
+    private final FolderTreePanel treeView;
     private final ConsolePanel console;
+    private final MessageSink ms = new MessageSink();
 
 
     public MetaExaminer() {
-        frame = new JFrame() {
+        frame = createFrame(this::onExit);
+        console = new ConsolePanel();
+        treeView = new FolderTreePanel(this::onRootSet, this::onSelectedFile);
+        treeView.setPreferredSize(new Dimension(frame.getWidth() / 4, 0));
+        frame.add(BorderLayout.CENTER, console);
+        frame.add(BorderLayout.WEST, treeView);
+        frame.setVisible(true);
+    }
+
+    public void setRoot(File root) {
+        if (!root.exists() || !root.isDirectory()) {
+            console.display("Folder does not exist: " + root);
+        }
+        treeView.setRoot(root); // receives callback onRootSet
+    }
+
+    private void onRootSet(File root) {
+        String absolutePath = root.getAbsolutePath();
+        selectedPath.trimTo(0).put(absolutePath).put(File.separatorChar);
+        rootLen = selectedPath.length();
+    }
+
+    private void onExit() {
+        Misc.free(metaReader);
+        Misc.free(txReader);
+        Misc.free(cvReader);
+        Misc.free(selectedPath);
+        Misc.free(auxPath);
+    }
+
+    private void onSelectedFile(TreePath treePath) {
+        Object[] nodes = treePath.getPath();
+        String fileName = FolderTreePanel.extractItemName(
+                nodes[nodes.length - 1].toString()
+        );
+        if (fileName.endsWith(File.separator)) {
+            // do nothing for folders
+            console.display("");
+            return;
+        }
+
+        // build the selected path
+        potentialPartitionFolderName = null;
+        selectedPath.trimTo(rootLen); // first node
+        for (int i = 1, limit = nodes.length - 1; i < limit; i++) {
+            String pathElement = nodes[i].toString();
+            selectedPath.put(pathElement);
+            if (i == limit - 1) {
+                int dotIdx = PathUtils.findNextDotIdx(pathElement, 0);
+                int end = dotIdx == -1 ? pathElement.length() - 1 : dotIdx;
+                potentialPartitionFolderName = pathElement.substring(0, end);
+            }
+        }
+        selectedPath.put(fileName).$(); // last node
+        frame.setTitle("Current path: " + selectedPath);
+        try {
+            if (fileName.contains(TableUtils.META_FILE_NAME)) {
+                displayMetaFileContent();
+            } else if (fileName.contains(TableUtils.TXN_SCOREBOARD_FILE_NAME)) {
+                // no clear interface
+                console.display("No reader available.");
+            } else if (fileName.contains(TableUtils.TXN_FILE_NAME)) {
+                displayTxnFileContent();
+            } else if (fileName.contains(TableUtils.COLUMN_VERSION_FILE_NAME)) {
+                displayCVFileContent();
+            } else if (fileName.contains(".c")) {
+                displayStaticSymbolMapFileContent();
+            } else if (fileName.contains(".o")) {
+                selectedPath.trimTo(selectedPath.length() - fileName.length());
+                selectedPath.concat(fileName.replace(".o", ".c")).$();
+                displayStaticSymbolMapFileContent();
+            } else if (fileName.contains(".k")) {
+                displayIndexFileContent();
+            } else if (fileName.contains(".v")) {
+                selectedPath.trimTo(selectedPath.length() - fileName.length());
+                selectedPath.concat(fileName.replace(".v", ".k")).$();
+                displayIndexFileContent();
+            } else {
+                console.display("No reader available.");
+            }
+        } catch (Throwable t) {
+            ms.failedToOpenFile(selectedPath, t);
+            console.display(ms.toString());
+        }
+    }
+
+    private void displayMetaFileContent() {
+        metaReader.deferredInit(selectedPath, ColumnType.VERSION);
+        ms.clear();
+        ms.addLn("tableId: ", metaReader.getId());
+        ms.addLn("version: ", metaReader.getVersion());
+        ms.addLn("structureVersion: ", metaReader.getStructureVersion());
+        ms.addLn("timestampIndex: ", metaReader.getTimestampIndex());
+        ms.addLn("partitionBy: ", PartitionBy.toString(metaReader.getPartitionBy()));
+        ms.addLn("maxUncommittedRows: ", metaReader.getMaxUncommittedRows());
+        ms.addTimeLn("commitLag: ", metaReader.getCommitLag());
+        ms.addLn();
+        int columnCount = metaReader.getColumnCount();
+        ms.addLn("columnCount: ", columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            int columnType = metaReader.getColumnType(i);
+            ms.addColumnLn(
+                    i,
+                    metaReader.getColumnName(i),
+                    metaReader.getColumnHash(i),
+                    columnType,
+                    columnType > 0 && metaReader.isColumnIndexed(i),
+                    columnType > 0 ? metaReader.getIndexValueBlockCapacity(i) : 0,
+                    true
+            );
+        }
+        console.display(ms.toString());
+    }
+
+    private void displayTxnFileContent() {
+        if (openRequiredMetaFile(1)) {
+            // load txn
+            txReader.ofRO(selectedPath, metaReader.getPartitionBy());
+            txReader.unsafeLoadAll();
+            ms.clear();
+            int symbolColumnCount = txReader.getSymbolColumnCount();
+            ms.addLn("txn: ", txReader.getTxn());
+            ms.addLn("version: ", txReader.getVersion());
+            ms.addLn("columnVersion: ", txReader.getColumnVersion());
+            ms.addLn("dataVersion: ", txReader.getDataVersion());
+            ms.addLn("structureVersion: ", txReader.getStructureVersion());
+            ms.addLn("truncateVersion: ", txReader.getTruncateVersion());
+            ms.addLn("partitionTableVersion: ", txReader.getPartitionTableVersion());
+            ms.addLn();
+            ms.addLn("rowCount: ", txReader.getRowCount());
+            ms.addLn("fixedRowCount: ", txReader.getFixedRowCount());
+            ms.addLn("transientRowCount: ", txReader.getTransientRowCount());
+            ms.addTimestampLn("minTimestamp: ", txReader.getMinTimestamp());
+            ms.addTimestampLn("maxTimestamp: ", txReader.getMaxTimestamp());
+            ms.addLn("recordSize: ", txReader.getRecordSize());
+            ms.addLn();
+            ms.addLn("symbolColumnCount: ", symbolColumnCount);
+            for (int i = 0; i < symbolColumnCount; i++) {
+                ms.addLn(" - column " + i + " value count: ", txReader.getSymbolValueCount(i));
+            }
+            int partitionCount = txReader.getPartitionCount();
+            ms.addLn();
+            ms.addLn("partitionCount: ", partitionCount);
+            for (int i = 0; i < partitionCount; i++) {
+                ms.addPartitionLn(
+                        i,
+                        txReader.getPartitionTimestamp(i),
+                        txReader.getPartitionNameTxn(i),
+                        txReader.getPartitionSize(i),
+                        txReader.getPartitionColumnVersion(i),
+                        txReader.getSymbolValueCount(i)
+                );
+            }
+            console.display(ms.toString());
+        }
+    }
+
+    private void displayCVFileContent() {
+        cvReader.ofRO(FilesFacadeImpl.INSTANCE, selectedPath);
+        cvReader.readSafe(MicrosecondClockImpl.INSTANCE, Long.MAX_VALUE);
+        LongList cvEntries = cvReader.getCachedList();
+        int limit = cvEntries.size();
+        ms.clear();
+        ms.addLn("version: ", cvReader.getVersion());
+        ms.addLn("entryCount: ", limit / 4);
+        for (int i = 0; i < limit; i += 4) {
+            long partitionTimestamp = cvEntries.getQuick(i);
+            ms.addLn("  + entry ", i / 4);
+            ms.addTimestampLn("     - partitionTimestamp: ", partitionTimestamp);
+            ms.addLn("     - columnIndex: ", cvEntries.getQuick(i + 1));
+            ms.addLn("     - columnNameTxn: ", cvEntries.getQuick(i + 2));
+            ms.addLn("     - columnTop: ", cvEntries.getQuick(i + 3));
+            ms.addLn();
+        }
+        console.display(ms.toString());
+    }
+
+    private void displayStaticSymbolMapFileContent() {
+        if (openRequiredMetaFile(1) && openRequiredTxnFile(1)) {
+            auxPath.of(selectedPath);
+            PathUtils.ColumnNameTxn cnTxn = PathUtils.columnNameTxnOf(auxPath);
+            int colIdx = metaReader.getColumnIndex(cnTxn.columnName);
+            int symbolCount = txReader.unsafeReadSymbolCount(colIdx);
+
+            // this also opens the .o (offset) file, which contains symbolCapacity, isCached, containsNull
+            // as well as the .k and .v (index key/value) files, which index the static table in this case
+            PathUtils.selectFileInFolder(auxPath, 1, null);
+            SymbolMapReaderImpl symReader = new SymbolMapReaderImpl(
+                    configuration,
+                    auxPath,
+                    cnTxn.columnName,
+                    cnTxn.columnNameTxn,
+                    symbolCount
+            );
+            ms.clear();
+            ms.addColumnLn(
+                    colIdx,
+                    metaReader.getColumnName(colIdx),
+                    metaReader.getColumnHash(colIdx),
+                    metaReader.getColumnType(colIdx),
+                    metaReader.isColumnIndexed(colIdx),
+                    metaReader.getIndexValueBlockCapacity(colIdx),
+                    false
+            );
+            ms.addLn();
+            ms.addLn("symbolCapacity: ", symReader.getSymbolCapacity());
+            ms.addLn("isCached: ", symReader.isCached());
+            ms.addLn("isDeleted: ", symReader.isDeleted());
+            ms.addLn("containsNullValue: ", symReader.containsNullValue());
+            ms.addLn("symbolCount: ", symbolCount);
+            for (int i = 0; i < symbolCount; i++) {
+                ms.addIndexedSymbolLn(i, symReader.valueOf(i), true);
+            }
+            console.display(ms.toString());
+        }
+    }
+
+    private void displayIndexFileContent() {
+        if (openRequiredMetaFile(2) && openRequiredCvFile(2) && openRequiredTxnFile(2)) {
+            auxPath.of(selectedPath);
+            PathUtils.ColumnNameTxn cnTxn = PathUtils.columnNameTxnOf(auxPath);
+            int colIdx = metaReader.getColumnIndex(cnTxn.columnName);
+            int symbolCount = txReader.unsafeReadSymbolCount(colIdx);
+
+            // this also opens the .o (offset) file, which contains symbolCapacity, isCached, containsNull
+            // as well as the .k and .v (index key/value) files, which index the static table in this case
+            PathUtils.selectFileInFolder(auxPath, 2, null);
+            SymbolMapReaderImpl symReader = new SymbolMapReaderImpl(
+                    configuration,
+                    auxPath,
+                    cnTxn.columnName,
+                    cnTxn.columnNameTxn,
+                    symbolCount
+            );
+
+            long partitionTimestamp = PartitionBy.parsePartitionDirName(potentialPartitionFolderName, metaReader.getPartitionBy());
+            int writerIdx = metaReader.getWriterIndex(colIdx);
+            int versionRecordIdx = cvReader.getRecordIndex(partitionTimestamp, writerIdx);
+            long columnTop = versionRecordIdx > -1L ? cvReader.getColumnTopByIndex(versionRecordIdx) : 0L;
+
+            auxPath.of(selectedPath);
+            PathUtils.selectFileInFolder(auxPath, 1, null);
+            try (BitmapIndexFwdReader indexReader = new BitmapIndexFwdReader(
+                    configuration,
+                    auxPath,
+                    cnTxn.columnName,
+                    cnTxn.columnNameTxn,
+                    columnTop,
+                    -1L
+            )) {
+                ms.clear();
+                if (symReader.containsNullValue()) {
+                    RowCursor cursor = indexReader.getCursor(false, 0, 0, Long.MAX_VALUE);
+                    if (cursor.hasNext()) {
+                        ms.addLn("*: ", "");
+                        ms.addLn(" - offset: ", cursor.next());
+                        while (cursor.hasNext()) {
+                            ms.addLn(" - offset: ", cursor.next());
+                        }
+                    }
+                }
+                for (int symbolKey = 0; symbolKey < symbolCount; symbolKey++) {
+                    CharSequence symbol = symReader.valueOf(symbolKey);
+                    RowCursor cursor = indexReader.getCursor(false, symbolKey + 1, 0, Long.MAX_VALUE);
+                    if (cursor.hasNext()) {
+                        ms.addIndexedSymbolLn(symbolKey, symbol, false);
+                        ms.addLn(" - offset: ", cursor.next());
+                        while (cursor.hasNext()) {
+                            ms.addLn(" - offset: ", cursor.next());
+                        }
+                    }
+                }
+                console.display(ms.toString());
+            }
+        }
+    }
+
+    private boolean openRequiredMetaFile(int levelUpCount) {
+        return onRequiredFile(levelUpCount, TableUtils.META_FILE_NAME, p -> {
+            metaReader.deferredInit(p, ColumnType.VERSION);
+        });
+    }
+
+    private boolean openRequiredTxnFile(int levelUpCount) {
+        return onRequiredFile(levelUpCount, TableUtils.TXN_FILE_NAME, p -> {
+            txReader.ofRO(p, metaReader.getPartitionBy());
+            txReader.unsafeLoadAll();
+        });
+    }
+
+    private boolean openRequiredCvFile(int levelUpCount) {
+        return onRequiredFile(levelUpCount, TableUtils.COLUMN_VERSION_FILE_NAME, p -> {
+            cvReader.ofRO(FilesFacadeImpl.INSTANCE, p);
+            cvReader.readSafe(MicrosecondClockImpl.INSTANCE, Long.MAX_VALUE);
+        });
+    }
+
+    private boolean onRequiredFile(int levelUpCount, String fileName, Consumer<Path> action) {
+        auxPath.of(selectedPath);
+        PathUtils.selectFileInFolder(auxPath, levelUpCount, fileName);
+        if (!ff.exists(auxPath.$())) {
+            console.display("Could not find required file: " + auxPath);
+            return false;
+        }
+        action.accept(auxPath);
+        return true;
+    }
+
+    private static JFrame createFrame(Runnable onExit) {
+        JFrame frame = new JFrame() {
             @Override
             public void dispose() {
                 super.dispose();
-                onExit();
+                onExit.run();
                 System.exit(0);
             }
         };
@@ -81,316 +382,14 @@ public class MetaExaminer {
         int y = (int) (screenSize.getHeight() - height) / 2;
         frame.setSize(width, height);
         frame.setLocation(x, y);
-
-        console = new ConsolePanel();
-        frame.add(BorderLayout.CENTER, console);
-
-        folderTreeView = new FolderTreePanel(this::onDbRootSet, this::onSelectedFile);
-        folderTreeView.setPreferredSize(new Dimension(frame.getWidth() / 4, 0));
-        frame.add(BorderLayout.WEST, folderTreeView);
-
-        frame.setVisible(true);
-    }
-
-    public void setDbRoot(File dbRoot) {
-        if (!dbRoot.exists() || !dbRoot.isDirectory()) {
-            console.display("Folder does not exist: " + dbRoot);
-        }
-        folderTreeView.setDbRoot(dbRoot); // receives callback onDbRootSet
-    }
-
-    private void onExit() {
-        Misc.free(metaReader);
-        Misc.free(txReader);
-        Misc.free(cvReader);
-        Misc.free(selectedPath);
-        Misc.free(auxPath);
-    }
-
-    private void onDbRootSet(File dbRoot) {
-        String absolutePath = dbRoot.getAbsolutePath();
-        selectedPath.trimTo(0).put(absolutePath).put(File.separatorChar);
-        dbRootLen = selectedPath.length();
-    }
-
-    private void onSelectedFile(TreePath treePath) {
-        Object[] nodes = treePath.getPath();
-        String fileName = FolderTreePanel.extractItemName(
-                nodes[nodes.length - 1].toString()
-        );
-        boolean isFolder = fileName.endsWith(File.separator);
-        selectedPath.trimTo(dbRootLen); // first node
-        for (int i = 1; i < nodes.length - 1; i++) {
-            selectedPath.put(nodes[i].toString());
-        }
-        selectedPath.put(fileName).$(); // last node
-        frame.setTitle("Current path: " + selectedPath);
-        if (isFolder) {
-            console.display("");
-        } else {
-            try {
-                if (fileName.contains(TableUtils.COLUMN_VERSION_FILE_NAME)) {
-                    displayCVFileContent();
-                } else if (fileName.contains(TableUtils.META_FILE_NAME)) {
-                    displayMetaFileContent();
-                } else if (fileName.contains(TableUtils.TXN_SCOREBOARD_FILE_NAME)) {
-                    console.display("No reader available.");
-                } else if (fileName.contains(TableUtils.TXN_FILE_NAME)) {
-                    displayTxnFileContent();
-                } else if (fileName.contains(".c")) {
-                    displayStaticSymbolMapFileContent();
-                } else {
-                    console.display("No reader available.");
-                }
-            } catch (Throwable t) {
-                messageBuilder.clear();
-                messageBuilder
-                        .put("Failed to open file: ")
-                        .put(t.getMessage())
-                        .put(System.lineSeparator());
-                console.display(messageBuilder.toString());
-            }
-        }
-    }
-
-    private void displayMetaFileContent() {
-        metaReader.deferredInit(selectedPath, ColumnType.VERSION);
-        int columnCount = metaReader.getColumnCount();
-        messageBuilder.clear();
-        mbAppendLn("tableId: ", metaReader.getId());
-        mbAppendLn("version: ", metaReader.getVersion());
-        mbAppendLn("structureVersion: ", metaReader.getStructureVersion());
-        mbAppendLn("timestampIndex: ", metaReader.getTimestampIndex());
-        mbAppendLn("partitionBy: ", metaReader.getPartitionBy());
-        mbAppendLn("commitLag: ", metaReader.getCommitLag());
-        mbAppendLn("maxUncommittedRows: ", metaReader.getMaxUncommittedRows());
-        mbAppendLn();
-        mbAppendLn("columnCount: ", columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            int columnType = metaReader.getColumnType(i);
-            mbAppendColumnLn(
-                    i,
-                    metaReader.getColumnName(i),
-                    metaReader.getColumnHash(i),
-                    columnType,
-                    columnType > 0 && metaReader.isColumnIndexed(i),
-                    columnType > 0 ? metaReader.getIndexValueBlockCapacity(i) : 0
-            );
-        }
-        console.display(messageBuilder.toString());
-    }
-
-    private void displayTxnFileContent() {
-        // load meta
-        auxPath.of(selectedPath);
-        selectInParentFolder(auxPath, TableUtils.META_FILE_NAME);
-        if (!configuration.getFilesFacade().exists(auxPath.$())) {
-            console.display("Could not find required file: " + auxPath);
-            return;
-        }
-        metaReader.deferredInit(auxPath, ColumnType.VERSION);
-
-        txReader.ofRO(selectedPath, metaReader.getPartitionBy());
-        txReader.unsafeLoadAll();
-        messageBuilder.clear();
-        int symbolColumnCount = txReader.getSymbolColumnCount();
-        mbAppendLn("txn: ", txReader.getTxn());
-        mbAppendLn("version: ", txReader.getVersion());
-        mbAppendLn("columnVersion: ", txReader.getColumnVersion());
-        mbAppendLn("dataVersion: ", txReader.getDataVersion());
-        mbAppendLn("structureVersion: ", txReader.getStructureVersion());
-        mbAppendLn("truncateVersion: ", txReader.getTruncateVersion());
-        mbAppendLn("partitionTableVersion: ", txReader.getPartitionTableVersion());
-        mbAppendLn();
-        mbAppendLn("rowCount: ", txReader.getRowCount());
-        mbAppendLn("fixedRowCount: ", txReader.getFixedRowCount());
-        mbAppendLn("transientRowCount: ", txReader.getTransientRowCount());
-        mbAppendLn("minTimestamp: ", txReader.getMinTimestamp());
-        mbAppendLn("maxTimestamp: ", txReader.getMaxTimestamp());
-        mbAppendLn("recordSize: ", txReader.getRecordSize());
-        mbAppendLn();
-        mbAppendLn("symbolColumnCount: ", symbolColumnCount);
-        for (int i = 0; i < symbolColumnCount; i++) {
-            mbAppendLn(" - symbol " + i + " -> value count: ", txReader.getSymbolValueCount(i));
-        }
-        int partitionCount = txReader.getPartitionCount();
-        mbAppendLn();
-        mbAppendLn("partitionCount: ", partitionCount);
-        for (int i = 0; i < partitionCount; i++) {
-            mbAppendPartitionLn(
-                    i,
-                    txReader.getPartitionTimestamp(i),
-                    txReader.getPartitionNameTxn(i),
-                    txReader.getPartitionSize(i),
-                    txReader.getPartitionColumnVersion(i),
-                    txReader.getSymbolValueCount(i)
-            );
-        }
-        console.display(messageBuilder.toString());
-    }
-
-    private void displayCVFileContent() {
-        cvReader.ofRO(FilesFacadeImpl.INSTANCE, selectedPath);
-        cvReader.readSafe(MicrosecondClockImpl.INSTANCE, Long.MAX_VALUE);
-        LongList cvEntries = cvReader.getCachedList();
-        int limit = cvEntries.size();
-        messageBuilder.clear();
-        mbAppendLn("version: ", cvReader.getVersion());
-        mbAppendLn("entryCount: ", limit / 4);
-        for (int i = 0; i < limit; i += 4) {
-            long partitionTimestamp = cvEntries.getQuick(i);
-            mbAppendLn("  + entry ", i / 4);
-            mbAppendTimestampLn(partitionTimestamp);
-            mbAppendLn("     - columnIndex: ", cvEntries.getQuick(i + 1));
-            mbAppendLn("     - columnNameTxn: ", cvEntries.getQuick(i + 2));
-            mbAppendLn("     - columnTop: ", cvEntries.getQuick(i + 3));
-            mbAppendLn();
-        }
-        console.display(messageBuilder.toString());
-    }
-
-    private void displayStaticSymbolMapFileContent() {
-        // load meta
-        auxPath.of(selectedPath);
-        selectInParentFolder(auxPath, TableUtils.META_FILE_NAME);
-        if (!configuration.getFilesFacade().exists(auxPath.$())) {
-            console.display("Could not find required file: " + auxPath);
-            return;
-        }
-        metaReader.deferredInit(auxPath, ColumnType.VERSION);
-
-        // load txn
-        auxPath.of(selectedPath);
-        selectInParentFolder(auxPath, TableUtils.TXN_FILE_NAME);
-        if (!configuration.getFilesFacade().exists(auxPath.$())) {
-            console.display("Could not find required file: " + auxPath);
-            return;
-        }
-        txReader.ofRO(auxPath, metaReader.getPartitionBy());
-        txReader.unsafeLoadAll();
-
-        // columnName and columnNameTxn (selected path may contain suffix .txn)
-        auxPath.of(selectedPath);
-        int len = auxPath.length();
-        int nameStart = len - 1;
-        while (auxPath.charAt(nameStart) != File.separatorChar) {
-            nameStart--;
-        }
-        int dotIdx = ++nameStart;
-        while (dotIdx < len && auxPath.charAt(dotIdx) != '.') {
-            dotIdx++;
-        }
-        int dotIdx2 = dotIdx + 1;
-        while (dotIdx2 < len && auxPath.charAt(dotIdx2) != '.') {
-            dotIdx2++;
-        }
-        String tmp = auxPath.toString();
-        String columnName = tmp.substring(nameStart, dotIdx);
-        long columnNameTxn = dotIdx2 == len ? -1L : Long.parseLong(tmp.substring(dotIdx2 + 1, len));
-
-        int colIdx = metaReader.getColumnIndex(columnName);
-        int symbolCount = txReader.unsafeReadSymbolCount(colIdx);
-
-        // this also opens the .o (offset) file, which contains symbolCapacity, isCached, containsNull
-        // as well as the .k and .v (index key/value) files, which index the static table in this case
-        selectInParentFolder(auxPath, null);
-        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(
-                configuration,
-                auxPath,
-                columnName,
-                columnNameTxn,
-                symbolCount
-        );
-
-        messageBuilder.clear();
-        mbAppendLn("symbolCapacity: ", reader.getSymbolCapacity());
-        mbAppendLn("containsNullValue: ", reader.containsNullValue());
-        mbAppendLn("isCached: ", reader.isCached());
-        mbAppendLn("isDeleted: ", reader.isDeleted());
-        mbAppendLn();
-        mbAppendLn("symbolCount: ", symbolCount);
-        for (int i = 0; i < symbolCount; i++) {
-            mbAppendIndexedSymbolLn(i, reader.valueOf(i));
-        }
-        console.display(messageBuilder.toString());
-    }
-
-    private static void selectInParentFolder(Path p, String fileName) {
-        int idx = p.length() - 1;
-        while (p.charAt(idx) != File.separatorChar) {
-            idx--;
-        }
-        p.trimTo(idx + 1);
-        if (fileName != null) {
-            p.concat(fileName);
-        }
-    }
-
-    private void mbAppendTimestampLn(long timestamp) {
-        messageBuilder.put("     - partitionTimestamp: ").put(timestamp).put(" (");
-        DATE_FORMATTER.format(timestamp, null, "Z", messageBuilder);
-        messageBuilder.put(')').put(System.lineSeparator());
-    }
-
-    private void mbAppendLn(String name, int value) {
-        messageBuilder.put(name).put(value).put(System.lineSeparator());
-    }
-
-    private void mbAppendLn(String name, long value) {
-        messageBuilder.put(name).put(value).put(System.lineSeparator());
-    }
-
-    private void mbAppendLn(String name, boolean value) {
-        messageBuilder.put(name).put(value).put(System.lineSeparator());
-    }
-
-    private void mbAppendIndexedSymbolLn(int index, CharSequence value) {
-        messageBuilder.put("  - ").put(index).put(": ").put(value).put(System.lineSeparator());
-    }
-
-    private void mbAppendColumnLn(
-            int columnIndex,
-            CharSequence columnName,
-            long columnHash,
-            int columnType,
-            boolean columnIsIndexed,
-            int columnIndexBlockCapacity
-    ) {
-        messageBuilder.put(" - column ").put(columnIndex)
-                .put(" -> name: ").put(columnName)
-                .put(", hash: ").put(columnHash)
-                .put(", type: ").put(ColumnType.nameOf(columnType))
-                .put(", indexed: ").put(columnIsIndexed)
-                .put(", indexBlockCapacity: ").put(columnIndexBlockCapacity)
-                .put(System.lineSeparator());
-    }
-
-    private void mbAppendPartitionLn(
-            int partitionIndex,
-            long partitionTimestamp,
-            long partitionNameTxn,
-            long partitionSize,
-            long partitionColumnVersion,
-            long partitionSymbolValueCount
-    ) {
-        messageBuilder.put(" - partition ").put(partitionIndex)
-                .put(" -> timestamp: ").put(partitionTimestamp)
-                .put(", txn: ").put(partitionNameTxn)
-                .put(", size: ").put(partitionSize)
-                .put(", column version: ").put(partitionColumnVersion)
-                .put(", symbol value count: ").put(partitionSymbolValueCount)
-                .put(System.lineSeparator());
-    }
-
-    private void mbAppendLn() {
-        messageBuilder.put(System.lineSeparator());
+        return frame;
     }
 
     public static void main(String[] args) {
         EventQueue.invokeLater(() -> {
             MetaExaminer examiner = new MetaExaminer();
             if (args.length == 1) {
-                examiner.setDbRoot(new File(args[0]));
+                examiner.setRoot(new File(args[0]));
             }
         });
     }
