@@ -201,7 +201,7 @@ public interface Sender extends Closeable {
      * Example usage:
      * <pre>{@code
      * try (Sender sender = Sender.builder()
-     *  .address("localhost:9001")
+     *  .address("localhost:9009")
      *  .build()) {
      *      sender.table(tableName).column("value", 42).atNow();
      *  }
@@ -215,7 +215,7 @@ public interface Sender extends Closeable {
         private static final byte PORT_DEFAULT = 0;
 
         private static final int DEFAULT_BUFFER_CAPACITY = 64 * 1024;
-        private static final int DEFAULT_PORT = 9001;
+        private static final int DEFAULT_PORT = 9009;
 
         private static final int MIN_BUFFER_SIZE_FOR_AUTH = 512 + 1; // challenge size + 1;
 
