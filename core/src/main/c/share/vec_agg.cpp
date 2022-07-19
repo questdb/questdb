@@ -175,7 +175,8 @@ int64_t MIN_LONG(int64_t *pl, int64_t count) {
         vecMin = min(vecMin, vec - 1); // filter out L_MIN by range shifting: L_MIN - 1 => L_MAX
     }
 
-    int64_t min = horizontal_min(vecMin) + 1;
+    int64_t min = horizontal_min(vecMin);
+    min = min == L_MAX ? min : min + 1; // clamp to L_MAX
     for (; i < count; i++) {
         int64_t x = *(pl + i);
         if (x != L_MIN && x < min) {
@@ -257,7 +258,8 @@ int32_t MIN_INT(int32_t *pi, int64_t count) {
         vecMin = min(vecMin, vec - 1); // filter out I_MIN by range shifting: I_MIN - 1 => I_MAX
     }
 
-    int32_t min = horizontal_min(vecMin) + 1; // restore original
+    int32_t min = horizontal_min(vecMin);
+    min = min == I_MAX ? min : min + 1; // clamp to L_MAX
     for (; i < count; i++) {
         int32_t x = *(pi + i);
         if (x != I_MIN && x < min) {
