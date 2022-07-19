@@ -47,7 +47,7 @@ public class TextImportException extends RuntimeException implements Sinkable, F
         StringSink sink = te.message;
         sink.clear();
         if (errno > Integer.MIN_VALUE) {
-            sink.put('[').put(errno).put("]: ");
+            sink.put('[').put(errno).put("] ");
         }
         sink.put(message);
         return te;

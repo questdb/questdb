@@ -388,7 +388,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 throw TextImportException.instance(
                         TextImportTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")
                         .put(partitionDirName).put("', msg=")
-                        .put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage()).put(']');
+                        .put('[').put(e.getErrno()).put("] ").put(e.getFlyweightMessage()).put(']');
             }
         }
 
