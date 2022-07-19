@@ -357,7 +357,8 @@ public enum PropertyKey {
     CAIRO_MAX_FILE_NAME_LENGTH("cairo.max.file.name.length"),
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
-    CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation");
+    CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
+    CAIRO_DEFAULT_TABLE_WRITE_MODE("cairo.default.table.write.mode");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

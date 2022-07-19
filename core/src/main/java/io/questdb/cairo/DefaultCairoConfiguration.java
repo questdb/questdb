@@ -254,6 +254,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getDefaultTableWriteMode() {
+        return WriteMode.DIRECT;
+    }
+
+    @Override
     public int getDoubleToStrCastScale() {
         return Numbers.MAX_SCALE;
     }

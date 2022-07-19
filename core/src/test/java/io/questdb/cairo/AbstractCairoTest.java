@@ -104,6 +104,7 @@ public class AbstractCairoTest {
     protected static double columnPurgeRetryDelayMultiplier = -1;
     protected static long columnPurgeRetryDelay = -1;
     protected static int columnVersionPurgeQueueCapacity = -1;
+    protected static int defaultTableWriteMode = -1;
 
     @Rule
     public Timeout timeout = Timeout.builder()
@@ -317,6 +318,11 @@ public class AbstractCairoTest {
             public RostiAllocFacade getRostiAllocFacade() {
                 return rostiAllocFacade != null? rostiAllocFacade : super.getRostiAllocFacade();
             }
+
+            @Override
+            public int getDefaultTableWriteMode() {
+                return defaultTableWriteMode < 0 ? super.getDefaultTableWriteMode() : defaultTableWriteMode;
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -372,6 +378,7 @@ public class AbstractCairoTest {
         columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
+        defaultTableWriteMode = -1;
     }
 
     protected static void configureForBackups() throws IOException {

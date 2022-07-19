@@ -120,6 +120,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    int getDefaultTableWriteMode();
+
     int getDoubleToStrCastScale();
 
     int getFileOperationRetryCount();

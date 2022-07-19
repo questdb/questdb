@@ -450,6 +450,11 @@ public class CairoTextWriter implements Closeable, Mutable {
             return configuration.getCommitLag();
         }
 
+        @Override
+        public int getWriteMode() {
+            return configuration.getDefaultTableWriteMode();
+        }
+
         TableStructureAdapter of(ObjList<CharSequence> names, ObjList<TypeAdapter> types) throws TextException {
             this.names = names;
             this.types = types;

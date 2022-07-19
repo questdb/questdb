@@ -133,6 +133,11 @@ class TableStructureAdapter implements TableStructure {
         return cairoConfiguration.getCommitLag();
     }
 
+    @Override
+    public int getWriteMode() {
+        return cairoConfiguration.getDefaultTableWriteMode();
+    }
+
     TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {
         this.tableName = tableName;
         entityNamesUtf16.clear();

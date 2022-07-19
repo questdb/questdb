@@ -47,6 +47,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private int maxUncommittedRows;
     private long commitLag;
     private boolean ignoreIfExists = false;
+    private int writerMode;
 
     private CreateTableModel() {
     }
@@ -84,11 +85,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
-    public long getColumnHash(int columnIndex) {
-        return columnHashes.get(columnIndex);
-    }
-
-    @Override
     public void clear() {
         columnCastModels.clear();
         queryModel = null;
@@ -119,6 +115,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     @Override
     public int getColumnType(int index) {
         return getLowAt(index * 2);
+    }
+
+    @Override
+    public long getColumnHash(int columnIndex) {
+        return columnHashes.get(columnIndex);
     }
 
     @Override
@@ -166,6 +167,33 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     @Override
     public int getTimestampIndex() {
         return timestamp == null ? -1 : getColumnIndex(timestamp.token);
+    }
+
+    @Override
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        this.maxUncommittedRows = maxUncommittedRows;
+    }
+
+    @Override
+    public long getCommitLag() {
+        return commitLag;
+    }
+
+    @Override
+    public int getWriteMode() {
+        return writerMode;
+    }
+
+    public void setWriteMode(int writerMode) {
+        this.writerMode = writerMode;
+    }
+
+    public void setCommitLag(long micros) {
+        this.commitLag = micros;
     }
 
     public int getColumnIndex(CharSequence columnName) {
@@ -326,23 +354,5 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         } else {
             columnBits.setQuick(index, Numbers.encodeLowHighInts(flags & ~COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
         }
-    }
-
-    @Override
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
-    }
-
-    public void setMaxUncommittedRows(int maxUncommittedRows) {
-        this.maxUncommittedRows = maxUncommittedRows;
-    }
-
-    @Override
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public void setCommitLag(long micros) {
-        this.commitLag = micros;
     }
 }

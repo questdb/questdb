@@ -2242,6 +2242,7 @@ public class TableWriter implements Closeable {
         ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
         ddlMem.putLong(metaMem.getLong(META_OFFSET_COMMIT_LAG));
         ddlMem.putLong(txWriter.getStructureVersion() + 1);
+        ddlMem.putInt(metaMem.getInt(META_OFFSET_WRITE_MODE));
         metadata.setStructureVersion(txWriter.getStructureVersion() + 1);
     }
 

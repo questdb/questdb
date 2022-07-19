@@ -631,6 +631,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             return configuration.getCommitLag();
         }
 
+        @Override
+        public int getWriteMode() {
+            return configuration.getDefaultTableWriteMode();
+        }
+
         TableStructureAdapter of(CharSequenceCache cache) {
             this.cache = cache;
             this.timestampIndex = columnNameType.size() / 2;

@@ -400,6 +400,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
     private final boolean simulateCrashEnabled;
+    private final int defaultTableWriteMode;
 
     public PropServerConfiguration(
             String root,
@@ -416,6 +417,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
         this.maxFileNameLength = getInt(properties, env, PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 127);
+        this.defaultTableWriteMode = WriteMode.valueOf(getString(properties, env, PropertyKey.CAIRO_DEFAULT_TABLE_WRITE_MODE, "direct"));
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         if (new File(this.dbDirectory).isAbsolute()) {
@@ -1978,6 +1980,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getDefaultSymbolCapacity() {
             return defaultSymbolCapacity;
+        }
+
+        @Override
+        public int getDefaultTableWriteMode() {
+            return defaultTableWriteMode;
         }
 
         @Override

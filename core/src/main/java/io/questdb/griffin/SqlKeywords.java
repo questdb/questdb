@@ -986,6 +986,23 @@ public class SqlKeywords {
                 && (tok.charAt(i)) == 's';
     }
 
+    public static boolean isWriteModeParam(CharSequence tok) {
+        if (tok.length() != 9) {
+            return false;
+        }
+
+        int i = 0;
+        return (tok.charAt(i++) | 32) == 'w'
+                && (tok.charAt(i++) | 32) == 'r'
+                && (tok.charAt(i++) | 32) == 'i'
+                && (tok.charAt(i++) | 32) == 't'
+                && (tok.charAt(i++) | 32) == 'e'
+                && (tok.charAt(i++) | 32) == 'm'
+                && (tok.charAt(i++) | 32) == 'o'
+                && (tok.charAt(i++) | 32) == 'd'
+                && (tok.charAt(i) | 32) == 'e';
+    }
+
     public static boolean isMicrosecondsKeyword(CharSequence tok) {
         if (tok.length() != 12) {
             return false;
