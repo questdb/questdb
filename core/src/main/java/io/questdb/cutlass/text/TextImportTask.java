@@ -63,14 +63,14 @@ public class TextImportTask {
     private static final Log LOG = LogFactory.getLog(TextImportTask.class);
     private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();
     private static final IntObjHashMap<String> STATUS_NAME_MAP = new IntObjHashMap<>();
-    private final CountQuotesStage countQuotesStage = new CountQuotesStage();
-    private final BuildPartitionIndexStage buildPartitionIndexStage = new BuildPartitionIndexStage();
-    private final ImportPartitionDataStage importPartitionDataStage = new ImportPartitionDataStage();
-    private final MergeSymbolTablesStage mergeSymbolTablesStage = new MergeSymbolTablesStage();
-    private final UpdateSymbolColumnKeysStage updateSymbolColumnKeysStage = new UpdateSymbolColumnKeysStage();
-    private final BuildSymbolColumnIndexStage buildSymbolColumnIndexStage = new BuildSymbolColumnIndexStage();
+    private final PhaseBoundaryCheck phaseBoundaryCheck = new PhaseBoundaryCheck();
+    private final PhaseIndexing phaseIndexing = new PhaseIndexing();
+    private final PhasePartitionImport phasePartitionImport = new PhasePartitionImport();
+    private final PhaseSymbolTableMerge phaseSymbolTableMerge = new PhaseSymbolTableMerge();
+    private final PhaseUpdateSymbolKeys phaseUpdateSymbolKeys = new PhaseUpdateSymbolKeys();
+    private final PhaseBuildSymbolIndex phaseBuildSymbolIndex = new PhaseBuildSymbolIndex();
     private byte phase;
-    private int index;
+    private int chunkIndex;
     private @Nullable ExecutionCircuitBreaker circuitBreaker;
     private byte status;
     private @Nullable CharSequence errorMessage;
@@ -85,44 +85,44 @@ public class TextImportTask {
 
     public void clear() {
         if (phase == PHASE_BOUNDARY_CHECK) {
-            countQuotesStage.clear();
+            phaseBoundaryCheck.clear();
         } else if (phase == PHASE_INDEXING) {
-            buildPartitionIndexStage.clear();
+            phaseIndexing.clear();
         } else if (phase == PHASE_PARTITION_IMPORT) {
-            importPartitionDataStage.clear();
+            phasePartitionImport.clear();
         } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
-            mergeSymbolTablesStage.clear();
+            phaseSymbolTableMerge.clear();
         } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
-            updateSymbolColumnKeysStage.clear();
+            phaseUpdateSymbolKeys.clear();
         } else if (phase == PHASE_BUILD_SYMBOL_INDEX) {
-            buildSymbolColumnIndexStage.clear();
+            phaseBuildSymbolIndex.clear();
         } else {
             throw TextException.$("Unexpected phase ").put(phase);
         }
     }
 
-    public BuildPartitionIndexStage getBuildPartitionIndexStage() {
-        return buildPartitionIndexStage;
+    public PhaseIndexing getBuildPartitionIndexStage() {
+        return phaseIndexing;
     }
 
-    public CountQuotesStage getCountQuotesStage() {
-        return countQuotesStage;
+    public int getChunkIndex() {
+        return chunkIndex;
+    }
+
+    public void setChunkIndex(int chunkIndex) {
+        this.chunkIndex = chunkIndex;
+    }
+
+    public PhaseBoundaryCheck getCountQuotesStage() {
+        return phaseBoundaryCheck;
     }
 
     public @Nullable CharSequence getErrorMessage() {
         return errorMessage;
     }
 
-    public ImportPartitionDataStage getImportPartitionDataStage() {
-        return importPartitionDataStage;
-    }
-
-    public int getIndex() {
-        return index;
-    }
-
-    public void setIndex(int index) {
-        this.index = index;
+    public PhasePartitionImport getImportPartitionDataStage() {
+        return phasePartitionImport;
     }
 
     public byte getPhase() {
@@ -141,20 +141,38 @@ public class TextImportTask {
         return this.status == STATUS_FAILED;
     }
 
-    public void ofBuildPartitionIndexStage(long chunkStart,
-                                           long chunkEnd,
-                                           long lineNumber,
-                                           int index,
-                                           CharSequence inputFileName,
-                                           CharSequence importRoot,
-                                           int partitionBy,
-                                           byte columnDelimiter,
-                                           int timestampIndex,
-                                           TimestampAdapter adapter,
-                                           boolean ignoreHeader,
-                                           int atomicity) {
+    public void ofPhaseBuildSymbolIndex(
+            CairoEngine cairoEngine,
+            TableStructure tableStructure,
+            CharSequence root,
+            int index,
+            RecordMetadata metadata
+    ) {
+        this.phase = PHASE_BUILD_SYMBOL_INDEX;
+        this.phaseBuildSymbolIndex.of(cairoEngine, tableStructure, root, index, metadata);
+    }
+
+    public void ofPhaseBoundaryCheck(final FilesFacade ff, Path path, long chunkStart, long chunkEnd) {
+        this.phase = PHASE_BOUNDARY_CHECK;
+        this.phaseBoundaryCheck.of(ff, path, chunkStart, chunkEnd);
+    }
+
+    public void ofPhaseIndexing(
+            long chunkStart,
+            long chunkEnd,
+            long lineNumber,
+            int index,
+            CharSequence inputFileName,
+            CharSequence importRoot,
+            int partitionBy,
+            byte columnDelimiter,
+            int timestampIndex,
+            TimestampAdapter adapter,
+            boolean ignoreHeader,
+            int atomicity
+    ) {
         this.phase = PHASE_INDEXING;
-        this.buildPartitionIndexStage.of(
+        this.phaseIndexing.of(
                 chunkStart,
                 chunkEnd,
                 lineNumber,
@@ -170,41 +188,52 @@ public class TextImportTask {
         );
     }
 
-    public void ofBuildSymbolColumnIndexStage(CairoEngine cairoEngine, TableStructure tableStructure, CharSequence root, int index, RecordMetadata metadata) {
-        this.phase = PHASE_BUILD_SYMBOL_INDEX;
-        this.buildSymbolColumnIndexStage.of(cairoEngine, tableStructure, root, index, metadata);
-    }
-
-    public void ofCountQuotesStage(final FilesFacade ff, Path path, long chunkStart, long chunkEnd) {
-        this.phase = PHASE_BOUNDARY_CHECK;
-        this.countQuotesStage.of(ff, path, chunkStart, chunkEnd);
-    }
-
-    public void ofMergeSymbolTablesStage(CairoConfiguration cfg,
-                                         CharSequence importRoot,
-                                         TableWriter writer,
-                                         CharSequence table,
-                                         CharSequence column,
-                                         int columnIndex,
-                                         int symbolColumnIndex,
-                                         int tmpTableCount,
-                                         int partitionBy
+    public void ofPhaseSymbolTableMerge(
+            CairoConfiguration cfg,
+            CharSequence importRoot,
+            TableWriter writer,
+            CharSequence table,
+            CharSequence column,
+            int columnIndex,
+            int symbolColumnIndex,
+            int tmpTableCount,
+            int partitionBy
     ) {
         this.phase = PHASE_SYMBOL_TABLE_MERGE;
-        this.mergeSymbolTablesStage.of(cfg, importRoot, writer, table, column, columnIndex, symbolColumnIndex, tmpTableCount, partitionBy);
+        this.phaseSymbolTableMerge.of(
+                cfg,
+                importRoot,
+                writer,
+                table,
+                column,
+                columnIndex,
+                symbolColumnIndex,
+                tmpTableCount,
+                partitionBy
+        );
     }
 
-    public void ofUpdateSymbolColumnKeysStage(CairoEngine cairoEngine,
-                                              TableStructure tableStructure,
-                                              int index,
-                                              long partitionSize,
-                                              long partitionTimestamp,
-                                              CharSequence root,
-                                              CharSequence columnName,
-                                              int symbolCount
+    public void ofPhaseUpdateSymbolKeys(
+            CairoEngine cairoEngine,
+            TableStructure tableStructure,
+            int index,
+            long partitionSize,
+            long partitionTimestamp,
+            CharSequence root,
+            CharSequence columnName,
+            int symbolCount
     ) {
         this.phase = PHASE_UPDATE_SYMBOL_KEYS;
-        this.updateSymbolColumnKeysStage.of(cairoEngine, tableStructure, index, partitionSize, partitionTimestamp, root, columnName, symbolCount);
+        this.phaseUpdateSymbolKeys.of(
+                cairoEngine,
+                tableStructure,
+                index,
+                partitionSize,
+                partitionTimestamp,
+                root,
+                columnName,
+                symbolCount
+        );
     }
 
     public boolean run(
@@ -218,7 +247,7 @@ public class TextImportTask {
             Path p2
     ) {
         try {
-            LOG.debug().$("starting [phase=").$(getPhaseName(phase)).$(",index=").$(index).I$();
+            LOG.debug().$("starting [phase=").$(getPhaseName(phase)).$(",index=").$(chunkIndex).I$();
 
             this.status = STATUS_STARTED;
             this.errorMessage = null;
@@ -226,22 +255,22 @@ public class TextImportTask {
             throwIfCancelled();
 
             if (phase == PHASE_BOUNDARY_CHECK) {
-                countQuotesStage.run(fileBufAddr, fileBufSize);
+                phaseBoundaryCheck.run(fileBufAddr, fileBufSize);
             } else if (phase == PHASE_INDEXING) {
-                buildPartitionIndexStage.run(indexer, fileBufAddr, fileBufSize);
+                phaseIndexing.run(indexer, fileBufAddr, fileBufSize);
             } else if (phase == PHASE_PARTITION_IMPORT) {
-                importPartitionDataStage.run(lexer, fileBufAddr, fileBufSize, utf8Sink, unmergedIndexes, p1, p2);
+                phasePartitionImport.run(lexer, fileBufAddr, fileBufSize, utf8Sink, unmergedIndexes, p1, p2);
             } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
-                mergeSymbolTablesStage.run(p1);
+                phaseSymbolTableMerge.run(p1);
             } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
-                updateSymbolColumnKeysStage.run(p1);
+                phaseUpdateSymbolKeys.run(p1);
             } else if (phase == PHASE_BUILD_SYMBOL_INDEX) {
-                buildSymbolColumnIndexStage.run();
+                phaseBuildSymbolIndex.run();
             } else {
                 throw TextException.$("Unexpected phase ").put(phase);
             }
 
-            LOG.debug().$("finished [phase=").$(getPhaseName(phase)).$(",index=").$(index).I$();
+            LOG.debug().$("finished [phase=").$(getPhaseName(phase)).$(",index=").$(chunkIndex).I$();
         } catch (TextImportException e) {
             this.status = STATUS_CANCELLED;
             this.errorMessage = e.getMessage();
@@ -260,10 +289,8 @@ public class TextImportTask {
         return true;
     }
 
-    private void throwIfCancelled() throws TextImportException {
-        if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
-            throw getCancelException();
-        }
+    public void setCircuitBreaker(@Nullable ExecutionCircuitBreaker circuitBreaker) {
+        this.circuitBreaker = circuitBreaker;
     }
 
     private TextImportException getCancelException() {
@@ -272,27 +299,42 @@ public class TextImportTask {
         return ex;
     }
 
-    public void setCircuitBreaker(@Nullable ExecutionCircuitBreaker circuitBreaker) {
-        this.circuitBreaker = circuitBreaker;
-    }
-
-    void ofImportPartitionDataStage(CairoEngine cairoEngine,
-                                    TableStructure targetTableStructure,
-                                    ObjList<TypeAdapter> types,
-                                    int atomicity,
-                                    byte columnDelimiter,
-                                    CharSequence importRoot,
-                                    CharSequence inputFileName,
-                                    int index,
-                                    int lo,
-                                    int hi,
-                                    final ObjList<ParallelCsvFileImporter.PartitionInfo> partitions
+    void ofPhasePartitionImport(
+            CairoEngine cairoEngine,
+            TableStructure targetTableStructure,
+            ObjList<TypeAdapter> types,
+            int atomicity,
+            byte columnDelimiter,
+            CharSequence importRoot,
+            CharSequence inputFileName,
+            int index,
+            int lo,
+            int hi,
+            final ObjList<ParallelCsvFileImporter.PartitionInfo> partitions
     ) {
         this.phase = PHASE_PARTITION_IMPORT;
-        this.importPartitionDataStage.of(cairoEngine, targetTableStructure, types, atomicity, columnDelimiter, importRoot, inputFileName, index, lo, hi, partitions);
+        this.phasePartitionImport.of(
+                cairoEngine,
+                targetTableStructure,
+                types,
+                atomicity,
+                columnDelimiter,
+                importRoot,
+                inputFileName,
+                index,
+                lo,
+                hi,
+                partitions
+        );
     }
 
-    public static class CountQuotesStage {
+    private void throwIfCancelled() throws TextImportException {
+        if (circuitBreaker != null && circuitBreaker.checkIfTripped()) {
+            throw getCancelException();
+        }
+    }
+
+    public static class PhaseBoundaryCheck {
         private long quoteCount;
         private long newLineCountEven;
         private long newLineCountOdd;
@@ -400,8 +442,223 @@ public class TextImportTask {
         }
     }
 
-    public class BuildPartitionIndexStage {
-        private final LongList partitionKeysAndSizes = new LongList();//stores partition key and size for all indexed partitions
+    public static class PhaseSymbolTableMerge {
+        private CairoConfiguration cfg;
+        private CharSequence importRoot;
+        private TableWriter writer;
+        private CharSequence table;
+        private CharSequence column;
+        private int columnIndex;
+        private int symbolColumnIndex;
+        private int tmpTableCount;
+        private int partitionBy;
+
+        public void clear() {
+            this.cfg = null;
+            this.importRoot = null;
+            this.writer = null;
+            this.table = null;
+            this.column = null;
+            this.columnIndex = -1;
+            this.symbolColumnIndex = -1;
+            this.tmpTableCount = -1;
+            this.partitionBy = -1;
+        }
+
+        public void of(CairoConfiguration cfg,
+                       CharSequence importRoot,
+                       TableWriter writer,
+                       CharSequence table,
+                       CharSequence column,
+                       int columnIndex,
+                       int symbolColumnIndex,
+                       int tmpTableCount,
+                       int partitionBy
+        ) {
+            this.cfg = cfg;
+            this.importRoot = importRoot;
+            this.writer = writer;
+            this.table = table;
+            this.column = column;
+            this.columnIndex = columnIndex;
+            this.symbolColumnIndex = symbolColumnIndex;
+            this.tmpTableCount = tmpTableCount;
+            this.partitionBy = partitionBy;
+        }
+
+        public void run(Path path) {
+            final FilesFacade ff = cfg.getFilesFacade();
+            path.of(importRoot).concat(table);
+            int plen = path.length();
+            for (int i = 0; i < tmpTableCount; i++) {
+                path.trimTo(plen);
+                path.put("_").put(i);
+                try (TxReader txFile = new TxReader(ff).ofRO(path, partitionBy)) {
+                    txFile.unsafeLoadAll();
+                    int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex);
+                    try (
+                            SymbolMapReaderImpl reader = new SymbolMapReaderImpl(
+                                    cfg,
+                                    path,
+                                    column,
+                                    TableUtils.COLUMN_NAME_TXN_NONE, symbolCount
+                            );
+                            MemoryCMARW mem = Vm.getSmallCMARWInstance(
+                                    ff,
+                                    path.concat(column).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),
+                                    MemoryTag.MMAP_PARALLEL_IMPORT,
+                                    cfg.getWriterFileOpenOpts()
+                            )
+                    ) {
+                        // It is possible to skip symbol rewrite when symbols do not clash.
+                        // From our benchmarks rewriting symbols take a tiny fraction of time compared to everything else
+                        // so that we don't need to optimise this yet.
+                        SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(columnIndex), reader, mem);
+                    }
+                }
+            }
+        }
+    }
+
+    public static class PhaseUpdateSymbolKeys {
+        int index;
+        long partitionSize;
+        long partitionTimestamp;
+        CharSequence root;
+        CharSequence columnName;
+        int symbolCount;
+        private CairoEngine cairoEngine;
+        private TableStructure tableStructure;
+
+        public void clear() {
+            this.cairoEngine = null;
+            this.tableStructure = null;
+            this.index = -1;
+            this.partitionSize = -1;
+            this.partitionTimestamp = -1;
+            this.root = null;
+            this.columnName = null;
+            this.symbolCount = -1;
+        }
+
+        public void of(CairoEngine cairoEngine,
+                       TableStructure tableStructure,
+                       int index,
+                       long partitionSize,
+                       long partitionTimestamp,
+                       CharSequence root,
+                       CharSequence columnName,
+                       int symbolCount
+        ) {
+            this.cairoEngine = cairoEngine;
+            this.tableStructure = tableStructure;
+            this.index = index;
+            this.partitionSize = partitionSize;
+            this.partitionTimestamp = partitionTimestamp;
+            this.root = root;
+            this.columnName = columnName;
+            this.symbolCount = symbolCount;
+        }
+
+        public void run(Path path) {
+            final FilesFacade ff = cairoEngine.getConfiguration().getFilesFacade();
+            path.of(root).concat(tableStructure.getTableName()).put("_").put(index);
+            int plen = path.length();
+            PartitionBy.setSinkForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, false);
+            path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
+
+            long columnMemory = 0;
+            long columnMemorySize = 0;
+            long remapTableMemory = 0;
+            long remapTableMemorySize = 0;
+            long columnFd = -1;
+            long remapFd = -1;
+            try {
+                columnFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+                columnMemorySize = ff.length(columnFd);
+
+                path.trimTo(plen);
+                path.concat(columnName).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX);
+                remapFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+                remapTableMemorySize = ff.length(remapFd);
+
+                if (columnMemorySize >= Integer.BYTES && remapTableMemorySize >= Integer.BYTES) {
+                    columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                    remapTableMemory = TableUtils.mapRW(ff, remapFd, remapTableMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                    long columnMemSize = partitionSize * Integer.BYTES;
+                    long remapMemSize = (long) symbolCount * Integer.BYTES;
+                    ColumnUtils.symbolColumnUpdateKeys(columnMemory, columnMemSize, remapTableMemory, remapMemSize);
+                }
+            } finally {
+                if (columnFd != -1) {
+                    ff.close(columnFd);
+                }
+                if (remapFd != -1) {
+                    ff.close(remapFd);
+                }
+                if (columnMemory > 0) {
+                    ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                }
+                if (remapTableMemory > 0) {
+                    ff.munmap(remapTableMemory, remapTableMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
+                }
+            }
+        }
+    }
+
+    public static class PhaseBuildSymbolIndex {
+        private final StringSink tableNameSink = new StringSink();
+        private CairoEngine cairoEngine;
+        private TableStructure tableStructure;
+        private CharSequence root;
+        private int index;
+        private RecordMetadata metadata;
+
+        public void clear() {
+            this.cairoEngine = null;
+            this.tableStructure = null;
+            this.root = null;
+            this.index = -1;
+            this.metadata = null;
+        }
+
+        public void of(
+                CairoEngine cairoEngine,
+                TableStructure tableStructure,
+                CharSequence root,
+                int index, RecordMetadata metadata) {
+            this.cairoEngine = cairoEngine;
+            this.tableStructure = tableStructure;
+            this.root = root;
+            this.index = index;
+            this.metadata = metadata;
+        }
+
+        public void run() {
+            final CairoConfiguration configuration = cairoEngine.getConfiguration();
+            tableNameSink.clear();
+            tableNameSink.put(tableStructure.getTableName()).put('_').put(index);
+            final int columnCount = metadata.getColumnCount();
+            try (TableWriter w = new TableWriter(configuration,
+                    tableNameSink,
+                    cairoEngine.getMessageBus(),
+                    null,
+                    true,
+                    DefaultLifecycleManager.INSTANCE,
+                    root,
+                    cairoEngine.getMetrics())) {
+                for (int i = 0; i < columnCount; i++) {
+                    if (metadata.isColumnIndexed(i)) {
+                        w.addIndex(metadata.getColumnName(i), metadata.getIndexValueBlockCapacity(i));
+                    }
+                }
+            }
+        }
+    }
+
+    public class PhaseIndexing {
+        //stores partition key and size for all indexed partitions
+        private final LongList partitionKeysAndSizes = new LongList();
         private long chunkStart;
         private long chunkEnd;
         private long lineNumber;
@@ -468,7 +725,18 @@ public class TextImportTask {
 
         public void run(CsvFileIndexer indexer, long fileBufAddr, long fileBufSize) throws TextException {
             try {
-                indexer.of(inputFileName, importRoot, index, partitionBy, columnDelimiter, timestampIndex, adapter, ignoreHeader, atomicity, circuitBreaker);
+                indexer.of(
+                        inputFileName,
+                        importRoot,
+                        index,
+                        partitionBy,
+                        columnDelimiter,
+                        timestampIndex,
+                        adapter,
+                        ignoreHeader,
+                        atomicity,
+                        circuitBreaker
+                );
                 indexer.index(chunkStart, chunkEnd, lineNumber, partitionKeysAndSizes, fileBufAddr, fileBufSize);
             } catch (TextException e) {
                 if (indexer.isCancelled()) {
@@ -482,7 +750,7 @@ public class TextImportTask {
         }
     }
 
-    public class ImportPartitionDataStage {
+    public class PhasePartitionImport {
         private final StringSink tableNameSink = new StringSink();
         private final LongList importedRows = new LongList();
         private CairoEngine cairoEngine;
@@ -570,7 +838,7 @@ public class TextImportTask {
                         lexer.clear();
                         errors = 0;
 
-                        final CharSequence name = partitions.get(i).name;
+                        final CharSequence name = partitions.getQuick(i).name;
                         path.of(importRoot).concat(name);
                         mergePartitionIndexAndImportData(
                                 ff,
@@ -715,7 +983,7 @@ public class TextImportTask {
                 final long len = ff.length(fd);
                 if (len == -1) {
                     throw CairoException.instance(ff.errno()).put(
-                            "could not get length of file [path=").put(tmpPath)
+                                    "could not get length of file [path=").put(tmpPath)
                             .put(']');
                 }
 
@@ -906,7 +1174,7 @@ public class TextImportTask {
             int partitionLen = partitionPath.length();
 
             long mergedIndexSize = -1;
-            long mergeIndexAddr = -1;
+            long mergeIndexAddr = 0;
             long fd = -1;
             try {
                 mergedIndexSize = openIndexChunks(ff, partitionPath, unmergedIndexes, partitionLen);
@@ -950,14 +1218,13 @@ public class TextImportTask {
                 if (fd > -1) {
                     ff.close(fd);
                 }
-                if (mergeIndexAddr != -1) {
-                    ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
-                }
+                ff.munmap(mergeIndexAddr, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
                 unmap(ff, unmergedIndexes);
             }
         }
 
-        void of(CairoEngine cairoEngine,
+        void of(
+                CairoEngine cairoEngine,
                 TableStructure targetTableStructure,
                 ObjList<TypeAdapter> types,
                 int atomicity,
@@ -1087,216 +1354,6 @@ public class TextImportTask {
                 ff.munmap(addr, size, MemoryTag.MMAP_PARALLEL_IMPORT);
             }
             mergeIndexes.clear();
-        }
-    }
-
-    public static class MergeSymbolTablesStage {
-        private CairoConfiguration cfg;
-        private CharSequence importRoot;
-        private TableWriter writer;
-        private CharSequence table;
-        private CharSequence column;
-        private int columnIndex;
-        private int symbolColumnIndex;
-        private int tmpTableCount;
-        private int partitionBy;
-
-        public void clear() {
-            this.cfg = null;
-            this.importRoot = null;
-            this.writer = null;
-            this.table = null;
-            this.column = null;
-            this.columnIndex = -1;
-            this.symbolColumnIndex = -1;
-            this.tmpTableCount = -1;
-            this.partitionBy = -1;
-        }
-
-        public void of(CairoConfiguration cfg,
-                       CharSequence importRoot,
-                       TableWriter writer,
-                       CharSequence table,
-                       CharSequence column,
-                       int columnIndex,
-                       int symbolColumnIndex,
-                       int tmpTableCount,
-                       int partitionBy
-        ) {
-            this.cfg = cfg;
-            this.importRoot = importRoot;
-            this.writer = writer;
-            this.table = table;
-            this.column = column;
-            this.columnIndex = columnIndex;
-            this.symbolColumnIndex = symbolColumnIndex;
-            this.tmpTableCount = tmpTableCount;
-            this.partitionBy = partitionBy;
-        }
-
-        public void run(Path path) {
-            final FilesFacade ff = cfg.getFilesFacade();
-            path.of(importRoot).concat(table);
-            int plen = path.length();
-            for (int i = 0; i < tmpTableCount; i++) {
-                path.trimTo(plen);
-                path.put("_").put(i);
-                try (TxReader txFile = new TxReader(ff).ofRO(path, partitionBy)) {
-                    txFile.unsafeLoadAll();
-                    int symbolCount = txFile.getSymbolValueCount(symbolColumnIndex);
-                    try (
-                            SymbolMapReaderImpl reader = new SymbolMapReaderImpl(
-                                    cfg,
-                                    path,
-                                    column,
-                                    TableUtils.COLUMN_NAME_TXN_NONE, symbolCount
-                            );
-                            MemoryCMARW mem = Vm.getSmallCMARWInstance(
-                                    ff,
-                                    path.concat(column).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),
-                                    MemoryTag.MMAP_PARALLEL_IMPORT,
-                                    cfg.getWriterFileOpenOpts()
-                            )
-                    ) {
-                        // It is possible to skip symbol rewrite when symbols do not clash.
-                        // From our benchmarks rewriting symbols take a tiny fraction of time compared to everything else
-                        // so that we don't need to optimise this yet.
-                        SymbolMapWriter.mergeSymbols(writer.getSymbolMapWriter(columnIndex), reader, mem);
-                    }
-                }
-            }
-        }
-    }
-
-    public static class UpdateSymbolColumnKeysStage {
-        int index;
-        long partitionSize;
-        long partitionTimestamp;
-        CharSequence root;
-        CharSequence columnName;
-        int symbolCount;
-        private CairoEngine cairoEngine;
-        private TableStructure tableStructure;
-
-        public void clear() {
-            this.cairoEngine = null;
-            this.tableStructure = null;
-            this.index = -1;
-            this.partitionSize = -1;
-            this.partitionTimestamp = -1;
-            this.root = null;
-            this.columnName = null;
-            this.symbolCount = -1;
-        }
-
-        public void of(CairoEngine cairoEngine,
-                       TableStructure tableStructure,
-                       int index,
-                       long partitionSize,
-                       long partitionTimestamp,
-                       CharSequence root,
-                       CharSequence columnName,
-                       int symbolCount
-        ) {
-            this.cairoEngine = cairoEngine;
-            this.tableStructure = tableStructure;
-            this.index = index;
-            this.partitionSize = partitionSize;
-            this.partitionTimestamp = partitionTimestamp;
-            this.root = root;
-            this.columnName = columnName;
-            this.symbolCount = symbolCount;
-        }
-
-        public void run(Path path) {
-            final FilesFacade ff = cairoEngine.getConfiguration().getFilesFacade();
-            path.of(root).concat(tableStructure.getTableName()).put("_").put(index);
-            int plen = path.length();
-            PartitionBy.setSinkForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, false);
-            path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
-
-            long columnMemory = 0;
-            long columnMemorySize = 0;
-            long remapTableMemory = 0;
-            long remapTableMemorySize = 0;
-            long columnFd = -1;
-            long remapFd = -1;
-            try {
-                columnFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
-                columnMemorySize = ff.length(columnFd);
-
-                path.trimTo(plen);
-                path.concat(columnName).put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX);
-                remapFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
-                remapTableMemorySize = ff.length(remapFd);
-
-                if (columnMemorySize >= Integer.BYTES && remapTableMemorySize >= Integer.BYTES) {
-                    columnMemory = TableUtils.mapRW(ff, columnFd, columnMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
-                    remapTableMemory = TableUtils.mapRW(ff, remapFd, remapTableMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
-                    long columnMemSize = partitionSize * Integer.BYTES;
-                    long remapMemSize = (long) symbolCount * Integer.BYTES;
-                    ColumnUtils.symbolColumnUpdateKeys(columnMemory, columnMemSize, remapTableMemory, remapMemSize);
-                }
-            } finally {
-                if (columnFd != -1) {
-                    ff.close(columnFd);
-                }
-                if (remapFd != -1) {
-                    ff.close(remapFd);
-                }
-                if (columnMemory > 0) {
-                    ff.munmap(columnMemory, columnMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
-                }
-                if (remapTableMemory > 0) {
-                    ff.munmap(remapTableMemory, remapTableMemorySize, MemoryTag.MMAP_PARALLEL_IMPORT);
-                }
-            }
-        }
-    }
-
-    public static class BuildSymbolColumnIndexStage {
-        private final StringSink tableNameSink = new StringSink();
-        private CairoEngine cairoEngine;
-        private TableStructure tableStructure;
-        private CharSequence root;
-        private int index;
-        private RecordMetadata metadata;
-
-        public void clear() {
-            this.cairoEngine = null;
-            this.tableStructure = null;
-            this.root = null;
-            this.index = -1;
-            this.metadata = null;
-        }
-
-        public void of(CairoEngine cairoEngine, TableStructure tableStructure, CharSequence root, int index, RecordMetadata metadata) {
-            this.cairoEngine = cairoEngine;
-            this.tableStructure = tableStructure;
-            this.root = root;
-            this.index = index;
-            this.metadata = metadata;
-        }
-
-        public void run() {
-            final CairoConfiguration configuration = cairoEngine.getConfiguration();
-            tableNameSink.clear();
-            tableNameSink.put(tableStructure.getTableName()).put('_').put(index);
-            final int columnCount = metadata.getColumnCount();
-            try (TableWriter w = new TableWriter(configuration,
-                    tableNameSink,
-                    cairoEngine.getMessageBus(),
-                    null,
-                    true,
-                    DefaultLifecycleManager.INSTANCE,
-                    root,
-                    cairoEngine.getMetrics())) {
-                for (int i = 0; i < columnCount; i++) {
-                    if (metadata.isColumnIndexed(i)) {
-                        w.addIndex(metadata.getColumnName(i), metadata.getIndexValueBlockCapacity(i));
-                    }
-                }
-            }
         }
     }
 

@@ -701,9 +701,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 ") timestamp(ts) partition by DAY", sqlExecutionContext);
 
         parallelImportStatusLogKeepNDays = daysToKeep;
-        try (TextImportRequestProcessingJob job = new TextImportRequestProcessingJob(engine, 1, null)) {
-
-        }
+        new TextImportRequestProcessingJob(engine, 1, null).close();
         assertQuery("count\n"+ daysToKeep +"\n",
                 "select count() from " + backlogTableName,
                 null,
@@ -1126,7 +1124,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "line.r") && stackContains("UpdateSymbolColumnKeysStage")) {
+                if (Chars.endsWith(name, "line.r") && stackContains("PhaseUpdateSymbolKeys")) {
                     return -1;
                 }
 
@@ -1142,7 +1140,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         FilesFacade brokenFf = new FilesFacadeImpl() {
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "line.v") && stackContains("BuildSymbolColumnIndexStage")) {
+                if (Chars.endsWith(name, "line.v") && stackContains("PhaseBuildSymbolIndex")) {
                     return -1;
                 }
 
@@ -1798,8 +1796,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             long fd = TableUtils.openRO(ff, path, LOG);
             try (TableWriter ignored = indexer.parseStructure(fd)) {
                 long length = ff.length(fd);
-                indexer.findChunkBoundaries(length);
-                indexer.indexChunks();
+                indexer.phaseBoundaryCheck(length);
+                indexer.phaseIndexing();
             } finally {
                 ff.close(fd);
             }
@@ -2005,8 +2003,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     @Test
     public void testImportFileFailsWhenWorkDirCantBeCreated() throws Exception {
         FilesFacadeImpl ff = new FilesFacadeImpl() {
-            final String w = inputWorkRoot + File.separator + "tab123";
-
             @Override
             public int mkdir(Path path, int mode) {
                 if (Chars.contains(path, "tab123")) {
@@ -2554,7 +2550,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             Assert.assertTrue(fd > -1);
 
             try {
-                LongList actualBoundaries = indexer.findChunkBoundaries(length);
+                LongList actualBoundaries = indexer.phaseBoundaryCheck(length);
                 Assert.assertEquals(expectedBoundaries, actualBoundaries);
             } finally {
                 ff.close(fd);
