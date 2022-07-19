@@ -728,7 +728,6 @@ public class TableWriter implements Closeable {
             path.trimTo(rootLen);
             detachedPath.trimTo(detachedRootLen);
         }
-
         return StatusCode.OK;
     }
 
@@ -2032,9 +2031,9 @@ public class TableWriter implements Closeable {
                 if (timestamp == partitionTimestamp) {
                     assert timestamp == entries.getQuick(i);
                     int columnIndex = (int) detachedEntries.getQuick(i + 1);
-                    assert columnIndex == entries.getQuick(i+1);
+                    assert columnIndex == entries.getQuick(i + 1);
                     long columnTop = detachedEntries.getQuick(i + 3);
-                    if (columnTop != entries.getQuick(i+3)) {
+                    if (columnTop != entries.getQuick(i + 3)) {
                         long columnNameTxn = detachedEntries.getQuick(i + 2);
                         columnVersionWriter.upsert(timestamp, columnIndex, columnNameTxn, columnTop);
                     }
