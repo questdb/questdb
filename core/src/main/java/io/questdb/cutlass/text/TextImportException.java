@@ -37,11 +37,18 @@ public class TextImportException extends RuntimeException implements Sinkable, F
     private boolean cancelled;
 
     public static TextImportException instance(byte phase, CharSequence message) {
+        return instance(phase, message, Integer.MIN_VALUE);
+    }
+
+    public static TextImportException instance(byte phase, CharSequence message, int errno) {
         TextImportException te = tlException.get();
         te.phase = phase;
         te.cancelled = false;
         StringSink sink = te.message;
         sink.clear();
+        if (errno > Integer.MIN_VALUE) {
+            sink.put('[').put(errno).put("]: ");
+        }
         sink.put(message);
         return te;
     }

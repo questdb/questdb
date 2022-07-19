@@ -143,7 +143,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         MessageBus bus = cairoEngine.getMessageBus();
         RingQueue<TextImportTask> queue = bus.getTextImportQueue();
         if (queue.getCycle() < 1) {
-            throw TextImportException.instance(TextImportTask.PHASE_SETUP,"Parallel import queue size cannot be zero!");
+            throw TextImportException.instance(TextImportTask.PHASE_SETUP, "Parallel import queue size cannot be zero!");
         }
 
         this.cairoEngine = cairoEngine;
@@ -386,7 +386,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 writer.attachPartition(timestamp, false);
             } catch (CairoException e) {
                 throw TextImportException.instance(
-                        TextImportTask.PHASE_ATTACH_PARTITIONS,"could not attach [partition='").put(partitionDirName).put("', msg=").put(e.getMessage()).put(']');
+                        TextImportTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")
+                        .put(partitionDirName).put("', msg=")
+                        .put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage()).put(']');
             }
         }
 
@@ -823,8 +825,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     }
                 }
             }
-        } catch (CairoException | TextException e) {
-            throw TextImportException.instance(TextImportTask.PHASE_MOVE_PARTITIONS, e.getMessage());
+        } catch (CairoException e) {
+            throw TextImportException.instance(TextImportTask.PHASE_MOVE_PARTITIONS, e.getFlyweightMessage(), e.getErrno());
+        } catch (TextException e) {
+            throw TextImportException.instance(TextImportTask.PHASE_MOVE_PARTITIONS, e.getFlyweightMessage());
         }
         phaseEpilogue(TextImportTask.PHASE_MOVE_PARTITIONS);
     }
@@ -956,8 +960,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             } else {
                 throw TextException.$("could not read from file '").put(inputFilePath).put("' to analyze structure");
             }
-        } catch (CairoException | TextException e) {
-            throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, e.getMessage());
+        } catch (CairoException e) {
+            throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, e.getFlyweightMessage(), e.getErrno());
+        } catch (TextException e) {
+            throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, e.getFlyweightMessage());
         } finally {
             Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
         }
@@ -1144,41 +1150,56 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         long fd = -1;
         try {
-            fd = TableUtils.openRO(ff, inputFilePath, LOG);
-            long length = ff.length(fd);
-            if (length < 1) {
-                throw TextImportException.instance(TextImportTask.PHASE_SETUP, "ignored empty input file [file='").put(inputFilePath).put(']');
-            }
-
-            try (TableWriter writer = parseStructure(fd)) {
-                phaseBoundaryCheck(length);
-                phaseIndexing();
-                phasePartitionImport();
-                phaseSymbolTableMerge(writer);
-                phaseUpdateSymbolKeys(writer);
-                phaseBuildSymbolIndex(writer);
+            try {
                 try {
-                    movePartitions();
-                    attachPartitions(writer);
+                    fd = TableUtils.openRO(ff, inputFilePath, LOG);
+                } catch (CairoException e) {
+                    throw TextImportException.instance(TextImportTask.PHASE_SETUP, e.getFlyweightMessage(), e.getErrno());
+                }
+
+                long length = ff.length(fd);
+                if (length < 1) {
+                    throw TextImportException.instance(TextImportTask.PHASE_SETUP, "ignored empty input file [file='").put(inputFilePath).put(']');
+                }
+
+                try (TableWriter writer = parseStructure(fd)) {
+                    phaseBoundaryCheck(length);
+                    phaseIndexing();
+                    phasePartitionImport();
+                    phaseSymbolTableMerge(writer);
+                    phaseUpdateSymbolKeys(writer);
+                    phaseBuildSymbolIndex(writer);
+                    try {
+                        movePartitions();
+                        attachPartitions(writer);
+                    } catch (Throwable t) {
+                        cleanUp(writer);
+                        throw t;
+                    }
                 } catch (Throwable t) {
-                    cleanUp(writer);
+                    cleanUp();
                     throw t;
+                } finally {
+                    if (createdWorkDir) {
+                        removeWorkDir();
+                    }
                 }
-            } catch (Throwable t) {
-                cleanUp();
-                throw t;
+                // these are the leftovers that also need to be converted
+            } catch (CairoException e) {
+                throw TextImportException.instance(TextImportTask.PHASE_CLEANUP, e.getFlyweightMessage(), e.getErrno());
+            } catch (TextException e) {
+                throw TextImportException.instance(TextImportTask.PHASE_CLEANUP, e.getFlyweightMessage());
             } finally {
-                if (createdWorkDir) {
-                    removeWorkDir();
+                if (fd != -1) {
+                    ff.close(fd);
                 }
             }
-        } catch (CairoException | TextException e) {
-            // these are the leftovers that also need to be converted
-            throw TextImportException.instance(TextImportTask.PHASE_CLEANUP, e.getMessage());
-        } finally {
-            if (fd != -1) {
-                ff.close(fd);
-            }
+        } catch (TextImportException e) {
+            LOG.error()
+                    .$("could not import [phase=").$(TextImportTask.getPhaseName(e.getPhase()))
+                    .$(", ex=").$(e.getFlyweightMessage())
+                    .I$();
+           throw e;
         }
 
         long endMs = getCurrentTimeMs();
