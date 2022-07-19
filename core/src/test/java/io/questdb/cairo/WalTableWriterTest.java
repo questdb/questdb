@@ -324,12 +324,12 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                         WalWriter walWriter2 = engine.getWalWriter(sqlExecutionContext.getCairoSecurityContext(), tableName)
                 ) {
                     rnd.reset();
-                    start += rowCount * tsIncrement - Timestamps.HOUR_MICROS / 2;
+                    start += rowCount * tsIncrement - Timestamps.HOUR_MICROS / 2 + 1;
                     addRowsToWalAndApplyToTable(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter2, true);
                     TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
                 }
 
-                start += rowCount * tsIncrement - Timestamps.HOUR_MICROS / 2;
+                start += rowCount * tsIncrement - Timestamps.HOUR_MICROS / 2 + 3;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
             }
