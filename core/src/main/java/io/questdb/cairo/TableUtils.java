@@ -1079,14 +1079,6 @@ public final class TableUtils {
         }
     }
 
-    private static int getSchemaVersion(MemoryMR metaMem, long offset) {
-        final int schemaVersion = metaMem.getInt(offset);
-        if (schemaVersion < 0) {
-            throw validationException(metaMem).put("Invalid schemaVersion: ").put(schemaVersion);
-        }
-        return schemaVersion;
-    }
-
     private static int getColumnCount(MemoryMR metaMem, long offset) {
         final int columnCount = metaMem.getInt(offset);
         if (columnCount < 0) {

@@ -57,6 +57,77 @@ public class Long128Tests extends AbstractGriffinTest {
     }
 
     @Test
+    public void testGroupByLong128ColumnWithNulls() throws Exception {
+        assertQuery("ts\tcount\n" +
+                        "\t10\n" +
+                        "00000000-0000-0002-0000-000000000002\t1\n" +
+                        "00000000-0000-0004-0000-000000000004\t1\n" +
+                        "00000000-0000-0006-0000-000000000006\t1\n" +
+                        "00000000-0000-0008-0000-000000000008\t1\n" +
+                        "00000000-0000-000a-0000-00000000000a\t1\n" +
+                        "00000000-0000-000c-0000-00000000000c\t1\n" +
+                        "00000000-0000-000e-0000-00000000000e\t1\n" +
+                        "00000000-0000-0010-0000-000000000010\t1\n" +
+                        "00000000-0000-0012-0000-000000000012\t1\n" +
+                        "00000000-0000-0014-0000-000000000014\t1\n",
+                "select ts, count() from tab1",
+                "create table tab1 as " +
+                        "(select" +
+                        " case when x % 2 = 0 then to_long128(x, x) else NULL end ts, " +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts1," +
+                        " cast(x as int) i" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testLong128ValueNotSet() throws Exception {
+        assertQuery("ts\tcount\n" +
+                        "\t10\n" +
+                        "00000000-0000-0002-0000-000000000002\t1\n" +
+                        "00000000-0000-0004-0000-000000000004\t1\n" +
+                        "00000000-0000-0006-0000-000000000006\t1\n" +
+                        "00000000-0000-0008-0000-000000000008\t1\n" +
+                        "00000000-0000-000a-0000-00000000000a\t1\n" +
+                        "00000000-0000-000c-0000-00000000000c\t1\n" +
+                        "00000000-0000-000e-0000-00000000000e\t1\n" +
+                        "00000000-0000-0010-0000-000000000010\t1\n" +
+                        "00000000-0000-0012-0000-000000000012\t1\n" +
+                        "00000000-0000-0014-0000-000000000014\t1\n",
+                "select ts, count() from tab1",
+                "create table tab1 as " +
+                        "(select" +
+                        " case when x % 2 = 0 then to_long128(x, x) else NULL end ts, " +
+                        " timestamp_sequence('2022-02-24', 1000000L) ts1," +
+                        " cast(x as int) i" +
+                        " from long_sequence(20)" +
+                        ")",
+                null,
+                "insert into tab1(i) select 21 as i from long_sequence(1)",
+                "ts\tcount\n" +
+                        "\t11\n" +
+                        "00000000-0000-0002-0000-000000000002\t1\n" +
+                        "00000000-0000-0004-0000-000000000004\t1\n" +
+                        "00000000-0000-0006-0000-000000000006\t1\n" +
+                        "00000000-0000-0008-0000-000000000008\t1\n" +
+                        "00000000-0000-000a-0000-00000000000a\t1\n" +
+                        "00000000-0000-000c-0000-00000000000c\t1\n" +
+                        "00000000-0000-000e-0000-00000000000e\t1\n" +
+                        "00000000-0000-0010-0000-000000000010\t1\n" +
+                        "00000000-0000-0012-0000-000000000012\t1\n" +
+                        "00000000-0000-0014-0000-000000000014\t1\n",
+                true,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testJoinOnLong128Column() throws Exception {
         compile(
                 "create table tab1 as " +

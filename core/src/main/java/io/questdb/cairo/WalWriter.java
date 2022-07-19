@@ -183,10 +183,6 @@ public class WalWriter implements Closeable {
         return walName;
     }
 
-    public int getTimestampIndex() {
-        return metadata.getTimestampIndex();
-    }
-
     public TableWriter.Row newRow() {
         return newRow(0L);
     }
@@ -295,7 +291,7 @@ public class WalWriter implements Closeable {
                 nullers.add(() -> mem1.putLong(GeoHashes.NULL));
                 break;
             default:
-                nullers.add(NOOP);
+                throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(type));
         }
     }
 
@@ -756,12 +752,6 @@ public class WalWriter implements Closeable {
         }
 
         @Override
-        public void putDate(int columnIndex, long value) {
-            putLong(columnIndex, value);
-            // putLong calls setRowValueNotNull
-        }
-
-        @Override
         public void putDouble(int columnIndex, double value) {
             getPrimaryColumn(columnIndex).putDouble(value);
             setRowValueNotNull(columnIndex);
@@ -776,40 +766,19 @@ public class WalWriter implements Closeable {
         @Override
         public void putGeoHash(int index, long value) {
             int type = metadata.getColumnType(index);
-            putGeoHash0(index, value, type);
+            WriterRowUtils.putGeoHash(index, value, type, this);
         }
 
         @Override
         public void putGeoHashDeg(int index, double lat, double lon) {
-            int type = metadata.getColumnType(index);
-            putGeoHash0(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type);
+            final int type = metadata.getColumnType(index);
+            WriterRowUtils.putGeoHash(index, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
         }
 
         @Override
         public void putGeoStr(int index, CharSequence hash) {
-            long val;
             final int type = metadata.getColumnType(index);
-            if (hash != null) {
-                final int hashLen = hash.length();
-                final int typeBits = ColumnType.getGeoHashBits(type);
-                final int charsRequired = (typeBits - 1) / 5 + 1;
-                if (hashLen < charsRequired) {
-                    val = GeoHashes.NULL;
-                } else {
-                    try {
-                        val = ColumnType.truncateGeoHashBits(
-                                GeoHashes.fromString(hash, 0, charsRequired),
-                                charsRequired * 5,
-                                typeBits
-                        );
-                    } catch (NumericException e) {
-                        val = GeoHashes.NULL;
-                    }
-                }
-            } else {
-                val = GeoHashes.NULL;
-            }
-            putGeoHash0(index, val, type);
+            WriterRowUtils.putGeoStr(index, hash, type, this);
         }
 
         @Override
@@ -847,6 +816,7 @@ public class WalWriter implements Closeable {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);
+            setRowValueNotNull(columnIndex);
         }
 
         @Override
@@ -912,54 +882,12 @@ public class WalWriter implements Closeable {
             putSym(columnIndex, str);
         }
 
-        @Override
-        public void putSymIndex(int columnIndex, int symIndex) {
-            getPrimaryColumn(columnIndex).putInt(symIndex);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putTimestamp(int columnIndex, long value) {
-            putLong(columnIndex, value);
-        }
-
-        @Override
-        public void putTimestamp(int columnIndex, CharSequence value) {
-            // try UTC timestamp first (micro)
-            long l;
-            try {
-                l = value != null ? IntervalUtils.parseFloorPartialDate(value) : Numbers.LONG_NaN;
-            } catch (NumericException e) {
-                throw CairoException.instance(0).put("Invalid timestamp: ").put(value);
-            }
-            putTimestamp(columnIndex, l);
-        }
-
         private MemoryA getPrimaryColumn(int columnIndex) {
             return columns.getQuick(getPrimaryColumnIndex(columnIndex));
         }
 
         private MemoryA getSecondaryColumn(int columnIndex) {
             return columns.getQuick(getSecondaryColumnIndex(columnIndex));
-        }
-
-        private void putGeoHash0(int index, long value, int type) {
-            final MemoryA primaryColumn = getPrimaryColumn(index);
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.GEOBYTE:
-                    primaryColumn.putByte((byte) value);
-                    break;
-                case ColumnType.GEOSHORT:
-                    primaryColumn.putShort((short) value);
-                    break;
-                case ColumnType.GEOINT:
-                    primaryColumn.putInt((int) value);
-                    break;
-                default:
-                    primaryColumn.putLong(value);
-                    break;
-            }
-            setRowValueNotNull(index);
         }
     }
 }

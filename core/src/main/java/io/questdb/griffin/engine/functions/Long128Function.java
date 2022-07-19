@@ -165,6 +165,12 @@ public abstract class Long128Function implements ScalarFunction {
     }
 
     @Override
+    public abstract long getLong128Hi(Record rec);
+
+    @Override
+    public abstract long getLong128Lo(Record rec);
+
+    @Override
     public final int getType() {
         return ColumnType.LONG128;
     }

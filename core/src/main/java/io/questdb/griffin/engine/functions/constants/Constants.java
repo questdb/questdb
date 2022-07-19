@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.griffin.TypeConstant;
+import io.questdb.std.Long128Util;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -89,6 +90,7 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.GEOBYTE, GeoByteConstant.NULL);
         nullConstants.extendAndSet(ColumnType.GEOSHORT, GeoShortConstant.NULL);
         nullConstants.extendAndSet(ColumnType.GEOINT, GeoIntConstant.NULL);
+        nullConstants.extendAndSet(ColumnType.LONG128, Long128Constant.NULL);
         nullConstants.extendAndSet(ColumnType.GEOLONG, GeoLongConstant.NULL);
 
         typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
@@ -104,6 +106,7 @@ public final class Constants {
         typeConstants.extendAndSet(ColumnType.DOUBLE, DoubleTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.FLOAT, FloatTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.BINARY, BinTypeConstant.INSTANCE);
+        typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.LONG256, Long256TypeConstant.INSTANCE);
 
         for (int b = 1; b <= ColumnType.GEO_HASH_MAX_BITS_LENGTH; b++) {
