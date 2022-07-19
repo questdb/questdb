@@ -168,16 +168,14 @@ int64_t MIN_LONG(int64_t *pl, int64_t count) {
     Vec8q vec;
     const int step = 8;
     Vec8q vecMin = L_MAX;
-    Vec8qb bVec;
     int i;
     for (i = 0; i < count - 7; i += step) {
         _mm_prefetch(pl + i + 63 * step, _MM_HINT_T1);
         vec.load(pl + i);
-        bVec = vec == L_MIN;
-        vecMin = select(bVec, vecMin, min(vecMin, vec));
+        vecMin = min(vecMin, vec - 1); // filter out L_MIN by range shifting: L_MIN - 1 => L_MAX
     }
 
-    int64_t min = horizontal_min(vecMin);
+    int64_t min = horizontal_min(vecMin) + 1;
     for (; i < count; i++) {
         int64_t x = *(pl + i);
         if (x != L_MIN && x < min) {
@@ -252,16 +250,14 @@ int32_t MIN_INT(int32_t *pi, int64_t count) {
     Vec16i vec;
     const int step = 16;
     Vec16i vecMin = I_MAX;
-    Vec16ib bVec;
     int i;
     for (i = 0; i < count - 15; i += step) {
         _mm_prefetch(pi + i + 63 * step, _MM_HINT_T1);
         vec.load(pi + i);
-        bVec = vec == I_MIN;
-        vecMin = select(bVec, vecMin, min(vecMin, vec));
+        vecMin = min(vecMin, vec - 1); // filter out I_MIN by range shifting: I_MIN - 1 => I_MAX
     }
 
-    int32_t min = horizontal_min(vecMin);
+    int32_t min = horizontal_min(vecMin) + 1; // restore original
     for (; i < count; i++) {
         int32_t x = *(pi + i);
         if (x != I_MIN && x < min) {
@@ -435,12 +431,12 @@ double MIN_DOUBLE(double *d, int64_t count) {
     const double *lim = d + count;
     const double *lim_vec = lim - step + 1;
     Vec8d vecMin = D_MAX;
-    Vec8db bVec;
     for (; d < lim_vec; d += step) {
         _mm_prefetch(d + 63 * step, _MM_HINT_T1);
         vec.load(d);
-        bVec = is_nan(vec);
-        vecMin = select(bVec, vecMin, min(vecMin, vec));
+        // (a < b) ? a : b
+        // returns b if a == NaN
+        vecMin = min(vec, vecMin);
     }
 
     double min = horizontal_min(vecMin);
@@ -464,12 +460,12 @@ double MAX_DOUBLE(double *d, int64_t count) {
     const double *lim = d + count;
     const double *lim_vec = lim - step + 1;
     Vec8d vecMax = D_MIN;
-    Vec8db bVec;
     for (; d < lim_vec; d += step) {
         _mm_prefetch(d + 63 * step, _MM_HINT_T1);
         vec.load(d);
-        bVec = is_nan(vec);
-        vecMax = select(bVec, vecMax, max(vecMax, vec));
+        // (a > b) ? a : b
+        // returns b if a == NaN
+        vecMax = max(vec, vecMax);
     }
 
     double max = horizontal_max(vecMax);
