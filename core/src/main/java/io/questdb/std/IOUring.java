@@ -76,7 +76,7 @@ public final class IOUring implements Closeable {
         final long cqMaskPtr = Unsafe.getUnsafe().getLong(ringPtr + CQ_KRING_MASK_OFFSET);
         this.cqKringMask = Unsafe.getUnsafe().getInt(cqMaskPtr);
 
-        Files.bumpFileCount(ringFd);
+        Files.bumpUringCount(ringFd);
     }
 
     @Override
@@ -85,7 +85,7 @@ public final class IOUring implements Closeable {
             return;
         }
         facade.close(ringPtr);
-        Files.decrementFileCount(ringFd);
+        Files.decrementUringCount(ringFd);
         closed = true;
     }
 
