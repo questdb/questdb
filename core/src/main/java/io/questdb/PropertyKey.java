@@ -160,6 +160,7 @@ public enum PropertyKey {
     CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY("cairo.o3.partition.purge.list.initial.capacity"),
     CAIRO_O3_ENABLED("cairo.o3.enabled"),
     CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY("cairo.query.cache.event.queue.capacity"),
+    CAIRO_IO_URING_ENABLED("cairo.iouring.enabled"),
     CIRCUIT_BREAKER_THROTTLE("circuit.breaker.throttle"),
     CIRCUIT_BREAKER_BUFFER_SIZE("circuit.breaker.buffer.size"),
     CONFIG_VALIDATION_STRICT("config.validation.strict"),

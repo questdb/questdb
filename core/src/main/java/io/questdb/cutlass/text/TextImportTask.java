@@ -575,6 +575,7 @@ public class TextImportTask {
                         mergePartitionIndexAndImportData(
                                 ff,
                                 configuration.getIOURingFacade(),
+                                configuration.isIOURingEnabled(),
                                 path,
                                 lexer,
                                 fileBufAddr,
@@ -659,6 +660,7 @@ public class TextImportTask {
 
         private void importPartitionData(
                 final IOURingFacade rf,
+                final boolean uringEnabled,
                 final TextLexer lexer,
                 long address,
                 long size,
@@ -667,7 +669,7 @@ public class TextImportTask {
                 DirectCharSink utf8Sink,
                 Path tmpPath
         ) throws TextException {
-            if (rf.isAvailable()) {
+            if (uringEnabled && rf.isAvailable()) {
                 importPartitionDataIO_URing(
                         rf,
                         lexer,
@@ -890,6 +892,7 @@ public class TextImportTask {
         private void mergePartitionIndexAndImportData(
                 final FilesFacade ff,
                 final IOURingFacade rf,
+                boolean uringEnabled,
                 Path partitionPath,
                 final TextLexer lexer,
                 long fileBufAddr,
@@ -908,7 +911,7 @@ public class TextImportTask {
             try {
                 mergedIndexSize = openIndexChunks(ff, partitionPath, unmergedIndexes, partitionLen);
 
-                if (unmergedIndexes.size() > 2) {//there's more than 1 chunk so we've to merge
+                if (unmergedIndexes.size() > 2) { // there's more than 1 chunk so we've to merge
                     partitionPath.trimTo(partitionLen);
                     partitionPath.concat(CsvFileIndexer.INDEX_FILE_NAME).$();
 
@@ -916,11 +919,12 @@ public class TextImportTask {
                     mergeIndexAddr = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_PARALLEL_IMPORT);
 
                     Vect.mergeLongIndexesAsc(unmergedIndexes.getAddress(), (int) unmergedIndexes.size() / 2, mergeIndexAddr);
-                    //release chunk memory because it's been copied to merge area
+                    // release chunk memory because it's been copied to merge area
                     unmap(ff, unmergedIndexes);
 
                     importPartitionData(
                             rf,
+                            uringEnabled,
                             lexer,
                             mergeIndexAddr,
                             mergedIndexSize,
@@ -929,9 +933,10 @@ public class TextImportTask {
                             utf8Sink,
                             tmpPath
                     );
-                } else {//we can use the single chunk as is
+                } else { // we can use the single chunk as is
                     importPartitionData(
                             rf,
+                            uringEnabled,
                             lexer,
                             unmergedIndexes.get(0),
                             mergedIndexSize,

@@ -823,4 +823,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public int getQueryCacheEventQueueCapacity() {
         return 4;
     }
+
+    @Override
+    public boolean isIOURingEnabled() {
+        return true;
+    }
 }

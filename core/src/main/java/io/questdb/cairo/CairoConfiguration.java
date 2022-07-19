@@ -394,4 +394,6 @@ public interface CairoConfiguration {
     int getParallelImportRequestQueueCapacity();
 
     int getParallelImportStatusLogKeepLastNDays();
+
+    boolean isIOURingEnabled();
 }

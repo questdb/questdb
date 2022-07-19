@@ -94,6 +94,7 @@ public class AbstractCairoTest {
     protected static int columnVersionTaskPoolCapacity = -1;
     protected static RostiAllocFacade rostiAllocFacade = null;
     protected static int parallelImportStatusLogKeepNDays = -1;
+    protected static Boolean ioURingEnabled = null;
 
     @Rule
     public TestName testName = new TestName();
@@ -328,6 +329,11 @@ public class AbstractCairoTest {
             public RostiAllocFacade getRostiAllocFacade() {
                 return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
             }
+
+            @Override
+            public boolean isIOURingEnabled() {
+                return ioURingEnabled != null ? ioURingEnabled : super.isIOURingEnabled();
+            }
         };
         engine = new CairoEngine(configuration, metrics);
         snapshotAgent = new DatabaseSnapshotAgent(engine);
@@ -385,6 +391,7 @@ public class AbstractCairoTest {
         rostiAllocFacade = null;
         sqlCopyBufferSize = 1024 * 1024;
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
+        ioURingEnabled = null;
         parallelImportStatusLogKeepNDays = -1;
     }
 

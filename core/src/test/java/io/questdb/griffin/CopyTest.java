@@ -26,13 +26,16 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.text.*;
+import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.TextImportRequestCollectingJob;
+import io.questdb.cutlass.text.TextImportRequestProcessingJob;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Os;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -40,9 +43,9 @@ import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 
-import static org.junit.Assert.*;
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.Assert.*;
 
 public class CopyTest extends AbstractGriffinTest {
 
@@ -353,6 +356,21 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyIntoNewTable() throws Exception {
+        ParallelCopyRunnable stmt = () -> {
+            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+        };
+
+        ParallelCopyRunnable test = this::assertQuotesTableContent;
+
+        testParallelCopy(stmt, test, 1, 1);
+    }
+
+    @Test
+    public void testParallelCopyIntoNewTableWithUringDisabled() throws Exception {
+        Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
+        ioURingEnabled = false;
+
         ParallelCopyRunnable stmt = () -> {
             compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);

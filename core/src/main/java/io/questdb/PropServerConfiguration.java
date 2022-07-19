@@ -408,6 +408,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long parallelImportRequestWaitTimeout;
     private final int parallelImportRequestQueueCapacity;
     private final int parallelImportStatusLogKeepLastNDays;
+    private final boolean ioURingEnabled;
 
     public PropServerConfiguration(
             String root,
@@ -847,6 +848,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_QUEUE_CAPACITY, 512));
             this.telemetryHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_HIDE_TABLES, true);
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
+            this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
 
             parseBindTo(properties, env, PropertyKey.LINE_UDP_BIND_TO, "0.0.0.0:9009", (a, p) -> {
                 this.lineUdpBindIPV4Address = a;
@@ -2598,6 +2600,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueryCacheEventQueueCapacity() {
             return queryCacheEventQueueCapacity;
+        }
+
+        @Override
+        public boolean isIOURingEnabled() {
+            return ioURingEnabled;
         }
     }
 

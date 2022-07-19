@@ -796,4 +796,9 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     public int getParallelImportStatusLogKeepLastNDays() {
         return conf.getParallelImportStatusLogKeepLastNDays();
     }
+
+    @Override
+    public boolean isIOURingEnabled() {
+        return conf.isIOURingEnabled();
+    }
 }
