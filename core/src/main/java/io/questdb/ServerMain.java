@@ -230,16 +230,17 @@ public class ServerMain {
             workerPool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
             TextImportJob.assignToPool(cairoEngine.getMessageBus(), workerPool);
 
-            TextImportRequestCollectingJob textImportRequestCollectingJob = new TextImportRequestCollectingJob(cairoEngine);
-            int parallelImportWorkerCount = Math.max(1, workerPool.getWorkerCount() - 2); // save CPU resources for collecting and processing jobs
-            TextImportRequestProcessingJob textImportRequestProcessingJob = new TextImportRequestProcessingJob(
-                    cairoEngine,
-                    parallelImportWorkerCount,
-                    functionFactoryCache
-            );
-            workerPool.assign(textImportRequestCollectingJob);
-            workerPool.assign(textImportRequestProcessingJob);
-            workerPool.freeOnHalt(textImportRequestProcessingJob);
+            if (configuration.getCairoConfiguration().getSqlCopyInputRoot() != null) {
+                workerPool.assign(new TextImportRequestCollectingJob(cairoEngine));
+                final TextImportRequestProcessingJob textImportRequestProcessingJob = new TextImportRequestProcessingJob(
+                        cairoEngine,
+                        // save CPU resources for collecting and processing jobs
+                        Math.max(1, workerPool.getWorkerCount() - 2),
+                        functionFactoryCache
+                );
+                workerPool.assign(textImportRequestProcessingJob);
+                workerPool.freeOnHalt(textImportRequestProcessingJob);
+            }
 
             instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
             instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));

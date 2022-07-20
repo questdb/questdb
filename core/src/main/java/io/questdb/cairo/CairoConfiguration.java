@@ -141,9 +141,9 @@ public interface CairoConfiguration {
     int getIndexValueBlockSize();
 
     // null input root disables "copy" sql
-    CharSequence getInputRoot();
+    CharSequence getSqlCopyInputRoot();
 
-    CharSequence getInputWorkRoot();
+    CharSequence getSqlCopyInputWorkRoot();
 
     long getSqlCopyMaxIndexChunkSize();
 

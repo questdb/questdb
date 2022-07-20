@@ -159,8 +159,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         CairoConfiguration cfg = this.cairoEngine.getConfiguration();
 
         this.ff = cfg.getFilesFacade();
-        this.inputRoot = cfg.getInputRoot();
-        this.inputWorkRoot = cfg.getInputWorkRoot();
+        this.inputRoot = cfg.getSqlCopyInputRoot();
+        this.inputWorkRoot = cfg.getSqlCopyInputWorkRoot();
 
         TextConfiguration textConfiguration = configuration.getTextConfiguration();
         this.utf8Sink = new DirectCharSink(textConfiguration.getUtf8SinkSize());

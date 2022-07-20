@@ -978,7 +978,7 @@ public class TextImportTask {
 
             long fd = -1;
             try {
-                tmpPath.of(configuration.getInputRoot()).concat(inputFileName).$();
+                tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName).$();
                 utf8Sink.clear();
                 fd = TableUtils.openRO(ff, tmpPath, LOG);
 
@@ -1078,7 +1078,7 @@ public class TextImportTask {
 
             long fd = -1;
             try {
-                tmpPath.of(configuration.getInputRoot()).concat(inputFileName).$();
+                tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName).$();
                 utf8Sink.clear();
                 fd = TableUtils.openRO(ff, tmpPath, LOG);
 

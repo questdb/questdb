@@ -263,13 +263,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getInputRoot() {
-        return conf.getInputRoot();
+    public CharSequence getSqlCopyInputRoot() {
+        return conf.getSqlCopyInputRoot();
     }
 
     @Override
-    public CharSequence getInputWorkRoot() {
-        return conf.getInputWorkRoot();
+    public CharSequence getSqlCopyInputWorkRoot() {
+        return conf.getSqlCopyInputWorkRoot();
     }
 
     @Override

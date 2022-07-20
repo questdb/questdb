@@ -1925,7 +1925,7 @@ public class SqlCompiler implements Closeable {
             int len = configuration.getSqlCopyBufferSize();
             long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             setupTextLoaderFromModel(model);
-            path.of(configuration.getInputRoot()).concat(fileName).$();
+            path.of(configuration.getSqlCopyInputRoot()).concat(fileName).$();
             long fd = ff.openRO(path);
             try {
                 if (fd == -1) {

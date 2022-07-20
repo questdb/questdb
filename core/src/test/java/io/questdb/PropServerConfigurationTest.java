@@ -1066,7 +1066,7 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
 
         PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
-        MatcherAssert.assertThat(configuration.getCairoConfiguration().getInputWorkRoot(), is(nullValue()));
+        MatcherAssert.assertThat(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot(), is(nullValue()));
 
         //direct cases 
         assertInputWorkRootCantBeSetTo(properties, root);
@@ -1088,7 +1088,7 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
 
         PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
-        MatcherAssert.assertThat(configuration.getCairoConfiguration().getInputWorkRoot(), is(nullValue()));
+        MatcherAssert.assertThat(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot(), is(nullValue()));
 
         assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toString().toUpperCase());
         assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toString().toLowerCase());

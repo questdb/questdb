@@ -177,12 +177,12 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public CharSequence getInputRoot() {
+            public CharSequence getSqlCopyInputRoot() {
                 return inputRoot;
             }
 
             @Override
-            public CharSequence getInputWorkRoot() {
+            public CharSequence getSqlCopyInputWorkRoot() {
                 return inputWorkRoot;
             }
 

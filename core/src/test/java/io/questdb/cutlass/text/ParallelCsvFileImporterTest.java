@@ -2641,12 +2641,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public CharSequence getInputWorkRoot() {
+                    public CharSequence getSqlCopyInputWorkRoot() {
                         return ParallelCsvFileImporterTest.inputWorkRoot;
                     }
 
                     @Override
-                    public CharSequence getInputRoot() {
+                    public CharSequence getSqlCopyInputRoot() {
                         return ParallelCsvFileImporterTest.inputRoot;
                     }
 

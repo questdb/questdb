@@ -309,12 +309,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getInputRoot() {
+    public CharSequence getSqlCopyInputRoot() {
         return null;
     }
 
     @Override
-    public CharSequence getInputWorkRoot() {
+    public CharSequence getSqlCopyInputWorkRoot() {
         return null;
     }
 
