@@ -157,7 +157,7 @@ inline void radix_shuffle(uint64_t* counts, int64_t* src, int64_t* dest, uint64_
 #endif
 
 template<typename T>
-void radix_sort_long_index_asc_in_place(const T *array, uint64_t size, T *cpy) {
+void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
     rscounts_t counts;
     memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
     uint64_t o8 = 0, o7 = 0, o6 = 0, o5 = 0, o4 = 0, o3 = 0, o2 = 0, o1 = 0;
