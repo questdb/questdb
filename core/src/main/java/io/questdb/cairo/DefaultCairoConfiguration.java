@@ -319,7 +319,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getMaxImportIndexChunkSize() {
+    public long getImportMaxIndexChunkSize() {
         return 1024 * 1024L;
     }
 

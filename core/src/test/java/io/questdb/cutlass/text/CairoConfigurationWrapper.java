@@ -273,8 +273,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getMaxImportIndexChunkSize() {
-        return conf.getMaxImportIndexChunkSize();
+    public long getImportMaxIndexChunkSize() {
+        return conf.getImportMaxIndexChunkSize();
     }
 
     @Override

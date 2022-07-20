@@ -156,7 +156,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.ff = configuration.getFilesFacade();
         this.dirMode = configuration.getMkDirMode();
         this.inputRoot = configuration.getInputRoot();
-        this.maxIndexChunkSize = configuration.getMaxImportIndexChunkSize();
+        this.maxIndexChunkSize = configuration.getImportMaxIndexChunkSize();
         this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
         this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_PARALLEL_IMPORT);
         this.fieldRollBufCur = fieldRollBufPtr;
@@ -212,10 +212,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
             return;
         }
 
-        //second long stores: 
-        // length as 16 bits unsigned number followed by 
-        // offset as 48-bits unsigned number 
-        // allowing for importing 256TB big files with rows up to 65kB long  
+        // second long stores:
+        //  length as 16 bits unsigned number followed by
+        //  offset as 48-bits unsigned number
+        //  allowing for importing 256TB big files with rows up to 65kB long
         long lengthAndOffset = (length << 48 | lineStartOffset);
         long partitionKey = partitionFloorMethod.floor(timestampValue);
         long mapKey = partitionKey / Timestamps.HOUR_MICROS; //remove trailing zeros to avoid excessive collisions in hashmap 

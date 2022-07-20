@@ -314,7 +314,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean httpReadOnlySecurityContext;
     private long maxHttpQueryResponseRowLimit;
     private boolean interruptOnClosedConnection;
-    private long parallelImportMaxIndexChunkSize;
+    private long cairoImportMaxIndexChunkSize;
     private final int parallelImportQueueCapacity;
     private int pgNetConnectionLimit;
     private boolean pgNetConnectionHint;
@@ -808,9 +808,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
             }
 
-            this.parallelImportMaxIndexChunkSize = getLong(properties, env, PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
-            this.parallelImportMaxIndexChunkSize -= (parallelImportMaxIndexChunkSize % CsvFileIndexer.INDEX_ENTRY_SIZE);
-            if (this.parallelImportMaxIndexChunkSize < 16) {
+            this.cairoImportMaxIndexChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
+            this.cairoImportMaxIndexChunkSize -= (cairoImportMaxIndexChunkSize % CsvFileIndexer.INDEX_ENTRY_SIZE);
+            if (this.cairoImportMaxIndexChunkSize < 16) {
                 throw new ServerConfigurationException("invalid configuration value [key=" + PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE.getPropertyPath() +
                         ", description=max import chunk size can't be smaller than 16]");
             }
@@ -2104,8 +2104,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getMaxImportIndexChunkSize() {
-            return parallelImportMaxIndexChunkSize;
+        public long getImportMaxIndexChunkSize() {
+            return cairoImportMaxIndexChunkSize;
         }
 
         @Override
