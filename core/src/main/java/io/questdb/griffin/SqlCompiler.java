@@ -1884,7 +1884,7 @@ public class SqlCompiler implements Closeable {
         return rowCount;
     }
 
-    private void copyTable(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
+    private void executeCopy0(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
         try {
             int workerCount = executionContext.getWorkerCount();
             ExpressionNode fileNameNode = model.getFileName();
@@ -1912,7 +1912,7 @@ public class SqlCompiler implements Closeable {
                     }
                     addTextImportRequest(correlationId, requestTimeout, model, fileName);
                 }
-                awaitTextImportResponse(correlationId, requestTimeout);
+                copyAwaitAsyncAck(correlationId, requestTimeout);
                 return;
             }
 
@@ -2000,7 +2000,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void awaitTextImportResponse(long correlationId, long timeout) throws SqlException {
+    private void copyAwaitAsyncAck(long correlationId, long timeout) throws SqlException {
         final MicrosecondClock clock = configuration.getMicrosecondClock();
         final FanOut textImportResponseFanOut = messageBus.getTextImportResponseFanOut();
         final RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestCollectingQueue();
@@ -2010,7 +2010,7 @@ public class SqlCompiler implements Closeable {
             long seq = textImportResponseSubSeq.next();
             if (seq < 0) {
                 if (clock.getTicks() - start > timeout) {
-                    throw SqlException.$(0, "Parallel import ack timeout.");
+                    throw SqlException.$(0, "async copy has not been acknowledged, it may still go ahead");
                 }
                 Os.pause();
                 continue;
@@ -2244,7 +2244,7 @@ public class SqlCompiler implements Closeable {
             setupTextLoaderFromModel(executionModel);
             return compiledQuery.ofCopyRemote(textLoader);
         }
-        copyTable(executionContext, executionModel);
+        executeCopy0(executionContext, executionModel);
         return compiledQuery.ofCopyLocal();
     }
 

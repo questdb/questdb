@@ -62,17 +62,17 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testSequentialCopyDoesntAcceptNewKeywords() {
-        assertFailsWith("copy x from 'somefile.csv' with partition by HOUR ;", "invalid option used for non-parallel import (timestamp, format or partition by)");
-        assertFailsWith("copy x from 'somefile.csv' with timestamp 'ts' ;", "invalid option used for non-parallel import (timestamp, format or partition by)");
-        assertFailsWith("copy x from 'somefile.csv' with format 'XYZ';", "invalid option used for non-parallel import (timestamp, format or partition by)");
+        assertFailsWith("copy x from 'somefile.csv' with partition by HOUR ;");
+        assertFailsWith("copy x from 'somefile.csv' with timestamp 'ts' ;");
+        assertFailsWith("copy x from 'somefile.csv' with format 'XYZ';");
     }
 
-    private void assertFailsWith(String sql, String message) {
+    private void assertFailsWith(String sql) {
         try {
             compiler.compile(sql, sqlExecutionContext);
             Assert.fail();
         } catch (SqlException e) {
-            assertThat(e.getMessage(), containsString(message));
+            assertThat(e.getMessage(), containsString("invalid option used for non-parallel import (timestamp, format or partition by)"));
         }
     }
 
@@ -351,19 +351,20 @@ public class CopyTest extends AbstractGriffinTest {
 
         ParallelCopyRunnable test = this::assertQuotesTableContent;
 
-        testParallelCopy(stmt, test, 1, 1);
+        testParallelCopy(stmt, test, 1);
     }
 
     @Test
     public void testParallelCopyIntoNewTable() throws Exception {
-        ParallelCopyRunnable stmt = () -> {
-            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
-                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
-        };
+        ParallelCopyRunnable stmt = () -> compiler.compile(
+                "copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ",
+                sqlExecutionContext
+        );
 
         ParallelCopyRunnable test = this::assertQuotesTableContent;
 
-        testParallelCopy(stmt, test, 1, 1);
+        testParallelCopy(stmt, test, 1);
     }
 
     @Test
@@ -371,33 +372,27 @@ public class CopyTest extends AbstractGriffinTest {
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
         ioURingEnabled = false;
 
-        ParallelCopyRunnable stmt = () -> {
-            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
-                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
-        };
+        ParallelCopyRunnable stmt = () -> compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
 
         ParallelCopyRunnable test = this::assertQuotesTableContent;
 
-        testParallelCopy(stmt, test, 1, 1);
+        testParallelCopy(stmt, test, 1);
     }
 
     @Test
     public void testParallelCopyThrowsExceptionWhenValidationFails() throws Exception {
-        ParallelCopyRunnable stmt = () -> {
-            compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
-                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT; ", sqlExecutionContext);
-        };
+        ParallelCopyRunnable stmt = () -> compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT; ", sqlExecutionContext);
 
-        ParallelCopyRunnable test = () -> {
-            assertQuery("message\n" +
-                            "partition by unit must be set when importing to new table\n",
-                    "select message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
-                    null,
-                    true
-            );
-        };
+        ParallelCopyRunnable test = () -> assertQuery("message\n" +
+                        "partition by unit must be set when importing to new table\n",
+                "select message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                null,
+                true
+        );
 
-        testParallelCopy(stmt, test, 1, 1);
+        testParallelCopy(stmt, test, 1);
     }
 
     @Test
@@ -474,20 +469,16 @@ public class CopyTest extends AbstractGriffinTest {
         inputRoot = new File(".").getAbsolutePath();
         inputWorkRoot = temp.getRoot().getAbsolutePath();
 
-        ParallelCopyRunnable stmt = () -> {
-            compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
-                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
-        };
+        ParallelCopyRunnable stmt = () -> compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
 
-        ParallelCopyRunnable test = () -> {
-            assertQuery("message\ncannot remove work dir because it points to one of main instance directories\n",
-                    "select left(message, 76) message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
-                    null,
-                    true
-            );
-        };
+        ParallelCopyRunnable test = () -> assertQuery("message\ncannot remove work dir because it points to one of main instance directories\n",
+                "select left(message, 76) message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                null,
+                true
+        );
 
-        testParallelCopy(stmt, test, 1, 1);
+        testParallelCopy(stmt, test, 1);
 
         inputRoot = inputRootTmp;
         inputWorkRoot = inputWorkRootTmp;
@@ -500,7 +491,7 @@ public class CopyTest extends AbstractGriffinTest {
                 compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Parallel import ack timeout"));
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("async copy has not been acknowledged, it may still go ahead"));
             }
             drainQueues();
         });
@@ -509,8 +500,13 @@ public class CopyTest extends AbstractGriffinTest {
     private void drainQueues() throws Exception {
         try (TextImportRequestProcessingJob processingJob = new TextImportRequestProcessingJob(engine, 1, null)) {
             TextImportRequestCollectingJob collectingJob = new TextImportRequestCollectingJob(engine);
-            while (collectingJob.run(0)) ;
-            while (processingJob.run(0)) ;
+            while (collectingJob.run(0)) {
+                Os.pause();
+            }
+
+            while (processingJob.run(0)) {
+                Os.pause();
+            }
         }
     }
 
@@ -533,14 +529,12 @@ public class CopyTest extends AbstractGriffinTest {
             }
         };
 
-        ParallelCopyRunnable test = () -> {
-            assertQuery("status\nCANCELLED\n",
-                    "select status from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
-                    null,
-                    true
-            );
-        };
-        testParallelCopy(stmt, test, 1, 3);
+        ParallelCopyRunnable test = () -> assertQuery("status\nCANCELLED\n",
+                "select status from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                null,
+                true
+        );
+        testParallelCopy(stmt, test, 3);
     }
 
     private void assertQuotesTableContent() throws SqlException {
@@ -580,9 +574,9 @@ public class CopyTest extends AbstractGriffinTest {
         });
     }
 
-    private void testParallelCopy(ParallelCopyRunnable statement, ParallelCopyRunnable test, int maxProcessed, int maxRequested) throws Exception {
+    private void testParallelCopy(ParallelCopyRunnable statement, ParallelCopyRunnable test, int maxRequested) throws Exception {
         assertMemoryLeak(() -> {
-            CountDownLatch processed = new CountDownLatch(maxProcessed);
+            CountDownLatch processed = new CountDownLatch(1);
             CountDownLatch requested = new CountDownLatch(maxRequested);
 
             compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log" , sqlExecutionContext);
