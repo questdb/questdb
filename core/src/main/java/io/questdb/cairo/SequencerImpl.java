@@ -31,7 +31,6 @@ import io.questdb.std.str.Path;
 
 import java.util.concurrent.locks.ReadWriteLock;
 
-import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TableUtils.WAL_INDEX_FILE_NAME;
 
 public class SequencerImpl implements Sequencer {
@@ -44,7 +43,6 @@ public class SequencerImpl implements Sequencer {
     private final int rootLen;
     private final SequencerMetadata metadata;
     private final TxnCatalog catalog;
-    private final IDGenerator txnGenerator;
     private final IDGenerator walIdGenerator;
 
     SequencerImpl(CairoEngine engine, String tableName) {
@@ -62,8 +60,6 @@ public class SequencerImpl implements Sequencer {
 
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
             walIdGenerator.open(path);
-            txnGenerator = new IDGenerator(configuration, TXN_FILE_NAME);
-            txnGenerator.open(path);
             catalog = new TxnCatalog(ff);
             catalog.open(path);
         } catch (Throwable th) {
@@ -72,31 +68,9 @@ public class SequencerImpl implements Sequencer {
         }
     }
 
-    private void createSequencerDir(FilesFacade ff, int mkDirMode) {
-        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
-            throw CairoException.instance(ff.errno()).put("Cannot create sequencer directory: ").put(path);
-        }
-        path.trimTo(rootLen);
-    }
-
     @Override
     public void open() {
         metadata.open(path, rootLen);
-    }
-
-    void of(TableStructure model) {
-        schemaLock.writeLock().lock();
-        try {
-            metadata.init(model, path, rootLen);
-        } finally {
-            schemaLock.writeLock().unlock();
-        }
-    }
-
-    private long nextTxn(int walId, long segmentId, long segmentTxn) {
-        long txn = catalog.addEntry(walId, segmentId, segmentTxn);
-        engine.notifyTxnReceived(tableName, txn);
-        return txn;
     }
 
     @Override
@@ -104,7 +78,7 @@ public class SequencerImpl implements Sequencer {
         schemaLock.writeLock().lock();
         try {
             if (metadata.getSchemaVersion() == expectedSchemaVersion) {
-                return nextTxn(walId, segmentId);
+                return nextTxn(walId, segmentId, segmentTxn);
             }
             return NO_TXN;
 
@@ -121,16 +95,6 @@ public class SequencerImpl implements Sequencer {
         } finally {
             schemaLock.readLock().unlock();
         }
-    }
-
-    @Override
-    public long addColumn(int columnIndex, CharSequence columnName, int columnType, int walId, long segmentId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long removeColumn(int columnIndex, int walId, long segmentId) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -155,8 +119,29 @@ public class SequencerImpl implements Sequencer {
             Misc.free(metadata);
             Misc.free(catalog);
             Misc.free(walIdGenerator);
-            Misc.free(txnGenerator);
             Misc.free(path);
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
+    }
+
+    private void createSequencerDir(FilesFacade ff, int mkDirMode) {
+        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            throw CairoException.instance(ff.errno()).put("Cannot create sequencer directory: ").put(path);
+        }
+        path.trimTo(rootLen);
+    }
+
+    private long nextTxn(int walId, long segmentId, long segmentTxn) {
+        long txn = catalog.addEntry(walId, segmentId, segmentTxn);
+        engine.notifyWalTxnCommitted(metadata.getTableId(), tableName, txn);
+        return txn;
+    }
+
+    void create( int tableId, TableStructure model) {
+        schemaLock.writeLock().lock();
+        try {
+            metadata.create(model, path, rootLen, tableId);
         } finally {
             schemaLock.writeLock().unlock();
         }

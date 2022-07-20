@@ -196,6 +196,7 @@ public class TableWriter implements Closeable {
     private long commitInterval;
     private UpdateOperator updateOperator;
     private DropIndexOperator dropIndexOperator;
+    private final WalEventReader walEventReader;
 
 
     public TableWriter(
@@ -317,6 +318,7 @@ public class TableWriter implements Closeable {
             commandPubSeq = new MPSequence(commandQueue.getCycle());
             commandPubSeq.then(commandSubSeq).then(commandPubSeq);
             walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, columnCount);
+            walEventReader = new WalEventReader(ff);
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -1074,6 +1076,11 @@ public class TableWriter implements Closeable {
         } finally {
             walPath.trimTo(walRootPathLen);
         }
+    }
+
+    public void processWalCommit(CharSequence walPath, long segmentTxn) {
+        Path path = Path.getThreadLocal(walPath);
+        walEventReader.of(path, WalWriter.WAL_FORMAT_VERSION);
     }
 
     private void mmapWalColumn(Path walPath, int timestampIndex, long rowLo, long rowHi) {

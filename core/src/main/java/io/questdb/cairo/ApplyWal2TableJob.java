@@ -1,0 +1,105 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2022 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.Path;
+
+public class ApplyWal2TableJob {
+    public final static String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
+    private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
+
+    public static void processWalTxnNotification(
+            String tableName,
+            int tableId,
+            long txn,
+            CairoEngine engine
+    ) {
+        // This is work steeling, security context is checked on writing to the WAL
+        // and can be ignored here
+        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, WAL_2_TABLE_WRITE_REASON)) {
+            if (writer.getMetadata().getId() != tableId) {
+                // Oh, no. The table we have is not the one we received notification about!
+
+            }
+            applyOutstandingWalTransactions(writer, engine);
+        } catch (EntryUnavailableException tableBusy) {
+            // This is all good, someone else will apply the data
+            if (!WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())) {
+                // Oh, no, rogue writer
+                LOG.error().$("Rogue TableWriter. Table with WAL writing is out or writer pool [table=").$(tableName)
+                        .$(", lock_reason=").$(tableBusy.getReason()).I$();
+            }
+        }
+    }
+
+    private static void applyOutstandingWalTransactions(TableWriter writer, CairoEngine engine) {
+        Sequencer sequencer = engine.getSequencer(writer.getTableName());
+        long sequenceMaxTxn = sequencer.getMaxTxn();
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+
+        long lastCommitted = writer.getTxn();
+
+        while (lastCommitted < sequenceMaxTxn) {
+            var sequencerCursor = sequencer.getCursor(lastCommitted);
+            while(sequencerCursor.hasNext()) {
+                CharSequence walPath = sequencerCursor.getWalPath();
+                long segmentTxn = sequencerCursor.getWalTxn();
+                int segmentId = sequencerCursor.getSegment();
+                long tableTxn = sequencerCursor.getTxn();
+
+                try (
+                        Path path = new Path();
+                        WalEventReader wre = new WalEventReader(ff)
+                ) {
+                    path.of(walPath);
+                    WalEventCursor waleCursor = wre.of(path.slash().put(segmentId), WalWriter.WAL_FORMAT_VERSION);
+//                    if (wre.goTo(segmentTxn)) {
+//
+//                        WalEventCursor.DataInfo dataInfo = waleCursor.getDataInfo();
+//                        writer.processWalCommit(                                walPath, segmentId, segmentTxn                        );
+//                        writer.processWalCommit(
+//                                path,
+//                                segmentId,
+//                                !dataInfo.isOutOfOrder(),
+//                                dataInfo.getStartRowID(),
+//                                dataInfo.getEndRowID(),
+//                                dataInfo.getMinTimestamp(),
+//                                dataInfo.getMaxTimestamp() + 1,
+//                                dataInfo
+//                        );
+//
+//                    } else {
+//                        // Oh, no WAL does not have the expected transaction!
+//                    }
+                }
+            }
+            lastCommitted = writer.getTxn();
+        }
+    }
+}

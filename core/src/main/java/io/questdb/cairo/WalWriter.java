@@ -140,29 +140,30 @@ public class WalWriter implements Closeable {
     }
 
     public void addColumn(CharSequence name, int type, int symbolCapacity) {
-        assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
-        assert isValidColumnName(name, configuration.getMaxFileNameLength()) : "invalid column name";
-
-        if (metadata.getColumnIndexQuiet(name) != -1) {
-            throw CairoException.instance(0).put("Duplicate column name: ").put(name);
-        }
-
-        try {
-            LOG.info().$("adding column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
-            commit(true);
-
-            final int index = columnCount;
-            metadata.addColumn(index, name, type);
-            configureColumn(index, type);
-            columnCount++;
-            configureSymbolMapWriter(index, name, 0, COLUMN_NAME_TXN_NONE);
-
-            final long txn = sequencer.addColumn(index, name, type, walId, segmentId);
-            events.addColumn(txn, index, name, type);
-            LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
-        } catch (Throwable e) {
-            throw new CairoError(e);
-        }
+//        assert symbolCapacity == Numbers.ceilPow2(symbolCapacity) : "power of 2 expected";
+//        assert isValidColumnName(name, configuration.getMaxFileNameLength()) : "invalid column name";
+//
+//        if (metadata.getColumnIndexQuiet(name) != -1) {
+//            throw CairoException.instance(0).put("Duplicate column name: ").put(name);
+//        }
+//
+//        try {
+//            LOG.info().$("adding column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
+//            commit(true);
+//
+//            final int index = columnCount;
+//            metadata.addColumn(index, name, type);
+//            configureColumn(index, type);
+//            columnCount++;
+//            configureSymbolMapWriter(index, name, 0, COLUMN_NAME_TXN_NONE);
+//
+//            long walTxn = events.addColumn(index, name, type);
+//            final long txn = sequencer.addColumn(index, name, type, walId, segmentId);
+//            LOG.info().$("ADDED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("], to ").$(path).$();
+//        } catch (Throwable e) {
+//            throw new CairoError(e);
+//        }
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -208,25 +209,26 @@ public class WalWriter implements Closeable {
     }
 
     public void removeColumn(CharSequence name) {
-        final int index = metadata.getColumnIndex(name);
-        final int type = metadata.getColumnType(index);
-
-        try {
-            LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
-            commit(true);
-
-            if (ColumnType.isSymbol(type)) {
-                removeSymbolMapWriter(index);
-            }
-            metadata.removeColumn(index);
-            removeColumn(index);
-
-            final long txn = sequencer.removeColumn(index, walId, segmentId);
-            events.removeColumn(txn, index);
-            LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
-        } catch (Throwable e) {
-            throw new CairoError(e);
-        }
+//        final int index = metadata.getColumnIndex(name);
+//        final int type = metadata.getColumnType(index);
+//
+//        try {
+//            LOG.info().$("removing column '").utf8(name).$("' from ").$(path).$();
+//            commit(true);
+//
+//            if (ColumnType.isSymbol(type)) {
+//                removeSymbolMapWriter(index);
+//            }
+//            metadata.removeColumn(index);
+//            removeColumn(index);
+//
+//            final long txn = sequencer.removeColumn(index, walId, segmentId);
+//            events.removeColumn(txn, index);
+//            LOG.info().$("REMOVED column '").utf8(name).$("' from ").$(path).$();
+//        } catch (Throwable e) {
+//            throw new CairoError(e);
+//        }
+        throw new UnsupportedOperationException();
     }
 
     public long size() {
@@ -532,6 +534,7 @@ public class WalWriter implements Closeable {
         return rowCount - startRowCount;
     }
 
+    // Returns table transaction number.
     public long commit() {
         return commit(false);
     }
@@ -546,8 +549,9 @@ public class WalWriter implements Closeable {
                 throw new UnsupportedOperationException("WAL schema changes not supported yet");
             }
             resetDataTxnProperties();
+            return txn;
         }
-        return transientRowCount;
+        return Sequencer.NO_TXN;
     }
 
     private void resetDataTxnProperties() {

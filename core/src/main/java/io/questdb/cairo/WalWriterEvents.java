@@ -38,6 +38,7 @@ class WalWriterEvents implements Closeable {
     private final MemoryMARW eventMem = Vm.getMARWInstance();
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
     private IntList initialSymbolCounts;
+    private long txn = 0;
 
     WalWriterEvents(FilesFacade ff) {
         this.ff = ff;
@@ -87,7 +88,7 @@ class WalWriterEvents implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
-    void data(long txn, long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+    long data(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
         long startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.DATA);
@@ -99,9 +100,10 @@ class WalWriterEvents implements Closeable {
         writeSymbolMapDiffs();
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
+        return txn++;
     }
 
-    void addColumn(long txn, int columnIndex, CharSequence columnName, int columnType) {
+    long addColumn(int columnIndex, CharSequence columnName, int columnType) {
         long startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.ADD_COLUMN);
@@ -110,15 +112,17 @@ class WalWriterEvents implements Closeable {
         eventMem.putInt(columnType);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
+        return txn++;
     }
 
-    void removeColumn(long txn, int columnIndex) {
+    long removeColumn(int columnIndex) {
         long startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.REMOVE_COLUMN);
         eventMem.putInt(columnIndex);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
+        return txn++;
     }
 
     private void init() {

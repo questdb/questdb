@@ -22,23 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.tasks;
 
-import io.questdb.std.ThreadLocal;
+public class WalTxnNotificationTask {
+    private String tableName;
+    private int tableId;
+    private long txn;
 
-public class EntryUnavailableException extends CairoException {
-    private static final ThreadLocal<EntryUnavailableException> tlException = new ThreadLocal<>(EntryUnavailableException::new);
-    private String reason;
-
-    public static EntryUnavailableException instance(String reason) {
-        EntryUnavailableException ex = tlException.get();
-        ex.message.clear();
-        ex.put("table busy [reason=").put(reason).put("]");
-        ex.reason = reason;
-        return ex;
+    public int getTableId() {
+        return tableId;
     }
 
-    public String getReason() {
-         return reason;
+    public String getTableName() {
+        return tableName;
+    }
+
+    public long getTxn() {
+        return txn;
+    }
+
+    public void of(String tableName, int tableId, long txn) {
+        this.tableName = tableName;
+        this.tableId = tableId;
+        this.txn = txn;
     }
 }

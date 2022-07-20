@@ -46,7 +46,7 @@ public class WalReader implements Closeable {
     private final int rootLen;
     private final WalReaderMetadata metadata;
     private final WalDataCursor dataCursor = new WalDataCursor();
-    private final WalReaderEvents events;
+    private final WalEventReader events;
     private final WalEventCursor eventCursor;
     private final String tableName;
     private final String walName;
@@ -71,10 +71,10 @@ public class WalReader implements Closeable {
             metadata = new WalReaderMetadata(ff);
             metadata.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION);
             columnCount = metadata.getColumnCount();
-            events = new WalReaderEvents(ff);
+            events = new WalEventReader(ff);
             LOG.debug().$("open [table=").$(tableName).I$();
-            openSymbolMaps(events.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION), configuration);
-            eventCursor = events.of(path, rootLen, segmentId, WalWriter.WAL_FORMAT_VERSION);
+            eventCursor = events.of(path.slash().concat(segmentId), WalWriter.WAL_FORMAT_VERSION);
+            openSymbolMaps(eventCursor, configuration);
 
             final int capacity = 2 * columnCount + 2;
             columns = new ObjList<>(capacity);

@@ -45,6 +45,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
+import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -143,7 +144,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             TableStructure struct
     ) {
         checkTableName(struct.getTableName());
-        CharSequence lockedReason = lock(securityContext, struct.getTableName(), "createTable");
+        String lockedReason = lock(securityContext, struct.getTableName(), "createTable");
         if (null == lockedReason) {
             boolean newTable = false;
             try {
@@ -174,7 +175,9 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             TableStructure struct
     ) {
         securityContext.checkWritePermission();
-        tableRegistry.registerTable(struct);
+        int tableId = (int) tableIdGenerator.getNextId();
+
+        tableRegistry.createTable(tableId, struct);
 
         // only create the table after it has been registered
         TableUtils.createTable(
@@ -247,7 +250,49 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return tableIdGenerator;
     }
 
-    public void notifyTxnReceived(String tableName, long txn) {
+    public void notifyWalTxnCommitted(int tableId, String tableName, long txn) {
+        Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
+        int steelingAttempts = 10;
+        while (true) {
+            long cursor = pubSeq.next();
+            if (cursor > -1L) {
+                WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
+                task.of(tableName, tableId, txn);
+                pubSeq.done(cursor);
+                return;
+            } else if (cursor == -1L) {
+                // Oh, no queue overflow!
+                // Steel the work!
+                if (steelingAttempts-- > 0) {
+                    Sequence subSeq = messageBus.getWalTxnNotificationSubSequence();
+                    try {
+                        while ((cursor = subSeq.next()) > -1L || cursor == -2L) {
+                            if (cursor > -1L) {
+                                WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
+                                String taskTableName = task.getTableName();
+                                int taskTableId = task.getTableId();
+                                long taskTxn = task.getTxn();
+
+                                // We can release queue obj now, all data copied. If writing fails another commit or async job will re-trigger it
+                                subSeq.done(cursor);
+
+                                ApplyWal2TableJob.processWalTxnNotification(taskTableName, taskTableId, taskTxn, this);
+                            }
+                        }
+                    } catch (Throwable throwable) {
+                        LOG.criticalW()
+                                .$("error in steeling and processing WAL notifications. Attempts left: ").$(steelingAttempts)
+                                .$(throwable).$();
+                    }
+                } else {
+                    LOG.criticalW().$("error publishing WAL notifications, queue is full").$();
+                    // WAL is committed and can eventually be picked up and applied to the table.
+                    // Error is critical but throwing exception will make client assume
+                    // that commit failed but in fact the data is written.
+                    return;
+                }
+            }
+        }
     }
 
     public void setPoolListener(PoolListener poolListener) {
@@ -279,6 +324,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     }
 
     // For testing only
+    @TestOnly
     public WalReader getWalReader(
             CairoSecurityContext securityContext,
             CharSequence tableName,
@@ -349,7 +395,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     public TableWriter getWriter(
             CairoSecurityContext securityContext,
             CharSequence tableName,
-            CharSequence lockReason
+            String lockReason
     ) {
         securityContext.checkWritePermission();
         checkTableName(tableName);
@@ -373,16 +419,20 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return sequencer.createWal();
     }
 
-    public CharSequence lock(
+    public Sequencer getSequencer(CharSequence tableName) {
+        return tableRegistry.getSequencer(tableName);
+    }
+
+    public String lock(
             CairoSecurityContext securityContext,
             CharSequence tableName,
-            CharSequence lockReason
+            String lockReason
     ) {
         assert null != lockReason;
         securityContext.checkWritePermission();
 
         checkTableName(tableName);
-        CharSequence lockedReason = writerPool.lock(tableName, lockReason);
+        String lockedReason = writerPool.lock(tableName, lockReason);
         if (lockedReason == OWNERSHIP_REASON_NONE) {
             boolean locked = readerPool.lock(tableName);
             if (locked) {
@@ -400,7 +450,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         return readerPool.lock(tableName);
     }
 
-    public CharSequence lockWriter(CharSequence tableName, CharSequence lockReason) {
+    public CharSequence lockWriter(CharSequence tableName, String lockReason) {
         checkTableName(tableName);
         return writerPool.lock(tableName, lockReason);
     }
@@ -463,7 +513,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         checkTableName(tableName);
         checkTableName(newName);
 
-        CharSequence lockedReason = lock(securityContext, tableName, "renameTable");
+        String lockedReason = lock(securityContext, tableName, "renameTable");
         if (null == lockedReason) {
             try {
                 rename0(path, tableName, otherPath, newName);

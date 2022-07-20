@@ -82,7 +82,8 @@ public final class TableUtils {
     public static final long SEQ_META_OFFSET_SCHEMA_VERSION = 4;
     public static final long SEQ_META_OFFSET_COLUMN_COUNT = 8;
     public static final long SEQ_META_OFFSET_TIMESTAMP_INDEX = 12;
-    public static final long SEQ_META_OFFSET_COLUMNS = 16;
+    public static final long SEQ_META_TABLE_ID = SEQ_META_OFFSET_TIMESTAMP_INDEX + Integer.BYTES;
+    public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_TABLE_ID + Integer.BYTES;
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;

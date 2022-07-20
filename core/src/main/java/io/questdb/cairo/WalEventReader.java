@@ -33,12 +33,12 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
-public class WalReaderEvents implements Closeable {
+public class WalEventReader implements Closeable {
     private final FilesFacade ff;
     private final MemoryMR eventMem;
     private final WalEventCursor eventCursor;
 
-    public WalReaderEvents(FilesFacade ff) {
+    public WalEventReader(FilesFacade ff) {
         this.ff = ff;
         eventMem = Vm.getMRInstance();
         eventCursor = new WalEventCursor(eventMem);
@@ -50,9 +50,9 @@ public class WalReaderEvents implements Closeable {
         Misc.free(eventMem);
     }
 
-    public WalEventCursor of(Path path, int pathLen, long segmentId, int expectedVersion) {
+    public WalEventCursor of(Path path, int expectedVersion) {
         try {
-            openSmallFile(ff, path.slash().put(segmentId), pathLen, eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_READER);
+            openSmallFile(ff, path, path.length(), eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_READER);
 
             // minimum we need is WAL_FORMAT_VERSION (int) and END_OF_EVENTS (long)
             checkMemSize(eventMem, Integer.BYTES + Long.BYTES);

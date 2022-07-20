@@ -359,7 +359,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     }
 
     @Override
-    public TableWriter getWriter(CairoSecurityContext context, CharSequence name, CharSequence lockReason) {
+    public TableWriter getWriter(CairoSecurityContext context, CharSequence name, String lockReason) {
         final int index = pendingWriters.keyIndex(name);
         if (index < 0) {
             return pendingWriters.valueAt(index);

@@ -39,9 +39,9 @@ public class OperationDispatcher<T extends AbstractOperation> {
     private final CairoEngine engine;
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
     private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
-    private final CharSequence lockReason;
+    private final String lockReason;
 
-    public OperationDispatcher(CairoEngine engine, CharSequence lockReason) {
+    public OperationDispatcher(CairoEngine engine, String lockReason) {
         this.engine = engine;
         futurePool = new WeakSelfReturningObjectPool<>(pool -> new OperationFutureImpl(engine, pool), 2);
         this.lockReason = lockReason;

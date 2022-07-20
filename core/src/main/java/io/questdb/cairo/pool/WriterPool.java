@@ -120,7 +120,7 @@ public class WriterPool extends AbstractPool {
      * @param lockReason description of where or why lock is held
      * @return cached TableWriter instance.
      */
-    public TableWriter get(CharSequence tableName, CharSequence lockReason) {
+    public TableWriter get(CharSequence tableName, String lockReason) {
         return getWriterEntry(tableName, lockReason, null);
     }
 
@@ -179,7 +179,7 @@ public class WriterPool extends AbstractPool {
      * @param lockReason description of where or why lock is held
      * @return true if lock was successful, false otherwise
      */
-    public CharSequence lock(CharSequence tableName, CharSequence lockReason) {
+    public String lock(CharSequence tableName, String lockReason) {
         checkClosed();
 
         long thread = Thread.currentThread().getId();
@@ -310,7 +310,7 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private void assertLockReasonIsNone(CharSequence lockReason) {
+    private void assertLockReasonIsNone(String lockReason) {
         if (lockReason == OWNERSHIP_REASON_NONE) {
             throw new NullPointerException();
         }
@@ -323,7 +323,7 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private TableWriter checkClosedAndGetWriter(CharSequence tableName, Entry e, CharSequence lockReason) {
+    private TableWriter checkClosedAndGetWriter(CharSequence tableName, Entry e, String lockReason) {
         assertLockReasonIsNone(lockReason);
         if (isClosed()) {
             // pool closed, but we somehow managed to lock writer
@@ -420,7 +420,7 @@ public class WriterPool extends AbstractPool {
         return count;
     }
 
-    private TableWriter createWriter(CharSequence name, Entry e, long thread, CharSequence lockReason) {
+    private TableWriter createWriter(CharSequence name, Entry e, long thread, String lockReason) {
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
@@ -444,7 +444,7 @@ public class WriterPool extends AbstractPool {
 
     private TableWriter getWriterEntry(
             CharSequence tableName,
-            CharSequence lockReason,
+            String lockReason,
             @Nullable AsyncWriterCommand asyncWriterCommand
     ) {
         assert null != lockReason;
@@ -500,7 +500,7 @@ public class WriterPool extends AbstractPool {
                     return null;
                 }
 
-                CharSequence reason = reinterpretOwnershipReason(e.ownershipReason);
+                String reason = reinterpretOwnershipReason(e.ownershipReason);
                 LOG.info().$("busy [table=`").utf8(tableName)
                         .$("`, owner=").$(owner)
                         .$(", thread=").$(thread)
@@ -511,7 +511,7 @@ public class WriterPool extends AbstractPool {
         }
     }
 
-    private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, CharSequence lockReason) {
+    private boolean lockAndNotify(long thread, Entry e, CharSequence tableName, String lockReason) {
         assertLockReasonIsNone(lockReason);
         TableUtils.lockName(path.trimTo(rootLen).concat(tableName));
         e.lockFd = TableUtils.lock(ff, path);
@@ -533,7 +533,7 @@ public class WriterPool extends AbstractPool {
         return e.writer;
     }
 
-    private CharSequence reinterpretOwnershipReason(CharSequence providedReason) {
+    private String reinterpretOwnershipReason(String providedReason) {
         // we cannot always guarantee that ownership reason is set
         // allocating writer and setting "reason" are non-atomic
         // therefore we could be in a situation where we can be confident writer is locked
@@ -592,7 +592,7 @@ public class WriterPool extends AbstractPool {
     private class Entry implements LifecycleManager {
         // owner thread id or -1 if writer is available for hire
         private volatile long owner = Thread.currentThread().getId();
-        private volatile CharSequence ownershipReason = OWNERSHIP_REASON_NONE;
+        private volatile String ownershipReason = OWNERSHIP_REASON_NONE;
         private TableWriter writer;
         // time writer was last released
         private volatile long lastReleaseTime;

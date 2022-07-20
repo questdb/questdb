@@ -39,6 +39,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
     private final MemoryMAR metaMem = Vm.getMARInstance();
 
     private int schemaVersion = -1;
+    private int tableId;
 
     SequencerMetadata(FilesFacade ff) {
         this.ff = ff;
@@ -46,11 +47,16 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
-    void init(TableStructure model, Path path, int pathLen) {
+    public int getTableId() {
+        return tableId;
+    }
+
+    void create(TableStructure model, Path path, int pathLen, int tableId) {
         reset();
 
         schemaVersion = 0;
         timestampIndex = model.getTimestampIndex();
+        this.tableId = tableId;
 
         for (int i = 0; i < model.getColumnCount(); i++) {
             final CharSequence name = model.getColumnName(i);
@@ -70,6 +76,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
             schemaVersion = metaMem.getInt(SEQ_META_OFFSET_SCHEMA_VERSION);
             columnCount = metaMem.getInt(SEQ_META_OFFSET_COLUMN_COUNT);
             timestampIndex = metaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
+            tableId = metaMem.getInt(SEQ_META_TABLE_ID);
         } catch (Throwable e) {
             close();
             throw e;
@@ -128,6 +135,7 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
         metaMem.putInt(schemaVersion);
         metaMem.putInt(liveColumnCount);
         metaMem.putInt(timestampIndex);
+        metaMem.putInt(tableId);
         for (int i = 0; i < columnCount; i++) {
             final int type = getColumnType(i);
             if (type > 0) {

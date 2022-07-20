@@ -36,18 +36,11 @@ public interface Sequencer extends Closeable {
     // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
     long nextTxn(int expectedSchemaVersion, int walId, long segmentId, long segmentTxn);
 
-    // returns next available txn number after alters the schema
-    long addColumn(int columnIndex, CharSequence columnName, int columnType, int walId, long segmentId);
-
-    // returns next available txn number after alters the schema
-    long removeColumn(int columnIndex, int walId, long segmentId);
-
     // populates the given table descriptor with the current snapshot of metadata and schema version number
     void populateDescriptor(TableDescriptor descriptor);
 
     // always creates a new wal with an increasing unique id
     WalWriter createWal();
-
 
     // return txn cursor to apply transaction from given point
     SequencerCursor getCursor(long lastCommittedTxn);

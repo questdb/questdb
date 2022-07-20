@@ -25,9 +25,13 @@
 package io.questdb.cairo;
 
 public interface SequencerCursor {
+    int getSegment();
+
     boolean hasNext();
 
     CharSequence getWalPath();
+
+    long getWalTxn();
 
     long getTxn();
 }

@@ -367,4 +367,19 @@ public class MessageBusImpl implements MessageBus {
     public FanOut getQueryCacheEventFanOut() {
         return queryCacheEventSubSeq;
     }
+
+    @Override
+    public RingQueue<WalTxnNotificationTask> getWalTxnNotificationQueue() {
+        return null;
+    }
+
+    @Override
+    public Sequence getWalTxnNotificationPubSequence() {
+        return null;
+    }
+
+    @Override
+    public Sequence getWalTxnNotificationSubSequence() {
+        return null;
+    }
 }

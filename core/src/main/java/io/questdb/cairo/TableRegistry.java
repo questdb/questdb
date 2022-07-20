@@ -41,7 +41,7 @@ public class TableRegistry implements Closeable {
     }
 
     // expected that caller holds the lock on the table
-    void registerTable(TableStructure struct) {
+    void createTable(int tableId, TableStructure struct) {
         final String tableName = Chars.toString(struct.getTableName());
         final Sequencer other = tableRegistry.remove(tableName);
         if (other != null) {
@@ -50,7 +50,7 @@ public class TableRegistry implements Closeable {
         }
 
         final SequencerImpl sequencer = new SequencerImpl(engine, tableName);
-        sequencer.of(struct);
+        sequencer.create(tableId, struct);
         sequencer.close();
     }
 
@@ -59,8 +59,10 @@ public class TableRegistry implements Closeable {
         if (sequencer == null) {
             sequencer = new SequencerImpl(engine, Chars.toString(tableName));
             sequencer.open();
+
             final Sequencer other = tableRegistry.putIfAbsent(Chars.toString(tableName), sequencer);
             if (other != null) {
+                // Race is lost
                 sequencer.close();
                 return other;
             }

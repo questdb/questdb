@@ -108,4 +108,10 @@ public interface MessageBus extends Closeable {
     MPSequence getQueryCacheEventPubSeq();
 
     FanOut getQueryCacheEventFanOut();
+
+    RingQueue<WalTxnNotificationTask> getWalTxnNotificationQueue();
+
+    Sequence getWalTxnNotificationPubSequence();
+
+    Sequence getWalTxnNotificationSubSequence();
 }

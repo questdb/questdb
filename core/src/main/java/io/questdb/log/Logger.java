@@ -253,12 +253,14 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord error() {
-        return addTimestamp(xerror(), LogLevel.ERROR_HEADER);
+        // Errors are important, we want to log them. Use waited call.
+        return errorW();
     }
 
     @Override
     public LogRecord critical() {
-        return addTimestamp(xcritical(), LogLevel.CRITICAL_HEADER);
+        // Critical means critical, we need to log it. Use waited call.
+        return criticalW();
     }
 
     @Override
