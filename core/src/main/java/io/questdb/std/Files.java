@@ -45,9 +45,12 @@ public final class Files {
 
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
     private static LongHashSet openFds;
+    // io_uring seems to use its own fd sequence, so we have to track io_uring fds separately.
+    private static LongHashSet openUringFds;
 
     private Files() {
-    } // Prevent construction.
+        // Prevent construction.
+    }
 
     public native static boolean allocate(long fd, long size);
 
@@ -77,6 +80,30 @@ public final class Files {
         return true;
     }
 
+    public static synchronized boolean auditUringClose(long fd) {
+        if (fd < 0) {
+            throw new IllegalStateException("Invalid fd " + fd);
+        }
+        if (openUringFds.remove(fd) == -1) {
+            throw new IllegalStateException("io_uring fd " + fd + " is already closed!");
+        }
+        return true;
+    }
+
+    public static synchronized boolean auditUringOpen(long fd) {
+        if (null == openUringFds) {
+            openUringFds = new LongHashSet();
+        }
+        if (fd < 0) {
+            throw new IllegalStateException("Invalid io_uring fd " + fd);
+        }
+        if (openUringFds.contains(fd)) {
+            throw new IllegalStateException("io_uring fd " + fd + " is already open");
+        }
+        openUringFds.add(fd);
+        return true;
+    }
+
     public static long bumpFileCount(long fd) {
         if (fd != -1) {
             //noinspection AssertWithSideEffects
@@ -86,11 +113,17 @@ public final class Files {
         return fd;
     }
 
-    /**
-     * close(fd) should be used instead of this method in most cases.
-     */
-    public static void decrementFileCount(long fd) {
-        assert auditClose(fd);
+    public static long bumpUringCount(long fd) {
+        if (fd != -1) {
+            //noinspection AssertWithSideEffects
+            assert auditUringOpen(fd);
+            OPEN_FILE_COUNT.incrementAndGet();
+        }
+        return fd;
+    }
+
+    public static void decrementUringCount(long fd) {
+        assert auditUringClose(fd);
         OPEN_FILE_COUNT.decrementAndGet();
     }
 
