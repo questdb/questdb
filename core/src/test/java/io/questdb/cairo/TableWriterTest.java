@@ -51,7 +51,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.File;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -232,7 +231,7 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 return (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
-                        && super.rename(from, to) == Files.FILES_RENAME_ERR_OK ? Files.FILES_RENAME_ERR_OK
+                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
                         : Files.FILES_RENAME_ERR_OTHER;
             }
         };
@@ -353,7 +352,7 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 return !(Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME) && --count == 0)
-                        && super.rename(from, to) == Files.FILES_RENAME_ERR_OK ? Files.FILES_RENAME_ERR_OK
+                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
                         : Files.FILES_RENAME_ERR_OTHER;
             }
         });
@@ -392,7 +391,7 @@ public class TableWriterTest extends AbstractCairoTest {
             public int rename(LPSZ from, LPSZ to) {
                 return (!Chars.contains(from, TableUtils.META_PREV_FILE_NAME) || --count <= 0)
                         && (!Chars.contains(to, TableUtils.META_PREV_FILE_NAME) || --toCount <= 0)
-                        && super.rename(from, to) == Files.FILES_RENAME_ERR_OK ? Files.FILES_RENAME_ERR_OK
+                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
                         : Files.FILES_RENAME_ERR_OTHER;
             }
         });
@@ -518,7 +517,7 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public int rename(LPSZ from, LPSZ to) {
                 return !Chars.endsWith(from, TableUtils.META_PREV_FILE_NAME)
-                        && super.rename(from, to) == Files.FILES_RENAME_ERR_OK ? Files.FILES_RENAME_ERR_OK
+                        && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
                         : Files.FILES_RENAME_ERR_OTHER;
             }
         }

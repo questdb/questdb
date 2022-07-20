@@ -310,7 +310,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
             path.put('.').put(index - 1);
             renameToPath.put('.').put(index);
-            if (ff.rename(path.$(), renameToPath.$()) != Files.FILES_RENAME_ERR_OK) {
+            if (ff.rename(path.$(), renameToPath.$()) != Files.FILES_RENAME_OK) {
                 throw new LogError("Could not rename " + path + " to " + renameToPath);
             }
             index--;
@@ -320,7 +320,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         buildFilePath(path);
         buildFilePath(renameToPath);
         renameToPath.put(".1");
-        if (ff.rename(path.$(), renameToPath.$()) != Files.FILES_RENAME_ERR_OK) {
+        if (ff.rename(path.$(), renameToPath.$()) != Files.FILES_RENAME_OK) {
             throw new LogError("Could not rename " + path + " to " + renameToPath);
         }
     }

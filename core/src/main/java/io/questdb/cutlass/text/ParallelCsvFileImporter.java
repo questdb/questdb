@@ -818,7 +818,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                                 }
                             }
                         });
-                    } else if (res != Files.FILES_RENAME_ERR_OK) {
+                    } else if (res != Files.FILES_RENAME_OK) {
                         throw CairoException.instance(ff.errno()).put("Cannot copy partition file [to=").put(dstPath).put(']');
                     }
                 }

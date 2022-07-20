@@ -285,7 +285,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 @Override
                 public int rename(LPSZ from, LPSZ to) {
                     return counter-- <= 0
-                            && super.rename(from, to) == Files.FILES_RENAME_ERR_OK ? Files.FILES_RENAME_ERR_OK
+                            && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
                             : Files.FILES_RENAME_ERR_OTHER;
                 }
 

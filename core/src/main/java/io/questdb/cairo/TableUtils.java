@@ -745,7 +745,7 @@ public final class TableUtils {
     }
 
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
-        if (ff.rename(src, dst) != Files.FILES_RENAME_ERR_OK) {
+        if (ff.rename(src, dst) != Files.FILES_RENAME_OK) {
             throw CairoException.instance(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
         }
     }

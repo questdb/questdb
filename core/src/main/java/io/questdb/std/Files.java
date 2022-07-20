@@ -44,7 +44,7 @@ public final class Files {
     public static final char SEPARATOR;
     public static final int POSIX_FADV_SEQUENTIAL;
     public static final int POSIX_FADV_RANDOM;
-    public static final int FILES_RENAME_ERR_OK = 0;
+    public static final int FILES_RENAME_OK = 0;
     public static final int FILES_RENAME_ERR_EXDEV = 1;
     public static final int FILES_RENAME_ERR_OTHER = 2;
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();

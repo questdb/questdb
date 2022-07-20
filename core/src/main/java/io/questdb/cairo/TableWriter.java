@@ -647,7 +647,7 @@ public class TableWriter implements Closeable {
                 other.put(DETACHED_DIR_MARKER);
 
                 if (ff.exists(other.$())) {
-                    if (ff.rename(other, path) == Files.FILES_RENAME_ERR_OK) {
+                    if (ff.rename(other, path) == Files.FILES_RENAME_OK) {
                         rollbackRename = true;
                         LOG.info().$("moved partition dir: ").$(other).$(" to ").$(path).$();
                     } else {
@@ -702,7 +702,7 @@ public class TableWriter implements Closeable {
             if (rollbackRename) {
                 // rename back to .detached
                 // otherwise it can be deleted on writer re-open
-                if (ff.rename(path.$(), other.$()) == Files.FILES_RENAME_ERR_OK) {
+                if (ff.rename(path.$(), other.$()) == Files.FILES_RENAME_OK) {
                     LOG.info().$("moved partition dir after failed attach attempt: ").$(path).$(" to ").$(other).$();
                 } else {
                     LOG.info().$("file system error on trying to rename partition folder [errno=").$(ff.errno())
@@ -1568,7 +1568,7 @@ public class TableWriter implements Closeable {
 
     private static void renameFileOrLog(FilesFacade ff, LPSZ name, LPSZ to) {
         if (ff.exists(name)) {
-            if (ff.rename(name, to) == Files.FILES_RENAME_ERR_OK) {
+            if (ff.rename(name, to) == Files.FILES_RENAME_OK) {
                 LOG.info().$("renamed: ").$(name).$();
             } else {
                 LOG.error().$("cannot rename: ").utf8(name).$(" [errno=").$(ff.errno()).$(']').$();
@@ -4530,7 +4530,7 @@ public class TableWriter implements Closeable {
                     continue;
                 }
 
-                if (ff.rename(path, other) != Files.FILES_RENAME_ERR_OK) {
+                if (ff.rename(path, other) != Files.FILES_RENAME_OK) {
                     LOG.info().$("cannot rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).$(']').$();
                     index++;
                     continue;
@@ -4655,7 +4655,7 @@ public class TableWriter implements Closeable {
                         Path other = Path.getThreadLocal2(path.trimTo(p).$());
                         TableUtils.oldPartitionName(other, getTxn());
                         if (ff.exists(other.$())) {
-                            if (ff.rename(other, path) != Files.FILES_RENAME_ERR_OK) {
+                            if (ff.rename(other, path) != Files.FILES_RENAME_OK) {
                                 LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).$(']').$();
                                 throw new CairoError("could not restore directory, see log for details");
                             } else {
@@ -4674,7 +4674,7 @@ public class TableWriter implements Closeable {
                         Path other = Path.getThreadLocal2(path);
                         TableUtils.oldPartitionName(other, getTxn());
                         if (ff.exists(other.$())) {
-                            if (ff.rename(other, path) != Files.FILES_RENAME_ERR_OK) {
+                            if (ff.rename(other, path) != Files.FILES_RENAME_OK) {
                                 LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).$(']').$();
                                 throw new CairoError("could not restore directory, see log for details");
                             } else {
@@ -4738,7 +4738,7 @@ public class TableWriter implements Closeable {
                     throw CairoException.instance(ff.errno()).put("Repair failed. Cannot replace ").put(other);
                 }
 
-                if (ff.rename(path, other) != Files.FILES_RENAME_ERR_OK) {
+                if (ff.rename(path, other) != Files.FILES_RENAME_OK) {
                     throw CairoException.instance(ff.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);
                 }
             }
