@@ -29,7 +29,6 @@ import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.cutlass.text.TextImportJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.log.Log;

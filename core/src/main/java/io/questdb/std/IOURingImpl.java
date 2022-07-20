@@ -73,7 +73,7 @@ public class IOURingImpl implements IOURing {
         final long cqMaskPtr = Unsafe.getUnsafe().getLong(ringPtr + CQ_KRING_MASK_OFFSET);
         this.cqKringMask = Unsafe.getUnsafe().getInt(cqMaskPtr);
 
-        Files.bumpUringCount(ringFd);
+        Files.bumpFileCount(ringFd);
     }
 
     @Override
@@ -81,8 +81,8 @@ public class IOURingImpl implements IOURing {
         if (closed) {
             return;
         }
+        Files.decrementFileCount(ringFd);
         facade.close(ringPtr);
-        Files.decrementUringCount(ringFd);
         closed = true;
     }
 
