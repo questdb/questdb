@@ -65,6 +65,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
     private final Rnd rnd;
     private final StringSink idSink = new StringSink();
+    private LongList partitionsToRemove = new LongList();
 
     public TextImportRequestProcessingJob(
             final CairoEngine engine,
@@ -107,7 +108,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
             return;
         }
         if (writer.getPartitionCount() > 0) {
-            final LongList partitionsToRemove = new LongList();
+            partitionsToRemove.clear();
             for (int i = writer.getPartitionCount() - keepPartitionCount - 1; i > -1; i--) {
                 partitionsToRemove.add(writer.getPartitionTimestamp(i));
             }
