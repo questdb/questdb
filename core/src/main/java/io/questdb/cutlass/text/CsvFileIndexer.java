@@ -281,7 +281,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
                 LOG.debug().$("created import index file [path='").$(path).$("']").$();
             }
 
-            this.memory.of(ff, path, ff.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+            this.memory.of(ff, path, ff.getMapPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
         }
 
         void putEntry(long timestamp, long offset, long length) {
