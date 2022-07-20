@@ -143,7 +143,8 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
                 loader.setStatusReporter(updateStatusRef);
                 loader.process();
             } catch (TextImportException e) {
-                updateStatus(e.getPhase(),
+                updateStatus(
+                        e.getPhase(),
                         e.isCancelled() ? TextImportTask.STATUS_CANCELLED : TextImportTask.STATUS_FAILED, e.getMessage()
                 );
             } finally {
@@ -167,8 +168,8 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
                 row.append();
                 writer.commit();
             } catch (Throwable th) {
-                LOG.error().$("error saving to parallel import log, unable to insert")
-                        .$(", releasing writer and stop updating log [table=").$(statusTableName)
+                LOG.error().$("error saving to parallel import log table, unable to insert")
+                        .$(", releasing writer and stopping log table updates [table=").$(statusTableName)
                         .$(", error=").$(th)
                         .I$();
                 writer = Misc.free(writer);

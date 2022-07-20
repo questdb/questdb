@@ -202,11 +202,15 @@ public class MessageBusImpl implements MessageBus {
                 .then(textImportResponseFanOut)
                 .then(textImportRequestCollectingPubSeq);
 
+        // We allow only a single parallel import to be in-flight, hence queue size of 1.
         this.textImportRequestProcessingQueue = new RingQueue<>(TextImportRequestTask::new, 1);
         this.textImportRequestProcessingPubSeq = new SPSequence(textImportRequestProcessingQueue.getCycle());
         this.textImportRequestProcessingSubSeq = new SCSequence();
         this.textImportRequestProcessingComplSeq = new SCSequence();
-        textImportRequestProcessingPubSeq.then(textImportRequestProcessingSubSeq).then(textImportRequestProcessingComplSeq).then(textImportRequestProcessingPubSeq);
+        textImportRequestProcessingPubSeq
+                .then(textImportRequestProcessingSubSeq)
+                .then(textImportRequestProcessingComplSeq)
+                .then(textImportRequestProcessingPubSeq);
     }
 
     @Override

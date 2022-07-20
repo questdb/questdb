@@ -60,9 +60,11 @@ public class TextImportTask {
     public static final byte STATUS_FINISHED = 1;
     public static final byte STATUS_FAILED = 2;
     public static final byte STATUS_CANCELLED = 3;
+
     private static final Log LOG = LogFactory.getLog(TextImportTask.class);
     private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();
     private static final IntObjHashMap<String> STATUS_NAME_MAP = new IntObjHashMap<>();
+
     private final PhaseBoundaryCheck phaseBoundaryCheck = new PhaseBoundaryCheck();
     private final PhaseIndexing phaseIndexing = new PhaseIndexing();
     private final PhasePartitionImport phasePartitionImport = new PhasePartitionImport();

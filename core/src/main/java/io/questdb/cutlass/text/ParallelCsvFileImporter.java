@@ -62,7 +62,6 @@ import java.util.function.Consumer;
  * - remaps all symbol values
  * - moves and attaches partitions from temp tables to target table
  * - removes temp tables and index files
- * <p>
  */
 public class ParallelCsvFileImporter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(ParallelCsvFileImporter.class);
