@@ -218,7 +218,8 @@ public final class TableUtils {
             mem.putInt(tableId);
             mem.putInt(structure.getMaxUncommittedRows());
             mem.putLong(structure.getCommitLag());
-            mem.putInt(META_OFFSET_WRITE_MODE, structure.getWriteMode());
+            mem.putLong(0); // Structure version.
+            mem.putInt(structure.getWriteMode());
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             assert count > 0;

@@ -539,7 +539,7 @@ public final class SqlParser {
                         } else if (isWriteModeParam(expr.lhs.token)) {
                             try {
                                 writeMode = WriteMode.valueOf(expr.rhs.token);
-                            } catch (UnsupportedOperationException ex) {
+                            } catch (IllegalArgumentException ex) {
                                 throw SqlException.position(lexer.getPosition()).put("unrecognized Write Mode '").put(expr.rhs.token).put('\'');
                             }
                             if (writeMode == WriteMode.WAL && !PartitionBy.isPartitioned(model.getPartitionBy())) {

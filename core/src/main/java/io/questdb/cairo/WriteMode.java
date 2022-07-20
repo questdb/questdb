@@ -63,13 +63,13 @@ public class WriteMode {
             case 1:
                 return "WAL";
             default:
-                throw new UnsupportedOperationException();
+                throw new IllegalArgumentException("invalid writer mode: " + writeMode);
         }
     }
 
     public static int valueOf(CharSequence mode) {
         if (isDirectKeyword(mode)) return DIRECT;
         if (isWalKeyword(mode)) return WAL;
-        throw new UnsupportedOperationException();
+        throw new IllegalArgumentException("unrecognized Write Mode: " + mode);
     }
 }

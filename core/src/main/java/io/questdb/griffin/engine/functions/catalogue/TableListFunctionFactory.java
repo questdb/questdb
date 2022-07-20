@@ -279,7 +279,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("commitLag", 6, ColumnType.LONG));
         commitLagColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("writeMode", 6, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("writeMode", 7, ColumnType.STRING));
         writeModeColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
