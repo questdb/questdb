@@ -169,7 +169,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getParallelImportQueueCapacity() {
+    public int getImportQueueCapacity() {
         return 32;
     }
 

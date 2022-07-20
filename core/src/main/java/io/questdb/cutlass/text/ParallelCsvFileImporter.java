@@ -428,7 +428,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 }
             }
 
-            // todo: this is not called when there are no indexed columns
             collectedCount += collect(queuedCount - collectedCount, checkStatusRef);
             assert collectedCount == queuedCount;
         }

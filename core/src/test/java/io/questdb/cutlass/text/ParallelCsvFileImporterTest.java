@@ -2621,7 +2621,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public int getParallelImportQueueCapacity() {
+                    public int getImportQueueCapacity() {
                         return queueCapacity;
                     }
 
@@ -2661,7 +2661,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public int getParallelImportQueueCapacity() {
+                    public int getImportQueueCapacity() {
                         return queueCapacity;
                     }
 

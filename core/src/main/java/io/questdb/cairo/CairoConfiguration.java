@@ -147,7 +147,7 @@ public interface CairoConfiguration {
 
     long getImportMaxIndexChunkSize();
 
-    int getParallelImportQueueCapacity();
+    int getImportQueueCapacity();
 
     int getInsertPoolCapacity();
 

@@ -278,8 +278,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getParallelImportQueueCapacity() {
-        return conf.getParallelImportQueueCapacity();
+    public int getImportQueueCapacity() {
+        return conf.getImportQueueCapacity();
     }
 
     @Override
