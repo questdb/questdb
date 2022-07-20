@@ -447,7 +447,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void throwErrorIfNotOk() {
         if (status == TextImportTask.STATUS_FAILED) {
-            throw  TextImportException.instance(phase, "import failed [phase=")
+            throw TextImportException.instance(phase, "import failed [phase=")
                     .put(TextImportTask.getPhaseName(phase))
                     .put(", msg=`").put(errorMessage).put("`]");
         } else if (status == TextImportTask.STATUS_CANCELLED) {

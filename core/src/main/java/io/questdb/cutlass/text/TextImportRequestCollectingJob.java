@@ -62,7 +62,7 @@ public class TextImportRequestCollectingJob extends SynchronizedJob {
             TextImportRequestTask collectingTask = requestCollectingQueue.get(collectingCursor);
             if (collectingTask.isCancel()) {
                 if (activeTaskName == null) {
-                    //there is no active import is in progress
+                    //there is no active import in progress
                     collectingTask.setStatus(TextImportRequestTask.STATUS_REJ);
                 } else if (cancellationToken.isCanceled()) {
                     //another cancel is in progress

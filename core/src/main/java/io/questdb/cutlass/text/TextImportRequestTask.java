@@ -92,7 +92,6 @@ public class TextImportRequestTask implements Mutable {
         this.cancel = other.cancel;
     }
 
-
     public void ofCancel(String tableName) {
         this.clear();
         this.tableName = tableName;
