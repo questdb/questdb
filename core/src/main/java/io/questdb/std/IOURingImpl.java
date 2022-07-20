@@ -27,8 +27,6 @@ package io.questdb.std;
 import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
-
 import static io.questdb.std.IOUringAccessor.*;
 
 public class IOURingImpl implements IOURing {
@@ -75,7 +73,7 @@ public class IOURingImpl implements IOURing {
         final long cqMaskPtr = Unsafe.getUnsafe().getLong(ringPtr + CQ_KRING_MASK_OFFSET);
         this.cqKringMask = Unsafe.getUnsafe().getInt(cqMaskPtr);
 
-//        Files.bumpFileCount(ringFd);
+        Files.bumpUringCount(ringFd);
     }
 
     @Override
@@ -84,7 +82,7 @@ public class IOURingImpl implements IOURing {
             return;
         }
         facade.close(ringPtr);
-//        Files.decrementFileCount(ringFd);
+        Files.decrementUringCount(ringFd);
         closed = true;
     }
 
