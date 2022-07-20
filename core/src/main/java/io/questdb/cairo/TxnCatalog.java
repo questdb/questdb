@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
@@ -35,34 +35,45 @@ import static io.questdb.cairo.TableUtils.*;
 
 public class TxnCatalog implements Closeable {
     private final FilesFacade ff;
-    private final MemoryMAR metaMem = Vm.getMARInstance();
+    private final MemoryCMARW txnListMem = Vm.getCMARWInstance();
+    private final int RECORD_SIZE = Integer.BYTES + Long.BYTES + Long.BYTES;
+    private final int HEADER_SIZE = Integer.BYTES + Long.BYTES;
+    private final long COUNT_OFFSET = Integer.BYTES;
+    private long txnCount;
 
     TxnCatalog(FilesFacade ff) {
         this.ff = ff;
     }
 
-    void open(Path path, int pathLen, long startTxn) {
-        openSmallFile(ff, path, pathLen, metaMem, CATALOG_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
-        if (startTxn == 0) {
-            metaMem.putInt(WalWriter.WAL_FORMAT_VERSION);
+    @Override
+    public void close() {
+        Misc.free(txnListMem);
+    }
+
+    void open(Path path) {
+        openSmallFile(ff, path, path.length(), txnListMem, CATALOG_FILE_NAME, MemoryTag.MMAP_SEQUENCER);
+        txnCount = txnListMem.getLong(COUNT_OFFSET);
+        if (txnCount == 0) {
+            txnListMem.putInt(WalWriter.WAL_FORMAT_VERSION);
         } else {
-            metaMem.jumpTo(Integer.BYTES + startTxn * (Long.BYTES + Integer.BYTES + Long.BYTES));
+            txnListMem.jumpTo(HEADER_SIZE + txnCount * RECORD_SIZE);
         }
     }
 
-    private long calcOffsetForTxn(long txn) {
-        return Integer.BYTES + (txn - 1) * (Long.BYTES + Integer.BYTES + Long.BYTES);
+    long addEntry(int walId, long segmentId, long segmentTxn) {
+        txnListMem.putInt(walId);
+        txnListMem.putLong(segmentId);
+        txnListMem.putLong(segmentTxn);
+
+        Unsafe.getUnsafe().storeFence();
+        txnListMem.putLong(COUNT_OFFSET, ++txnCount);
+        return txnCount - 1;
     }
 
-    void setEntry(long txn, int walId, long segmentId) {
-        metaMem.jumpTo(calcOffsetForTxn(txn));
-        metaMem.putLong(txn);
-        metaMem.putInt(walId);
-        metaMem.putLong(segmentId);
-    }
-
-    @Override
-    public void close() {
-        Misc.free(metaMem);
+    // Can be used in parallel thread with no synchronisation between it and  addEntry
+    long maxTxn() {
+        Unsafe.getUnsafe().loadFence();
+        long txnCount = txnListMem.getLong(COUNT_OFFSET);
+        return txnCount - 1L;
     }
 }

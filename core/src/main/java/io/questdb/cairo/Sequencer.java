@@ -33,11 +33,8 @@ public interface Sequencer extends Closeable {
 
     void open();
 
-    // returns next available txn number
-    long nextTxn(int walId, long segmentId);
-
-    // returns next available txn number if schema version is the expected one, otherwise returns NO_TXN
-    long nextTxn(int expectedSchemaVersion, int walId, long segmentId);
+    // returns committed txn number if schema version is the expected one, otherwise returns NO_TXN
+    long nextTxn(int expectedSchemaVersion, int walId, long segmentId, long segmentTxn);
 
     // returns next available txn number after alters the schema
     long addColumn(int columnIndex, CharSequence columnName, int columnType, int walId, long segmentId);
@@ -50,6 +47,12 @@ public interface Sequencer extends Closeable {
 
     // always creates a new wal with an increasing unique id
     WalWriter createWal();
+
+
+    // return txn cursor to apply transaction from given point
+    SequencerCursor getCursor(long lastCommittedTxn);
+
+    long getMaxTxn();
 
     @Override
     void close();

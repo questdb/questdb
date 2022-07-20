@@ -540,25 +540,14 @@ public class WalWriter implements Closeable {
         rollSegmentOnNextRow = rollSegment;
         final long transientRowCount = getTransientRowCount();
         if (transientRowCount != 0) {
-            events.data(nextTxn(), startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+            long segmentTxn = events.data(startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+            long txn = sequencer.nextTxn(tableDescriptor.getSchemaVersion(), walId, segmentId, segmentTxn);
+            if (txn == Sequencer.NO_TXN) {
+                throw new UnsupportedOperationException("WAL schema changes not supported yet");
+            }
             resetDataTxnProperties();
         }
         return transientRowCount;
-    }
-
-    private long nextTxn() {
-        long txn;
-        while ((txn = sequencer.nextTxn(tableDescriptor.getSchemaVersion(), walId, segmentId)) == Sequencer.NO_TXN) {
-            // update table descriptor to get the latest version of the schema
-            sequencer.populateDescriptor(tableDescriptor);
-
-            // check schema diff !!!
-            // might need to reject transaction here depending on schema diff!
-
-            // then update metadata
-            //metadata.of(tableDescriptor);
-        }
-        return txn;
     }
 
     private void resetDataTxnProperties() {

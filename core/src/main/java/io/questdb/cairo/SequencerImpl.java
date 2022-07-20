@@ -65,7 +65,7 @@ public class SequencerImpl implements Sequencer {
             txnGenerator = new IDGenerator(configuration, TXN_FILE_NAME);
             txnGenerator.open(path);
             catalog = new TxnCatalog(ff);
-            catalog.open(path, rootLen, txnGenerator.getCurrentId());
+            catalog.open(path);
         } catch (Throwable th) {
             close();
             throw th;
@@ -93,20 +93,23 @@ public class SequencerImpl implements Sequencer {
         }
     }
 
-    @Override
-    public long nextTxn(int walId, long segmentId) {
-        final long txn = txnGenerator.getNextId();
-        catalog.setEntry(txn, walId, segmentId);
+    private long nextTxn(int walId, long segmentId, long segmentTxn) {
+        long txn = catalog.addEntry(walId, segmentId, segmentTxn);
+        engine.notifyTxnReceived(tableName, txn);
         return txn;
     }
 
     @Override
-    public long nextTxn(int expectedSchemaVersion, int walId, long segmentId) {
-        schemaLock.readLock().lock();
+    public long nextTxn(int expectedSchemaVersion, int walId, long segmentId, long segmentTxn) {
+        schemaLock.writeLock().lock();
         try {
-            return metadata.getSchemaVersion() == expectedSchemaVersion ? nextTxn(walId, segmentId) : NO_TXN;
+            if (metadata.getSchemaVersion() == expectedSchemaVersion) {
+                return nextTxn(walId, segmentId);
+            }
+            return NO_TXN;
+
         } finally {
-            schemaLock.readLock().unlock();
+            schemaLock.writeLock().unlock();
         }
     }
 
@@ -122,29 +125,27 @@ public class SequencerImpl implements Sequencer {
 
     @Override
     public long addColumn(int columnIndex, CharSequence columnName, int columnType, int walId, long segmentId) {
-        schemaLock.writeLock().lock();
-        try {
-            metadata.addColumn(columnIndex, columnName, columnType, path, rootLen);
-            return nextTxn(walId, segmentId);
-        } finally {
-            schemaLock.writeLock().unlock();
-        }
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long removeColumn(int columnIndex, int walId, long segmentId) {
-        schemaLock.writeLock().lock();
-        try {
-            metadata.removeColumn(columnIndex, path, rootLen);
-            return nextTxn(walId, segmentId);
-        } finally {
-            schemaLock.writeLock().unlock();
-        }
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public WalWriter createWal() {
         return new WalWriter(engine, tableName, (int) walIdGenerator.getNextId(), this);
+    }
+
+    @Override
+    public SequencerCursor getCursor(long lastCommittedTxn) {
+        return null;
+    }
+
+    @Override
+    public long getMaxTxn() {
+        return catalog.maxTxn();
     }
 
     @Override
