@@ -315,7 +315,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long maxHttpQueryResponseRowLimit;
     private boolean interruptOnClosedConnection;
     private long cairoImportMaxIndexChunkSize;
-    private final int parallelImportQueueCapacity;
+    private final int cairoImportQueueCapacity;
     private int pgNetConnectionLimit;
     private boolean pgNetConnectionHint;
     private int pgNetBindIPv4Address;
@@ -814,7 +814,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new ServerConfigurationException("invalid configuration value [key=" + PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE.getPropertyPath() +
                         ", description=max import chunk size can't be smaller than 16]");
             }
-            this.parallelImportQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_IMPORT_QUEUE_CAPACITY, 32));
+            this.cairoImportQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_IMPORT_QUEUE_CAPACITY, 32));
 
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
@@ -1954,8 +1954,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getParallelImportQueueCapacity() {
-            return parallelImportQueueCapacity;
+        public int getImportQueueCapacity() {
+            return cairoImportQueueCapacity;
         }
 
         @Override
