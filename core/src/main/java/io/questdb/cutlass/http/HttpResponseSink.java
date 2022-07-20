@@ -454,7 +454,6 @@ public class HttpResponseSink implements Closeable, Mutable {
                 escapeSpace(c);
             } else {
                 switch (c) {
-                    case '/':
                     case '\"':
                     case '\\':
                         put('\\');

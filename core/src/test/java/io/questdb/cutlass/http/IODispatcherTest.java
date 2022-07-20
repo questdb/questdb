@@ -3054,8 +3054,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "b2\r\n" +
-                        "{\"query\":\"select cast(1.0\\/0.0 as float), cast(1.0\\/0.0 as double)\",\"columns\":[{\"name\":\"cast\",\"type\":\"FLOAT\"},{\"name\":\"cast1\",\"type\":\"DOUBLE\"}],\"dataset\":[[null,null]],\"count\":1}\r\n" +
+                        "b0\r\n" +
+                        "{\"query\":\"select cast(1.0/0.0 as float), cast(1.0/0.0 as double)\",\"columns\":[{\"name\":\"cast\",\"type\":\"FLOAT\"},{\"name\":\"cast1\",\"type\":\"DOUBLE\"}],\"dataset\":[[null,null]],\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -6209,8 +6209,8 @@ public class IODispatcherTest {
                         "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "68\r\n" +
-                        "{\"query\":\"create table balance (money float)\",\"error\":\"\\/exp endpoint only accepts SELECT\",\"position\":0}\r\n" +
+                        "67\r\n" +
+                        "{\"query\":\"create table balance (money float)\",\"error\":\"/exp endpoint only accepts SELECT\",\"position\":0}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 1

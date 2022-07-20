@@ -28,8 +28,6 @@
 #define SECURITY_WIN32
 
 #include <sspi.h>
-#include <issper16.h>
-#include <errno.h>
 #include <rpc.h>
 #include <sys/timeb.h>
 #include "../share/os.h"
@@ -38,7 +36,7 @@
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_getPid
         (JNIEnv *e, jclass cl) {
-    return GetCurrentProcessId();
+    return (jint) GetCurrentProcessId();
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_errno
@@ -126,7 +124,7 @@ jlong JNICALL Java_io_questdb_std_Os_generateKrbToken
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Os_setCurrentThreadAffinity0
         (JNIEnv *e, jclass fd, jint cpu) {
-    DWORD_PTR mask = (DWORD_PTR) (1L << cpu);
+    DWORD_PTR mask = (1L << cpu);
     if (SetThreadAffinityMask(GetCurrentThread(), mask) == 0) {
         SaveLastError();
         return -1;
