@@ -55,7 +55,7 @@ public class TextImportJob extends AbstractQueueConsumerJob<TextImportTask> impl
         this.fileBufAddr = Unsafe.malloc(fileBufSize, MemoryTag.NATIVE_PARALLEL_IMPORT);
         this.indexer = new CsvFileIndexer(messageBus.getConfiguration());
         this.utf8Sink = new DirectCharSink(messageBus.getConfiguration().getTextConfiguration().getUtf8SinkSize());
-        this.mergeIndexes = new DirectLongList(INDEX_MERGE_LIST_CAPACITY, MemoryTag.NATIVE_DEFAULT);
+        this.mergeIndexes = new DirectLongList(INDEX_MERGE_LIST_CAPACITY, MemoryTag.NATIVE_PARALLEL_IMPORT);
         this.tmpPath1 = new Path();
         this.tmpPath2 = new Path();
     }

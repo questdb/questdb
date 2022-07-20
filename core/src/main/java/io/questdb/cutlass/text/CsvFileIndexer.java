@@ -103,7 +103,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private static final int MAX_TIMESTAMP_LENGTH = 100;
 
     //maps partitionFloors to output file descriptors
-    final private LongObjHashMap<IndexOutputFile> outputFiles;
+    final private LongObjHashMap<IndexOutputFile> outputFileLookupMap = new LongObjHashMap<>();
+    final private ObjList<IndexOutputFile> outputFileDenseList = new ObjList<>();
 
     //timestamp field of current line
     final private DirectByteCharSequence timestampField;
@@ -157,13 +158,11 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.inputRoot = configuration.getInputRoot();
         this.maxIndexChunkSize = configuration.getMaxImportIndexChunkSize();
         this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
-        this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_DEFAULT);
+        this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_PARALLEL_IMPORT);
         this.fieldRollBufCur = fieldRollBufPtr;
-
         this.timestampField = new DirectByteCharSequence();
         this.failOnTsError = false;
         this.path = new Path();
-        this.outputFiles = new LongObjHashMap<>();
         this.sortBufferPtr = -1;
         this.sortBufferLength = 0;
     }
@@ -222,12 +221,13 @@ public class CsvFileIndexer implements Closeable, Mutable {
         long mapKey = partitionKey / Timestamps.HOUR_MICROS; //remove trailing zeros to avoid excessive collisions in hashmap 
 
         final IndexOutputFile target;
-        int keyIndex = outputFiles.keyIndex(mapKey);
+        int keyIndex = outputFileLookupMap.keyIndex(mapKey);
         if (keyIndex > -1) {
             target = prepareTargetFile(partitionKey);
-            outputFiles.putAt(keyIndex, mapKey, target);
+            outputFileDenseList.add(target);
+            outputFileLookupMap.putAt(keyIndex, mapKey, target);
         } else {
-            target = outputFiles.valueAt(keyIndex);
+            target = outputFileLookupMap.valueAt(keyIndex);
         }
 
         if (target.indexChunkSize == maxIndexChunkSize) {
@@ -250,7 +250,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
     }
 
-    class IndexOutputFile {
+    class IndexOutputFile implements Closeable {
         final MemoryPMARImpl memory = new MemoryPMARImpl();
         long indexChunkSize;
         long dataSize;//partition data size in bytes 
@@ -297,6 +297,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             }
         }
 
+        @Override
         public void close() {
             if (memory.isOpen()) {
                 memory.close(true, Vm.TRUNCATE_TO_POINTER);
@@ -372,19 +373,22 @@ public class CsvFileIndexer implements Closeable, Mutable {
     }
 
     private void sortAndCloseOutputFiles() {
-        this.outputFiles.forEach((key, value) -> value.sortAndClose());
-        this.outputFiles.clear();
+        for (int i = 0, n = outputFileDenseList.size(); i < n; i++) {
+            outputFileDenseList.getQuick(i).sortAndClose();
+        }
+        this.outputFileDenseList.clear();
+        this.outputFileLookupMap.clear();
     }
 
     private void closeOutputFiles() {
-        this.outputFiles.forEach((key, value) -> value.close());
-        this.outputFiles.clear();
+        Misc.freeObjListAndClear(outputFileDenseList);
+        this.outputFileLookupMap.clear();
     }
 
     @Override
     public void close() {
         if (fieldRollBufPtr != 0) {
-            Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_PARALLEL_IMPORT);
             fieldRollBufPtr = 0;
         }
 
@@ -657,7 +661,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private void closeSortBuffer() {
         if (sortBufferPtr != -1) {
-            Unsafe.free(sortBufferPtr, sortBufferLength, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(sortBufferPtr, sortBufferLength, MemoryTag.NATIVE_PARALLEL_IMPORT);
             sortBufferPtr = -1;
             sortBufferLength = 0;
         }
@@ -665,10 +669,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private void collectPartitionStats(LongList partitionKeysAndSizes) {
         partitionKeysAndSizes.setPos(0);
-        outputFiles.forEach((key, value) -> {
-            partitionKeysAndSizes.add(value.partitionKey);
-            partitionKeysAndSizes.add(value.dataSize);
-        });
+        for (int i = 0, n = outputFileDenseList.size(); i < n; i++) {
+            final IndexOutputFile value = outputFileDenseList.getQuick(i);
+            partitionKeysAndSizes.add(value.partitionKey, value.dataSize);
+        }
     }
 
     void openInputFile() {
@@ -696,17 +700,17 @@ public class CsvFileIndexer implements Closeable, Mutable {
         long srcAddress = -1;
 
         try {
-            srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_DEFAULT);
+            srcAddress = TableUtils.mapRW(ff, srcFd, srcSize, MemoryTag.MMAP_PARALLEL_IMPORT);
 
             if (sortBufferPtr == -1) {
-                sortBufferPtr = Unsafe.malloc(maxIndexChunkSize, MemoryTag.NATIVE_DEFAULT);
+                sortBufferPtr = Unsafe.malloc(maxIndexChunkSize, MemoryTag.NATIVE_PARALLEL_IMPORT);
                 sortBufferLength = maxIndexChunkSize;
             }
 
             Vect.radixSortLongIndexAscInPlace(srcAddress, srcSize / INDEX_ENTRY_SIZE, sortBufferPtr);
         } finally {
             if (srcAddress != -1) {
-                ff.munmap(srcAddress, srcSize, MemoryTag.MMAP_DEFAULT);
+                ff.munmap(srcAddress, srcSize, MemoryTag.MMAP_PARALLEL_IMPORT);
             }
         }
     }
