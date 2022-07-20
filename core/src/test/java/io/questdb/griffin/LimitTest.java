@@ -614,6 +614,38 @@ public class LimitTest extends AbstractGriffinTest {
         assertQuery(expected, query, "timestamp", true, true);
     }
 
+    @Test
+    public void testNegativeLimitOnIndexedSymbolFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table y as (" +
+                            "select" +
+                            " cast(x as int) i," +
+                            " rnd_symbol('msft','ibm', 'googl') sym," +
+                            " round(rnd_double(0), 3) price," +
+                            " cast(x * 120000000 as timestamp) timestamp" +
+                            " from long_sequence(30)" +
+                            "), index(sym) timestamp(timestamp) partition by month",
+                    sqlExecutionContext
+            );
+
+            executeInsert("insert into y values (-3, 'googl', 1, to_timestamp('2001-01-01', 'yyyy-MM-dd'))");
+            executeInsert("insert into y values (-2, 'googl', 2, to_timestamp('2002-01-01', 'yyyy-MM-dd'))");
+            executeInsert("insert into y values (-1, 'googl', 3, to_timestamp('2003-01-01', 'yyyy-MM-dd'))");
+
+            assertQuery(
+                    "i\tsym\tprice\ttimestamp\n" +
+                            "-3\tgoogl\t1.0\t2001-01-01T00:00:00.000000Z\n" +
+                            "-2\tgoogl\t2.0\t2002-01-01T00:00:00.000000Z\n" +
+                            "-1\tgoogl\t3.0\t2003-01-01T00:00:00.000000Z\n",
+                    "y where sym = 'googl' limit -3",
+                    "timestamp",
+                    true,
+                    true
+            );
+        });
+    }
+
     private void testLimitMinusOne() throws Exception {
         compiler.compile("create table t1 (ts timestamp, id symbol)", sqlExecutionContext);
 

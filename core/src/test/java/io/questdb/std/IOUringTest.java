@@ -187,14 +187,16 @@ public class IOUringTest {
     }
 
     @Test
-    public void testIsIOUringAvailable() {
+    public void testIsAvailableOn() {
         Assert.assertFalse(IOUringFacadeImpl.isAvailableOn("6.1"));
         Assert.assertFalse(IOUringFacadeImpl.isAvailableOn("4.0.0"));
         Assert.assertFalse(IOUringFacadeImpl.isAvailableOn("5.0.0"));
+        Assert.assertFalse(IOUringFacadeImpl.isAvailableOn("5.1.0"));
+        Assert.assertFalse(IOUringFacadeImpl.isAvailableOn("5.10.2"));
 
-        Assert.assertTrue(IOUringFacadeImpl.isAvailableOn("5.1.0"));
+        Assert.assertTrue(IOUringFacadeImpl.isAvailableOn("5.12.0"));
         Assert.assertTrue(IOUringFacadeImpl.isAvailableOn("5.14.0-1044-oem"));
-        Assert.assertTrue(IOUringFacadeImpl.isAvailableOn("5.10.2"));
+        Assert.assertTrue(IOUringFacadeImpl.isAvailableOn("5.13.1"));
         Assert.assertTrue(IOUringFacadeImpl.isAvailableOn("6.2.2"));
         Assert.assertTrue(IOUringFacadeImpl.isAvailableOn("7.1.1"));
     }
