@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class CancellationToken implements ExecutionCircuitBreaker {
+public class AtomicBooleanCircuitBreaker implements ExecutionCircuitBreaker {
     private final AtomicBoolean canceledFlag = new AtomicBoolean(false);
 
     @Override

@@ -156,7 +156,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.ff = configuration.getFilesFacade();
         this.dirMode = configuration.getMkDirMode();
         this.inputRoot = configuration.getInputRoot();
-        this.maxIndexChunkSize = configuration.getImportMaxIndexChunkSize();
+        this.maxIndexChunkSize = configuration.getSqlCopyMaxIndexChunkSize();
         this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
         this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_PARALLEL_IMPORT);
         this.fieldRollBufCur = fieldRollBufPtr;

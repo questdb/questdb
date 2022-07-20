@@ -37,7 +37,7 @@ public class TextImportRequestCollectingJob extends SynchronizedJob {
     private final Sequence requestProcessingPubSeq;
     private final Sequence requestProcessingComplSeq;
 
-    private final CancellationToken cancellationToken = new CancellationToken();
+    private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     private @Nullable CharSequence activeTaskName;
 
     public TextImportRequestCollectingJob(final CairoEngine engine) {
@@ -64,19 +64,19 @@ public class TextImportRequestCollectingJob extends SynchronizedJob {
                 if (activeTaskName == null) {
                     //there is no active import in progress
                     collectingTask.setStatus(TextImportRequestTask.STATUS_REJ);
-                } else if (cancellationToken.isCanceled()) {
+                } else if (circuitBreaker.isCanceled()) {
                     //another cancel is in progress
                     collectingTask.setStatus(TextImportRequestTask.STATUS_REJ_ACTIVE_CANCEL);
                 } else {
-                    cancellationToken.cancel();
+                    circuitBreaker.cancel();
                     collectingTask.setStatus(TextImportRequestTask.STATUS_ACK);
                 }
             } else {
                 long processingCursor = requestProcessingPubSeq.next();
                 if (processingCursor > -1) {
                     TextImportRequestTask processingTask = requestProcessingQueue.get(processingCursor);
-                    cancellationToken.reset();
-                    processingTask.setCancellationToken(cancellationToken);
+                    circuitBreaker.reset();
+                    processingTask.setCircuitBreaker(circuitBreaker);
                     processingTask.copyFrom(collectingTask);
                     activeTaskName = collectingTask.getFileName();
                     requestProcessingPubSeq.done(processingCursor);

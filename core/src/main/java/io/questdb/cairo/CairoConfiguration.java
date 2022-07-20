@@ -145,9 +145,9 @@ public interface CairoConfiguration {
 
     CharSequence getInputWorkRoot();
 
-    long getImportMaxIndexChunkSize();
+    long getSqlCopyMaxIndexChunkSize();
 
-    int getImportQueueCapacity();
+    int getSqlCopyQueueCapacity();
 
     int getInsertPoolCapacity();
 
@@ -389,11 +389,11 @@ public interface CairoConfiguration {
         return IOURingFacadeImpl.INSTANCE;
     }
 
-    long getParallelImportRequestWaitTimeout();
+    long getSqlCopyRequestTimeoutMicro();
 
-    int getParallelImportRequestQueueCapacity();
+    int getSqlCopyRequestQueueCapacity();
 
-    int getParallelImportStatusLogKeepLastNDays();
+    int getSqlCopyLogRetentionDays();
 
     boolean isIOURingEnabled();
 }

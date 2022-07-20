@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.std.Mutable;
 import org.jetbrains.annotations.Nullable;
 
@@ -45,7 +46,7 @@ public class TextImportRequestTask implements Mutable {
     private int partitionBy;
 
     private boolean cancel = false;
-    private CancellationToken cancellationToken;
+    private ExecutionCircuitBreaker circuitBreaker;
     private long taskCorrelationId = -1;
     private byte status;
 
@@ -73,12 +74,12 @@ public class TextImportRequestTask implements Mutable {
         return cancel;
     }
 
-    public void setCancellationToken(@Nullable CancellationToken token) {
-       this.cancellationToken = token;
+    public void setCircuitBreaker(@Nullable ExecutionCircuitBreaker token) {
+       this.circuitBreaker = token;
     }
 
-    public CancellationToken getCancellationToken() {
-        return this.cancellationToken;
+    public ExecutionCircuitBreaker getCircuitBreaker() {
+        return this.circuitBreaker;
     }
 
     public void copyFrom(final TextImportRequestTask other) {

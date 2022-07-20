@@ -1899,10 +1899,10 @@ public class SqlCompiler implements Closeable {
                 if (queue.getCycle() < 1) {
                     throw SqlException.$(0, "Parallel import requests queue size can't be zero!");
                 }
-                long correlationId = TextImportRequestTask.newTaskCorrelationId();
-                long timeout = configuration.getParallelImportRequestWaitTimeout();
+                final long correlationId = TextImportRequestTask.newTaskCorrelationId();
+                final long requestTimeout = configuration.getSqlCopyRequestTimeoutMicro();
                 if (model.isCancel()) {
-                    addTextImportRequest(correlationId, timeout, model, null);
+                    addTextImportRequest(correlationId, requestTimeout, model, null);
                 } else {
                     if (model.getTimestampFormat() == null) {
                         model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
@@ -1910,9 +1910,9 @@ public class SqlCompiler implements Closeable {
                     if (model.getDelimiter() < 0) {
                         model.setDelimiter((byte) ',');
                     }
-                    addTextImportRequest(correlationId, timeout, model, fileName);
+                    addTextImportRequest(correlationId, requestTimeout, model, fileName);
                 }
-                awaitTextImportResponse(correlationId, timeout);
+                awaitTextImportResponse(correlationId, requestTimeout);
                 return;
             }
 

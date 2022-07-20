@@ -273,13 +273,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getImportMaxIndexChunkSize() {
-        return conf.getImportMaxIndexChunkSize();
+    public long getSqlCopyMaxIndexChunkSize() {
+        return conf.getSqlCopyMaxIndexChunkSize();
     }
 
     @Override
-    public int getImportQueueCapacity() {
-        return conf.getImportQueueCapacity();
+    public int getSqlCopyQueueCapacity() {
+        return conf.getSqlCopyQueueCapacity();
     }
 
     @Override
@@ -783,18 +783,18 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getParallelImportRequestWaitTimeout() {
-        return conf.getParallelImportRequestWaitTimeout();
+    public long getSqlCopyRequestTimeoutMicro() {
+        return conf.getSqlCopyRequestTimeoutMicro();
     }
 
     @Override
-    public int getParallelImportRequestQueueCapacity() {
-        return conf.getParallelImportRequestQueueCapacity();
+    public int getSqlCopyRequestQueueCapacity() {
+        return conf.getSqlCopyRequestQueueCapacity();
     }
 
     @Override
-    public int getParallelImportStatusLogKeepLastNDays() {
-        return conf.getParallelImportStatusLogKeepLastNDays();
+    public int getSqlCopyLogRetentionDays() {
+        return conf.getSqlCopyLogRetentionDays();
     }
 
     @Override

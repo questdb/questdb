@@ -169,7 +169,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getImportQueueCapacity() {
+    public int getSqlCopyQueueCapacity() {
         return 32;
     }
 
@@ -319,7 +319,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getImportMaxIndexChunkSize() {
+    public long getSqlCopyMaxIndexChunkSize() {
         return 1024 * 1024L;
     }
 
@@ -409,17 +409,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getParallelImportRequestWaitTimeout() {
+    public long getSqlCopyRequestTimeoutMicro() {
         return 3_000_000L;
     }
 
     @Override
-    public int getParallelImportRequestQueueCapacity() {
+    public int getSqlCopyRequestQueueCapacity() {
         return 8;
     }
 
     @Override
-    public int getParallelImportStatusLogKeepLastNDays() {
+    public int getSqlCopyLogRetentionDays() {
         return 3;
     }
 

@@ -53,29 +53,27 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
 
     private final RingQueue<TextImportRequestTask> requestProcessingQueue;
     private final Sequence requestProcessingSubSeq;
-    private final CairoEngine engine;
-    private final int workerCount;
     private final CharSequence statusTableName;
     private final MicrosecondClock clock;
-    private final int keepLastNDays;
+    private final int logRetentionDays;
+    private final Rnd rnd;
+    private final StringSink idSink = new StringSink();
+    private final LongList partitionsToRemove = new LongList();
     private TableWriter writer;
     private SqlCompiler sqlCompiler;
     private SqlExecutionContextImpl sqlExecutionContext;
     private TextImportRequestTask task;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
-    private final Rnd rnd;
-    private final StringSink idSink = new StringSink();
-    private LongList partitionsToRemove = new LongList();
+    private ParallelCsvFileImporter importer;
 
     public TextImportRequestProcessingJob(
             final CairoEngine engine,
             int workerCount,
             @Nullable FunctionFactoryCache functionFactoryCache
     ) throws SqlException {
-        this.engine = engine;
-        this.workerCount = workerCount;
         this.requestProcessingQueue = engine.getMessageBus().getTextImportRequestProcessingQueue();
         this.requestProcessingSubSeq = engine.getMessageBus().getTextImportRequestProcessingSubSeq();
+        this.importer = new ParallelCsvFileImporter(engine, workerCount);
 
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
@@ -98,18 +96,26 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
         );
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
         this.rnd = new Rnd(this.clock.getTicks(), this.clock.getTicks());
-        this.keepLastNDays = configuration.getParallelImportStatusLogKeepLastNDays();
-        cleanupStatusLog(writer, keepLastNDays);
+        this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
+        enforceLogRetention();
     }
 
-    void cleanupStatusLog(final TableWriter writer, int keepPartitionCount) {
-        if (keepPartitionCount <= 0) {
+    @Override
+    public void close() throws IOException {
+        this.importer = Misc.free(importer);
+        this.writer = Misc.free(this.writer);
+        this.sqlCompiler = Misc.free(sqlCompiler);
+        this.sqlExecutionContext = Misc.free(sqlExecutionContext);
+    }
+
+    void enforceLogRetention() {
+        if (logRetentionDays < 1) {
             writer.truncate();
             return;
         }
         if (writer.getPartitionCount() > 0) {
             partitionsToRemove.clear();
-            for (int i = writer.getPartitionCount() - keepPartitionCount - 1; i > -1; i--) {
+            for (int i = writer.getPartitionCount() - logRetentionDays - 1; i > -1; i--) {
                 partitionsToRemove.add(writer.getPartitionTimestamp(i));
             }
 
@@ -120,40 +126,35 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
     }
 
     @Override
-    public void close() throws IOException {
-        this.writer = Misc.free(this.writer);
-        this.sqlCompiler = Misc.free(sqlCompiler);
-        this.sqlExecutionContext = Misc.free(sqlExecutionContext);
-    }
-
-    @Override
     protected boolean runSerially() {
         long cursor = requestProcessingSubSeq.next();
         if (cursor > -1) {
             idSink.clear();
             Numbers.appendHex(idSink, rnd.nextPositiveLong(), true);
             task = requestProcessingQueue.get(cursor);
-            try (ParallelCsvFileImporter loader = new ParallelCsvFileImporter(engine, workerCount, task.getCancellationToken())) {
-                loader.of(
+            try {
+                importer.of(
                         task.getTableName(),
                         task.getFileName(),
                         task.getPartitionBy(),
                         task.getDelimiter(),
                         task.getTimestampColumnName(),
                         task.getTimestampFormat(),
-                        task.isHeaderFlag()
+                        task.isHeaderFlag(),
+                        task.getCircuitBreaker()
                 );
-                loader.setStatusReporter(updateStatusRef);
-                loader.process();
+                importer.setStatusReporter(updateStatusRef);
+                importer.process();
             } catch (TextImportException e) {
                 updateStatus(
                         e.getPhase(),
-                        e.isCancelled() ? TextImportTask.STATUS_CANCELLED : TextImportTask.STATUS_FAILED, e.getMessage()
+                        e.isCancelled() ? TextImportTask.STATUS_CANCELLED : TextImportTask.STATUS_FAILED,
+                        e.getMessage()
                 );
             } finally {
                 requestProcessingSubSeq.done(cursor);
             }
-            cleanupStatusLog(writer, keepLastNDays);
+            enforceLogRetention();
             return true;
         }
         return false;

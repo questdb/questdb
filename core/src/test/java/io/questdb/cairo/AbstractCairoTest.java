@@ -321,8 +321,8 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public int getParallelImportStatusLogKeepLastNDays() {
-                return parallelImportStatusLogKeepNDays >= 0 ? parallelImportStatusLogKeepNDays : super.getParallelImportStatusLogKeepLastNDays();
+            public int getSqlCopyLogRetentionDays() {
+                return parallelImportStatusLogKeepNDays >= 0 ? parallelImportStatusLogKeepNDays : super.getSqlCopyLogRetentionDays();
             }
 
             @Override

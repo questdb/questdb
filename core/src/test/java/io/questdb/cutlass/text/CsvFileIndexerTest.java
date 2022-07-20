@@ -168,11 +168,11 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
 
             CairoConfiguration conf = new CairoConfigurationWrapper(engine.getConfiguration()) {
                 @Override
-                public long getImportMaxIndexChunkSize() {
+                public long getSqlCopyMaxIndexChunkSize() {
                     if (chunkSize > 0) {
                         return chunkSize;
                     }
-                    return super.getImportMaxIndexChunkSize();
+                    return super.getSqlCopyMaxIndexChunkSize();
                 }
 
                 @Override

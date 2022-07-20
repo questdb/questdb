@@ -99,8 +99,6 @@ public enum PropertyKey {
     CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY("cairo.sql.rename.table.model.pool.capacity"),
     CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY("cairo.sql.with.clause.model.pool.capacity"),
     CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY("cairo.sql.insert.model.pool.capacity"),
-    CAIRO_SQL_COPY_MODEL_POOL_CAPACITY("cairo.sql.copy.model.pool.capacity"),
-    CAIRO_SQL_COPY_BUFFER_SIZE("cairo.sql.copy.buffer.size"),
     CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE("cairo.writer.data.index.key.append.page.size"),
     CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE("cairo.writer.data.index.value.append.page.size"),
     CAIRO_WRITER_DATA_APPEND_PAGE_SIZE("cairo.writer.data.append.page.size"),
@@ -113,7 +111,6 @@ public enum PropertyKey {
     CAIRO_SQL_GROUPBY_POOL_CAPACITY("cairo.sql.groupby.pool.capacity"),
     CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT("cairo.sql.max.symbol.not.equals.count"),
     CAIRO_SQL_BIND_VARIABLE_POOL_SIZE("cairo.sql.bind.variable.pool.size"),
-    CAIRO_SQL_COPY_FORMATS_FILE("cairo.sql.copy.formats.file"),
     CAIRO_DATE_LOCALE("cairo.date.locale"),
     CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY("cairo.sql.distinct.timestamp.key.capacity"),
     CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR("cairo.sql.distinct.timestamp.load.factor"),
@@ -127,10 +124,18 @@ public enum PropertyKey {
     CAIRO_SQL_JIT_PAGE_ADDRESS_CACHE_THRESHOLD("cairo.sql.jit.page.address.cache.threshold"),
     CAIRO_SQL_JIT_DEBUG_ENABLED("cairo.sql.jit.debug.enabled"),
     CAIRO_WRITER_FO_OPTS("cairo.writer.fo_opts"),
+
+    CAIRO_SQL_COPY_FORMATS_FILE("cairo.sql.copy.formats.file"),
+    CAIRO_SQL_COPY_MODEL_POOL_CAPACITY("cairo.sql.copy.model.pool.capacity"),
+    CAIRO_SQL_COPY_BUFFER_SIZE("cairo.sql.copy.buffer.size"),
     CAIRO_SQL_COPY_ROOT("cairo.sql.copy.root"),
     CAIRO_SQL_COPY_WORK_ROOT("cairo.sql.copy.work.root"),
-    CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE("cairo.import.max.index.chunk.size"),
-    CAIRO_IMPORT_QUEUE_CAPACITY("cairo.import.queue.capacity"),
+    CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE("cairo.sql.copy.max.index.chunk.size"),
+    CAIRO_SQL_COPY_QUEUE_CAPACITY("cairo.sql.copy.queue.capacity"),
+    CAIRO_SQL_COPY_REQUEST_TIMEOUT_MICRO("cairo.sql.copy.request.timeout.micro"),
+    CAIRO_SQL_COPY_REQUEST_QUEUE_CAPACITY("cairo.sql.copy.request.queue.capacity"),
+    CAIRO_SQL_COPY_LOG_RETENTION_DAYS("cairo.sql.copy.log.retention.days"),
+
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
     CAIRO_SQL_BACKUP_DIR_TMP_NAME("cairo.sql.backup.dir.tmp.name"),
     CAIRO_SQL_BACKUP_MKDIR_MODE("cairo.sql.backup.mkdir.mode"),
@@ -361,10 +366,7 @@ public enum PropertyKey {
     CAIRO_MAX_FILE_NAME_LENGTH("cairo.max.file.name.length"),
     LINE_AUTO_CREATE_NEW_COLUMNS("line.auto.create.new.columns"),
     LINE_AUTO_CREATE_NEW_TABLES("line.auto.create.new.tables"),
-    CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation"),
-    PARALLEL_IMPORT_REQ_WAIT_TIMEOUT_MICRO("parallel.import.request.wait.timeout.micro"),
-    PARALLEL_IMPORT_REQ_QUEUE_CAPACITY("parallel.import.request.queue.capacity"),
-    PARALLEL_IMPORT_STATUS_LOG_KEEP_LAST_N_DAYS("parallel.import.status.log.keep.last.n.days");
+    CAIRO_SIMULATE_CRASH_ENABLED("cairo.enable.crash.simulation");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final String propertyPath;

@@ -314,8 +314,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean httpReadOnlySecurityContext;
     private long maxHttpQueryResponseRowLimit;
     private boolean interruptOnClosedConnection;
-    private long cairoImportMaxIndexChunkSize;
-    private final int cairoImportQueueCapacity;
+    private long cairoSqlCopyMaxIndexChunkSize;
+    private final int cairoSqlCopyQueueCapacity;
     private int pgNetConnectionLimit;
     private boolean pgNetConnectionHint;
     private int pgNetBindIPv4Address;
@@ -405,9 +405,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
     private final boolean simulateCrashEnabled;
-    private final long parallelImportRequestWaitTimeout;
-    private final int parallelImportRequestQueueCapacity;
-    private final int parallelImportStatusLogKeepLastNDays;
+    private final long cairoSqlCopytRequestTimeoutMicro;
+    private final int cairoSqlCopyRequestQueueCapacity;
+    private final int cairoSqlCopyLogRetentionDays;
     private final boolean ioURingEnabled;
 
     public PropServerConfiguration(
@@ -808,13 +808,16 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
             }
 
-            this.cairoImportMaxIndexChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
-            this.cairoImportMaxIndexChunkSize -= (cairoImportMaxIndexChunkSize % CsvFileIndexer.INDEX_ENTRY_SIZE);
-            if (this.cairoImportMaxIndexChunkSize < 16) {
-                throw new ServerConfigurationException("invalid configuration value [key=" + PropertyKey.CAIRO_IMPORT_MAX_INDEX_CHUNK_SIZE.getPropertyPath() +
+            this.cairoSqlCopyMaxIndexChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE, 100 * 1024 * 1024L);
+            this.cairoSqlCopyMaxIndexChunkSize -= (cairoSqlCopyMaxIndexChunkSize % CsvFileIndexer.INDEX_ENTRY_SIZE);
+            if (this.cairoSqlCopyMaxIndexChunkSize < 16) {
+                throw new ServerConfigurationException("invalid configuration value [key=" + PropertyKey.CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE.getPropertyPath() +
                         ", description=max import chunk size can't be smaller than 16]");
             }
-            this.cairoImportQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_IMPORT_QUEUE_CAPACITY, 32));
+            this.cairoSqlCopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_QUEUE_CAPACITY, 32));
+            this.cairoSqlCopytRequestTimeoutMicro = getLong(properties, env, PropertyKey.CAIRO_SQL_COPY_REQUEST_TIMEOUT_MICRO, 3_000_000L);
+            this.cairoSqlCopyRequestQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_REQUEST_QUEUE_CAPACITY, 8));
+            this.cairoSqlCopyLogRetentionDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, 3);
 
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
@@ -985,9 +988,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.buildInformation = buildInformation;
             this.binaryEncodingMaxLength = getInt(properties, env, PropertyKey.BINARYDATA_ENCODING_MAXLENGTH, 32768);
-            this.parallelImportRequestWaitTimeout = getLong(properties, env, PropertyKey.PARALLEL_IMPORT_REQ_WAIT_TIMEOUT_MICRO, 3_000_000L);
-            this.parallelImportRequestQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.PARALLEL_IMPORT_REQ_QUEUE_CAPACITY, 8));
-            this.parallelImportStatusLogKeepLastNDays = getInt(properties, env, PropertyKey.PARALLEL_IMPORT_STATUS_LOG_KEEP_LAST_N_DAYS, 3);
         }
     }
 
@@ -1954,8 +1954,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getImportQueueCapacity() {
-            return cairoImportQueueCapacity;
+        public int getSqlCopyQueueCapacity() {
+            return cairoSqlCopyQueueCapacity;
         }
 
         @Override
@@ -2104,8 +2104,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getImportMaxIndexChunkSize() {
-            return cairoImportMaxIndexChunkSize;
+        public long getSqlCopyMaxIndexChunkSize() {
+            return cairoSqlCopyMaxIndexChunkSize;
         }
 
         @Override
@@ -2199,18 +2199,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getParallelImportRequestWaitTimeout() {
-            return parallelImportRequestWaitTimeout;
+        public long getSqlCopyRequestTimeoutMicro() {
+            return cairoSqlCopytRequestTimeoutMicro;
         }
 
         @Override
-        public int getParallelImportRequestQueueCapacity() {
-            return parallelImportRequestQueueCapacity;
+        public int getSqlCopyRequestQueueCapacity() {
+            return cairoSqlCopyRequestQueueCapacity;
         }
 
         @Override
-        public int getParallelImportStatusLogKeepLastNDays() {
-            return parallelImportStatusLogKeepLastNDays;
+        public int getSqlCopyLogRetentionDays() {
+            return cairoSqlCopyLogRetentionDays;
         }
 
         @Override
