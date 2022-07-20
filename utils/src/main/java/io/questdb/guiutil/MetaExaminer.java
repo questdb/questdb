@@ -121,17 +121,17 @@ public class MetaExaminer {
             } else if (fileName.contains(TableUtils.COLUMN_VERSION_FILE_NAME)) {
                 displayCVFileContent();
             } else if (fileName.contains(".c")) {
-                displayStaticSymbolMapFileContent();
+                displayCOFileContent();
             } else if (fileName.contains(".o")) {
                 selectedPath.trimTo(selectedPath.length() - fileName.length());
                 selectedPath.concat(fileName.replace(".o", ".c")).$();
-                displayStaticSymbolMapFileContent();
+                displayCOFileContent();
             } else if (fileName.contains(".k")) {
-                displayIndexFileContent();
+                displayKVFileContent();
             } else if (fileName.contains(".v")) {
                 selectedPath.trimTo(selectedPath.length() - fileName.length());
                 selectedPath.concat(fileName.replace(".v", ".k")).$();
-                displayIndexFileContent();
+                displayKVFileContent();
             } else {
                 console.display("No reader available.");
             }
@@ -165,6 +165,26 @@ public class MetaExaminer {
                     columnType > 0 ? metaReader.getIndexValueBlockCapacity(i) : 0,
                     true
             );
+        }
+        console.display(ms.toString());
+    }
+
+    private void displayCVFileContent() {
+        cvReader.ofRO(FilesFacadeImpl.INSTANCE, selectedPath);
+        cvReader.readSafe(MicrosecondClockImpl.INSTANCE, Long.MAX_VALUE);
+        LongList cvEntries = cvReader.getCachedList();
+        int limit = cvEntries.size();
+        ms.clear();
+        ms.addLn("version: ", cvReader.getVersion());
+        ms.addLn("entryCount: ", limit / 4);
+        for (int i = 0; i < limit; i += 4) {
+            long partitionTimestamp = cvEntries.getQuick(i);
+            ms.addLn("  + entry ", i / 4);
+            ms.addTimestampLn("     - partitionTimestamp: ", partitionTimestamp);
+            ms.addLn("     - columnIndex: ", cvEntries.getQuick(i + 1));
+            ms.addLn("     - columnNameTxn: ", cvEntries.getQuick(i + 2));
+            ms.addLn("     - columnTop: ", cvEntries.getQuick(i + 3));
+            ms.addLn();
         }
         console.display(ms.toString());
     }
@@ -212,28 +232,9 @@ public class MetaExaminer {
         }
     }
 
-    private void displayCVFileContent() {
-        cvReader.ofRO(FilesFacadeImpl.INSTANCE, selectedPath);
-        cvReader.readSafe(MicrosecondClockImpl.INSTANCE, Long.MAX_VALUE);
-        LongList cvEntries = cvReader.getCachedList();
-        int limit = cvEntries.size();
-        ms.clear();
-        ms.addLn("version: ", cvReader.getVersion());
-        ms.addLn("entryCount: ", limit / 4);
-        for (int i = 0; i < limit; i += 4) {
-            long partitionTimestamp = cvEntries.getQuick(i);
-            ms.addLn("  + entry ", i / 4);
-            ms.addTimestampLn("     - partitionTimestamp: ", partitionTimestamp);
-            ms.addLn("     - columnIndex: ", cvEntries.getQuick(i + 1));
-            ms.addLn("     - columnNameTxn: ", cvEntries.getQuick(i + 2));
-            ms.addLn("     - columnTop: ", cvEntries.getQuick(i + 3));
-            ms.addLn();
-        }
-        console.display(ms.toString());
-    }
-
-    private void displayStaticSymbolMapFileContent() {
-        if (openRequiredMetaFile(1) && openRequiredTxnFile(1)) {
+    private void displayCOFileContent() {
+        int metaLevelUp = insidePartitionFolder() ? 2 : 1;
+        if (openRequiredMetaFile(metaLevelUp) && openRequiredTxnFile(metaLevelUp)) {
             auxPath.of(selectedPath);
             PathUtils.ColumnNameTxn cnTxn = PathUtils.columnNameTxnOf(auxPath);
             int colIdx = metaReader.getColumnIndex(cnTxn.columnName);
@@ -272,8 +273,9 @@ public class MetaExaminer {
         }
     }
 
-    private void displayIndexFileContent() {
-        if (openRequiredMetaFile(2) && openRequiredCvFile(2) && openRequiredTxnFile(2)) {
+    private void displayKVFileContent() {
+        int metaLevelUp = insidePartitionFolder() ? 2 : 1;
+        if (openRequiredMetaFile(metaLevelUp) && openRequiredCvFile(metaLevelUp) && openRequiredTxnFile(metaLevelUp)) {
             auxPath.of(selectedPath);
             PathUtils.ColumnNameTxn cnTxn = PathUtils.columnNameTxnOf(auxPath);
             int colIdx = metaReader.getColumnIndex(cnTxn.columnName);
@@ -281,7 +283,7 @@ public class MetaExaminer {
 
             // this also opens the .o (offset) file, which contains symbolCapacity, isCached, containsNull
             // as well as the .k and .v (index key/value) files, which index the static table in this case
-            PathUtils.selectFileInFolder(auxPath, 2, null);
+            PathUtils.selectFileInFolder(auxPath, metaLevelUp, null);
             SymbolMapReaderImpl symReader = new SymbolMapReaderImpl(
                     configuration,
                     auxPath,
@@ -290,7 +292,12 @@ public class MetaExaminer {
                     symbolCount
             );
 
-            long partitionTimestamp = PartitionBy.parsePartitionDirName(potentialPartitionFolderName, metaReader.getPartitionBy());
+            long partitionTimestamp;
+            try {
+                partitionTimestamp = PartitionBy.parsePartitionDirName(potentialPartitionFolderName, metaReader.getPartitionBy());
+            } catch (Throwable t) {
+                partitionTimestamp = -1L;
+            }
             int writerIdx = metaReader.getWriterIndex(colIdx);
             int versionRecordIdx = cvReader.getRecordIndex(partitionTimestamp, writerIdx);
             long columnTop = versionRecordIdx > -1L ? cvReader.getColumnTopByIndex(versionRecordIdx) : 0L;
@@ -361,6 +368,21 @@ public class MetaExaminer {
         }
         action.accept(auxPath);
         return true;
+    }
+
+    private boolean insidePartitionFolder() {
+        if (potentialPartitionFolderName != null) {
+            int len = potentialPartitionFolderName.length();
+            int i = 0;
+            for (; i < len; i++) {
+                char c = potentialPartitionFolderName.charAt(i);
+                if (!(Character.isDigit(c) || c == '-' || c == 'T')) {
+                    break;
+                }
+            }
+            return i == len;
+        }
+        return false;
     }
 
     private static JFrame createFrame(Runnable onExit) {

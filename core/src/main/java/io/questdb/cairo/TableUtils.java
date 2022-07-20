@@ -58,6 +58,7 @@ public final class TableUtils {
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     public static final String DETACHED_DIR_MARKER = ".detached";
+    public static final String DETACHED_DIR_META_FOLDER_NAME = "_dm_";
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
     public static final int INITIAL_TXN = 0;
