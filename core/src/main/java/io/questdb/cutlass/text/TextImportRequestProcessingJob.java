@@ -57,6 +57,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
     private final int workerCount;
     private final CharSequence statusTableName;
     private final MicrosecondClock clock;
+    private final int keepLastNDays;
     private TableWriter writer;
     private SqlCompiler sqlCompiler;
     private SqlExecutionContextImpl sqlExecutionContext;
@@ -96,7 +97,8 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
         );
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
         this.rnd = new Rnd(this.clock.getTicks(), this.clock.getTicks());
-        cleanupStatusLog(writer, configuration.getParallelImportStatusLogKeepLastNDays());
+        this.keepLastNDays = configuration.getParallelImportStatusLogKeepLastNDays();
+        cleanupStatusLog(writer, keepLastNDays);
     }
 
     void cleanupStatusLog(final TableWriter writer, int keepPartitionCount) {
@@ -150,6 +152,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
             } finally {
                 requestProcessingSubSeq.done(cursor);
             }
+            cleanupStatusLog(writer, keepLastNDays);
             return true;
         }
         return false;
