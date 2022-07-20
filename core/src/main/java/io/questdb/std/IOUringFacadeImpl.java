@@ -69,7 +69,7 @@ public class IOUringFacadeImpl implements IOUringFacade {
     }
 
     /**
-     * io_uring is available since kernel 5.1.
+     * io_uring is available since kernel 5.1, but we require 5.12 to avoid ulimit -l issues.
      */
     static boolean isAvailableOn(String kernelVersion) {
         final String[] versionParts = kernelVersion.split("\\.");
@@ -98,6 +98,6 @@ public class IOUringFacadeImpl implements IOUringFacade {
             return false;
         }
 
-        return minor > 0;
+        return minor > 11;
     }
 }
