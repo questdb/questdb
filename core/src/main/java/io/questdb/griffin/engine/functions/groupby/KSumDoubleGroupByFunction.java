@@ -109,6 +109,6 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("KSumDouble(").put(arg).put(")");
+        sink.put("KSumDouble(").put(arg).put(')');
     }
 }

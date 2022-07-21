@@ -85,6 +85,6 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MinDouble(").put(arg).put(")");
+        sink.put("MinDouble(").put(arg).put(')');
     }
 }

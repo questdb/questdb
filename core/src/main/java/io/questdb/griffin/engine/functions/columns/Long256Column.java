@@ -77,7 +77,7 @@ public class Long256Column extends Long256Function implements ScalarFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("Long256Column");
+        sink.put("Long256Column(").put(columnIndex).put(')');
     }
 
 }

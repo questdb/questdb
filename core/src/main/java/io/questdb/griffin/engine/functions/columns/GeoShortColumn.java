@@ -83,6 +83,6 @@ public class GeoShortColumn extends GeoShortFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("GeoShortColumn");
+        sink.put("GeoShortColumn(").put(columnIndex).put(')');
     }
 }

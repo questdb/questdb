@@ -105,6 +105,6 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("SumDouble(").put(arg).put(")");
+        sink.put("SumDouble(").put(arg).put(')');
     }
 }

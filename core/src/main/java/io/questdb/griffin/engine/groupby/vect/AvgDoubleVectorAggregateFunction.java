@@ -149,6 +149,6 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("AvgDoubleVector(").put(columnIndex).put(")");
+        sink.put("AvgDoubleVector(").put(columnIndex).put(')');
     }
 }

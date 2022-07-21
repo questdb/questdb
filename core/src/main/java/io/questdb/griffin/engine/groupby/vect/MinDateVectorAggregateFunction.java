@@ -129,6 +129,6 @@ public class MinDateVectorAggregateFunction extends DateFunction implements Vect
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MinDateVector(").put(columnIndex).put(")");
+        sink.put("MinDateVector(").put(columnIndex).put(')');
     }
 }

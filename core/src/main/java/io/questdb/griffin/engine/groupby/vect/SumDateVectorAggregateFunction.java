@@ -131,6 +131,6 @@ public class SumDateVectorAggregateFunction extends DateFunction implements Vect
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("SumDateVector(").put(columnIndex).put(")");
+        sink.put("SumDateVector(").put(columnIndex).put(')');
     }
 }

@@ -56,6 +56,6 @@ public class LongConstant extends LongFunction implements ConstantFunction {
     }
 
     public void toSink(CharSink sink) {
-        sink.put("LongConst(").put(value).put(")");
+        sink.put(value).put('L');
     }
 }

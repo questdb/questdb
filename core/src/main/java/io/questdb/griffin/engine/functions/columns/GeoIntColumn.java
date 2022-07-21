@@ -83,6 +83,6 @@ public class GeoIntColumn extends GeoIntFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("GeoIntColumn");
+        sink.put("GeoIntColumn(").put(columnIndex).put(')');
     }
 }

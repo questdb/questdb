@@ -83,7 +83,7 @@ public class GeoByteColumn extends GeoByteFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("GeoByteColumn");
+        sink.put("GeoByteColumn(").put(columnIndex).put(')');
     }
 
 }

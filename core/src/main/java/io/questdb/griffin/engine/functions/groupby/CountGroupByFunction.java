@@ -84,7 +84,7 @@ public class CountGroupByFunction extends LongFunction implements GroupByFunctio
     }
 
     public void toSink(CharSink sink) {
-        sink.put("Count(").put(valueIndex).put(")");
+        sink.put("Count(").put(valueIndex).put(')');
     }
 
 }

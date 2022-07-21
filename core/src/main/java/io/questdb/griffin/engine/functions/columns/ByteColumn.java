@@ -60,7 +60,7 @@ public class ByteColumn extends ByteFunction implements ScalarFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("ByteColumn");
+        sink.put("ByteColumn(").put(columnIndex).put(')');
     }
 
     static {

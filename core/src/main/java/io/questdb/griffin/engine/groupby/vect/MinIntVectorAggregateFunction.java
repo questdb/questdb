@@ -129,6 +129,6 @@ public class MinIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MinIntVector(").put(columnIndex).put(")");
+        sink.put("MinIntVector(").put(columnIndex).put(')');
     }
 }

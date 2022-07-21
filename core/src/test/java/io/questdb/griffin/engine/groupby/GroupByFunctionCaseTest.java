@@ -46,14 +46,14 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
     public void testAggregatesOnColumnWithNoKeyWorkRegardlessOfCase() throws Exception {
         assertMemoryLeak(() -> {
             String[] functions = {"KSum", "NSum", "Sum", "Avg", "Min", "Max"};
-            String[][] expectedFunctions = {{"KSumDouble(ByteColumn)", "NSumDouble(ByteColumn)", "SumInt(ByteColumn)", "AvgDouble(ByteColumn)", "MinInt(ByteColumn)", "MaxInt(ByteColumn)"},//byte
-                    {"KSumDouble(ShortColumn)", "NSumDouble(ShortColumn)", "SumInt(ShortColumn)", "AvgDouble(ShortColumn)", "MinInt(ShortColumn)", "MaxInt(ShortColumn)"},//short
-                    {null, null, null, null, "MinChar(CharColumn)", "MaxChar(CharColumn)"},//char
-                    {"KSumDouble(IntColumn)", "NSumDouble(IntColumn)", "SumIntVector(0)", "AvgIntVector(0)", "MinIntVector(0)", "MaxIntVector(0)"},//int
-                    {"KSumDouble(LongColumn)", "NSumDouble(LongColumn)", "SumLongVector(0)", "AvgLongVector(0)", "MinLongVector(0)", "MaxLongVector(0)"},//long
+            String[][] expectedFunctions = {{"KSumDouble(ByteColumn(0))", "NSumDouble(ByteColumn(0))", "SumInt(ByteColumn(0))", "AvgDouble(ByteColumn(0))", "MinInt(ByteColumn(0))", "MaxInt(ByteColumn(0))"},//byte
+                    {"KSumDouble(ShortColumn(0))", "NSumDouble(ShortColumn(0))", "SumInt(ShortColumn(0))", "AvgDouble(ShortColumn(0))", "MinInt(ShortColumn(0))", "MaxInt(ShortColumn(0))"},//short
+                    {null, null, null, null, "MinChar(CharColumn(0))", "MaxChar(CharColumn(0))"},//char
+                    {"KSumDouble(IntColumn(0))", "NSumDouble(IntColumn(0))", "SumIntVector(0)", "AvgIntVector(0)", "MinIntVector(0)", "MaxIntVector(0)"},//int
+                    {"KSumDouble(LongColumn(0))", "NSumDouble(LongColumn(0))", "SumLongVector(0)", "AvgLongVector(0)", "MinLongVector(0)", "MaxLongVector(0)"},//long
                     {null, null, "SumDateVector(0)", "AvgLongVector(0)", "MinDateVector(0)", "MaxDateVector(0)"},//date
                     {null, null, "SumTimestampVector(0)", "AvgLongVector(0)", "MinTimestampVector(0)", "MaxTimestampVector(0)"},//timestamp
-                    {"KSumDouble(FloatColumn)", "NSumDouble(FloatColumn)", "SumFloat(FloatColumn)", "AvgDouble(FloatColumn)", "MinFloat(FloatColumn)", "MaxFloat(FloatColumn)"}, //float
+                    {"KSumDouble(FloatColumn(0))", "NSumDouble(FloatColumn(0))", "SumFloat(FloatColumn(0))", "AvgDouble(FloatColumn(0))", "MinFloat(FloatColumn(0))", "MaxFloat(FloatColumn(0))"}, //float
                     {"KSumDoubleVector(0)", "NSumDoubleVector(0)", "SumDoubleVector(0)", "AvgDoubleVector(0)", "MinDoubleVector(0)", "MaxDoubleVector(0)"}, //double
             };
             //other types aren't accepted by aggregates at all (including string and symbol!)
@@ -105,14 +105,14 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
     public void testAggregatesOnColumnWithSingleKeyWorkRegardlessOfCase() throws Exception {
         assertMemoryLeak(() -> {
             String[] functions = {"KSum", "NSum", "Sum", "Avg", "Min", "Max"};
-            String[][] expectedFunctions = {{"KSumDouble(ByteColumn)", "NSumDouble(ByteColumn)", "SumInt(ByteColumn)", "AvgDouble(ByteColumn)", "MinInt(ByteColumn)", "MaxInt(ByteColumn)"},//byte
-                    {"KSumDouble(ShortColumn)", "NSumDouble(ShortColumn)", "SumInt(ShortColumn)", "AvgDouble(ShortColumn)", "MinInt(ShortColumn)", "MaxInt(ShortColumn)"},//short
-                    {null, null, null, null, "MinChar(CharColumn)", "MaxChar(CharColumn)"},//char
-                    {"KSumDouble(IntColumn)", "NSumDouble(IntColumn)", "SumIntVector(1)", "AvgIntVector(1)", "MinIntVector(1)", "MaxIntVector(1)"},//int
-                    {"KSumDouble(LongColumn)", "NSumDouble(LongColumn)", "SumLongVector(1)", "AvgLongVector(1)", "MinLongVector(1)", "MaxLongVector(1)"},//long
+            String[][] expectedFunctions = {{"KSumDouble(ByteColumn(1))", "NSumDouble(ByteColumn(1))", "SumInt(ByteColumn(1))", "AvgDouble(ByteColumn(1))", "MinInt(ByteColumn(1))", "MaxInt(ByteColumn(1))"},//byte
+                    {"KSumDouble(ShortColumn(1))", "NSumDouble(ShortColumn(1))", "SumInt(ShortColumn(1))", "AvgDouble(ShortColumn(1))", "MinInt(ShortColumn(1))", "MaxInt(ShortColumn(1))"},//short
+                    {null, null, null, null, "MinChar(CharColumn(1))", "MaxChar(CharColumn(1))"},//char
+                    {"KSumDouble(IntColumn(1))", "NSumDouble(IntColumn(1))", "SumIntVector(1)", "AvgIntVector(1)", "MinIntVector(1)", "MaxIntVector(1)"},//int
+                    {"KSumDouble(LongColumn(1))", "NSumDouble(LongColumn(1))", "SumLongVector(1)", "AvgLongVector(1)", "MinLongVector(1)", "MaxLongVector(1)"},//long
                     {null, null, "SumDateVector(1)", "AvgLongVector(1)", "MinDateVector(1)", "MaxDateVector(1)"},//date
                     {null, null, "SumTimestampVector(1)", "AvgLongVector(1)", "MinTimestampVector(1)", "MaxTimestampVector(1)"},//timestamp
-                    {"KSumDouble(FloatColumn)", "NSumDouble(FloatColumn)", "SumFloat(FloatColumn)", "AvgDouble(FloatColumn)", "MinFloat(FloatColumn)", "MaxFloat(FloatColumn)"}, //float
+                    {"KSumDouble(FloatColumn(1))", "NSumDouble(FloatColumn(1))", "SumFloat(FloatColumn(1))", "AvgDouble(FloatColumn(1))", "MinFloat(FloatColumn(1))", "MaxFloat(FloatColumn(1))"}, //float
                     {"KSumDoubleVector(1)", "NSumDoubleVector(1)", "SumDoubleVector(1)", "AvgDoubleVector(1)", "MinDoubleVector(1)", "MaxDoubleVector(1)"}, //double
             };
             //other types aren't accepted by aggregates at all (including string and symbol!)
@@ -131,11 +131,15 @@ public class GroupByFunctionCaseTest extends AbstractGriffinTest {
                     }
 
                     boolean vectorized = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE;
+                    int keyPos = f < 2 ? 3 : f < 4 ? 2 : 1;
+                    if (t == FLOAT && f == 2) {
+                        keyPos = 1;
+                    }
 
                     planSink.clear();
                     planSink.put("GroupByRecord vectorized=").put(vectorized + "\n")
                             .put("  groupByFunctions=[").put(expectedFunction).put("]\n")
-                            .put("  ").put((vectorized ? "keyColumnIndex=0\n" : "recordFunctions=[IntColumn," + expectedFunction + "]\n"))
+                            .put("  ").put((vectorized ? "keyColumnIndex=0\n" : "recordFunctions=[IntColumn(" + keyPos + ")," + expectedFunction + "]\n"))
                             .put("    DataFrameRecordCursorFactory\n")
                             .put("        FullFwdDataFrame\n")
                             .put("          tableName=test");

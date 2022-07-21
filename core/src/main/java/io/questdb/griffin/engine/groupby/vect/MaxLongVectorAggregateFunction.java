@@ -124,6 +124,6 @@ public class MaxLongVectorAggregateFunction extends LongFunction implements Vect
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MaxLongVector(").put(columnIndex).put(")");
+        sink.put("MaxLongVector(").put(columnIndex).put(')');
     }
 }

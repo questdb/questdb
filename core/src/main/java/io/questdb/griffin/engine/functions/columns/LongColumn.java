@@ -59,7 +59,7 @@ public class LongColumn extends LongFunction implements ScalarFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("LongColumn");
+        sink.put("LongColumn(").put(columnIndex).put(')');
     }
 
     static {

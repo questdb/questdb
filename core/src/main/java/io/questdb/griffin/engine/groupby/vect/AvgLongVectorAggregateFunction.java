@@ -152,6 +152,6 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("AvgLongVector(").put(columnIndex).put(")");
+        sink.put("AvgLongVector(").put(columnIndex).put(')');
     }
 }

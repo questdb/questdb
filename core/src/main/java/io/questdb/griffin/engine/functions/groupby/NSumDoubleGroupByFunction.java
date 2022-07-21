@@ -114,6 +114,6 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("NSumDouble(").put(arg).put(")");
+        sink.put("NSumDouble(").put(arg).put(')');
     }
 }

@@ -124,6 +124,6 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MaxTimestampVector(").put(columnIndex).put(")");
+        sink.put("MaxTimestampVector(").put(columnIndex).put(')');
     }
 }

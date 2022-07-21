@@ -101,6 +101,6 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("SumInt(").put(arg).put(")");
+        sink.put("SumInt(").put(arg).put(')');
     }
 }

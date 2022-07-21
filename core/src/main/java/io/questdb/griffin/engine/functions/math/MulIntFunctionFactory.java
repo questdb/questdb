@@ -79,7 +79,7 @@ public class MulIntFunctionFactory implements FunctionFactory {
 
         @Override
         public void toSink(CharSink sink) {
-            sink.put("MulInt(").put(left).put(",").put(right).put(")");
+            sink.put("MulInt(").put(left).put(",").put(right).put(')');
         }
     }
 }

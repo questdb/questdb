@@ -59,7 +59,7 @@ public class TimestampColumn extends TimestampFunction implements ScalarFunction
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("TimestampColumn(").put(columnIndex).put(")");
+        sink.put("TimestampColumn(").put(columnIndex).put(')');
     }
 
     static {

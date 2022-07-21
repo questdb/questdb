@@ -128,6 +128,6 @@ public class MaxDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MaxDoubleVector(").put(columnIndex).put(")");
+        sink.put("MaxDoubleVector(").put(columnIndex).put(')');
     }
 }

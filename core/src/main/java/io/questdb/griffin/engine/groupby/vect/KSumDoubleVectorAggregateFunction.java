@@ -164,6 +164,6 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("KSumDoubleVector(").put(columnIndex).put(")");
+        sink.put("KSumDoubleVector(").put(columnIndex).put(')');
     }
 }

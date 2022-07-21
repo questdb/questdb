@@ -151,6 +151,6 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("AvgIntVector(").put(columnIndex).put(")");
+        sink.put("AvgIntVector(").put(columnIndex).put(')');
     }
 }

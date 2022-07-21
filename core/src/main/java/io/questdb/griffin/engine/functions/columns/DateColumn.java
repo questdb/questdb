@@ -59,7 +59,7 @@ public class DateColumn extends DateFunction implements ScalarFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("DateColumn");
+        sink.put("DateColumn(").put(columnIndex).put(')');
     }
 
     static {

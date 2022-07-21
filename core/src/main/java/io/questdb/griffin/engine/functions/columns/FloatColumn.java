@@ -59,7 +59,7 @@ public class FloatColumn extends FloatFunction implements ScalarFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("FloatColumn");
+        sink.put("FloatColumn(").put(columnIndex).put(')');
     }
 
     static {

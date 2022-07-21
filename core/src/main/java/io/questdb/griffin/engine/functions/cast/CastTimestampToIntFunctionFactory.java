@@ -67,7 +67,7 @@ public class CastTimestampToIntFunctionFactory implements FunctionFactory {
 
         @Override
         public void toSink(CharSink sink) {
-            sink.put("CastTimestampToInt(").put(arg).put(")");
+            sink.put("CastTimestampToInt(").put(arg).put(')');
         }
     }
 

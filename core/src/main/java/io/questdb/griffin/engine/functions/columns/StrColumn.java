@@ -69,7 +69,7 @@ public class StrColumn extends StrFunction implements ScalarFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("StrColumn");
+        sink.put("StrColumn(").put(columnIndex).put(')');
     }
 
     static {

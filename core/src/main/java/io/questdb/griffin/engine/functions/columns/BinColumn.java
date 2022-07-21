@@ -72,7 +72,7 @@ public class BinColumn extends BinFunction implements ScalarFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("BinColumn");
+        sink.put("BinColumn(").put(columnIndex).put(')');
     }
 
 }

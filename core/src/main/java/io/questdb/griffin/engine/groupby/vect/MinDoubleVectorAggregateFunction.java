@@ -133,6 +133,6 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MinDoubleVector(").put(columnIndex).put(")");
+        sink.put("MinDoubleVector(").put(columnIndex).put(')');
     }
 }

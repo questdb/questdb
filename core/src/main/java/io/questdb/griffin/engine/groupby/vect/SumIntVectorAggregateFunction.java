@@ -129,6 +129,6 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("SumIntVector(").put(columnIndex).put(")");
+        sink.put("SumIntVector(").put(columnIndex).put(')');
     }
 }

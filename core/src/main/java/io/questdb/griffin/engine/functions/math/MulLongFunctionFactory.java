@@ -79,7 +79,7 @@ public class MulLongFunctionFactory implements FunctionFactory {
 
         @Override
         public void toSink(CharSink sink) {
-            sink.put("MulLong(").put(left).put(",").put(right).put(")");
+            sink.put("MulLong(").put(left).put(",").put(right).put(')');
         }
     }
 }

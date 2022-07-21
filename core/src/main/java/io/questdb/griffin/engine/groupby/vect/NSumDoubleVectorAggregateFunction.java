@@ -174,6 +174,6 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("NSumDoubleVector(").put(columnIndex).put(")");
+        sink.put("NSumDoubleVector(").put(columnIndex).put(')');
     }
 }

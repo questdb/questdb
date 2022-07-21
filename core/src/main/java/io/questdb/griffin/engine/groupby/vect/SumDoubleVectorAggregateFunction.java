@@ -151,6 +151,6 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("SumDoubleVector(").put(columnIndex).put(")");
+        sink.put("SumDoubleVector(").put(columnIndex).put(')');
     }
 }

@@ -125,6 +125,6 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MaxIntVector(").put(columnIndex).put(")");
+        sink.put("MaxIntVector(").put(columnIndex).put(')');
     }
 }

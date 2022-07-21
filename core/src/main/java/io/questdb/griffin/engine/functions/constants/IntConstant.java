@@ -51,6 +51,6 @@ public class IntConstant extends IntFunction implements ConstantFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("IntConst(").put(value).put(")");
+        sink.put(value);
     }
 }

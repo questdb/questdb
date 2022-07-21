@@ -174,6 +174,6 @@ public interface Function extends Closeable, StatefulAtom, Sinkable {
     }
 
     default void toSink(CharSink sink) {
-        throw new UnsupportedOperationException("Unssuported for class" + getClass());
+        sink.put(getClass().getName());
     }
 }

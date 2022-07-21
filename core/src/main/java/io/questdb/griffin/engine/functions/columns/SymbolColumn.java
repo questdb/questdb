@@ -115,7 +115,7 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("SymbolColumn");
+        sink.put("SymbolColumn(").put(columnIndex).put(')');
     }
 
 }

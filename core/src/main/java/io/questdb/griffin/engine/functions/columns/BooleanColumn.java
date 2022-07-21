@@ -66,7 +66,7 @@ public class BooleanColumn extends BooleanFunction implements ScalarFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("BooleanColumn");
+        sink.put("BooleanColumn(").put(columnIndex).put(')');
     }
 
 }

@@ -80,7 +80,7 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public void toSink(CharSink sink) {
-            sink.put("SubTimestamp(").put(left).put(",").put(right).put(")");
+            sink.put("SubTimestamp(").put(left).put(",").put(right).put(')');
         }
     }
 }

@@ -147,6 +147,6 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     @Override
     default void toPlan(PlanSink sink) {
-        throw new UnsupportedOperationException("Unsupported for: " + getClass());
+        sink.type(getClass().getName());
     }
 }

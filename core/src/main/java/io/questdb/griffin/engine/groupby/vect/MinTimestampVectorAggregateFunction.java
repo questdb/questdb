@@ -129,6 +129,6 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MinTimestampVector(").put(columnIndex).put(")");
+        sink.put("MinTimestampVector(").put(columnIndex).put(')');
     }
 }

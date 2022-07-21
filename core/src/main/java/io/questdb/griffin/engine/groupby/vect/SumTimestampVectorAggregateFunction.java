@@ -131,6 +131,6 @@ public class SumTimestampVectorAggregateFunction extends TimestampFunction imple
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("SumTimestampVector(").put(columnIndex).put(")");
+        sink.put("SumTimestampVector(").put(columnIndex).put(')');
     }
 }

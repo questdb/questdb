@@ -59,7 +59,7 @@ public class ShortColumn extends ShortFunction implements ScalarFunction {
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("ShortColumn");
+        sink.put("ShortColumn(").put(columnIndex).put(')');
     }
 
     static {

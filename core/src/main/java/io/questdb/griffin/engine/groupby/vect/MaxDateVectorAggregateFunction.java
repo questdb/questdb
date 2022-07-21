@@ -124,6 +124,6 @@ public class MaxDateVectorAggregateFunction extends DateFunction implements Vect
 
     @Override
     public void toSink(CharSink sink) {
-        sink.put("MaxDateVector(").put(columnIndex).put(")");
+        sink.put("MaxDateVector(").put(columnIndex).put(')');
     }
 }
