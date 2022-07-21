@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class SumLongGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
@@ -96,5 +97,10 @@ public class SumLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("SumLong(").put(arg).put(")");
     }
 }

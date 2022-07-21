@@ -32,6 +32,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.CharSink;
 
 import java.util.Arrays;
 
@@ -169,5 +170,10 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
         this.transientSum = sum;
         this.transientCount = count;
         this.transientC = c;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("NSumDoubleVector(").put(columnIndex).put(")");
     }
 }

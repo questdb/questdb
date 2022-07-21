@@ -25,6 +25,8 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.Sequence;
@@ -55,7 +57,7 @@ import java.io.Closeable;
  * }
  *
  */
-public interface RecordCursorFactory extends Closeable, Sinkable {
+public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     @Override
     default void close() {
     }
@@ -116,7 +118,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     }
 
     default void toSink(CharSink sink) {
-        throw new UnsupportedOperationException();
+        throw new UnsupportedOperationException("Unsupported for: " + getClass());
     }
 
     default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
@@ -141,5 +143,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable {
     // via `testSymbolAPI()` call.
     default boolean fragmentedSymbolTables() {
         return false;
+    }
+
+    @Override
+    default void toPlan(PlanSink sink) {
+        throw new UnsupportedOperationException("Unsupported for: " + getClass());
     }
 }

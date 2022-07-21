@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.columns;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoLongFunction;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
@@ -78,5 +79,10 @@ public class GeoLongColumn extends GeoLongFunction {
                 COLUMNS[col * bits + bit - ColumnType.GEOLONG_MIN_BITS] = new GeoLongColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
             }
         }
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("GeoLongColumn");
     }
 }

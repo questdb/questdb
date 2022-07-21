@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class SumFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
@@ -89,5 +90,10 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("SumFloat(").put(arg).put(")");
     }
 }

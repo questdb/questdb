@@ -32,6 +32,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
@@ -146,5 +147,10 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
     @Override
     public boolean isReadThreadSafe() {
         return false;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("SumDoubleVector(").put(columnIndex).put(")");
     }
 }

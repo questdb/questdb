@@ -74,4 +74,10 @@ public class Long256Column extends Long256Function implements ScalarFunction {
     public boolean isReadThreadSafe() {
         return true;
     }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("Long256Column");
+    }
+
 }

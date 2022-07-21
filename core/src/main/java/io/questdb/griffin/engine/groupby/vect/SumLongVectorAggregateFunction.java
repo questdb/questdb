@@ -32,6 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.LongAdder;
 
@@ -126,5 +127,10 @@ public class SumLongVectorAggregateFunction extends LongFunction implements Vect
     @Override
     public boolean isReadThreadSafe() {
         return false;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("SumLongVector(").put(columnIndex).put(")");
     }
 }

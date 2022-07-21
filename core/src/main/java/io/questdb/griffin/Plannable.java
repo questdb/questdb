@@ -22,39 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.columns;
+package io.questdb.griffin;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.engine.functions.RecordFunction;
-import io.questdb.std.str.CharSink;
+public interface Plannable {
 
-public class RecordColumn extends RecordFunction {
-    private final int columnIndex;
-    private final RecordMetadata metadata;
-
-    public RecordColumn(int columnIndex, RecordMetadata metadata) {
-        this.columnIndex = columnIndex;
-        this.metadata = metadata;
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return false;
-    }
-
-    @Override
-    public Record getRecord(Record rec) {
-        return rec.getRecord(columnIndex);
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put("RecordColumn");
-    }
+    /**
+     * adds this object's data to plan
+     */
+    void toPlan(PlanSink sink);
 }

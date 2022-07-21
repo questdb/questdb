@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
@@ -62,4 +63,10 @@ public class BooleanColumn extends BooleanFunction implements ScalarFunction {
             COLUMNS.setQuick(i, new BooleanColumn(i));
         }
     }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("BooleanColumn");
+    }
+
 }
