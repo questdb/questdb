@@ -1186,4 +1186,18 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
             TestUtils.assertContains(e.getFlyweightMessage(), "ORDER BY expressions must appear in select list.");
         }
     }
+
+    @Test
+    public void testOrderByPriority() throws Exception {
+        assertQuery("a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+                    "select a from x order by a asc, a desc;",
+                    "create table x as (" +
+                        "select" +
+                                " x a," +
+                                " x % 3 b" +
+                                " from long_sequence(9)" +
+                                ")",
+                    null,
+                    true, true, true);
+    }
 }
