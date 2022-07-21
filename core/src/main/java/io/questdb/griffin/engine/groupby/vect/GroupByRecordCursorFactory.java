@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -311,6 +312,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("GroupByRecord");
+        sink.meta("vectorized").val(true);
+        sink.attr("groupByFunctions").val(vafList);
+        sink.attr("keyColumnIndex").val(keyColumnIndex);
+        sink.child(base);
     }
 
     private static class RostiRecordCursor implements RecordCursor {

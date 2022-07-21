@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MaxDateGroupByFunction extends DateFunction implements GroupByFunction, UnaryFunction {
@@ -76,5 +77,10 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     @Override
     public long getDate(Record rec) {
         return rec.getDate(valueIndex);
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("MaxDate(").put(arg).put(')');
     }
 }
