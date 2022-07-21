@@ -151,7 +151,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getCairoConfiguration().getIndexValueBlockSize());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getMaxSwapFileCount());
         Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());
-        Assert.assertEquals(509, configuration.getCairoConfiguration().getDetachedMkDirMode());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getBindVariablePoolSize());
 
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());

@@ -56,8 +56,6 @@ public interface CairoConfiguration {
     // null disables backups
     CharSequence getBackupRoot();
 
-    int getDetachedMkDirMode();
-
     CharSequence getDetachedRoot();
 
     CharSequence getBackupTempDirName();

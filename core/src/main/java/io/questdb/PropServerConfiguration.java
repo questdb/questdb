@@ -176,7 +176,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateFormat backupDirTimestampFormat;
     private final CharSequence backupTempDirName;
     private final int backupMkdirMode;
-    private final int detachedMkdirMode;
     private final int sqlFloatToStrCastScale;
     private final int sqlDoubleToStrCastScale;
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
@@ -794,7 +793,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.backupDirTimestampFormat = getTimestampFormat(properties, env);
             this.backupTempDirName = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_DIR_TMP_NAME, "tmp");
             this.backupMkdirMode = getInt(properties, env, PropertyKey.CAIRO_SQL_BACKUP_MKDIR_MODE, 509);
-            this.detachedMkdirMode = getInt(properties, env, PropertyKey.CAIRO_SQL_DETACHED_MKDIR_MODE, 509);
             this.columnIndexerQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY, 64));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, 128));
             this.o3CallbackQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_CALLBACK_QUEUE_CAPACITY, 128));
@@ -1819,11 +1817,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getBackupRoot() {
             return backupRoot;
-        }
-
-        @Override
-        public int getDetachedMkDirMode() {
-            return detachedMkdirMode;
         }
 
         @Override

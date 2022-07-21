@@ -91,11 +91,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getDetachedMkDirMode() {
-        return 509;
-    }
-
-    @Override
     public CharSequence getDetachedRoot() {
         return detachedRoot;
     }

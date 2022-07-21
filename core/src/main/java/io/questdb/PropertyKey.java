@@ -132,7 +132,6 @@ public enum PropertyKey {
     CAIRO_SQL_DETACHED_ROOT("cairo.sql.detached.root"),
     CAIRO_SQL_BACKUP_DIR_TMP_NAME("cairo.sql.backup.dir.tmp.name"),
     CAIRO_SQL_BACKUP_MKDIR_MODE("cairo.sql.backup.mkdir.mode"),
-    CAIRO_SQL_DETACHED_MKDIR_MODE("cairo.sql.detached.mkdir.mode"),
     CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY("cairo.column.indexer.queue.capacity"),
     CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY("cairo.vector.aggregate.queue.capacity"),
     CAIRO_O3_CALLBACK_QUEUE_CAPACITY("cairo.o3.callback.queue.capacity"),

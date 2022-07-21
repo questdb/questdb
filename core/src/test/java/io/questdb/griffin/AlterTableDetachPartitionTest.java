@@ -259,7 +259,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     StatusCode statusCode = writer.detachPartition(timestamp);
                     Assert.assertEquals(StatusCode.PARTITION_FOLDER_CANNOT_UNDO_RENAME, statusCode);
                 }
-
                 try {
                     assertContent("does not matter", tableName);
                     Assert.fail();
@@ -286,24 +285,23 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         3
                 );
 
-                String expected = "ts\ti\tl\n" +
-                        "2022-06-01T07:11:59.900000Z\t1\t1\n" +
-                        "2022-06-01T14:23:59.800000Z\t2\t2\n" +
-                        "2022-06-01T21:35:59.700000Z\t3\t3\n" +
-                        "2022-06-02T04:47:59.600000Z\t4\t4\n" +
-                        "2022-06-02T11:59:59.500000Z\t5\t5\n" +
-                        "2022-06-02T19:11:59.400000Z\t6\t6\n" +
-                        "2022-06-03T02:23:59.300000Z\t7\t7\n" +
-                        "2022-06-03T09:35:59.200000Z\t8\t8\n" +
-                        "2022-06-03T16:47:59.100000Z\t9\t9\n" +
-                        "2022-06-03T23:59:59.000000Z\t10\t10\n";
-
-                assertContent(expected, tableName);
-                engine.clear();
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 engine.clear();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
-                assertContent(expected, tableName);
+                assertContent(
+                        "ts\ti\tl\n" +
+                                "2022-06-01T07:11:59.900000Z\t1\t1\n" +
+                                "2022-06-01T14:23:59.800000Z\t2\t2\n" +
+                                "2022-06-01T21:35:59.700000Z\t3\t3\n" +
+                                "2022-06-02T04:47:59.600000Z\t4\t4\n" +
+                                "2022-06-02T11:59:59.500000Z\t5\t5\n" +
+                                "2022-06-02T19:11:59.400000Z\t6\t6\n" +
+                                "2022-06-03T02:23:59.300000Z\t7\t7\n" +
+                                "2022-06-03T09:35:59.200000Z\t8\t8\n" +
+                                "2022-06-03T16:47:59.100000Z\t9\t9\n" +
+                                "2022-06-03T23:59:59.000000Z\t10\t10\n",
+                        tableName
+                );
             }
         });
     }
@@ -361,18 +359,18 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.detachPartition(timestamp);
                     Assert.assertEquals(9, writer.size());
                     Assert.assertFalse(writer.inTransaction());
-                    path.of(configuration.getDetachedRoot())
-                            .concat(tableName)
-                            .concat(timestampDay)
-                            .$();
-                    Assert.assertFalse(Files.exists(path));
-                    path.of(configuration.getDetachedRoot())
-                            .concat(tableName)
-                            .concat(timestampDay)
-                            .put(DETACHED_DIR_MARKER)
-                            .$();
-                    Assert.assertTrue(Files.exists(path));
                 }
+                path.of(configuration.getDetachedRoot())
+                        .concat(tableName)
+                        .concat(timestampDay)
+                        .$();
+                Assert.assertFalse(Files.exists(path));
+                path.of(configuration.getDetachedRoot())
+                        .concat(tableName)
+                        .concat(timestampDay)
+                        .put(DETACHED_DIR_MARKER)
+                        .$();
+                Assert.assertTrue(Files.exists(path));
 
                 engine.clear();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
@@ -513,12 +511,11 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         tableName
                 );
 
-                engine.clear();
                 dropCurrentVersionOfPartition(tableName, timestampDay);
 
                 // reattach old version
                 engine.clear();
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'");
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'");
                 assertContent(
                         "l\ti\tts\n" +
                                 "1\t1\t2022-06-01T07:59:59.916666Z\n" +
@@ -615,7 +612,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 // reattach old version
                 assertFailure(
-                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'",
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
                         "table '" + tableName + "' could not be altered: [-100] Detached partition metadata [structure_version] is not compatible with current table metadata"
                 );
             }
@@ -676,6 +673,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 // drop the partition
+                engine.clear();
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 // insert data, which will create the partition again
@@ -776,51 +774,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 "VTJW\t4\t2022-06-02T07:59:59.666664Z\n" +
                                 "PEHN\t5\t2022-06-02T15:59:59.583330Z\n" +
                                 "\t6\t2022-06-02T23:59:59.499996Z\n",
-                        tableName
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testDetachAttachPartitionMissingMetadata() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = "tabDetachAttachMissingMeta";
-            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                createPopulateTable(tab
-                                .timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        10,
-                        "2022-06-01",
-                        3
-                );
-                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
-
-                // remove _meta.detached simply prevents metadata checking, all else is the same
-                engine.clear();
-                path.of(configuration.getDetachedRoot())
-                        .concat(tableName)
-                        .concat("2022-06-02")
-                        .put(DETACHED_DIR_MARKER)
-                        .concat(DETACHED_DIR_META_FOLDER_NAME)
-                        .$();
-                Assert.assertEquals(0, Files.rmdir(path));
-
-                engine.clear();
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
-                assertContent(
-                        "ts\ti\tl\n" +
-                                "2022-06-01T07:11:59.900000Z\t1\t1\n" +
-                                "2022-06-01T14:23:59.800000Z\t2\t2\n" +
-                                "2022-06-01T21:35:59.700000Z\t3\t3\n" +
-                                "2022-06-02T04:47:59.600000Z\t4\t4\n" +
-                                "2022-06-02T11:59:59.500000Z\t5\t5\n" +
-                                "2022-06-02T19:11:59.400000Z\t6\t6\n" +
-                                "2022-06-03T02:23:59.300000Z\t7\t7\n" +
-                                "2022-06-03T09:35:59.200000Z\t8\t8\n" +
-                                "2022-06-03T16:47:59.100000Z\t9\t9\n" +
-                                "2022-06-03T23:59:59.000000Z\t10\t10\n",
                         tableName
                 );
             }
