@@ -89,9 +89,10 @@ public class MessageBusImpl implements MessageBus {
     private final SPSequence textImportPubSeq;
     private final MCSequence textImportSubSeq;
     private final SCSequence textImportColSeq;
-    private final RingQueue<TextImportRequestTask> textImportRequestProcessingQueue;
-    private final MPSequence textImportRequestProcessingPubSeq;
-    private final SCSequence textImportRequestProcessingSubSeq;
+    private final RingQueue<TextImportRequestTask> textImportRequestQueue;
+    private final MPSequence textImportRequestPubSeq;
+    private final SCSequence textImportRequestSubSeq;
+
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
         this.indexerQueue = new RingQueue<>(ColumnIndexerTask::new, configuration.getColumnIndexerQueueCapacity());
@@ -186,10 +187,10 @@ public class MessageBusImpl implements MessageBus {
         textImportPubSeq.then(textImportSubSeq).then(textImportColSeq).then(textImportPubSeq);
 
         // We allow only a single parallel import to be in-flight, hence queue size of 1.
-        this.textImportRequestProcessingQueue = new RingQueue<>(TextImportRequestTask::new, 1);
-        this.textImportRequestProcessingPubSeq = new MPSequence(textImportRequestProcessingQueue.getCycle());
-        this.textImportRequestProcessingSubSeq = new SCSequence();
-        textImportRequestProcessingPubSeq.then(textImportRequestProcessingSubSeq).then(textImportRequestProcessingPubSeq);
+        this.textImportRequestQueue = new RingQueue<>(TextImportRequestTask::new, 1);
+        this.textImportRequestPubSeq = new MPSequence(textImportRequestQueue.getCycle());
+        this.textImportRequestSubSeq = new SCSequence();
+        textImportRequestPubSeq.then(textImportRequestSubSeq).then(textImportRequestPubSeq);
     }
 
     @Override
@@ -410,17 +411,17 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public RingQueue<TextImportRequestTask> getTextImportRequestProcessingQueue() {
-        return textImportRequestProcessingQueue;
+    public RingQueue<TextImportRequestTask> getTextImportRequestQueue() {
+        return textImportRequestQueue;
     }
 
     @Override
-    public Sequence getTextImportRequestProcessingPubSeq() {
-        return textImportRequestProcessingPubSeq;
+    public Sequence getTextImportRequestPubSeq() {
+        return textImportRequestPubSeq;
     }
 
     @Override
-    public Sequence getTextImportRequestProcessingSubSeq() {
-        return textImportRequestProcessingSubSeq;
+    public Sequence getTextImportRequestSubSeq() {
+        return textImportRequestSubSeq;
     }
 }

@@ -48,8 +48,8 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.io.IOException;
 
-public class TextImportRequestProcessingJob extends SynchronizedJob implements Closeable {
-    private static final Log LOG = LogFactory.getLog(TextImportRequestProcessingJob.class);
+public class TextImportRequestJob extends SynchronizedJob implements Closeable {
+    private static final Log LOG = LogFactory.getLog(TextImportRequestJob.class);
 
     private final RingQueue<TextImportRequestTask> requestProcessingQueue;
     private final Sequence requestProcessingSubSeq;
@@ -67,13 +67,13 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
     private ParallelCsvFileImporter importer;
     private final TextImportExecutionContext textImportExecutionContext;
 
-    public TextImportRequestProcessingJob(
+    public TextImportRequestJob(
             final CairoEngine engine,
             int workerCount,
             @Nullable FunctionFactoryCache functionFactoryCache
     ) throws SqlException {
-        this.requestProcessingQueue = engine.getMessageBus().getTextImportRequestProcessingQueue();
-        this.requestProcessingSubSeq = engine.getMessageBus().getTextImportRequestProcessingSubSeq();
+        this.requestProcessingQueue = engine.getMessageBus().getTextImportRequestQueue();
+        this.requestProcessingSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
         this.importer = new ParallelCsvFileImporter(engine, workerCount);
 
         CairoConfiguration configuration = engine.getConfiguration();
@@ -154,7 +154,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
                         e.getMessage()
                 );
             } finally {
-                textImportExecutionContext.setIsActive(false);
+                textImportExecutionContext.setActive(false);
                 requestProcessingSubSeq.done(cursor);
             }
             enforceLogRetention();

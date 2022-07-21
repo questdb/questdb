@@ -701,7 +701,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 ") timestamp(ts) partition by DAY", sqlExecutionContext);
 
         parallelImportStatusLogKeepNDays = daysToKeep;
-        new TextImportRequestProcessingJob(engine, 1, null).close();
+        new TextImportRequestJob(engine, 1, null).close();
         assertQuery("count\n"+ daysToKeep +"\n",
                 "select count() from " + backlogTableName,
                 null,
@@ -2532,7 +2532,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             try {
                 compiler.compile("copy xy from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
-                engine.getTextImportExecutionContext().setIsActive(false);
+                engine.getTextImportExecutionContext().setActive(false);
                 compiler.compile("copy xy from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
             } catch (Exception e) {

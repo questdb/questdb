@@ -44,15 +44,12 @@ import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
 import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -1952,11 +1949,11 @@ public class SqlCompiler implements Closeable {
 
     private void addTextImportRequest(CopyModel model, @Nullable CharSequence fileName) throws SqlException {
 
-        RingQueue<TextImportRequestTask> textImportRequestProcessingQueue = messageBus.getTextImportRequestProcessingQueue();
-        Sequence textImportRequestProcessingPubSeq = messageBus.getTextImportRequestProcessingPubSeq();
+        RingQueue<TextImportRequestTask> textImportRequestProcessingQueue = messageBus.getTextImportRequestQueue();
+        Sequence textImportRequestProcessingPubSeq = messageBus.getTextImportRequestPubSeq();
         TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
 
-        boolean isActive = textImportExecutionContext.getIsActive();
+        boolean isActive = textImportExecutionContext.isActive();
         AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
         if (model.isCancel()) {
             if (isActive) {
@@ -1982,7 +1979,7 @@ public class SqlCompiler implements Closeable {
 
                     circuitBreaker.reset();
                     textImportRequestProcessingPubSeq.done(processingCursor);
-                    textImportExecutionContext.setIsActive(true);
+                    textImportExecutionContext.setActive(true);
                 } else {
                     throw SqlException.$(0, "Unable to process the import request. The processing queue may not be configured correctly.");
                 }

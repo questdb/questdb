@@ -250,17 +250,17 @@ public class MessageBusStub implements MessageBus {
     }
 
     @Override
-    public RingQueue<TextImportRequestTask> getTextImportRequestProcessingQueue() {
+    public RingQueue<TextImportRequestTask> getTextImportRequestQueue() {
         return null;
     }
 
     @Override
-    public Sequence getTextImportRequestProcessingPubSeq() {
+    public Sequence getTextImportRequestPubSeq() {
         return null;
     }
 
     @Override
-    public Sequence getTextImportRequestProcessingSubSeq() {
+    public Sequence getTextImportRequestSubSeq() {
         return null;
     }
 }

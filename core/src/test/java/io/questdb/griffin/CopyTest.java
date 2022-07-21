@@ -27,7 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.TextImportRequestProcessingJob;
+import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Os;
@@ -484,7 +484,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     private void drainProcessingQueue() throws Exception {
-        try (TextImportRequestProcessingJob processingJob = new TextImportRequestProcessingJob(engine, 1, null)) {
+        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
             while (processingJob.run(0)) {
                 Os.pause();
             }
@@ -557,7 +557,7 @@ public class CopyTest extends AbstractGriffinTest {
             CountDownLatch processed = new CountDownLatch(1);
 
             compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log" , sqlExecutionContext);
-            try (TextImportRequestProcessingJob processingJob = new TextImportRequestProcessingJob(engine, 1, null)) {
+            try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
 
                 Thread processingThread = createJobThread(processingJob, processed);
 

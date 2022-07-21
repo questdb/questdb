@@ -39,11 +39,11 @@ public class TextImportExecutionContext {
         return circuitBreaker;
     }
 
-    public boolean getIsActive() {
+    public boolean isActive() {
         return isActive.get();
     }
 
-    public void setIsActive(boolean flag) {
+    public void setActive(boolean flag) {
          isActive.set(flag);
     }
 }

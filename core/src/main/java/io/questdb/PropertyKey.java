@@ -132,8 +132,6 @@ public enum PropertyKey {
     CAIRO_SQL_COPY_WORK_ROOT("cairo.sql.copy.work.root"),
     CAIRO_SQL_COPY_MAX_INDEX_CHUNK_SIZE("cairo.sql.copy.max.index.chunk.size"),
     CAIRO_SQL_COPY_QUEUE_CAPACITY("cairo.sql.copy.queue.capacity"),
-    CAIRO_SQL_COPY_REQUEST_TIMEOUT_MICRO("cairo.sql.copy.request.timeout.micro"),
-    CAIRO_SQL_COPY_REQUEST_QUEUE_CAPACITY("cairo.sql.copy.request.queue.capacity"),
     CAIRO_SQL_COPY_LOG_RETENTION_DAYS("cairo.sql.copy.log.retention.days"),
 
     CAIRO_SQL_BACKUP_ROOT("cairo.sql.backup.root"),
