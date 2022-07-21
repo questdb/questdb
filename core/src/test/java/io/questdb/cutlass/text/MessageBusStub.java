@@ -255,7 +255,7 @@ public class MessageBusStub implements MessageBus {
     }
 
     @Override
-    public Sequence getTextImportRequestPubSeq() {
+    public MPSequence getTextImportRequestPubSeq() {
         return null;
     }
 

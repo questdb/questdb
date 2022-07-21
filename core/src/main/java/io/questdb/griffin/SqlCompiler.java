@@ -44,8 +44,8 @@ import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
@@ -1949,12 +1949,12 @@ public class SqlCompiler implements Closeable {
 
     private void addTextImportRequest(CopyModel model, @Nullable CharSequence fileName) throws SqlException {
 
-        RingQueue<TextImportRequestTask> textImportRequestProcessingQueue = messageBus.getTextImportRequestQueue();
-        Sequence textImportRequestProcessingPubSeq = messageBus.getTextImportRequestPubSeq();
-        TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
+        final RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
+        final MPSequence textImportRequestPubSeq = messageBus.getTextImportRequestPubSeq();
+        final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
+        final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
 
         boolean isActive = textImportExecutionContext.isActive();
-        AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
         if (model.isCancel()) {
             if (isActive) {
                 circuitBreaker.cancel();
@@ -1963,10 +1963,10 @@ public class SqlCompiler implements Closeable {
             }
         } else {
             if (!isActive) {
-                long processingCursor = textImportRequestProcessingPubSeq.next();
+                long processingCursor = textImportRequestPubSeq.next();
                 if (processingCursor > -1) {
-                    CharSequence tableName = GenericLexer.unquote(model.getTableName().token);
-                    TextImportRequestTask task = textImportRequestProcessingQueue.get(processingCursor);
+                    final CharSequence tableName = GenericLexer.unquote(model.getTableName().token);
+                    final TextImportRequestTask task = textImportRequestQueue.get(processingCursor);
 
                     assert fileName != null;
                     task.of(Objects.toString(tableName, null),
@@ -1978,10 +1978,10 @@ public class SqlCompiler implements Closeable {
                             model.getPartitionBy());
 
                     circuitBreaker.reset();
-                    textImportRequestProcessingPubSeq.done(processingCursor);
                     textImportExecutionContext.setActive(true);
+                    textImportRequestPubSeq.done(processingCursor);
                 } else {
-                    throw SqlException.$(0, "Unable to process the import request. The processing queue may not be configured correctly.");
+                    throw SqlException.$(0, "Unable to process the import request. Another import request may be in progress.");
                 }
             } else {
                 throw SqlException.$(0, "Another import request is in progress.");

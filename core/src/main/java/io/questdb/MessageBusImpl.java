@@ -416,7 +416,7 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public Sequence getTextImportRequestPubSeq() {
+    public MPSequence getTextImportRequestPubSeq() {
         return textImportRequestPubSeq;
     }
 

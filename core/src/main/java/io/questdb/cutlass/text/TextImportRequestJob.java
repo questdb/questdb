@@ -51,8 +51,8 @@ import java.io.IOException;
 public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(TextImportRequestJob.class);
 
-    private final RingQueue<TextImportRequestTask> requestProcessingQueue;
-    private final Sequence requestProcessingSubSeq;
+    private final RingQueue<TextImportRequestTask> requestQueue;
+    private final Sequence requestSubSeq;
     private final CharSequence statusTableName;
     private final MicrosecondClock clock;
     private final int logRetentionDays;
@@ -72,8 +72,8 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             int workerCount,
             @Nullable FunctionFactoryCache functionFactoryCache
     ) throws SqlException {
-        this.requestProcessingQueue = engine.getMessageBus().getTextImportRequestQueue();
-        this.requestProcessingSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
+        this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();
+        this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
         this.importer = new ParallelCsvFileImporter(engine, workerCount);
 
         CairoConfiguration configuration = engine.getConfiguration();
@@ -129,11 +129,11 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
 
     @Override
     protected boolean runSerially() {
-        long cursor = requestProcessingSubSeq.next();
+        long cursor = requestSubSeq.next();
         if (cursor > -1) {
             idSink.clear();
             Numbers.appendHex(idSink, rnd.nextPositiveLong(), true);
-            task = requestProcessingQueue.get(cursor);
+            task = requestQueue.get(cursor);
             try {
                 importer.of(
                         task.getTableName(),
@@ -154,8 +154,8 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         e.getMessage()
                 );
             } finally {
+                requestSubSeq.done(cursor);
                 textImportExecutionContext.setActive(false);
-                requestProcessingSubSeq.done(cursor);
             }
             enforceLogRetention();
             return true;

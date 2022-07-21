@@ -30,11 +30,6 @@ public class TextImportExecutionContext {
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     private final AtomicBoolean isActive = new AtomicBoolean();
 
-    public void reset() {
-        circuitBreaker.reset();
-        isActive.set(false);
-    }
-
     public AtomicBooleanCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }

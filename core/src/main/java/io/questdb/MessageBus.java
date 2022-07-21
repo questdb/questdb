@@ -121,7 +121,7 @@ public interface MessageBus extends Closeable {
 
     RingQueue<TextImportRequestTask> getTextImportRequestQueue();
 
-    Sequence getTextImportRequestPubSeq();
+    MPSequence getTextImportRequestPubSeq();
 
     Sequence getTextImportRequestSubSeq();
 }
