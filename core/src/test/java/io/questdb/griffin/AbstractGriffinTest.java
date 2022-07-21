@@ -1406,7 +1406,7 @@ public class AbstractGriffinTest extends AbstractCairoTest {
 
     protected <T extends AbstractOperation> void executeOperation(
             String query,
-            int opType,
+            short opType,
             Function<CompiledQuery, T> op
     ) throws SqlException {
         CompiledQuery cq = compiler.compile(query, sqlExecutionContext);

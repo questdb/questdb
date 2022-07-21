@@ -299,6 +299,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         "2022-06-03T23:59:59.000000Z\t10\t10\n";
 
                 assertContent(expected, tableName);
+                engine.clear();
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 engine.clear();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
@@ -337,8 +338,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 engine.clear();
-                long timestamp = TimestampFormatUtils.parseTimestamp("2022-06-01T00:00:00.000000Z");
-                long timestamp2 = TimestampFormatUtils.parseTimestamp("2022-06-01T09:59:59.999999Z");
+                String timestampDay = "2022-06-01";
+                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T00:00:00.000000Z");
+                long timestamp2 = TimestampFormatUtils.parseTimestamp(timestampDay + "T09:59:59.999999Z");
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                     // structural change
                     writer.addColumn("new_column", ColumnType.INT);
@@ -359,10 +361,21 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     writer.detachPartition(timestamp);
                     Assert.assertEquals(9, writer.size());
                     Assert.assertFalse(writer.inTransaction());
+                    path.of(configuration.getDetachedRoot())
+                            .concat(tableName)
+                            .concat(timestampDay)
+                            .$();
+                    Assert.assertFalse(Files.exists(path));
+                    path.of(configuration.getDetachedRoot())
+                            .concat(tableName)
+                            .concat(timestampDay)
+                            .put(DETACHED_DIR_MARKER)
+                            .$();
+                    Assert.assertTrue(Files.exists(path));
                 }
 
                 engine.clear();
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
                         "l\ti\tts\tnew_column\n" +
                                 "2802\t2802\t2022-06-01T00:00:00.000000Z\t2802\n" +
@@ -462,6 +475,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 // drop the partition
+                engine.clear();
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
                 // insert data, which will create the partition again
@@ -499,6 +513,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         tableName
                 );
 
+                engine.clear();
                 dropCurrentVersionOfPartition(tableName, timestampDay);
 
                 // reattach old version
@@ -783,6 +798,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
 
                 // remove _meta.detached simply prevents metadata checking, all else is the same
+                engine.clear();
                 path.of(configuration.getDetachedRoot())
                         .concat(tableName)
                         .concat("2022-06-02")
@@ -993,7 +1009,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         sink.clear();
                         Chars.utf8DecodeZ(pUtf8NameZ, sink);
                         other.of(path).concat(sink).$();
-                        System.out.printf("WANNA REMOVE: %s%n", other);
                         Assert.assertTrue(Files.remove(other));
                     }
                 });
@@ -1081,6 +1096,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         // drop the latest version of the partition
         compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
         // resurface the hidden detached partition
+        engine.clear();
         Assert.assertTrue(Files.rename(other, path));
     }
 
