@@ -286,7 +286,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
-                engine.clear();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertContent(
                         "ts\ti\tl\n" +
@@ -372,7 +371,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         .$();
                 Assert.assertTrue(Files.exists(path));
 
-                engine.clear();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
                         "l\ti\tts\tnew_column\n" +
@@ -473,7 +471,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 // drop the partition
-                engine.clear();
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
                 // insert data, which will create the partition again
@@ -514,7 +511,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 dropCurrentVersionOfPartition(tableName, timestampDay);
 
                 // reattach old version
-                engine.clear();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'");
                 assertContent(
                         "l\ti\tts\n" +
@@ -673,7 +669,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 // drop the partition
-                engine.clear();
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 // insert data, which will create the partition again
@@ -704,7 +699,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 dropCurrentVersionOfPartition(tableName, timestampDay);
 
                 // reattach old version
-                engine.clear();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
                         "l\ti\tts\tnew_column\n" +
@@ -774,6 +768,49 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 "VTJW\t4\t2022-06-02T07:59:59.666664Z\n" +
                                 "PEHN\t5\t2022-06-02T15:59:59.583330Z\n" +
                                 "\t6\t2022-06-02T23:59:59.499996Z\n",
+                        tableName
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDetachAttachPartitionMissingMetadata() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tabDetachAttachMissingMeta";
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(tab
+                                .timestamp("ts")
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG),
+                        10,
+                        "2022-06-01",
+                        3
+                );
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
+
+                // remove _meta.detached simply prevents metadata checking, all else is the same
+                path.of(configuration.getDetachedRoot())
+                        .concat(tableName)
+                        .concat("2022-06-02")
+                        .put(DETACHED_DIR_MARKER)
+                        .concat(DETACHED_DIR_META_FOLDER_NAME)
+                        .$();
+                Assert.assertEquals(0, Files.rmdir(path));
+
+                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
+                assertContent(
+                        "ts\ti\tl\n" +
+                                "2022-06-01T07:11:59.900000Z\t1\t1\n" +
+                                "2022-06-01T14:23:59.800000Z\t2\t2\n" +
+                                "2022-06-01T21:35:59.700000Z\t3\t3\n" +
+                                "2022-06-02T04:47:59.600000Z\t4\t4\n" +
+                                "2022-06-02T11:59:59.500000Z\t5\t5\n" +
+                                "2022-06-02T19:11:59.400000Z\t6\t6\n" +
+                                "2022-06-03T02:23:59.300000Z\t7\t7\n" +
+                                "2022-06-03T09:35:59.200000Z\t8\t8\n" +
+                                "2022-06-03T16:47:59.100000Z\t9\t9\n" +
+                                "2022-06-03T23:59:59.000000Z\t10\t10\n",
                         tableName
                 );
             }
@@ -1049,7 +1086,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         // drop the latest version of the partition
         compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
         // resurface the hidden detached partition
-        engine.clear();
         Assert.assertTrue(Files.rename(other, path));
     }
 
@@ -1085,7 +1121,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
     private void assertFailure(String operation, String errorMsg) {
         try {
-            engine.clear();
             compile(operation, sqlExecutionContext);
             Assert.fail();
         } catch (SqlException e) {
