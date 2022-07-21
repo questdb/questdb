@@ -119,20 +119,9 @@ public interface MessageBus extends Closeable {
 
     SCSequence getTextImportColSeq();
 
-    RingQueue<TextImportRequestTask> getTextImportRequestCollectingQueue();
-
-    Sequence getTextImportRequestCollectingPubSeq();
-
-    Sequence getTextImportRequestCollectingSubSeq();
-
     RingQueue<TextImportRequestTask> getTextImportRequestProcessingQueue();
 
     Sequence getTextImportRequestProcessingPubSeq();
 
     Sequence getTextImportRequestProcessingSubSeq();
-
-    Sequence getTextImportRequestProcessingComplSeq();
-
-    FanOut getTextImportResponseFanOut();
-
 }

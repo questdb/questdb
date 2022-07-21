@@ -389,10 +389,6 @@ public interface CairoConfiguration {
         return IOURingFacadeImpl.INSTANCE;
     }
 
-    long getSqlCopyRequestTimeoutMicro();
-
-    int getSqlCopyRequestQueueCapacity();
-
     int getSqlCopyLogRetentionDays();
 
     boolean isIOURingEnabled();

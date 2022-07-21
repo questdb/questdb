@@ -32,7 +32,6 @@ import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.cutlass.text.TextImportJob;
-import io.questdb.cutlass.text.TextImportRequestCollectingJob;
 import io.questdb.cutlass.text.TextImportRequestProcessingJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
@@ -231,7 +230,6 @@ public class ServerMain {
             TextImportJob.assignToPool(cairoEngine.getMessageBus(), workerPool);
 
             if (configuration.getCairoConfiguration().getSqlCopyInputRoot() != null) {
-                workerPool.assign(new TextImportRequestCollectingJob(cairoEngine));
                 final TextImportRequestProcessingJob textImportRequestProcessingJob = new TextImportRequestProcessingJob(
                         cairoEngine,
                         // save CPU resources for collecting and processing jobs

@@ -120,7 +120,6 @@ public class SqlCompiler implements Closeable {
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
-    private final SCSequence textImportResponseSubSeq = new SCSequence();
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
         this(engine, null, null);
@@ -869,9 +868,6 @@ public class SqlCompiler implements Closeable {
         Misc.free(renamePath);
         Misc.free(textLoader);
         Misc.free(rebuildIndex);
-
-        textImportResponseSubSeq.clear();
-        messageBus.getTextImportResponseFanOut().remove(textImportResponseSubSeq);
     }
 
     @NotNull
@@ -1894,15 +1890,8 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(0, "Invalid worker count set [value=").put(workerCount).put("]");
                 }
 
-                MessageBus bus = executionContext.getMessageBus();
-                RingQueue<TextImportRequestTask> queue = bus.getTextImportRequestCollectingQueue();
-                if (queue.getCycle() < 1) {
-                    throw SqlException.$(0, "Parallel import requests queue size can't be zero!");
-                }
-                final long correlationId = TextImportRequestTask.newTaskCorrelationId();
-                final long requestTimeout = configuration.getSqlCopyRequestTimeoutMicro();
                 if (model.isCancel()) {
-                    addTextImportRequest(correlationId, requestTimeout, model, null);
+                    addTextImportRequest(model, null);
                 } else {
                     if (model.getTimestampFormat() == null) {
                         model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
@@ -1910,9 +1899,8 @@ public class SqlCompiler implements Closeable {
                     if (model.getDelimiter() < 0) {
                         model.setDelimiter((byte) ',');
                     }
-                    addTextImportRequest(correlationId, requestTimeout, model, fileName);
+                    addTextImportRequest(model, fileName);
                 }
-                copyAwaitAsyncAck(correlationId, requestTimeout);
                 return;
             }
 
@@ -1962,86 +1950,45 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    private void addTextImportRequest(long correlationId, long timeout, CopyModel model, @Nullable CharSequence fileName) throws SqlException {
-        final MicrosecondClock clock = configuration.getMicrosecondClock();
-        final long start = clock.getTicks();
-        final Sequence textImportPubSeq = messageBus.getTextImportRequestCollectingPubSeq();
-        final RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestCollectingQueue();
-        final FanOut textImportResponseFanOut = messageBus.getTextImportResponseFanOut();
-        while (true) {
-            long cursor = textImportPubSeq.next();
-            if (cursor < 0) {
-                if (clock.getTicks() - start > timeout) {
-                    throw SqlException.$(0, "Parallel import request timeout.");
-                }
-                Os.pause();
-                continue;
-            }
+    private void addTextImportRequest(CopyModel model, @Nullable CharSequence fileName) throws SqlException {
 
-            TextImportRequestTask task = textImportRequestQueue.get(cursor);
-            task.setCorrelationId(correlationId);
-            CharSequence tableName = GenericLexer.unquote(model.getTableName().token);
-            if (model.isCancel()) {
-                task.ofCancel(Objects.toString(tableName, null));
+        RingQueue<TextImportRequestTask> textImportRequestProcessingQueue = messageBus.getTextImportRequestProcessingQueue();
+        Sequence textImportRequestProcessingPubSeq = messageBus.getTextImportRequestProcessingPubSeq();
+        TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
+
+        boolean isActive = textImportExecutionContext.getIsActive();
+        AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
+        if (model.isCancel()) {
+            if (isActive) {
+                circuitBreaker.cancel();
             } else {
-                assert fileName != null;
-                task.of(Objects.toString(tableName, null),
-                        Objects.toString(fileName, null),
-                        model.isHeader(),
-                        Objects.toString(model.getTimestampColumnName(), null),
-                        model.getDelimiter(),
-                        Objects.toString(model.getTimestampFormat(), null),
-                        model.getPartitionBy());
+                throw SqlException.$(0, "There is no active import to cancel.");
             }
+        } else {
+            if (!isActive) {
+                long processingCursor = textImportRequestProcessingPubSeq.next();
+                if (processingCursor > -1) {
+                    CharSequence tableName = GenericLexer.unquote(model.getTableName().token);
+                    TextImportRequestTask task = textImportRequestProcessingQueue.get(processingCursor);
 
-            textImportResponseFanOut.and(textImportResponseSubSeq);
-            textImportPubSeq.done(cursor);
-            return;
-        }
-    }
+                    assert fileName != null;
+                    task.of(Objects.toString(tableName, null),
+                            Objects.toString(fileName, null),
+                            model.isHeader(),
+                            Objects.toString(model.getTimestampColumnName(), null),
+                            model.getDelimiter(),
+                            Objects.toString(model.getTimestampFormat(), null),
+                            model.getPartitionBy());
 
-    private void copyAwaitAsyncAck(long correlationId, long timeout) throws SqlException {
-        final MicrosecondClock clock = configuration.getMicrosecondClock();
-        final FanOut textImportResponseFanOut = messageBus.getTextImportResponseFanOut();
-        final RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestCollectingQueue();
-
-        final long start = clock.getTicks();
-        while (true) {
-            long seq = textImportResponseSubSeq.next();
-            if (seq < 0) {
-                if (clock.getTicks() - start > timeout) {
-                    throw SqlException.$(0, "async copy has not been acknowledged, it may still go ahead");
+                    circuitBreaker.reset();
+                    textImportRequestProcessingPubSeq.done(processingCursor);
+                    textImportExecutionContext.setIsActive(true);
+                } else {
+                    throw SqlException.$(0, "Unable to process the import request. The processing queue may not be configured correctly.");
                 }
-                Os.pause();
-                continue;
+            } else {
+                throw SqlException.$(0, "Another import request is in progress.");
             }
-
-            boolean statusReceived = false;
-            try {
-                TextImportRequestTask task = textImportRequestQueue.get(seq);
-                if (task.getCorrelationId() == correlationId) {
-                    statusReceived = true;
-                    byte status = task.getStatus();
-                    if (status != TextImportRequestTask.STATUS_ACK) {
-                        if (task.isCancel()) {
-                            if (status == TextImportRequestTask.STATUS_REJ_ACTIVE_CANCEL) {
-                                throw SqlException.$(0, "Another cancel request is in progress.");
-                            } else {
-                                throw SqlException.$(0, "There is no active import to cancel.");
-                            }
-                        } else {
-                            throw SqlException.$(0, "Another import request is in progress.");
-                        }
-                    }
-                }
-            } finally {
-                textImportResponseSubSeq.done(seq);
-                if (statusReceived) {
-                    textImportResponseFanOut.remove(textImportResponseSubSeq);
-                    textImportResponseSubSeq.clear();
-                }
-            }
-            break;
         }
     }
 

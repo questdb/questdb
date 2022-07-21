@@ -409,16 +409,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getSqlCopyRequestTimeoutMicro() {
-        return 3_000_000L;
-    }
-
-    @Override
-    public int getSqlCopyRequestQueueCapacity() {
-        return 8;
-    }
-
-    @Override
     public int getSqlCopyLogRetentionDays() {
         return 3;
     }

@@ -65,6 +65,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
     private TextImportRequestTask task;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
     private ParallelCsvFileImporter importer;
+    private final TextImportExecutionContext textImportExecutionContext;
 
     public TextImportRequestProcessingJob(
             final CairoEngine engine,
@@ -97,6 +98,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
         this.rnd = new Rnd(this.clock.getTicks(), this.clock.getTicks());
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
+        this.textImportExecutionContext = engine.getTextImportExecutionContext();
         enforceLogRetention();
     }
 
@@ -141,7 +143,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
                         task.getTimestampColumnName(),
                         task.getTimestampFormat(),
                         task.isHeaderFlag(),
-                        task.getCircuitBreaker()
+                        textImportExecutionContext.getCircuitBreaker()
                 );
                 importer.setStatusReporter(updateStatusRef);
                 importer.process();
@@ -152,6 +154,7 @@ public class TextImportRequestProcessingJob extends SynchronizedJob implements C
                         e.getMessage()
                 );
             } finally {
+                textImportExecutionContext.setIsActive(false);
                 requestProcessingSubSeq.done(cursor);
             }
             enforceLogRetention();

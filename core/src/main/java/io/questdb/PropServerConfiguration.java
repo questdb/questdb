@@ -268,8 +268,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
     private final boolean simulateCrashEnabled;
-    private final long cairoSqlCopytRequestTimeoutMicro;
-    private final int cairoSqlCopyRequestQueueCapacity;
     private final int cairoSqlCopyLogRetentionDays;
     private final boolean ioURingEnabled;
     private int lineUdpDefaultPartitionBy;
@@ -815,8 +813,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                         ", description=max import chunk size can't be smaller than 16]");
             }
             this.cairoSqlCopyQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_QUEUE_CAPACITY, 32));
-            this.cairoSqlCopytRequestTimeoutMicro = getLong(properties, env, PropertyKey.CAIRO_SQL_COPY_REQUEST_TIMEOUT_MICRO, 3_000_000L);
-            this.cairoSqlCopyRequestQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_REQUEST_QUEUE_CAPACITY, 8));
             this.cairoSqlCopyLogRetentionDays = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_LOG_RETENTION_DAYS, 3);
 
             this.backupRoot = getString(properties, env, PropertyKey.CAIRO_SQL_BACKUP_ROOT, null);
@@ -2585,16 +2581,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParallelFilterEnabled() {
             return sqlParallelFilterEnabled;
-        }
-
-        @Override
-        public long getSqlCopyRequestTimeoutMicro() {
-            return cairoSqlCopytRequestTimeoutMicro;
-        }
-
-        @Override
-        public int getSqlCopyRequestQueueCapacity() {
-            return cairoSqlCopyRequestQueueCapacity;
         }
 
         @Override

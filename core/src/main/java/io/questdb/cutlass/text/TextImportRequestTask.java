@@ -24,19 +24,9 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.std.Mutable;
-import org.jetbrains.annotations.Nullable;
-
-import java.util.concurrent.atomic.AtomicLong;
 
 public class TextImportRequestTask implements Mutable {
-    public static final byte STATUS_ACK = 0;
-    public static final byte STATUS_REJ = 1;
-    public static final byte STATUS_REJ_ACTIVE_CANCEL = 3;
-
-    private static final AtomicLong taskCorrelationIdGen = new AtomicLong();
-
     private String tableName;
     private String fileName;
     private boolean headerFlag;
@@ -44,60 +34,6 @@ public class TextImportRequestTask implements Mutable {
     private byte delimiter;
     private String timestampFormat;
     private int partitionBy;
-
-    private boolean cancel = false;
-    private ExecutionCircuitBreaker circuitBreaker;
-    private long taskCorrelationId = -1;
-    private byte status;
-
-    public static long newTaskCorrelationId() {
-        return taskCorrelationIdGen.incrementAndGet();
-    }
-
-    public void setStatus(byte status) {
-        this.status = status;
-    }
-
-    public byte getStatus() {
-        return status;
-    }
-
-    public void setCorrelationId(long correlationId) {
-       this.taskCorrelationId = correlationId;
-    }
-
-    public long getCorrelationId() {
-        return this.taskCorrelationId;
-    }
-
-    public boolean isCancel() {
-        return cancel;
-    }
-
-    public void setCircuitBreaker(@Nullable ExecutionCircuitBreaker token) {
-       this.circuitBreaker = token;
-    }
-
-    public ExecutionCircuitBreaker getCircuitBreaker() {
-        return this.circuitBreaker;
-    }
-
-    public void copyFrom(final TextImportRequestTask other) {
-        this.tableName = other.tableName;
-        this.fileName = other.fileName;
-        this.headerFlag = other.headerFlag;
-        this.timestampColumnName = other.timestampColumnName;
-        this.delimiter = other.delimiter;
-        this.timestampFormat = other.timestampFormat;
-        this.partitionBy = other.partitionBy;
-        this.cancel = other.cancel;
-    }
-
-    public void ofCancel(String tableName) {
-        this.clear();
-        this.tableName = tableName;
-        this.cancel = true;
-    }
 
     public void of(String tableName,
                    String fileName,
@@ -126,7 +62,6 @@ public class TextImportRequestTask implements Mutable {
         this.delimiter = 0;
         this.timestampFormat = null;
         this.partitionBy = -1;
-        this.cancel = false;
     }
 
     public byte getDelimiter() {

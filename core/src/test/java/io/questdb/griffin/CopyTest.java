@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.TextImportRequestCollectingJob;
 import io.questdb.cutlass.text.TextImportRequestProcessingJob;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.mp.SynchronizedJob;
@@ -351,7 +350,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         ParallelCopyRunnable test = this::assertQuotesTableContent;
 
-        testParallelCopy(stmt, test, 1);
+        testParallelCopy(stmt, test);
     }
 
     @Test
@@ -364,7 +363,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         ParallelCopyRunnable test = this::assertQuotesTableContent;
 
-        testParallelCopy(stmt, test, 1);
+        testParallelCopy(stmt, test);
     }
 
     @Test
@@ -377,7 +376,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         ParallelCopyRunnable test = this::assertQuotesTableContent;
 
-        testParallelCopy(stmt, test, 1);
+        testParallelCopy(stmt, test);
     }
 
     @Test
@@ -392,7 +391,7 @@ public class CopyTest extends AbstractGriffinTest {
                 true
         );
 
-        testParallelCopy(stmt, test, 1);
+        testParallelCopy(stmt, test);
     }
 
     @Test
@@ -478,32 +477,14 @@ public class CopyTest extends AbstractGriffinTest {
                 true
         );
 
-        testParallelCopy(stmt, test, 1);
+        testParallelCopy(stmt, test);
 
         inputRoot = inputRootTmp;
         inputWorkRoot = inputWorkRootTmp;
     }
 
-    @Test
-    public void testParallelCopyWithoutCollectingProcessingJobs() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
-                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
-            } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("async copy has not been acknowledged, it may still go ahead"));
-            }
-            drainQueues();
-        });
-    }
-
-    private void drainQueues() throws Exception {
+    private void drainProcessingQueue() throws Exception {
         try (TextImportRequestProcessingJob processingJob = new TextImportRequestProcessingJob(engine, 1, null)) {
-            TextImportRequestCollectingJob collectingJob = new TextImportRequestCollectingJob(engine);
-            while (collectingJob.run(0)) {
-                Os.pause();
-            }
-
             while (processingJob.run(0)) {
                 Os.pause();
             }
@@ -512,29 +493,26 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyRejectSecondReq() throws Exception {
-        ParallelCopyRunnable stmt = () -> {
+        compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+        // this one should be rejected
+        try {
             compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
-            // this one should be rejected
-            try {
-                compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
-                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
-            } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Another import request is in progress"));
-            }
-            try {
-                compiler.compile("copy x cancel", sqlExecutionContext);
-            } catch (Exception e) {
-                Assert.fail();
-            }
-        };
+        } catch (Exception e) {
+            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Another import request is in progress"));
+        }
+        try {
+            compiler.compile("copy x cancel", sqlExecutionContext);
+        } catch (Exception e) {
+            Assert.fail();
+        }
 
-        ParallelCopyRunnable test = () -> assertQuery("status\nCANCELLED\n",
+        drainProcessingQueue();
+        assertQuery("status\nCANCELLED\n",
                 "select status from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
                 null,
-                true
-        );
-        testParallelCopy(stmt, test, 3);
+                true );
     }
 
     private void assertQuotesTableContent() throws SqlException {
@@ -574,32 +552,22 @@ public class CopyTest extends AbstractGriffinTest {
         });
     }
 
-    private void testParallelCopy(ParallelCopyRunnable statement, ParallelCopyRunnable test, int maxRequested) throws Exception {
+    private void testParallelCopy(ParallelCopyRunnable statement, ParallelCopyRunnable test) throws Exception {
         assertMemoryLeak(() -> {
             CountDownLatch processed = new CountDownLatch(1);
-            CountDownLatch requested = new CountDownLatch(maxRequested);
 
             compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log" , sqlExecutionContext);
             try (TextImportRequestProcessingJob processingJob = new TextImportRequestProcessingJob(engine, 1, null)) {
-                TextImportRequestCollectingJob collectingJob = new TextImportRequestCollectingJob(engine);
 
                 Thread processingThread = createJobThread(processingJob, processed);
-                Thread collectingThread = createJobThread(collectingJob, requested);
 
                 processingThread.start();
-                collectingThread.start();
-
                 statement.run();
-
-                requested.await();
                 processed.await();
-
                 test.run();
-
                 processingThread.join();
-                collectingThread.join();
             }
-            drainQueues();
+            drainProcessingQueue();
         });
     }
 

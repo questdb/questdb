@@ -783,16 +783,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getSqlCopyRequestTimeoutMicro() {
-        return conf.getSqlCopyRequestTimeoutMicro();
-    }
-
-    @Override
-    public int getSqlCopyRequestQueueCapacity() {
-        return conf.getSqlCopyRequestQueueCapacity();
-    }
-
-    @Override
     public int getSqlCopyLogRetentionDays() {
         return conf.getSqlCopyLogRetentionDays();
     }

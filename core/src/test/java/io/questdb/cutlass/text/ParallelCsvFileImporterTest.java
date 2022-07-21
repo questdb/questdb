@@ -2527,13 +2527,16 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelCopyCollectingQueueCapacity() throws Exception {
-        executeWithPool(1, 0, 0, FilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+    public void testParallelCopyProcessingQueueCapacityZero() throws Exception {
+        executeWithPool(1, 0, FilesFacadeImpl.INSTANCE, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             try {
                 compiler.compile("copy xy from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+                engine.getTextImportExecutionContext().setIsActive(false);
+                compiler.compile("copy xy from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Parallel import requests queue size can't be zero!"));
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Unable to process the import request. The processing queue may not be configured correctly."));
             }
         });
     }
@@ -2573,20 +2576,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             int queueCapacity,
             TextImportRunnable runnable
     ) throws Exception {
-        executeWithPool(workerCount, queueCapacity, configuration.getSqlCopyRequestQueueCapacity(), FilesFacadeImpl.INSTANCE, runnable);
+        executeWithPool(workerCount, queueCapacity, FilesFacadeImpl.INSTANCE, runnable);
     }
+
     protected void executeWithPool(
             int workerCount,
             int queueCapacity,
-            FilesFacade ff,
-            TextImportRunnable runnable
-    ) throws Exception {
-        executeWithPool(workerCount, queueCapacity, configuration.getSqlCopyRequestQueueCapacity(), ff, runnable);
-    }
-    protected void executeWithPool(
-            int workerCount,
-            int queueCapacity,
-            int requestQueueCapacity,
             FilesFacade ff,
             TextImportRunnable runnable
     ) throws Exception {
@@ -2633,11 +2628,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                     @Override
                     public int getSqlCopyQueueCapacity() {
                         return queueCapacity;
-                    }
-
-                    @Override
-                    public int getSqlCopyRequestQueueCapacity() {
-                        return requestQueueCapacity;
                     }
 
                     @Override

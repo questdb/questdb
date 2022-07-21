@@ -89,17 +89,9 @@ public class MessageBusImpl implements MessageBus {
     private final SPSequence textImportPubSeq;
     private final MCSequence textImportSubSeq;
     private final SCSequence textImportColSeq;
-
-    private final RingQueue<TextImportRequestTask> textImportRequestCollectingQueue;
-    private final MPSequence textImportRequestCollectingPubSeq;
-    private final SCSequence textImportRequestCollectingSubSeq;
-    private final FanOut textImportResponseFanOut;
-
     private final RingQueue<TextImportRequestTask> textImportRequestProcessingQueue;
-    private final SPSequence textImportRequestProcessingPubSeq;
+    private final MPSequence textImportRequestProcessingPubSeq;
     private final SCSequence textImportRequestProcessingSubSeq;
-    private final SCSequence textImportRequestProcessingComplSeq;
-
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
         this.indexerQueue = new RingQueue<>(ColumnIndexerTask::new, configuration.getColumnIndexerQueueCapacity());
@@ -193,24 +185,11 @@ public class MessageBusImpl implements MessageBus {
         this.textImportColSeq = new SCSequence();
         textImportPubSeq.then(textImportSubSeq).then(textImportColSeq).then(textImportPubSeq);
 
-        this.textImportRequestCollectingQueue = new RingQueue<>(TextImportRequestTask::new, configuration.getSqlCopyRequestQueueCapacity());
-        this.textImportRequestCollectingPubSeq = new MPSequence(textImportRequestCollectingQueue.getCycle());
-        this.textImportRequestCollectingSubSeq = new SCSequence();
-        this.textImportResponseFanOut = new FanOut();
-        textImportRequestCollectingPubSeq
-                .then(textImportRequestCollectingSubSeq)
-                .then(textImportResponseFanOut)
-                .then(textImportRequestCollectingPubSeq);
-
         // We allow only a single parallel import to be in-flight, hence queue size of 1.
         this.textImportRequestProcessingQueue = new RingQueue<>(TextImportRequestTask::new, 1);
-        this.textImportRequestProcessingPubSeq = new SPSequence(textImportRequestProcessingQueue.getCycle());
+        this.textImportRequestProcessingPubSeq = new MPSequence(textImportRequestProcessingQueue.getCycle());
         this.textImportRequestProcessingSubSeq = new SCSequence();
-        this.textImportRequestProcessingComplSeq = new SCSequence();
-        textImportRequestProcessingPubSeq
-                .then(textImportRequestProcessingSubSeq)
-                .then(textImportRequestProcessingComplSeq)
-                .then(textImportRequestProcessingPubSeq);
+        textImportRequestProcessingPubSeq.then(textImportRequestProcessingSubSeq).then(textImportRequestProcessingPubSeq);
     }
 
     @Override
@@ -431,21 +410,6 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public RingQueue<TextImportRequestTask> getTextImportRequestCollectingQueue() {
-        return textImportRequestCollectingQueue;
-    }
-
-    @Override
-    public Sequence getTextImportRequestCollectingPubSeq() {
-        return textImportRequestCollectingPubSeq;
-    }
-
-    @Override
-    public Sequence getTextImportRequestCollectingSubSeq() {
-        return textImportRequestCollectingSubSeq;
-    }
-
-    @Override
     public RingQueue<TextImportRequestTask> getTextImportRequestProcessingQueue() {
         return textImportRequestProcessingQueue;
     }
@@ -458,15 +422,5 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public Sequence getTextImportRequestProcessingSubSeq() {
         return textImportRequestProcessingSubSeq;
-    }
-
-    @Override
-    public Sequence getTextImportRequestProcessingComplSeq() {
-        return textImportRequestProcessingComplSeq;
-    }
-
-    @Override
-    public FanOut getTextImportResponseFanOut() {
-        return textImportResponseFanOut;
     }
 }
