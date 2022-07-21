@@ -36,6 +36,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 
+import java.io.File;
 import java.util.function.Function;
 
 import static io.questdb.cairo.TableUtils.*;
@@ -169,6 +170,68 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 "ALTER TABLE tab42 DETACH PARTITION LIST '2022-06-03'",
                 "could not detach [statusCode=PARTITION_FOLDER_CANNOT_RENAME, table=tab42, partition='2022-06-03']"
         );
+    }
+
+    @Test
+    public void testCannotMakeRootDir() throws Exception {
+        String detachedFolderName = "d3t@ch3d";
+        FilesFacade ff2 = new FilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Chars.contains(path, detachedFolderName)) {
+                    return -1;
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+
+        assertMemoryLeak(ff2, () -> {
+            CairoConfiguration conf2 = new DefaultCairoConfiguration(root) {
+                @Override
+                public CharSequence getDetachedRoot() {
+                    CharSequence r = getRoot();
+                    int idx = r.length() - 1;
+                    while (idx > 0 && r.charAt(idx) != File.separatorChar) {
+                        idx--;
+                    }
+                    return r.subSequence(0, ++idx) + detachedFolderName;
+                }
+
+                public FilesFacade getFilesFacade() {
+                    return ff2;
+                }
+            };
+            CairoEngine engine2 = new CairoEngine(conf2, metrics);
+            SqlCompiler compiler2 = new SqlCompiler(engine2, null, null);
+            SqlExecutionContextImpl context2 = new SqlExecutionContextImpl(engine, 1);
+            try (TableModel tab = new TableModel(conf2, "tab42", PartitionBy.DAY)) {
+                TestUtils.createPopulateTable(
+                        compiler2,
+                        context2,
+                        tab.timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        100,
+                        "2022-06-01",
+                        5
+                );
+                try {
+                    compiler2.compile(
+                            "ALTER TABLE tab42 DETACH PARTITION LIST '2022-06-03'",
+                            context2
+                    ).execute(null).await();
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
+                            "could not detach [statusCode=PARTITION_DETACHED_FOLDER_CANNOT_CREATE, table=tab42, partition='2022-06-03']"
+                    );
+                }
+            }
+            engine2.close();
+            compiler2.close();
+        });
     }
 
     @Test
@@ -781,8 +844,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
                                 .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
                         10,
                         "2022-06-01",
                         3
@@ -800,17 +865,17 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertContent(
-                        "ts\ti\tl\n" +
-                                "2022-06-01T07:11:59.900000Z\t1\t1\n" +
-                                "2022-06-01T14:23:59.800000Z\t2\t2\n" +
-                                "2022-06-01T21:35:59.700000Z\t3\t3\n" +
-                                "2022-06-02T04:47:59.600000Z\t4\t4\n" +
-                                "2022-06-02T11:59:59.500000Z\t5\t5\n" +
-                                "2022-06-02T19:11:59.400000Z\t6\t6\n" +
-                                "2022-06-03T02:23:59.300000Z\t7\t7\n" +
-                                "2022-06-03T09:35:59.200000Z\t8\t8\n" +
-                                "2022-06-03T16:47:59.100000Z\t9\t9\n" +
-                                "2022-06-03T23:59:59.000000Z\t10\t10\n",
+                        "ts\ts1\ti\tl\ts2\n" +
+                                "2022-06-01T07:11:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
+                                "2022-06-01T14:23:59.800000Z\tVTJW\t2\t2\t\n" +
+                                "2022-06-01T21:35:59.700000Z\t\t3\t3\tSXUX\n" +
+                                "2022-06-02T04:47:59.600000Z\t\t4\t4\t\n" +
+                                "2022-06-02T11:59:59.500000Z\t\t5\t5\tGPGW\n" +
+                                "2022-06-02T19:11:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
+                                "2022-06-03T02:23:59.300000Z\tCPSW\t7\t7\t\n" +
+                                "2022-06-03T09:35:59.200000Z\t\t8\t8\t\n" +
+                                "2022-06-03T16:47:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
+                                "2022-06-03T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n",
                         tableName
                 );
             }
@@ -911,16 +976,20 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 "tabBrokenColumnName2",
                 brokenMeta -> brokenMeta
                         .timestamp("ts")
+                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                         .col("ii", ColumnType.INT)
-                        .col("l", ColumnType.LONG),
+                        .col("l", ColumnType.LONG)
+                        .col("s2", ColumnType.SYMBOL),
                 "insert into tabBrokenColumnName2 " +
                         "select " +
                         "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
+                        "'SUGUS' s1, " +
                         "cast(x as int) ii, " +
-                        "x l " +
+                        "x l, " +
+                        "'PINE' s2 " +
                         "from long_sequence(100))",
                 null,
-                "[-100] Detached column [index=1, name=i, attribute=name] does not match current table metadata"
+                "[-100] Detached column [index=2, name=i, attribute=name] does not match current table metadata"
         );
     }
 
@@ -932,16 +1001,20 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 "tabBrokenColumnType2",
                 brokenMeta -> brokenMeta
                         .timestamp("ts")
-                        .col("i", ColumnType.LONG)
-                        .col("l", ColumnType.LONG),
+                        .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.INT)
+                        .col("s2", ColumnType.SYMBOL),
                 "insert into tabBrokenColumnType2 " +
                         "select " +
                         "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
+                        "'SUGUS' s1, " +
                         "cast(x as int) i, " +
-                        "x l " +
+                        "x l, " +
+                        "'PINE' s2 " +
                         "from long_sequence(100))",
                 null,
-                "[-100] Detached column [index=1, name=i, attribute=type] does not match current table metadata"
+                "[-100] Detached column [index=3, name=l, attribute=type] does not match current table metadata"
         );
     }
 
@@ -962,8 +1035,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             ) {
                 createPopulateTable(tab
                                 .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
                         10,
                         "2022-06-01",
                         3
@@ -1026,7 +1101,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 createPopulateTable(tab
                                 .timestamp("ts")
                                 .col("i", ColumnType.INT)
-                                .col("s1", ColumnType.SYMBOL)
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("l", ColumnType.LONG)
                                 .col("s2", ColumnType.SYMBOL),
                         10,
@@ -1108,8 +1183,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
                                 .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
                         100,
                         "2022-06-01",
                         5

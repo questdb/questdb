@@ -737,11 +737,9 @@ public class TableWriter implements Closeable {
     }
 
     public StatusCode detachPartition(long timestamp) {
+        // Partitioned table must have a timestamp
+        // SQL compiler will check that table is partitioned
         assert metadata.getTimestampIndex() > -1;
-
-        if (!PartitionBy.isPartitioned(partitionBy)) {
-            return TABLE_NOT_PARTITIONED;
-        }
 
         // check timestamp boundaries
         long minTimestamp = txWriter.getMinTimestamp();
@@ -786,7 +784,14 @@ public class TableWriter implements Closeable {
             if (!ff.exists(detachedPath.trimTo(detachedRootLen).slash$())) {
                 // the detached and standard folders can have different roots
                 // (server.conf: cairo.sql.detached.root)
-                ff.mkdirs(detachedPath, mkDirMode);
+                if (0 != ff.mkdirs(detachedPath, mkDirMode)) {
+                    LOG.error()
+                            .$("cannot create detached partition folder [path=")
+                            .$(detachedPath)
+                            .$(']')
+                            .$();
+                    return PARTITION_DETACHED_FOLDER_CANNOT_CREATE;
+                }
             }
             setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
             detachedPath.put(DETACHED_DIR_MARKER).$();
@@ -1774,9 +1779,6 @@ public class TableWriter implements Closeable {
             }
             if (metadata.getTimestampIndex() != detachedMetadata.getTimestampIndex()) {
                 throw CairoException.detachedMetadataMismatch("timestamp_index");
-            }
-            if (partitionBy != detachedMetadata.getPartitionBy()) {
-                throw CairoException.detachedMetadataMismatch("partition_by");
             }
             if (columnCount != detachedMetadata.getColumnCount()) {
                 throw CairoException.detachedMetadataMismatch("column_count");
