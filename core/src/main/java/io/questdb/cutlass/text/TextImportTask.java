@@ -143,6 +143,11 @@ public class TextImportTask {
         return this.status == STATUS_FAILED;
     }
 
+    public void ofPhaseBoundaryCheck(final FilesFacade ff, Path path, long chunkStart, long chunkEnd) {
+        this.phase = PHASE_BOUNDARY_CHECK;
+        this.phaseBoundaryCheck.of(ff, path, chunkStart, chunkEnd);
+    }
+
     public void ofPhaseBuildSymbolIndex(
             CairoEngine cairoEngine,
             TableStructure tableStructure,
@@ -152,11 +157,6 @@ public class TextImportTask {
     ) {
         this.phase = PHASE_BUILD_SYMBOL_INDEX;
         this.phaseBuildSymbolIndex.of(cairoEngine, tableStructure, root, index, metadata);
-    }
-
-    public void ofPhaseBoundaryCheck(final FilesFacade ff, Path path, long chunkStart, long chunkEnd) {
-        this.phase = PHASE_BOUNDARY_CHECK;
-        this.phaseBoundaryCheck.of(ff, path, chunkStart, chunkEnd);
     }
 
     public void ofPhaseIndexing(
@@ -755,6 +755,7 @@ public class TextImportTask {
     public class PhasePartitionImport {
         private final StringSink tableNameSink = new StringSink();
         private final LongList importedRows = new LongList();
+        private final LongList offsets = new LongList();
         private CairoEngine cairoEngine;
         private TableStructure targetTableStructure;
         private ObjList<TypeAdapter> types;
@@ -976,6 +977,9 @@ public class TextImportTask {
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
+            offsets.clear();
+            lexer.setupBeforeExactLines(onFieldsPartitioned);
+
             long fd = -1;
             try {
                 tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName).$();
@@ -995,7 +999,6 @@ public class TextImportTask {
                 final long count = size / (2 * Long.BYTES);
 
                 int ringCapacity = 32;
-                LongList offsets = new LongList();
                 long sqeMin = 0;
                 long sqeMax = -1;
                 try (IOURing ring = rf.newInstance(ringCapacity)) {
@@ -1048,13 +1051,11 @@ public class TextImportTask {
                             sqeMin = sqeMax + 1;
                         }
                     } // for
-                    // check if something is enqueued
 
+                    // check if something is enqueued
                     if (cc > 0) {
                         consumeURing(sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
                     }
-
-                    lexer.parseLast();
                 }
 
             } finally {
@@ -1075,6 +1076,8 @@ public class TextImportTask {
         ) {
             final CairoConfiguration configuration = cairoEngine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
+
+            lexer.setupBeforeExactLines(onFieldsPartitioned);
 
             long fd = -1;
             try {
@@ -1132,7 +1135,8 @@ public class TextImportTask {
 
                     long n = ff.read(fd, fileBufAddr, bytesToRead, offset);
                     if (n > 0) {
-                        lexer.parse(fileBufAddr, fileBufAddr + n, Integer.MAX_VALUE, onFieldsPartitioned);
+                        // at this phase there is no way for lines to be split across buffers
+                        lexer.parseExactLines(fileBufAddr, fileBufAddr + n);
                     } else {
                         throw TextException
                                 .$("could not read from file [path='").put(tmpPath)
@@ -1141,8 +1145,6 @@ public class TextImportTask {
                                 .put("]");
                     }
                 }
-
-                lexer.parseLast();
             } finally {
                 if (fd > -1) {
                     ff.close(fd);
@@ -1346,7 +1348,7 @@ public class TextImportTask {
         private void parseLineAndWrite(TextLexer lexer, long fileBufAddr, LongList offsets, int j) {
             final long lo = fileBufAddr + offsets.getQuick(j * 2);
             final long hi = lo + offsets.getQuick(j * 2 + 1);
-            lexer.parse(lo, hi, Integer.MAX_VALUE, onFieldsPartitioned);
+            lexer.parseExactLines(lo, hi);
         }
 
         private void unmap(FilesFacade ff, DirectLongList mergeIndexes) {
