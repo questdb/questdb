@@ -160,7 +160,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                             path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
                             try (TxReader txReader0 = tableReader.getTxFile()) {
                                 try (TxReader txReader1 = new TxReader(ff).ofRO(path, metadata.getPartitionBy())) {
-                                    TableUtils.safeReadTxn(txReader1, configuration.getMicrosecondClock(), configuration.getSpinLockTimeoutUs());
+                                    TableUtils.safeReadTxn(txReader1, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(txReader0.getTxn(), txReader1.getTxn());
                                     Assert.assertEquals(txReader0.getTransientRowCount(), txReader1.getTransientRowCount());
@@ -188,7 +188,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                             path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
                             try (ColumnVersionReader cvReader0 = tableReader.getColumnVersionReader()) {
                                 try (ColumnVersionReader cvReader1 = new ColumnVersionReader().ofRO(ff, path)) {
-                                    cvReader1.readSafe(configuration.getMicrosecondClock(), configuration.getSpinLockTimeoutUs());
+                                    cvReader1.readSafe(configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(cvReader0.getVersion(), cvReader1.getVersion());
                                     TestUtils.assertEquals(cvReader0.getCachedList(), cvReader1.getCachedList());

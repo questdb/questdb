@@ -108,7 +108,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                         AbstractOperation op = cc.getOperation();
                         OperationFuture fut = cc.getDispatcher().execute(op, sqlExecutionContext, waitSequence)
                 ) {
-                    if (fut.await(30 * Timestamps.SECOND_MICROS) != QUERY_COMPLETE) {
+                    if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
                         throw SqlException.$(0, "update query timeout");
                     }
                 }

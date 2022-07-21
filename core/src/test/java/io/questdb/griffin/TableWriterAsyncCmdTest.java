@@ -103,7 +103,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 try (OperationFuture fut = cc.execute(tempSequence)) {
                     fut.await(0);
                     writer.tick();
-                    Assert.assertEquals(QUERY_NO_RESPONSE, fut.await(500_000));
+                    Assert.assertEquals(QUERY_NO_RESPONSE, fut.await(500));
                 }
 
                 // Remove sequence
@@ -245,7 +245,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     writer.tick(true);
 
                     try {
-                        fut.await(Timestamps.SECOND_MICROS);
+                        fut.await(Timestamps.SECOND_MILLIS);
                         Assert.fail();
                     } catch (SqlException exception) {
                         Assert.assertNotNull(exception);

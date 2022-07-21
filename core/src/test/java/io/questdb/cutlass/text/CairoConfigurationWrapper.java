@@ -458,8 +458,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getSpinLockTimeoutUs() {
-        return conf.getSpinLockTimeoutUs();
+    public long getSpinLockTimeout() {
+        return conf.getSpinLockTimeout();
     }
 
     @Override

@@ -98,7 +98,7 @@ public class AbstractCairoTest {
 
     @Rule
     public TestName testName = new TestName();
-    public static long spinLockTimeoutUs = -1;
+    public static long spinLockTimeout = -1;
     protected static boolean hideTelemetryTable = false;
     private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
@@ -192,11 +192,11 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public long getSpinLockTimeoutUs() {
-                if (spinLockTimeoutUs > -1) {
-                    return spinLockTimeoutUs;
+            public long getSpinLockTimeout() {
+                if (spinLockTimeout > -1) {
+                    return spinLockTimeout;
                 }
-                return 5_000_000;
+                return 5_000;
             }
 
             @Override
@@ -376,7 +376,7 @@ public class AbstractCairoTest {
         jitMode = SqlJitMode.JIT_MODE_ENABLED;
         rndFunctionMemoryPageSize = -1;
         rndFunctionMemoryMaxPages = -1;
-        spinLockTimeoutUs = -1;
+        spinLockTimeout = -1;
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
         enableParallelFilter = null;

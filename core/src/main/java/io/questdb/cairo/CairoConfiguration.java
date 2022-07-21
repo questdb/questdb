@@ -245,7 +245,7 @@ public interface CairoConfiguration {
 
     CharSequence getSnapshotRoot(); // same as root/../snapshot
 
-    long getSpinLockTimeoutUs();
+    long getSpinLockTimeout();
 
     int getSqlAnalyticRowIdMaxPages();
 

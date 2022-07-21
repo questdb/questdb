@@ -91,7 +91,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int mkdirMode;
     private final int parallelIndexThreshold;
     private final int readerPoolMaxSegments;
-    private final long spinLockTimeoutUs;
+    private final long spinLockTimeout;
     private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheBlockCount;
     private final int httpSqlCacheRowCount;
@@ -139,7 +139,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sharedWorkerHaltOnError;
     private final long sharedWorkerYieldThreshold;
     private final long sharedWorkerSleepThreshold;
-    private final long sharedWorkerSleepMs;
+    private final long sharedWorkerSleepTimeout;
     private final WorkerPoolConfiguration workerPoolConfiguration = new PropWorkerPoolConfiguration();
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final InputFormatConfiguration inputFormatConfiguration;
@@ -235,7 +235,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double sqlDistinctTimestampLoadFactor;
     private final int circuitBreakerThrottle;
     private final int circuitBreakerBufferSize;
-    private final long circuitBreakerMaxTime;
+    private final long circuitBreakerTimeout;
     private final int latestByQueueCapacity;
     private final int sampleByIndexSearchPageSize;
     private final int binaryEncodingMaxLength;
@@ -286,7 +286,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean httpWorkerHaltOnError;
     private long httpWorkerYieldThreshold;
     private long httpWorkerSleepThreshold;
-    private long httpWorkerSleepMs;
+    private long httpWorkerSleepTimeout;
     private boolean httpServerKeepAlive;
     private int sendBufferSize;
     private CharSequence indexFileName;
@@ -516,7 +516,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.httpWorkerHaltOnError = getBoolean(properties, env, PropertyKey.HTTP_WORKER_HALT_ON_ERROR, false);
                 this.httpWorkerYieldThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_YIELD_THRESHOLD, 10);
                 this.httpWorkerSleepThreshold = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_THRESHOLD, 10000);
-                this.httpWorkerSleepMs = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_MS, 100);
+                this.httpWorkerSleepTimeout = getLong(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 100);
                 this.sendBufferSize = getIntSize(properties, env, PropertyKey.HTTP_SEND_BUFFER_SIZE, 2 * 1024 * 1024);
                 this.indexFileName = getString(properties, env, PropertyKey.HTTP_STATIC_INDEX_FILE_NAME, "index.html");
                 this.httpFrozenClock = getBoolean(properties, env, PropertyKey.HTTP_FROZEN_CLOCK, false);
@@ -604,7 +604,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.circuitBreakerThrottle = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_THROTTLE, 2_000_000);
             this.circuitBreakerBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
-            this.circuitBreakerMaxTime = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, 60) * Timestamps.SECOND_MICROS);
+            this.circuitBreakerTimeout = (long) (getDouble(properties, env, PropertyKey.QUERY_TIMEOUT_SEC, 60) * Timestamps.SECOND_MILLIS);
 
             this.pgEnabled = getBoolean(properties, env, PropertyKey.PG_ENABLED, true);
             if (pgEnabled) {
@@ -680,7 +680,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.maxSwapFileCount = getInt(properties, env, PropertyKey.CAIRO_MAX_SWAP_FILE_COUNT, 30);
             this.parallelIndexThreshold = getInt(properties, env, PropertyKey.CAIRO_PARALLEL_INDEX_THRESHOLD, 100000);
             this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, 5);
-            this.spinLockTimeoutUs = getLong(properties, env, PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1_000_000);
+            this.spinLockTimeout = getLong(properties, env, PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1_000);
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 4);
             this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, 16);
@@ -971,11 +971,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sharedWorkerHaltOnError = getBoolean(properties, env, PropertyKey.SHARED_WORKER_HALT_ON_ERROR, false);
             this.sharedWorkerYieldThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_YIELD_THRESHOLD, 100);
             this.sharedWorkerSleepThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD, 10_000);
-            this.sharedWorkerSleepMs = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_MS, 100);
+            this.sharedWorkerSleepTimeout = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT, 100);
 
             this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
-            this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT_MICRO, 500_000);
-            this.writerAsyncCommandMaxWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT_MICRO, 30_000_000L);
+            this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
+            this.writerAsyncCommandMaxWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000L);
             this.writerTickRowsCountMod = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_TICK_ROWS_COUNT, 1024)) - 1;
             this.writerAsyncCommandQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 32));
             this.writerAsyncCommandQueueSlotSize = Numbers.ceilPow2(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE, 2048));
@@ -1681,13 +1681,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public MicrosecondClock getClock() {
-            return MicrosecondClockImpl.INSTANCE;
+        public MillisecondClock getClock() {
+            return MillisecondClockImpl.INSTANCE;
         }
 
         @Override
-        public long getMaxTime() {
-            return circuitBreakerMaxTime;
+        public long getTimeout() {
+            return circuitBreakerTimeout;
         }
     }
 
@@ -1837,8 +1837,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSleepMs() {
-            return httpWorkerSleepMs;
+        public long getSleepTimeout() {
+            return httpWorkerSleepTimeout;
         }
     }
 
@@ -2260,8 +2260,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSpinLockTimeoutUs() {
-            return spinLockTimeoutUs;
+        public long getSpinLockTimeout() {
+            return spinLockTimeout;
         }
 
         @Override
@@ -3060,8 +3060,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSleepMs() {
-            return sharedWorkerSleepMs;
+        public long getSleepTimeout() {
+            return sharedWorkerSleepTimeout;
         }
     }
 

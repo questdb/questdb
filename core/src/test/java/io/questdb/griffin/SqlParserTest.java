@@ -6683,7 +6683,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             }
 
             @Override
-            public long getSpinLockTimeoutUs() {
+            public long getSpinLockTimeout() {
                 return 1000;
             }
         };

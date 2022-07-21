@@ -168,7 +168,7 @@ public class PageFrameReduceJob implements Job, Closeable {
         // we deliberately hold the queue item because
         // processing is daisy-chained. If we were to release item before
         // finishing reduction, next step (job) will be processing an incomplete task
-        if (!circuitBreaker.checkIfTripped(frameSequence.getStartTimeUs(), frameSequence.getCircuitBreakerFd())) {
+        if (!circuitBreaker.checkIfTripped(frameSequence.getStartTime(), frameSequence.getCircuitBreakerFd())) {
             record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
             record.setFrameIndex(task.getFrameIndex());
             assert frameSequence.doneLatch.getCount() == 0;

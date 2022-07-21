@@ -159,7 +159,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
                 createX(tbl);
             }
             engine.releaseAllWriters();
-            spinLockTimeoutUs = 1000;
+            spinLockTimeout = 1;
 
             ff = new FilesFacadeImpl() {
                 int attempt = 0;
@@ -242,7 +242,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
     @Test
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen() throws Exception {
         assertMemoryLeak(() -> {
-            spinLockTimeoutUs = 1000;
+            spinLockTimeout = 1;
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
                 CairoTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)
@@ -284,7 +284,7 @@ public class AlterTableCommitLagTest extends AbstractGriffinTest {
     @Test
     public void setMaxUncommittedRowsFailsToSwapMetadataUntilWriterReopen2() throws Exception {
         assertMemoryLeak(() -> {
-            spinLockTimeoutUs = 1000;
+            spinLockTimeout = 1;
             try (TableModel tbl = new TableModel(configuration, "X", PartitionBy.DAY)) {
                 CairoTestUtils.create(tbl.timestamp("ts")
                         .col("i", ColumnType.INT)

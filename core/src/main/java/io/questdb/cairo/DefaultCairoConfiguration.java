@@ -479,8 +479,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getSpinLockTimeoutUs() {
-        return 5000000;
+    public long getSpinLockTimeout() {
+        return 5000;
     }
 
     @Override
@@ -747,12 +747,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWriterAsyncCommandBusyWaitTimeout() {
-        return 500_000L;
+        return 500L;
     }
 
     @Override
     public long getWriterAsyncCommandMaxTimeout() {
-        return 30_000_000L;
+        return 30_000L;
     }
 
     @Override

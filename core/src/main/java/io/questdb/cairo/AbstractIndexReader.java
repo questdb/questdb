@@ -32,7 +32,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
 public abstract class AbstractIndexReader implements BitmapIndexReader {
@@ -43,7 +43,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected int blockValueCountMod;
     protected int blockCapacity;
     protected long spinLockTimeoutUs;
-    protected MicrosecondClock clock;
+    protected MillisecondClock clock;
     protected int keyCount;
     protected long unIndexedNullCount;
     private int keyCountIncludingNulls;
@@ -94,11 +94,11 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
         this.unIndexedNullCount = unIndexedNullCount;
         TableUtils.txnPartitionConditionally(path, partitionTxn);
         final int plen = path.length();
-        this.spinLockTimeoutUs = configuration.getSpinLockTimeoutUs();
+        this.spinLockTimeoutUs = configuration.getSpinLockTimeout();
 
         try {
             this.keyMem.wholeFile(configuration.getFilesFacade(), BitmapIndexUtils.keyFileName(path, name, columnNameTxn), MemoryTag.MMAP_INDEX_READER);
-            this.clock = configuration.getMicrosecondClock();
+            this.clock = configuration.getMillisecondClock();
 
             // key file should already be created at least with header
             long keyMemSize = this.keyMem.size();

@@ -40,7 +40,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public boolean checkIfTripped(long executionStartTimeUs, long fd) {
+        public boolean checkIfTripped(long millis, long fd) {
             return false;
         }
 
@@ -67,7 +67,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      */
     void statefulThrowExceptionIfTripped();
 
-    boolean checkIfTripped(long executionStartTimeUs, long fd);
+    boolean checkIfTripped(long millis, long fd);
 
     void resetTimer();
 

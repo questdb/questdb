@@ -31,7 +31,7 @@ import io.questdb.cairo.vm.api.MemoryW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
@@ -191,7 +191,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return this;
     }
 
-    public void readSafe(MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
+    public void readSafe(MillisecondClock microsecondClock, long spinLockTimeout) {
         final long tick = microsecondClock.getTicks();
         while (true) {
             long version = unsafeGetVersion();
@@ -225,8 +225,8 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 }
             }
 
-            if (microsecondClock.getTicks() - tick > spinLockTimeoutUs) {
-                LOG.error().$("Column Version read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+            if (microsecondClock.getTicks() - tick > spinLockTimeout) {
+                LOG.error().$("Column Version read timeout [timeout=").$(spinLockTimeout).utf8("μs]").$();
                 throw CairoException.instance(0).put("Column Version read timeout");
             }
             Os.pause();

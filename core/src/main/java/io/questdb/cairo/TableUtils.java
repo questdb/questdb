@@ -38,7 +38,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -798,8 +798,8 @@ public final class TableUtils {
         txMem.putInt(baseOffset + getPartitionTableSizeOffset(symbolMapCount), 0);
     }
 
-    public static void safeReadTxn(TxReader txReader, MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
-        long deadline = microsecondClock.getTicks() + spinLockTimeoutUs;
+    public static void safeReadTxn(TxReader txReader, MillisecondClock clock, long spinLockTimeout) {
+        long deadline = clock.getTicks() + spinLockTimeout;
         if (txReader.unsafeReadVersion() == txReader.getVersion()) {
             LOG.debug().$("checked clean txn, version ").$(txReader.getVersion()).$(", txn=").$(txReader.getTxn()).$();
             return;
@@ -816,8 +816,8 @@ public final class TableUtils {
             }
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
-            if (microsecondClock.getTicks() > deadline) {
-                LOG.error().$("tx read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+            if (clock.getTicks() > deadline) {
+                LOG.error().$("tx read timeout [timeout=").$(spinLockTimeout).utf8("μs]").$();
                 throw CairoException.instance(0).put("Transaction read timeout");
             }
 
