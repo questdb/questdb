@@ -226,7 +226,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         // operation replacing the old file with the new one, it's ok to clone the metadata
         // by copying metaMem's contents. Even if _meta file was already replaced, the file
         // should be still kept on disk until inode's ref counter is above zero.
-        long len = ff.length(metaMem.getFd());
+        long len = metaMem.size();
         for (long p = 0; p < len; p++) {
             mem.putByte(metaMem.getByte(p));
         }
