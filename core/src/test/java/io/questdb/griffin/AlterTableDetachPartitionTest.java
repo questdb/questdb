@@ -149,10 +149,25 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAlreadyDetached() throws Exception {
+    public void testAlreadyDetached1() throws Exception {
         assertFailure(
                 "tab143",
                 "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03', '2022-06-03'",
+                "could not detach [statusCode=PARTITION_ALREADY_DETACHED, table=tab143, partition='2022-06-03']"
+        );
+    }
+
+    @Test
+    public void testAlreadyDetached2() throws Exception {
+        path.of(configuration.getDetachedRoot())
+                .concat("tab143")
+                .concat("2022-06-03")
+                .put(DETACHED_DIR_MARKER)
+                .slash$();
+        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.mkdirs(path, 509));
+        assertFailure(
+                "tab143",
+                "ALTER TABLE tab143 DETACH PARTITION LIST '2022-06-03'",
                 "could not detach [statusCode=PARTITION_ALREADY_DETACHED, table=tab143, partition='2022-06-03']"
         );
     }
@@ -249,6 +264,23 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 "tab111",
                 "ALTER TABLE tab111 DETACH PARTITION LIST '2022-06-03'",
                 "could not detach [statusCode=PARTITION_FOLDER_DOES_NOT_EXIST, table=tab111, partition='2022-06-03']"
+        );
+    }
+
+    @Test
+    public void testCannotCreateMetaFolder() throws Exception {
+        assertCannotCopyMetadata(
+                new FilesFacadeImpl() {
+                    @Override
+                    public int mkdirs(Path path, int mode) {
+                        if (Chars.contains(path, DETACHED_DIR_META_FOLDER_NAME)) {
+                            return -1;
+                        }
+                        return Files.mkdirs(path, mode);
+                    }
+                },
+                "testCannotCopyMeta",
+                1
         );
     }
 
@@ -1096,7 +1128,11 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     private void assertCannotCopyMetadata(String tableName, final int copyFailCallId) throws Exception {
-        assertMemoryLeak(() -> {
+        assertCannotCopyMetadata(null, tableName, copyFailCallId);
+    }
+
+    private void assertCannotCopyMetadata(@Nullable FilesFacade withFf, String tableName, final int copyFailCallId) throws Exception {
+        assertMemoryLeak(withFf, () -> {
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
                                 .timestamp("ts")

@@ -823,6 +823,19 @@ public class TableWriter implements Closeable {
             if (statusCode == StatusCode.OK) {
                 // all good, commit
                 commitDetachPartition(timestamp, minTimestamp);
+            } else {
+                // undo folder rename
+                setPathForPartition(path, rootLen, partitionBy, timestamp, partitionNameTxn);
+                setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
+                detachedPath.put(DETACHED_DIR_MARKER);
+                if (!ff.rename(detachedPath.$(), path.$())) {
+                    LOG.error()
+                            .$("undo rename partition folder (admin needs to rename this file) [errno=").$(ff.errno())
+                            .$(", undo=").$(detachedPath)
+                            .$(", original=").$(path)
+                            .I$();
+                    statusCode = StatusCode.PARTITION_FOLDER_CANNOT_UNDO_RENAME;
+                }
             }
             return statusCode;
         } finally {
@@ -1654,7 +1667,9 @@ public class TableWriter implements Closeable {
         detachedPathLen = detachedPath.length();
         if (!ff.exists(detachedPath.slash$())) {
             // create the folder within partition.detached to keep the metadata
-            ff.mkdirs(detachedPath, mkDirMode);
+            if (ff.mkdirs(detachedPath, mkDirMode) != 0) {
+                return PARTITION_DETACHED_FOLDER_CANNOT_CREATE_META;
+            }
         }
         // copy _meta
         path.trimTo(rootLen).concat(META_FILE_NAME).$(); // exists already checked
@@ -1720,19 +1735,6 @@ public class TableWriter implements Closeable {
                         .$(", path=").$(detachedPath)
                         .I$();
             }
-
-            // undo folder rename
-            setPathForPartition(path, rootLen, partitionBy, timestamp, partitionNameTxn);
-            setPathForPartition(detachedPath, detachedRootLen, partitionBy, timestamp, -1L);
-            detachedPath.put(DETACHED_DIR_MARKER);
-            if (!ff.rename(detachedPath.$(), path.$())) {
-                LOG.error()
-                        .$("undo rename partition folder (admin needs to rename this file) [errno=").$(ff.errno())
-                        .$(", undo=").$(detachedPath)
-                        .$(", original=").$(path)
-                        .I$();
-                statusCode = StatusCode.PARTITION_FOLDER_CANNOT_UNDO_RENAME;
-            }
             return statusCode;
         }
         return StatusCode.OK;
@@ -1758,6 +1760,8 @@ public class TableWriter implements Closeable {
         other.of(detachedPath).concat(DETACHED_DIR_META_FOLDER_NAME);
         int otherLen = other.length();
         boolean removeFolder = false;
+        boolean closeMeta = false;
+        boolean closeColumnVersion = false;
         try {
             // _meta
             other.concat(META_FILE_NAME).$();
@@ -1771,6 +1775,7 @@ public class TableWriter implements Closeable {
                 return false;
             }
             detachedMetadata.deferredInit(other, ColumnType.VERSION);
+            closeMeta = true;
             if (metadata.getId() != detachedMetadata.getId()) {
                 throw CairoException.detachedMetadataMismatch("id");
             }
@@ -1809,14 +1814,13 @@ public class TableWriter implements Closeable {
             }
             detachedColumnVersionReader.ofRO(ff, other);
             detachedColumnVersionReader.readSafe(MicrosecondClockImpl.INSTANCE, Long.MAX_VALUE);
+            closeColumnVersion = true;
             LongList detachedEntries = detachedColumnVersionReader.getCachedList();
             LongList entries = columnVersionWriter.getCachedList();
             for (int i = 0, limit = detachedEntries.size(); i < limit; i += 4) {
                 long partitionTimestamp = detachedEntries.getQuick(i);
                 if (timestamp == partitionTimestamp) {
-                    assert timestamp == entries.getQuick(i);
                     int columnIndex = (int) detachedEntries.getQuick(i + 1);
-                    assert columnIndex == entries.getQuick(i + 1);
                     long columnTop = detachedEntries.getQuick(i + 3);
                     if (columnTop != entries.getQuick(i + 3)) {
                         long columnNameTxn = detachedEntries.getQuick(i + 2);
@@ -1844,8 +1848,12 @@ public class TableWriter implements Closeable {
             return true;
         } finally {
             other.trimTo(rootLen);
-            Misc.free(detachedMetadata);
-            Misc.free(detachedColumnVersionReader);
+            if (closeMeta) {
+                Misc.free(detachedMetadata);
+            }
+            if (closeColumnVersion) {
+                Misc.free(detachedColumnVersionReader);
+            }
             if (removeFolder) {
                 // remove _dm_ folder
                 if (-1 == ff.rmdir(other.trimTo(otherLen).slash$())) { // remove .detached/_dm_
