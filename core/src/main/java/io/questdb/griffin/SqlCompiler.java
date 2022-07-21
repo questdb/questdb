@@ -1907,6 +1907,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(-1, "invalid option used for non-parallel import (timestamp, format or partition by)");
             }
 
+            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             int len = configuration.getSqlCopyBufferSize();
             long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
             setupTextLoaderFromModel(model);
@@ -1926,6 +1927,11 @@ public class SqlCompiler implements Closeable {
                     textLoader.setState(TextLoader.LOAD_DATA);
                     int read;
                     while (n < fileLen) {
+                        // We don't want import to stop on query timeout, but only on closed connection.
+                        circuitBreaker.resetTimer();
+                        if (circuitBreaker.checkIfTripped()) {
+                            throw SqlException.$(model.getFileName().position, "import was cancelled");
+                        }
                         read = (int) ff.read(fd, buf, len, n);
                         if (read < 1) {
                             throw SqlException.$(model.getFileName().position, "could not read file [errno=").put(ff.errno()).put(']');

@@ -29,8 +29,6 @@ import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -40,7 +38,6 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 public class TextLoaderBase implements Closeable, Mutable {
-    private static final Log LOG = LogFactory.getLog(TextLoaderBase.class);
     private final CairoTextWriter textWriter;
     private final TextLexer textLexer;
 
