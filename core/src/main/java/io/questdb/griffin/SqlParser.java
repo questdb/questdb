@@ -426,7 +426,7 @@ public final class SqlParser {
     }
 
     private ExecutionModel parseCopy(GenericLexer lexer) throws SqlException {
-        if (configuration.getSqlCopyInputRoot() == null) {
+        if (Chars.isBlank(configuration.getSqlCopyInputRoot())) {
             throw SqlException.$(lexer.lastTokenPosition(), "COPY is disabled ['cairo.sql.copy.root' is not set?]");
         }
         ExpressionNode tableName = expectExpr(lexer);

@@ -367,6 +367,21 @@ public final class Chars {
         return -1;
     }
 
+    public static boolean isBlank(CharSequence s) {
+        if (s == null) {
+            return true;
+        }
+
+        int len = s.length();
+        for (int i = 0; i < len; i++) {
+            int c = s.charAt(i);
+            if (!Character.isWhitespace(c)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean isOnlyDecimals(CharSequence s) {
         int len = s.length();
         for (int i = len - 1; i > -1; i--) {
