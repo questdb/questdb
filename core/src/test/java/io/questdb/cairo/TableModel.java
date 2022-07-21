@@ -196,7 +196,7 @@ public class TableModel implements TableStructure, Closeable {
     }
 
     @Override
-    public int getWriteMode() {
-        return configuration.getDefaultTableWriteMode();
+    public boolean isWallEnabled() {
+        return configuration.getWallEnabledDefault();
     }
 }

@@ -134,8 +134,8 @@ class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public int getWriteMode() {
-        return cairoConfiguration.getDefaultTableWriteMode();
+    public boolean isWallEnabled() {
+        return cairoConfiguration.getWallEnabledDefault();
     }
 
     TableStructureAdapter of(CharSequence tableName, LineTcpParser parser) {

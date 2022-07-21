@@ -254,8 +254,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getDefaultTableWriteMode() {
-        return WriteMode.DIRECT;
+    public boolean getWallEnabledDefault() {
+        return false;
     }
 
     @Override

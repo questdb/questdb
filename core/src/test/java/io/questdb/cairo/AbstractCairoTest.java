@@ -320,8 +320,8 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public int getDefaultTableWriteMode() {
-                return defaultTableWriteMode < 0 ? super.getDefaultTableWriteMode() : defaultTableWriteMode;
+            public boolean getWallEnabledDefault() {
+                return defaultTableWriteMode < 0 ? super.getWallEnabledDefault() : defaultTableWriteMode == 1;
             }
         };
         engine = new CairoEngine(configuration, metrics);

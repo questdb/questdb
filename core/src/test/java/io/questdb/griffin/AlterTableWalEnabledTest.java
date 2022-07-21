@@ -25,76 +25,79 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.WriteMode;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class AlterTableWriteModeTest extends AbstractGriffinTest {
+public class AlterTableWalEnabledTest extends AbstractGriffinTest {
 
     @Test
-    public void testDefaultWriteMode() throws Exception {
+    public void testDefaultWalEnabledMode() throws Exception {
         assertMemoryLeak(() -> {
-            defaultTableWriteMode = WriteMode.WAL;
+            defaultTableWriteMode = 1;
             createTableWrite("my_table_wal", null, "HOUR");
-            assertWriteMode("my_table_wal", WriteMode.WAL);
+            assertWalEnabled("my_table_wal", true);
 
-            defaultTableWriteMode = WriteMode.DIRECT;
+
+            createTableWrite("my_table_wal_none", null, "NONE");
+            assertWalEnabled("my_table_wal_none", false);
+
+            defaultTableWriteMode = 0;
             createTableWrite("my_table_dir", null, "HOUR");
-            assertWriteMode("my_table_dir", WriteMode.DIRECT);
+            assertWalEnabled("my_table_dir", false);
         });
     }
 
     @Test
-    public void testWriteModeAddIndex() throws Exception {
+    public void testWalEnabledAddIndex() throws Exception {
         assertMemoryLeak(() -> {
             String alterSuffix = "ALTER COLUMN s ADD INDEX";
-            checkWriteModeBeforeAfterAlter(alterSuffix);
+            checkWalEnabledBeforeAfterAlter(alterSuffix);
         });
     }
 
     @Test
-    public void testWriteModeAndAlterLag() throws Exception {
+    public void testWalEnabledAndAlterLag() throws Exception {
         assertMemoryLeak(() -> {
             String alterSuffix = "set param commitLag=100s";
-            checkWriteModeBeforeAfterAlter(alterSuffix);
+            checkWalEnabledBeforeAfterAlter(alterSuffix);
         });
     }
 
     @Test
-    public void testWriteModeAndRenameColumn() throws Exception {
+    public void testWalEnabledAndRenameColumn() throws Exception {
         assertMemoryLeak(() -> {
             String alterSuffix = "rename column x to y";
-            checkWriteModeBeforeAfterAlter(alterSuffix);
+            checkWalEnabledBeforeAfterAlter(alterSuffix);
         });
     }
 
     @Test
-    public void testWriteModeNameInCreateAsSelect() throws Exception {
+    public void testWalEnabledNameInCreateAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table wm as (" +
                     "select x, cast(x as timestamp) as ts " +
                     "from long_sequence(2) " +
-                    ") timestamp(ts) partition by DAY with writeMode=WAL");
+                    ") timestamp(ts) partition by DAY WAL");
 
-            assertWriteMode("wm", WriteMode.WAL);
+            assertWalEnabled("wm", true);
         });
     }
 
     @Test
-    public void testWriteModeNameInCreateAsSelect2() throws Exception {
+    public void testWalEnabledNameInCreateAsSelect2() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table wm as (" +
                     "select x, cast(x as timestamp) as ts " +
                     "from long_sequence(2) " +
-                    ") timestamp(ts) partition by DAY with writeMode=DIREcT");
+                    ") timestamp(ts) partition by DAY Bypass WaL");
 
-            assertWriteMode("wm", WriteMode.DIRECT);
+            assertWalEnabled("wm", false);
         });
     }
 
     @Test
-    public void testWriteModeNameInvalid() throws Exception {
+    public void testWalEnabledNameInvalid() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 createTableWrite("my_table_wal", "NONE", "DAY");
@@ -102,29 +105,29 @@ public class AlterTableWriteModeTest extends AbstractGriffinTest {
             } catch (SqlException ex) {
                 TestUtils.assertContains(
                         ex.getFlyweightMessage(),
-                        "unrecognized Write Mode 'NONE'"
+                        "unexpected token: NONE"
                 );
             }
         });
     }
 
     @Test
-    public void testWriteModeNameInvalidEmpty() throws Exception {
+    public void testWalEnabledNameInvalidWalWord() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                createTableWrite("my_table_wal", "", "DAY");
+                createTableWrite("my_table_wal", "BYPASS WALL", "DAY");
                 Assert.fail("Exception expected");
             } catch (SqlException ex) {
                 TestUtils.assertContains(
                         ex.getFlyweightMessage(),
-                        "too few arguments for '='"
+                        "invalid syntax, should be BYPASS WAL but was BYPASS WALL"
                 );
             }
         });
     }
 
     @Test
-    public void testWriteModeNonPartitionedTable() throws Exception {
+    public void testWalEnabledNonPartitionedTable() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 createTableWrite("my_table_wal", "WAL", "NONE");
@@ -138,35 +141,35 @@ public class AlterTableWriteModeTest extends AbstractGriffinTest {
         });
     }
 
-    private void assertWriteMode(String tableName, int writeMode) {
+    private void assertWalEnabled(String tableName, boolean enabled) {
         try (TableReader rdr = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), tableName)) {
-            Assert.assertEquals(writeMode, rdr.getMetadata().getWriteMode());
+            Assert.assertEquals(enabled, rdr.getMetadata().isWalEnabled());
         }
     }
 
-    private void checkWriteModeBeforeAfterAlter(String alterSuffix) throws SqlException {
+    private void checkWalEnabledBeforeAfterAlter(String alterSuffix) throws SqlException {
         createTableWrite("my_table_wal", "WAL", "DAY");
-        assertWriteMode("my_table_wal", WriteMode.WAL);
+        assertWalEnabled("my_table_wal", true);
         compile("alter table my_table_wal " + alterSuffix, sqlExecutionContext);
-        assertWriteMode("my_table_wal", WriteMode.WAL);
+        assertWalEnabled("my_table_wal", true);
 
-        createTableWrite("my_table_dir", "DIRECT", "DAY");
-        assertWriteMode("my_table_dir", WriteMode.DIRECT);
+        createTableWrite("my_table_dir", "BYPASS WAL", "DAY");
+        assertWalEnabled("my_table_dir", false);
         compile("alter table my_table_dir " + alterSuffix, sqlExecutionContext);
-        assertWriteMode("my_table_dir", WriteMode.DIRECT);
+        assertWalEnabled("my_table_dir", false);
 
-        assertSql("select name, writeMode from tables() order by name",
-                "name\twriteMode\n" +
-                "my_table_dir\tDirect\n" +
-                "my_table_wal\tWAL\n");
+        assertSql("select name, walEnabled from tables() order by name",
+                "name\twalEnabled\n" +
+                "my_table_dir\tfalse\n" +
+                "my_table_wal\ttrue\n");
     }
 
-    private void createTableWrite(String tableName, String writeMode, String partitionBY) throws SqlException {
+    private void createTableWrite(String tableName, String walMode, String partitionBY) throws SqlException {
         compile(
                 "create table " + tableName +
                         " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                         " PARTITION BY " + partitionBY +
-                        (writeMode != null ? " WITH WriteMode=" + writeMode : "")
+                        (walMode != null ? " " + walMode : "")
         );
     }
 }

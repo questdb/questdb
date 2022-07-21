@@ -632,8 +632,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
-        public int getWriteMode() {
-            return configuration.getDefaultTableWriteMode();
+        public boolean isWallEnabled() {
+            return configuration.getWallEnabledDefault();
         }
 
         TableStructureAdapter of(CharSequenceCache cache) {

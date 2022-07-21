@@ -509,10 +509,13 @@ public final class SqlParser {
             model.setTimestamp(timestamp);
             tok = optTok(lexer);
         }
-
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
         long commitLag = configuration.getCommitLag();
-        int writeMode = configuration.getDefaultTableWriteMode();
+
+        final int walNotSet = -1;
+        final int walDisabled = 0;
+        final int walEnabled = 1;
+        int walSetting = walNotSet;
 
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {
@@ -524,6 +527,25 @@ public final class SqlParser {
             }
             model.setPartitionBy(partitionBy);
             tok = optTok(lexer);
+
+            if (tok != null) {
+                if (isWalKeyword(tok)) {
+                    if (!PartitionBy.isPartitioned(model.getPartitionBy())) {
+                        throw SqlException.position(lexer.getPosition()).put("WAL Write Mode can only be used on partitioned tables");
+                    }
+                    walSetting = walEnabled;
+                    tok = optTok(lexer);
+                } else if (isBypassKeyword(tok)) {
+                    tok = optTok(lexer);
+                    if (tok != null && isWalKeyword(tok)) {
+                        walSetting = walDisabled;
+                        tok = optTok(lexer);
+                    } else {
+                        throw SqlException.position(lexer.getPosition()).put(" invalid syntax, should be BYPASS WAL but was BYPASS " + tok);
+                    }
+                }
+            }
+
             if (tok != null && isWithKeyword(tok)) {
                 ExpressionNode expr;
                 while ((expr = expr(lexer, (QueryModel) null)) != null) {
@@ -536,15 +558,6 @@ public final class SqlParser {
                             }
                         } else if (isCommitLag(expr.lhs.token)) {
                             commitLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
-                        } else if (isWriteModeParam(expr.lhs.token)) {
-                            try {
-                                writeMode = WriteMode.valueOf(expr.rhs.token);
-                            } catch (IllegalArgumentException ex) {
-                                throw SqlException.position(lexer.getPosition()).put("unrecognized Write Mode '").put(expr.rhs.token).put('\'');
-                            }
-                            if (writeMode == WriteMode.WAL && !PartitionBy.isPartitioned(model.getPartitionBy())) {
-                                throw SqlException.position(lexer.getPosition()).put("WAL Write Mode can only be used on partitioned tables");
-                            }
                         } else {
                             throw SqlException.position(lexer.getPosition()).put(" unrecognized ").put(expr.lhs.token).put(" after WITH");
                         }
@@ -561,7 +574,12 @@ public final class SqlParser {
 
         model.setMaxUncommittedRows(maxUncommittedRows);
         model.setCommitLag(commitLag);
-        model.setWriteMode(writeMode);
+        final boolean isWalEnabled =
+                PartitionBy.isPartitioned(model.getPartitionBy()) && (
+                        (walSetting == walNotSet && configuration.getWallEnabledDefault()) || walSetting == walEnabled
+                );
+
+        model.setWalEnabled(isWalEnabled);
 
         if (tok == null || Chars.equals(tok, ';')) {
             return model;

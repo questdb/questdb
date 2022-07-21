@@ -49,7 +49,7 @@ public interface TableStructure {
 
     int getTimestampIndex();
 
-    int getWriteMode();
+    boolean isWallEnabled();
 
     boolean isIndexed(int columnIndex);
 

@@ -120,7 +120,7 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
-    int getDefaultTableWriteMode();
+    boolean getWallEnabledDefault();
 
     int getDoubleToStrCastScale();
 

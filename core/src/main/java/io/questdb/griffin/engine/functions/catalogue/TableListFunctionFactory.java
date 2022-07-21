@@ -214,10 +214,15 @@ public class TableListFunctionFactory implements FunctionFactory {
                             return metaReader.getColumnName(metaReader.getTimestampIndex());
                         }
                     }
-                    if (col == writeModeColumn) {
-                        return WriteMode.nameOf(metaReader.getWriteMode());
-                    }
                     return null;
+                }
+
+                @Override
+                public boolean getBool(int col) {
+                    if (col == writeModeColumn) {
+                        return metaReader.isWalEnabled();
+                    }
+                    return false;
                 }
 
                 @Override
@@ -279,7 +284,7 @@ public class TableListFunctionFactory implements FunctionFactory {
         maxUncommittedRowsColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("commitLag", 6, ColumnType.LONG));
         commitLagColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("writeMode", 7, ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("walEnabled", 7, ColumnType.BOOLEAN));
         writeModeColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }

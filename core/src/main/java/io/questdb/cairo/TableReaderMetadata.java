@@ -44,7 +44,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     private long commitLag;
     private long structureVersion;
     private MemoryMR transitionMeta;
-    private int writeMode;
+    private boolean walEnabled;
 
     public TableReaderMetadata(FilesFacade ff) {
         this.path = new Path();
@@ -76,7 +76,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
-        this.writeMode = metaMem.getInt(TableUtils.META_OFFSET_WRITE_MODE);
+        this.walEnabled = metaMem.getInt(TableUtils.META_OFFSET_WAL_ENABLED) > 0;
         long offset = TableUtils.getColumnNameOffset(columnCount);
 
         int shiftLeft = 0, existingIndex = 0;
@@ -184,7 +184,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
             this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
             this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
-            this.writeMode = metaMem.getInt(TableUtils.META_OFFSET_WRITE_MODE);
+            this.walEnabled = metaMem.getInt(TableUtils.META_OFFSET_WAL_ENABLED) > 0;
             this.columnMetadata.clear();
             long offset = TableUtils.getColumnNameOffset(columnCount);
             this.timestampIndex = -1;
@@ -261,7 +261,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         return version;
     }
 
-    public int getWriteMode() {
-        return writeMode;
+    public boolean isWalEnabled() {
+        return walEnabled;
     }
 }

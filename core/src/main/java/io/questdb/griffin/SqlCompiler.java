@@ -3087,8 +3087,8 @@ public class SqlCompiler implements Closeable {
         }
 
         @Override
-        public int getWriteMode() {
-            return model.getWriteMode();
+        public boolean isWallEnabled() {
+            return model.isWallEnabled();
         }
 
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {
