@@ -492,16 +492,45 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelCopyRejectSecondReq() throws Exception {
+    public void testParallelCopyRejectChecksTableName() throws Exception {
         compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
-                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
+
         // this one should be rejected
         try {
+            compiler.compile("copy y cancel", sqlExecutionContext);
+            Assert.fail();
+        } catch (Exception e) {
+            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("different table"));
+        }
+        // this one should succeed
+        try {
+            compiler.compile("copy x cancel", sqlExecutionContext);
+        } catch (Exception e) {
+            Assert.fail();
+        }
+
+        drainProcessingQueue();
+        assertQuery("status\nCANCELLED\n",
+                "select status from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                null,
+                true );
+    }
+
+    @Test
+    public void testParallelCopyRejectSecondReq() throws Exception {
+        compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
+
+        // this import should be rejected
+        try {
             compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
-                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
+            Assert.fail();
         } catch (Exception e) {
             MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Another import request is in progress"));
         }
+        // cancel request should succeed
         try {
             compiler.compile("copy x cancel", sqlExecutionContext);
         } catch (Exception e) {

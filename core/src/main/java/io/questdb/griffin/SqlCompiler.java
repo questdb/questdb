@@ -1953,19 +1953,24 @@ public class SqlCompiler implements Closeable {
         final MPSequence textImportRequestPubSeq = messageBus.getTextImportRequestPubSeq();
         final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
         final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
+        final CharSequence tableName = GenericLexer.unquote(model.getTableName().token);
 
         boolean isActive = textImportExecutionContext.isActive();
         if (model.isCancel()) {
+            // The cancellation is based on the best effort, so we don't worry about potential races with imports.
             if (isActive) {
-                circuitBreaker.cancel();
+                if (textImportExecutionContext.equalsActiveTableName(tableName)) {
+                    circuitBreaker.cancel();
+                } else {
+                    throw SqlException.$(0, "Active import is on different table.");
+                }
             } else {
-                throw SqlException.$(0, "There is no active import to cancel.");
+                throw SqlException.$(0, "No active import to cancel.");
             }
         } else {
             if (!isActive) {
                 long processingCursor = textImportRequestPubSeq.next();
                 if (processingCursor > -1) {
-                    final CharSequence tableName = GenericLexer.unquote(model.getTableName().token);
                     final TextImportRequestTask task = textImportRequestQueue.get(processingCursor);
 
                     assert fileName != null;
@@ -1978,7 +1983,7 @@ public class SqlCompiler implements Closeable {
                             model.getPartitionBy());
 
                     circuitBreaker.reset();
-                    textImportExecutionContext.setActive(true);
+                    textImportExecutionContext.setActiveTableName(tableName);
                     textImportRequestPubSeq.done(processingCursor);
                 } else {
                     throw SqlException.$(0, "Unable to process the import request. Another import request may be in progress.");
@@ -1989,7 +1994,9 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    //sets insertCount to number of copied rows
+    /**
+     * Sets insertCount to number of copied rows.
+     */
     private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
         TableWriter writer = new TableWriter(
                 configuration,
@@ -2012,7 +2019,9 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    /* returns number of copied rows*/
+    /**
+     * Returns number of copied rows.
+     */
     private long copyTableData(RecordCursor cursor, RecordMetadata metadata, TableWriter writer, RecordMetadata
             writerMetadata, RecordToRowCopier recordToRowCopier) {
         int timestampIndex = writerMetadata.getTimestampIndex();
@@ -2023,7 +2032,9 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    //returns number of copied rows
+    /**
+     * Returns number of copied rows.
+     */
     private long copyUnordered(RecordCursor cursor, TableWriter writer, RecordToRowCopier copier) {
         long rowCount = 0;
         final Record record = cursor.getRecord();

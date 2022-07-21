@@ -155,7 +155,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 );
             } finally {
                 requestSubSeq.done(cursor);
-                textImportExecutionContext.setActive(false);
+                textImportExecutionContext.resetActiveTableName();
             }
             enforceLogRetention();
             return true;

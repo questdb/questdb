@@ -2532,11 +2532,11 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             try {
                 compiler.compile("copy xy from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
-                engine.getTextImportExecutionContext().setActive(false);
+                engine.getTextImportExecutionContext().resetActiveTableName();
                 compiler.compile("copy xy from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
             } catch (Exception e) {
-                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Unable to process the import request. The processing queue may not be configured correctly."));
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Unable to process the import request. Another import request may be in progress."));
             }
         });
     }

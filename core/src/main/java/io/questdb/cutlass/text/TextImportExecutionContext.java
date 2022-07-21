@@ -24,21 +24,32 @@
 
 package io.questdb.cutlass.text;
 
-import java.util.concurrent.atomic.AtomicBoolean;
+import io.questdb.std.Chars;
+import io.questdb.std.str.StringSink;
 
 public class TextImportExecutionContext {
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
-    private final AtomicBoolean isActive = new AtomicBoolean();
+    // Access is synchronized on the context instance.
+    private final StringSink activeTableName = new StringSink();
 
     public AtomicBooleanCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
 
-    public boolean isActive() {
-        return isActive.get();
+    public synchronized boolean isActive() {
+        return activeTableName.length() > 0;
     }
 
-    public void setActive(boolean flag) {
-         isActive.set(flag);
+    public synchronized boolean equalsActiveTableName(CharSequence tableName) {
+        return Chars.equalsNc(activeTableName, tableName);
+    }
+
+    public synchronized void setActiveTableName(CharSequence tableName) {
+        activeTableName.clear();
+        activeTableName.put(tableName);
+    }
+
+    public synchronized void resetActiveTableName() {
+        activeTableName.clear();
     }
 }
