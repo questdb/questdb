@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
@@ -66,4 +67,10 @@ public class IntervalBwdDataFrameCursorFactory extends AbstractDataFrameCursorFa
         Misc.free(intervals);
     }
 
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("IntervalBwdDataFrame");
+        super.toPlan(sink);
+        sink.attr("intervals").val(intervals);
+    }
 }
