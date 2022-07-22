@@ -27,7 +27,7 @@ package io.questdb.guiutil;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.Path;
 
 import javax.swing.*;
@@ -171,7 +171,7 @@ public class MetaExaminer {
 
     private void displayCVFileContent() {
         cvReader.ofRO(FilesFacadeImpl.INSTANCE, selectedPath);
-        cvReader.readSafe(MicrosecondClockImpl.INSTANCE, Long.MAX_VALUE);
+        cvReader.readSafe(MillisecondClockImpl.INSTANCE, Long.MAX_VALUE);
         LongList cvEntries = cvReader.getCachedList();
         int limit = cvEntries.size();
         ms.clear();
@@ -355,7 +355,7 @@ public class MetaExaminer {
     private boolean openRequiredCvFile(int levelUpCount) {
         return onRequiredFile(levelUpCount, TableUtils.COLUMN_VERSION_FILE_NAME, p -> {
             cvReader.ofRO(FilesFacadeImpl.INSTANCE, p);
-            cvReader.readSafe(MicrosecondClockImpl.INSTANCE, Long.MAX_VALUE);
+            cvReader.readSafe(MillisecondClockImpl.INSTANCE, Long.MAX_VALUE);
         });
     }
 
