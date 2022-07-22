@@ -549,7 +549,7 @@ public class ServerMain {
         if (file == null) {
             throw new IllegalArgumentException("File must not be null");
         }
-        if (File.separatorChar == '\\') {
+        if (Os.type == Os.WINDOWS) {
             return true;
         }
 

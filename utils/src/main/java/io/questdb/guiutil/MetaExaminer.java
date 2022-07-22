@@ -325,7 +325,7 @@ public class MetaExaminer {
                 }
                 for (int symbolKey = 0; symbolKey < symbolCount; symbolKey++) {
                     CharSequence symbol = symReader.valueOf(symbolKey);
-                    RowCursor cursor = indexReader.getCursor(false, symbolKey + 1, 0, Long.MAX_VALUE);
+                    RowCursor cursor = indexReader.getCursor(false, TableUtils.toIndexKey(symbolKey), 0, Long.MAX_VALUE);
                     if (cursor.hasNext()) {
                         ms.addIndexedSymbolLn(symbolKey, symbol, false);
                         ms.addLn(" - offset: ", cursor.next());
