@@ -27,8 +27,14 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
-import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.*;
+import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.ReaderOutOfDateException;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.MemoryFCRImpl;
+import io.questdb.cairo.vm.MemoryFMCRImpl;
+import io.questdb.cairo.vm.NullMapWriter;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.SqlException;
@@ -825,10 +831,6 @@ public class TableWriter implements Closeable {
         return hasO3() ? getO3RowCount0() : 0;
     }
 
-    public long getRowCount() {
-        return txWriter.getRowCount();
-    }
-
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -871,12 +873,20 @@ public class TableWriter implements Closeable {
         return txWriter.unsafeGetRawMemorySize();
     }
 
+    public long getRowCount() {
+        return txWriter.getRowCount();
+    }
+
     public long getStructureVersion() {
         return txWriter.getStructureVersion();
     }
 
     public int getSymbolIndexNoTransientCountUpdate(int columnIndex, CharSequence symValue) {
         return symbolMapWriters.getQuick(columnIndex).put(symValue, SymbolValueCountCollector.NOOP);
+    }
+
+    public MapWriter getSymbolMapWriter(int columnIndex) {
+        return symbolMapWriters.getQuick(columnIndex);
     }
 
     public String getTableName() {
@@ -1082,74 +1092,6 @@ public class TableWriter implements Closeable {
             return finishO3Commit(partitionTimestampHiLimit);
         } finally {
             walPath.trimTo(walRootPathLen);
-        }
-    }
-
-    private void mmapWalColumn(Path walPath, int timestampIndex, long rowLo, long rowHi) {
-        walMappedColumns.clear();
-        int walPathLen = walPath.length();
-        final int columnCount = metadata.getColumnCount();
-
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            int type = metadata.getColumnType(columnIndex);
-            o3RowCount = rowHi - rowLo;
-            if (type > 0) {
-                int sizeBitsPow2 = ColumnType.pow2SizeOf(type);
-                if (columnIndex == timestampIndex) {
-                    sizeBitsPow2 += 1;
-                }
-
-                if (!ColumnType.isVariableLength(type)) {
-                    MemoryCMOR primary = walColumnMemoryPool.pop();
-
-                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    primary.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            rowLo << sizeBitsPow2,
-                            rowHi << sizeBitsPow2,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
-
-                    walMappedColumns.add(primary);
-                    walMappedColumns.add(null);
-                } else {
-                    sizeBitsPow2 = 3;
-                    MemoryCMOR fixed = walColumnMemoryPool.pop();
-                    MemoryCMOR var = walColumnMemoryPool.pop();
-
-                    iFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    fixed.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            rowLo << sizeBitsPow2,
-                            (rowHi + 1) << sizeBitsPow2,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
-
-                    long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
-                    long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
-                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
-                    var.ofOffset(
-                            configuration.getFilesFacade(),
-                            walPath,
-                            varOffset,
-                            varOffset + varLen,
-                            MemoryTag.MMAP_TABLE_WRITER,
-                            CairoConfiguration.O_NONE
-                    );
-                    walPath.trimTo(walPathLen);
-
-                    walMappedColumns.add(var);
-                    walMappedColumns.add(fixed);
-                }
-            } else {
-                walMappedColumns.add(null);
-            }
         }
     }
 
@@ -1801,7 +1743,7 @@ public class TableWriter implements Closeable {
                 nullers.add(() -> mem1.putLong(Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG128:
-                nullers.add(() -> mem1.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                nullers.add(() -> mem1.putLong128BigEndian(Numbers.LONG_NaN, Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG256:
                 nullers.add(() -> mem1.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
@@ -1904,25 +1846,6 @@ public class TableWriter implements Closeable {
             ddlMem.close();
         }
         return index;
-    }
-
-    private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int denseSymbolIndex, IntList symbolMap) {
-        final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
-        symbolMap.setPos(symbolMapDiff.getSize());
-
-        // This is defensive coding. It validates that all the symbols used in WAL are set in SymbolMapDiff
-        symbolMap.setAll(symbolMapDiff.getSize(), -1);
-        final MapWriter mapWriter = denseSymbolMapWriters.get(denseSymbolIndex);
-        boolean identical = true;
-
-        SymbolMapDiffEntry entry;
-        while ((entry = symbolMapDiff.nextEntry()) != null) {
-            final CharSequence symbolValue = entry.getSymbol();
-            final int newKey = mapWriter.put(symbolValue);
-            identical &= newKey == entry.getKey();
-            symbolMap.setQuick(entry.getKey() - cleanSymbolCount, newKey);
-        }
-        return identical;
     }
 
     private void attachPartitionCheckFilesMatchFixedColumn(FilesFacade ff, Path path, int columnType, long partitionSize, String columnName, long columnNameTxn) {
@@ -2505,6 +2428,25 @@ public class TableWriter implements Closeable {
         symbolMapWriters.extendAndSet(columnCount, w);
     }
 
+    private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int denseSymbolIndex, IntList symbolMap) {
+        final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
+        symbolMap.setPos(symbolMapDiff.getSize());
+
+        // This is defensive coding. It validates that all the symbols used in WAL are set in SymbolMapDiff
+        symbolMap.setAll(symbolMapDiff.getSize(), -1);
+        final MapWriter mapWriter = denseSymbolMapWriters.get(denseSymbolIndex);
+        boolean identical = true;
+
+        SymbolMapDiffEntry entry;
+        while ((entry = symbolMapDiff.nextEntry()) != null) {
+            final CharSequence symbolValue = entry.getSymbol();
+            final int newKey = mapWriter.put(symbolValue);
+            identical &= newKey == entry.getKey();
+            symbolMap.setQuick(entry.getKey() - cleanSymbolCount, newKey);
+        }
+        return identical;
+    }
+
     private void doClose(boolean truncate) {
         boolean tx = inTransaction();
         freeSymbolMapWriters();
@@ -2816,6 +2758,74 @@ public class TableWriter implements Closeable {
 
         if (this.lockFd == -1L) {
             throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
+        }
+    }
+
+    private void mmapWalColumn(Path walPath, int timestampIndex, long rowLo, long rowHi) {
+        walMappedColumns.clear();
+        int walPathLen = walPath.length();
+        final int columnCount = metadata.getColumnCount();
+
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            int type = metadata.getColumnType(columnIndex);
+            o3RowCount = rowHi - rowLo;
+            if (type > 0) {
+                int sizeBitsPow2 = ColumnType.pow2SizeOf(type);
+                if (columnIndex == timestampIndex) {
+                    sizeBitsPow2 += 1;
+                }
+
+                if (!ColumnType.isVariableLength(type)) {
+                    MemoryCMOR primary = walColumnMemoryPool.pop();
+
+                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                    primary.ofOffset(
+                            configuration.getFilesFacade(),
+                            walPath,
+                            rowLo << sizeBitsPow2,
+                            rowHi << sizeBitsPow2,
+                            MemoryTag.MMAP_TABLE_WRITER,
+                            CairoConfiguration.O_NONE
+                    );
+                    walPath.trimTo(walPathLen);
+
+                    walMappedColumns.add(primary);
+                    walMappedColumns.add(null);
+                } else {
+                    sizeBitsPow2 = 3;
+                    MemoryCMOR fixed = walColumnMemoryPool.pop();
+                    MemoryCMOR var = walColumnMemoryPool.pop();
+
+                    iFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                    fixed.ofOffset(
+                            configuration.getFilesFacade(),
+                            walPath,
+                            rowLo << sizeBitsPow2,
+                            (rowHi + 1) << sizeBitsPow2,
+                            MemoryTag.MMAP_TABLE_WRITER,
+                            CairoConfiguration.O_NONE
+                    );
+                    walPath.trimTo(walPathLen);
+
+                    long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
+                    long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
+                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                    var.ofOffset(
+                            configuration.getFilesFacade(),
+                            walPath,
+                            varOffset,
+                            varOffset + varLen,
+                            MemoryTag.MMAP_TABLE_WRITER,
+                            CairoConfiguration.O_NONE
+                    );
+                    walPath.trimTo(walPathLen);
+
+                    walMappedColumns.add(var);
+                    walMappedColumns.add(fixed);
+                }
+            } else {
+                walMappedColumns.add(null);
+            }
         }
     }
 
@@ -3347,7 +3357,7 @@ public class TableWriter implements Closeable {
                 long ts = Unsafe.getUnsafe().getLong(address + alignedExtraLen + (n << shl));
                 // putLong128(hi, lo)
                 // written in memory as lo then hi
-                o3TimestampMem.putLong128(o3RowCount + n, ts);
+                o3TimestampMem.putLongLong(ts, o3RowCount + n);
             }
 
             if (locallyMapped) {
@@ -3798,7 +3808,7 @@ public class TableWriter implements Closeable {
     private void o3TimestampSetter(long timestamp) {
         // putLong128(hi, lo)
         // written in memory as lo then hi
-        o3TimestampMem.putLong128(getO3RowCount0(), timestamp);
+        o3TimestampMem.putLongLong(timestamp, getO3RowCount0());
     }
 
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {

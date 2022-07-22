@@ -28,7 +28,6 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -197,7 +196,7 @@ public class WalWriter implements Closeable {
             if (timestampIndex != -1) {
                 //avoid lookups by having a designated field with primaryColumn
                 final MemoryMA primaryColumn = getPrimaryColumn(timestampIndex);
-                primaryColumn.putLong128(rowCount, timestamp);
+                primaryColumn.putLongLong(timestamp, rowCount);
                 setRowValueNotNull(timestampIndex);
                 row.timestamp = timestamp;
             }
