@@ -24,13 +24,11 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoTestUtils;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableModel;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Os;
+import io.questdb.std.RostiAllocFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -1094,6 +1092,27 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
         }
     }
 
+    @Test
+    public void testRostiReallocation() throws Exception {
+        rostiAllocFacade = new RostiAllocFacadeImpl() {
+            @Override
+            public long alloc(ColumnTypes types, long ignore) {
+                // force resize
+                return super.alloc(types, 64);
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            String ddl = "create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1500))";
+            String sql = "select distinct count, count1 from (select x1, count(*), count(*) from tab group by x1)";
+            assertQuery(
+                    "count\tcount1\n1\t1\n",
+                    sql,
+                    ddl,
+                    null, true, true, false
+            );
+        });
+    }
     private void testAggregations(String[] aggregateFunctions, TypeVal[] aggregateColTypes) throws SqlException {
         StringBuilder sql = new StringBuilder();
         sql.append("select ");
