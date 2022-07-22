@@ -1727,7 +1727,6 @@ public class TableWriter implements Closeable {
             }
         }
         if (!copySuccess) {
-            StatusCode statusCode = StatusCode.PARTITION_CANNOT_COPY_META;
             // remove _dm_ folder
             if (-1 == ff.rmdir(detachedPath.trimTo(detachedPathLen).slash$())) { // remove .detached/_dm_
                 LOG.error()
@@ -1735,7 +1734,7 @@ public class TableWriter implements Closeable {
                         .$(", path=").$(detachedPath)
                         .I$();
             }
-            return statusCode;
+            return StatusCode.PARTITION_CANNOT_COPY_META;
         }
         return StatusCode.OK;
     }
@@ -1757,6 +1756,7 @@ public class TableWriter implements Closeable {
     }
 
     private boolean checkDetachedMetadataOnPartitionAttach(long timestamp) {
+        // detached metadata resides within folder _dm_ inside the detached partition folder itself
         other.of(detachedPath).concat(DETACHED_DIR_META_FOLDER_NAME);
         int otherLen = other.length();
         boolean removeFolder = false;
@@ -1784,6 +1784,9 @@ public class TableWriter implements Closeable {
             }
             if (metadata.getTimestampIndex() != detachedMetadata.getTimestampIndex()) {
                 throw CairoException.detachedMetadataMismatch("timestamp_index");
+            }
+            if (partitionBy != detachedMetadata.getPartitionBy()) {
+                throw CairoException.detachedMetadataMismatch("partition_by");
             }
             if (columnCount != detachedMetadata.getColumnCount()) {
                 throw CairoException.detachedMetadataMismatch("column_count");
