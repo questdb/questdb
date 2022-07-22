@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.Chars;
 import io.questdb.std.str.CharSink;
 
@@ -62,5 +63,10 @@ public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorF
     @Override
     public boolean supportTableRowId(CharSequence tableName) {
         return Chars.equalsIgnoreCaseNc(tableName, this.tableName);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.attr("tableName").val(tableName);
     }
 }

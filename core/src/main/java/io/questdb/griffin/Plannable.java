@@ -22,35 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
+public interface Plannable {
 
-public class IntConstant extends IntFunction implements ConstantFunction {
-
-    public static final IntConstant NULL = new IntConstant(Numbers.INT_NaN);
-
-    private final int value;
-
-    public IntConstant(int value) {
-        super();
-        this.value = value;
-    }
-
-    public static IntConstant newInstance(int value) {
-        return value != Numbers.INT_NaN ? new IntConstant(value) : NULL;
-    }
-
-    @Override
-    public int getInt(Record rec) {
-        return value;
-    }
-
-    @Override
-    public void toSink(CharSink sink) {
-        sink.put(value);
-    }
+    /**
+     * adds this object's data to plan
+     */
+    void toPlan(PlanSink sink);
 }

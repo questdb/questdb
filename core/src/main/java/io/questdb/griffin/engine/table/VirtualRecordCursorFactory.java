@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
@@ -95,5 +96,15 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean hasDescendingOrder() {
         return baseFactory.hasDescendingOrder();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("VirtualRecordCursorFactory");
+        sink.attr("supportsRandomAccess");
+        sink.val(supportsRandomAccess);
+        sink.attr("functions");
+        sink.val(functions);
+        sink.child(baseFactory);
     }
 }

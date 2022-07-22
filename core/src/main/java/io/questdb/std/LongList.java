@@ -30,7 +30,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.*;
 
-public class LongList implements Mutable, LongVec {
+public class LongList implements Mutable, LongVec, Sinkable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private static final long DEFAULT_NO_ENTRY_VALUE = -1L;
     private final long noEntryValue;
@@ -324,21 +324,25 @@ public class LongList implements Mutable, LongVec {
         return this == that || that instanceof LongList && equals((LongList) that);
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('[');
+        for (int i = 0, k = pos; i < k; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            sink.put(get(i));
+        }
+        sink.put(']');
+    }
+
     /**
      * {@inheritDoc}
      */
     @Override
     public String toString() {
         final CharSink sb = Misc.getThreadLocalBuilder();
-
-        sb.put('[');
-        for (int i = 0, k = pos; i < k; i++) {
-            if (i > 0) {
-                sb.put(',');
-            }
-            sb.put(get(i));
-        }
-        sb.put(']');
+        toSink(sb);
         return sb.toString();
     }
 
