@@ -373,6 +373,8 @@ bool resize(rosti_t *map, uint64_t new_capacity, HASH_M hash_m, CPY cpy) {
                 uint64_t new_i = target.offset;
                 total_probe_length += target.probe_length;
                 set_ctrl(map, new_i, H2(hash));
+
+                cpy(map->slot_initial_values_, old_init, map->slot_size_);
                 cpy(map->slots_ + (new_i << map->slot_size_shift_), p, map->slot_size_);
             }
         }
