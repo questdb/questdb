@@ -1790,6 +1790,9 @@ public class TableWriter implements Closeable {
                 if (metadata.getColumnType(i) != detachedMetadata.getColumnType(i)) {
                     throw CairoException.detachedColumnMetadataMismatch(i, name, "type");
                 }
+                if (metadata.isColumnIndexed(i) != detachedMetadata.isColumnIndexed(i)) {
+                    throw CairoException.detachedColumnMetadataMismatch(i, name, "is_indexed");
+                }
             }
 
             // _cv

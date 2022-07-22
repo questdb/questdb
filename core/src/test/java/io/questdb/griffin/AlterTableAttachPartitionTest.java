@@ -314,7 +314,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.BINARY), expected);
                 assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.BYTE), expected);
                 assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.CHAR), expected);
-                assertSchemaMismatch(src,"dst12", dst -> dst.col("ts", ColumnType.SHORT), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.SHORT), expected);
             }
         });
     }
@@ -413,46 +413,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 assertSchemaMismatch(src, "dst16", dst -> dst.col("sh", ColumnType.STRING),
                         "[-100] Detached column [index=3, name=sh, attribute=type] does not match current table metadata"
                 );
-            }
-        });
-    }
-
-    @Test
-    @Ignore
-    // TODO: this will fail as predicted when symbols are checked
-    public void testAttachPartitionSymbolFileNegativeValue() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src17", PartitionBy.DAY)) {
-                createPopulateTable(
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("sym", ColumnType.SYMBOL),
-                        10000,
-                        "2020-01-09",
-                        2);
-
-                writeToStrIndexFile(src, "sym.d", -1L, 4L);
-
-                try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
-                    createPopulateTable(
-                            dst.timestamp("ts")
-                                    .col("i", ColumnType.INT)
-                                    .col("l", ColumnType.LONG).
-                                    col("sym", ColumnType.SYMBOL),
-                            10000,
-                            "2020-01-09",
-                            2);
-
-                    compile("alter table " + dst.getName() + " drop partition list '2020-01-09'");
-
-                    try {
-                        copyAttachPartition(src, dst, 0, "2020-01-09");
-                        Assert.fail();
-                    } catch (SqlException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Symbol file does not match symbol column, invalid key");
-                    }
-                }
             }
         });
     }
@@ -718,12 +678,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    @Ignore
-    // TODO: fix this by checking symbols in _dm_
     public void testAttachPartitionsWithSymbolsValueMatchWithNoIndex() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "src26", PartitionBy.DAY);
+                 TableModel dst = new TableModel(configuration, "dst26", PartitionBy.DAY)) {
 
                 createPopulateTable(
                         src.col("l", ColumnType.LONG)
@@ -743,13 +701,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-01",
                         10);
 
-                compile("alter table dst drop partition list '2020-01-09'");
+                compile("alter table " + dst.getName() + " drop partition list '2020-01-09'");
 
                 try {
                     copyAttachPartition(src, dst, 9000, "2020-01-09");
                 } catch (SqlException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(),
-                            "[-100] Detached partition metadata [id] is not compatible with current table metadata"
+                            "[-100] Detached column [index=2, name=s, attribute=is_indexed] does not match current table metadata"
                     );
                 }
             }
@@ -758,7 +716,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     @Test
     @Ignore
-    // TODO: fix this by checking symbols in _dm_
+    // TODO check symbols and indexes in metadata check
     public void testAttachPartitionsWithSymbolsValueMatchWithNoIndexKeyFile() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src27", PartitionBy.DAY);
@@ -1120,7 +1078,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "from t2 cross join t1"
                 )
         );
-
     }
 
     private void copyPartitionToDetached(String src, String srcDir, String dst, String dstDir) {
