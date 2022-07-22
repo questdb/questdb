@@ -44,8 +44,8 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -800,7 +800,7 @@ public class TableWriter implements Closeable {
             }
 
             // rename partition folder to partition.detached
-            if (!ff.rename(path, detachedPath)) {
+            if (ff.rename(path, detachedPath) != Files.FILES_RENAME_OK) {
                 LOG.error()
                         .$("cannot rename [errno=")
                         .$(ff.errno())
@@ -813,7 +813,7 @@ public class TableWriter implements Closeable {
                 return StatusCode.PARTITION_FOLDER_CANNOT_RENAME;
             }
 
-            StatusCode statusCode = copyRequiredFilesToDetachedPartitionFolderOrRollback(timestamp, partitionNameTxn, detachedPathLen);
+            StatusCode statusCode = copyRequiredFilesToDetachedPartitionFolderOrRollback(timestamp, detachedPathLen);
             if (statusCode == StatusCode.OK) {
                 // all good, commit
                 commitDetachPartition(timestamp, minTimestamp);
@@ -822,7 +822,7 @@ public class TableWriter implements Closeable {
                 setPathForPartition(path, rootLen, partitionBy, timestamp, partitionNameTxn);
                 setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
                 detachedPath.put(DETACHED_DIR_MARKER);
-                if (!ff.rename(detachedPath.$(), path.$())) {
+                if (ff.rename(detachedPath.$(), path.$()) != Files.FILES_RENAME_OK) {
                     LOG.error()
                             .$("undo rename partition folder (admin needs to rename this file) [errno=").$(ff.errno())
                             .$(", undo=").$(detachedPath)
@@ -1657,7 +1657,7 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private StatusCode copyRequiredFilesToDetachedPartitionFolderOrRollback(long timestamp, long partitionNameTxn, int detachedPathLen) {
+    private StatusCode copyRequiredFilesToDetachedPartitionFolderOrRollback(long timestamp, int detachedPathLen) {
         // copy required metadata files to partition.detached/_dm_
         detachedPath.trimTo(detachedPathLen).concat(DETACHED_DIR_META_FOLDER_NAME);
         detachedPathLen = detachedPath.length();
@@ -1751,11 +1751,10 @@ public class TableWriter implements Closeable {
         return true;
     }
 
-    private boolean checkDetachedMetadataOnPartitionAttach(long timestamp) {
+    private void checkDetachedMetadataOnPartitionAttach(long timestamp) {
         // detached metadata resides within folder _dm_ inside the detached partition folder itself
         other.of(detachedPath).concat(DETACHED_DIR_META_FOLDER_NAME);
         int otherLen = other.length();
-        boolean removeFolder = false;
         boolean closeMeta = false;
         boolean closeColumnVersion = false;
         try {
@@ -1768,7 +1767,7 @@ public class TableWriter implements Closeable {
                         .$(other)
                         .$(']')
                         .$();
-                return false;
+                return;
             }
             detachedMetadata.deferredInit(other, ColumnType.VERSION);
             closeMeta = true;
@@ -1806,13 +1805,13 @@ public class TableWriter implements Closeable {
                         .$(other)
                         .$(']')
                         .$();
-                return false;
+                return;
             }
             if (detachedColumnVersionReader == null) {
                 detachedColumnVersionReader = new ColumnVersionReader();
             }
             detachedColumnVersionReader.ofRO(ff, other);
-            detachedColumnVersionReader.readSafe(MicrosecondClockImpl.INSTANCE, Long.MAX_VALUE);
+            detachedColumnVersionReader.readSafe(MillisecondClockImpl.INSTANCE, Long.MAX_VALUE);
             closeColumnVersion = true;
             LongList detachedEntries = detachedColumnVersionReader.getCachedList();
             LongList entries = columnVersionWriter.getCachedList();
@@ -1843,8 +1842,14 @@ public class TableWriter implements Closeable {
 //                    }
 //                }
 //            }
-            removeFolder = true;
-            return true;
+
+            // remove _dm_ folder
+            if (-1 == ff.rmdir(other.trimTo(otherLen).slash$())) { // remove .detached/_dm_
+                LOG.error()
+                        .$("cannot remove [errno=").$(ff.errno())
+                        .$(", path=").$(detachedPath)
+                        .I$();
+            }
         } finally {
             other.trimTo(rootLen);
             if (closeMeta) {
@@ -1852,15 +1857,6 @@ public class TableWriter implements Closeable {
             }
             if (closeColumnVersion) {
                 Misc.free(detachedColumnVersionReader);
-            }
-            if (removeFolder) {
-                // remove _dm_ folder
-                if (-1 == ff.rmdir(other.trimTo(otherLen).slash$())) { // remove .detached/_dm_
-                    LOG.error()
-                            .$("cannot remove [errno=").$(ff.errno())
-                            .$(", path=").$(detachedPath)
-                            .I$();
-                }
             }
         }
     }
@@ -2066,26 +2062,6 @@ public class TableWriter implements Closeable {
             ddlMem.close();
         }
         return index;
-    }
-
-    private void attachPartitionCheckFilesMatchFixedColumn(FilesFacade ff, Path path, int columnType, long partitionSize, String columnName, long columnNameTxn) {
-        TableUtils.dFile(path, columnName, columnNameTxn);
-        if (ff.exists(path.$())) {
-            long fileSize = ff.length(path);
-            if (fileSize < partitionSize << ColumnType.pow2SizeOf(columnType)) {
-                throw CairoException.instance(0)
-                        .put("Column file is too small. ")
-                        .put("Partition files inconsistent [file=")
-                        .put(path)
-                        .put(", expectedSize=")
-                        .put(partitionSize << ColumnType.pow2SizeOf(columnType))
-                        .put(", actual=")
-                        .put(fileSize)
-                        .put(']');
-            }
-            return;
-        }
-        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
     }
 
     private void bumpMasterRef() {

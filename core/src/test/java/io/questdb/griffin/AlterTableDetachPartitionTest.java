@@ -176,8 +176,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         assertFailure(
                 new FilesFacadeImpl() {
                     @Override
-                    public boolean rename(LPSZ from, LPSZ to) {
-                        return false;
+                    public int rename(LPSZ from, LPSZ to) {
+                        return -1;
                     }
                 },
                 "tab42",
@@ -342,8 +342,11 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                     }
 
                     @Override
-                    public boolean rename(LPSZ from, LPSZ to) {
-                        return !copyCalled && super.rename(from, to);
+                    public int rename(LPSZ from, LPSZ to) {
+                        if (!copyCalled ) {
+                            return super.rename(from, to);
+                        }
+                        return -1;
                     }
                 };
 
@@ -1094,7 +1097,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         .put(DETACHED_DIR_MARKER)
                         .concat(DETACHED_DIR_META_FOLDER_NAME)
                         .$();
-                Assert.assertTrue(Files.rename(other, path));
+                Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
 
                 // attempt to reattach
                 assertFailure(
@@ -1171,11 +1174,11 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         // hide the detached partition
         path.of(configuration.getDetachedRoot()).concat(tableName).concat(partitionName + ".detached").$();
         other.of(configuration.getDetachedRoot()).concat(tableName).concat(partitionName + ".detached.hide").$();
-        Assert.assertTrue(Files.rename(path, other));
+        Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(path, other));
         // drop the latest version of the partition
         compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
         // resurface the hidden detached partition
-        Assert.assertTrue(Files.rename(other, path));
+        Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
     }
 
     private static void assertContent(String expected, String tableName) throws Exception {

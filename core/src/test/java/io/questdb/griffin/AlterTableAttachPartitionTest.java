@@ -857,7 +857,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (Chars.endsWith(to, "2020-01-01") && counter.decrementAndGet() == 0) {
+                if (Chars.contains(to, "2020-01-01") && counter.decrementAndGet() == 0) {
                     return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
