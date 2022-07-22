@@ -91,7 +91,10 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         "file symbol, " + // 3
                         "stage symbol, " + // 4
                         "status symbol, " + // 5
-                        "message string" + // 6
+                        "message string," + // 6
+                        "rows_handled long," + // 7
+                        "rows_imported long," + // 8
+                        "errors int" + // 9
                         ") timestamp(ts) partition by DAY",
                 sqlExecutionContext
         );
@@ -151,7 +154,10 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 updateStatus(
                         e.getPhase(),
                         e.isCancelled() ? TextImportTask.STATUS_CANCELLED : TextImportTask.STATUS_FAILED,
-                        e.getMessage()
+                        e.getMessage(),
+                        0,
+                        0,
+                        1
                 );
             } finally {
                 requestSubSeq.done(cursor);
@@ -163,7 +169,14 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         return false;
     }
 
-    private void updateStatus(byte phase, byte status, final CharSequence msg) {
+    private void updateStatus(
+            byte phase,
+            byte status,
+            final CharSequence msg,
+            long rowsHandled,
+            long rowsImported,
+            int errors
+    ) {
         if (writer != null) {
             try {
                 TableWriter.Row row = writer.newRow(clock.getTicks());
@@ -173,6 +186,9 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 row.putSym(4, TextImportTask.getPhaseName(phase));
                 row.putSym(5, TextImportTask.getStatusName(status));
                 row.putStr(6, msg);
+                row.putLong(7, rowsHandled);
+                row.putLong(8, rowsImported);
+                row.putInt(9, errors);
                 row.append();
                 writer.commit();
             } catch (Throwable th) {

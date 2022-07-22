@@ -367,6 +367,26 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testParallelCopyLogTableStats() throws Exception {
+        ParallelCopyRunnable stmt = () -> compiler.compile(
+                "copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ",
+                sqlExecutionContext
+        );
+
+        ParallelCopyRunnable test = () -> assertQuery("rows_handled\trows_imported\terrors\n" +
+                        "1000\t1000\t0\n",
+                "select rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log " +
+                        "where stage = 'PARTITION_IMPORT' and status = 'FINISHED'",
+                null,
+                true,
+                false
+        );
+
+        testParallelCopy(stmt, test);
+    }
+
+    @Test
     public void testParallelCopyIntoNewTableWithUringDisabled() throws Exception {
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
         ioURingEnabled = false;

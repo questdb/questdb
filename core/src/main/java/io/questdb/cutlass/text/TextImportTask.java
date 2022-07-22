@@ -756,6 +756,9 @@ public class TextImportTask {
         private final StringSink tableNameSink = new StringSink();
         private final LongList importedRows = new LongList();
         private final LongList offsets = new LongList();
+        private int rowsHandled;
+        private int rowsImported;
+        private int errors;
         private CairoEngine cairoEngine;
         private TableStructure targetTableStructure;
         private ObjList<TypeAdapter> types;
@@ -771,7 +774,6 @@ public class TextImportTask {
         private int timestampIndex;
         private TimestampAdapter timestampAdapter;
         private long offset;
-        private int errors;
         private DirectCharSink utf8Sink;
         private final TextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
 
@@ -788,10 +790,12 @@ public class TextImportTask {
             this.timestampIndex = -1;
             this.timestampAdapter = null;
 
-            this.errors = 0;
             this.offset = 0;
             this.importedRows.clear();
             this.tableNameSink.clear();
+            this.rowsHandled = 0;
+            this.rowsImported = 0;
+            this.errors = 0;
 
             this.utf8Sink = null;
         }
@@ -834,12 +838,13 @@ public class TextImportTask {
                 lexer.of(columnDelimiter);
                 lexer.setSkipLinesWithExtraValues(false);
 
+                int prevErrors;
                 try {
                     for (int i = lo; i < hi; i++) {
                         throwIfCancelled();
 
                         lexer.clear();
-                        errors = 0;
+                        prevErrors = errors;
 
                         final CharSequence name = partitions.getQuick(i).name;
                         path.of(importRoot).concat(name);
@@ -856,15 +861,18 @@ public class TextImportTask {
                                 tmpPath
                         );
 
-                        long imported = atomicity == Atomicity.SKIP_ROW ? lexer.getLineCount() - errors : lexer.getLineCount();
+                        int newErrors = errors - prevErrors;
+                        long imported = atomicity == Atomicity.SKIP_ROW ? lexer.getLineCount() - newErrors : lexer.getLineCount();
                         importedRows.add(i);
                         importedRows.add(imported);
+                        rowsHandled += lexer.getLineCount();
+                        rowsImported += imported;
 
                         LOG.info()
                                 .$("imported data [temp_table=").$(tableNameSink)
                                 .$(", partition=").$(name)
                                 .$(", lines=").$(lexer.getLineCount())
-                                .$(", errors=").$(errors)
+                                .$(", errors=").$(newErrors)
                                 .I$();
                     }
                 } finally {
@@ -1358,6 +1366,18 @@ public class TextImportTask {
                 ff.munmap(addr, size, MemoryTag.MMAP_PARALLEL_IMPORT);
             }
             mergeIndexes.clear();
+        }
+
+        public int getErrors() {
+            return errors;
+        }
+
+        public int getRowsHandled() {
+            return rowsHandled;
+        }
+
+        public int getRowsImported() {
+            return rowsImported;
         }
     }
 

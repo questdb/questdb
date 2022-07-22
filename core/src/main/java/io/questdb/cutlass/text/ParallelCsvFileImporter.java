@@ -124,6 +124,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private byte status = TextImportTask.STATUS_STARTED;
     private byte phase = TextImportTask.PHASE_SETUP;
     private CharSequence errorMessage;
+    private long rowsHandled;
+    private long rowsImported;
+    private int errors;
     private final Consumer<TextImportTask> checkStatusRef = this::updateStatus;
     private final Consumer<TextImportTask> collectChunkStatsRef = this::collectChunkStats;
     private final Consumer<TextImportTask> collectDataImportStatsRef = this::collectDataImportStats;
@@ -237,6 +240,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         textMetadataDetector.clear();
         otherToTimestampAdapterPool.clear();
         partitions.clear();
+        rowsHandled = 0;
+        rowsImported = 0;
+        errors = 0;
         inputFileName = null;
         tableName = null;
         timestampColumn = null;
@@ -419,7 +425,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     public void updateStatus(byte phase, byte status, @Nullable final CharSequence msg) {
         if (this.statusReporter != null) {
-            this.statusReporter.report(phase, status, msg);
+            this.statusReporter.report(phase, status, msg, rowsHandled, rowsImported, errors);
         }
     }
 
@@ -547,6 +553,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         for (int i = 0, n = rows.size(); i < n; i += 2) {
             partitions.get((int) rows.get(i)).importedRows = rows.get(i + 1);
         }
+        rowsHandled += stage.getRowsHandled();
+        rowsImported += stage.getRowsImported();
+        errors += stage.getErrors();
     }
 
     private void collectIndexStats(final TextImportTask task) {
@@ -901,6 +910,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 .$("finished [phase=").$(phase)
                 .$(", file=`").$(inputFilePath)
                 .$("`, duration=").$((endMs - startMs) / 1000).$('s')
+                .$(", errors=").$(errors)
                 .I$();
         updateStatus(phase, TextImportTask.STATUS_FINISHED, null);
     }
@@ -1021,6 +1031,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void phasePrologue(byte phase) {
+        rowsHandled = 0;
+        rowsImported = 0;
+        errors = 0;
         LOG.info().$("started  [phase=").$(phase).$(", file=`").$(inputFilePath).$('`').$(", workerCount=").$(workerCount).I$();
         updateStatus(phase, TextImportTask.STATUS_STARTED, null);
         startMs = getCurrentTimeMs();
@@ -1388,7 +1401,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     @FunctionalInterface
     public interface PhaseStatusReporter {
-        void report(byte phase, byte status, @Nullable final CharSequence msg);
+        void report(byte phase, byte status, @Nullable final CharSequence msg, long rowsHandled, long rowsImported, int errors);
     }
 
     static class PartitionInfo {
