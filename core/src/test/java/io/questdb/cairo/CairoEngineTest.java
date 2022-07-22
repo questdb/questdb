@@ -27,22 +27,13 @@ package io.questdb.cairo;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.griffin.engine.table.LongTreeSet;
 import io.questdb.mp.Job;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.LongList;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.fail;
 
@@ -155,7 +146,7 @@ public class CairoEngineTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             createX();
 
-            spinLockTimeoutUs = 1000;
+            spinLockTimeout = 1;
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
@@ -292,8 +283,10 @@ public class CairoEngineTest extends AbstractCairoTest {
                 int counter = 1;
 
                 @Override
-                public boolean rename(LPSZ from, LPSZ to) {
-                    return counter-- <= 0 && super.rename(from, to);
+                public int rename(LPSZ from, LPSZ to) {
+                    return counter-- <= 0
+                            && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
+                            : Files.FILES_RENAME_ERR_OTHER;
                 }
 
                 @Override

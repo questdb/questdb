@@ -68,7 +68,7 @@ public class BasePGTest extends AbstractGriffinTest {
 
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
-            public long getMaxTime() {
+            public long getTimeout() {
                 return maxQueryTime;
             }
         };

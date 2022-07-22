@@ -46,6 +46,12 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
     }
 
+    public ObjList(T... other) {
+        this.buffer = (T[]) new Object[Math.max(other.length, DEFAULT_ARRAY_SIZE)];
+        setPos(other.length);
+        System.arraycopy(other, 0, this.buffer, 0, pos);
+    }
+
     @SuppressWarnings("unchecked")
     public ObjList(int capacity) {
         this.buffer = (T[]) new Object[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
@@ -325,11 +331,15 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
             for (int i = 0, n = pos; i < n; i++) {
                 Object lhs = this.getQuick(i);
                 if (lhs == null) {
-                    return that.getQuick(i) == null;
-                } else if (lhs.equals(that.getQuick(i))) {
-                    return true;
+                    if (that.getQuick(i) != null) {
+                        return false;
+                    }
+                } else if (!lhs.equals(that.getQuick(i))) {
+                    return false;
                 }
             }
+
+            return true;
         }
         return false;
     }

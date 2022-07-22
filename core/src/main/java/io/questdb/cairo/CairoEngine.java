@@ -36,6 +36,7 @@ import io.questdb.cairo.pool.WalWriterSource;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.text.TextImportExecutionContext;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -72,6 +73,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
     private final TableRegistry tableRegistry;
 
 
+    private final TextImportExecutionContext textImportExecutionContext = new TextImportExecutionContext();
     // Kept for embedded API purposes. The second constructor (the one with metrics)
     // should be preferred for internal use.
     public CairoEngine(CairoConfiguration configuration) {
@@ -495,6 +497,10 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
         writerPool.unlock(tableName);
     }
 
+    public TextImportExecutionContext getTextImportExecutionContext() {
+        return textImportExecutionContext;
+    }
+
     private void checkTableName(CharSequence tableName) {
         if (!TableUtils.isValidTableName(tableName, configuration.getMaxFileNameLength())) {
             throw CairoException.instance(0)
@@ -520,7 +526,7 @@ public class CairoEngine implements Closeable, WriterSource, WalWriterSource {
             throw CairoException.instance(0).put("Rename target exists");
         }
 
-        if (!ff.rename(path, otherPath)) {
+        if (ff.rename(path, otherPath) != Files.FILES_RENAME_OK) {
             int error = ff.errno();
             LOG.error().$("rename failed [from='").$(path).$("', to='").$(otherPath).$("', error=").$(error).$(']').$();
             throw CairoException.instance(error).put("Rename failed");

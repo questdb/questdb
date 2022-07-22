@@ -22,19 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo;
 
-public interface IOUringFacade {
+import io.questdb.std.ThreadLocal;
 
-    boolean isAvailable();
+/**
+ * Thrown when data conversion fails in cairo (e.g. for Long256).
+ */
+public class ConversionException extends CairoException {
+    private static final ThreadLocal<ConversionException> tlException = new ThreadLocal<>(ConversionException::new);
 
-    long create(int capacity);
-
-    void close(long ptr);
-
-    int submit(long ptr);
-
-    int submitAndWait(long ptr, int waitNr);
-
-    int errno();
+    public static ConversionException instance(CharSequence reason) {
+        ConversionException ex = tlException.get();
+        ex.message.clear();
+        ex.errno = 0;
+        ex.put(reason);
+        return ex;
+    }
 }

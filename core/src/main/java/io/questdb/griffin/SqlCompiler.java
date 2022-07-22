@@ -32,9 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.Atomicity;
-import io.questdb.cutlass.text.TextException;
-import io.questdb.cutlass.text.TextLoader;
+import io.questdb.cutlass.text.*;
 import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.*;
@@ -46,6 +44,8 @@ import io.questdb.griffin.engine.table.TableListRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.*;
@@ -54,8 +54,10 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.Objects;
 import java.util.ServiceLoader;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -115,7 +117,6 @@ public class SqlCompiler implements Closeable {
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
-
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
         this(engine, null, null);
@@ -1887,51 +1888,132 @@ public class SqlCompiler implements Closeable {
         return rowCount;
     }
 
-    private void copyTable(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
+    private void executeCopy0(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
         try {
+            int workerCount = executionContext.getWorkerCount();
+            ExpressionNode fileNameNode = model.getFileName();
+            final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
+            if (model.isParallel()) {
+                if (workerCount < 1) {
+                    throw SqlException.$(0, "Invalid worker count set [value=").put(workerCount).put("]");
+                }
+
+                if (model.isCancel()) {
+                    addTextImportRequest(model, null);
+                } else {
+                    if (model.getTimestampFormat() == null) {
+                        model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
+                    }
+                    if (model.getDelimiter() < 0) {
+                        model.setDelimiter((byte) ',');
+                    }
+                    addTextImportRequest(model, fileName);
+                }
+                return;
+            }
+
+            if (model.getTimestampColumnName() != null ||
+                    model.getTimestampFormat() != null ||
+                    model.getPartitionBy() != -1) {
+                throw SqlException.$(-1, "invalid option used for non-parallel import (timestamp, format or partition by)");
+            }
+
+            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             int len = configuration.getSqlCopyBufferSize();
             long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+            setupTextLoaderFromModel(model);
+            path.of(configuration.getSqlCopyInputRoot()).concat(fileName).$();
+            long fd = ff.openRO(path);
             try {
-                final CharSequence name = GenericLexer.assertNoDots(GenericLexer.unquote(model.getFileName().token), model.getFileName().position);
-                path.of(configuration.getInputRoot()).concat(name).$();
-                long fd = ff.openRO(path);
                 if (fd == -1) {
                     throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
                 }
-                try {
-                    long fileLen = ff.length(fd);
-                    long n = ff.read(fd, buf, len, 0);
-                    if (n > 0) {
-                        textLoader.setForceHeaders(model.isHeader());
-                        textLoader.setSkipRowsWithExtraValues(false);
-                        textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
-                        textLoader.setState(TextLoader.LOAD_DATA);
-                        int read;
-                        while (n < fileLen) {
-                            read = (int) ff.read(fd, buf, len, n);
-                            if (read < 1) {
-                                throw SqlException.$(model.getFileName().position, "could not read file [errno=").put(ff.errno()).put(']');
-                            }
-                            textLoader.parse(buf, buf + read, executionContext.getCairoSecurityContext());
-                            n += read;
+
+                long fileLen = ff.length(fd);
+                long n = ff.read(fd, buf, len, 0);
+                if (n > 0) {
+                    textLoader.setForceHeaders(model.isHeader());
+                    textLoader.setSkipRowsWithExtraValues(false);
+                    textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
+                    textLoader.setState(TextLoader.LOAD_DATA);
+                    int read;
+                    while (n < fileLen) {
+                        // We don't want import to stop on query timeout, but only on closed connection.
+                        circuitBreaker.resetTimer();
+                        if (circuitBreaker.checkIfTripped()) {
+                            throw SqlException.$(model.getFileName().position, "import was cancelled");
                         }
-                        textLoader.wrapUp();
+                        read = (int) ff.read(fd, buf, len, n);
+                        if (read < 1) {
+                            throw SqlException.$(model.getFileName().position, "could not read file [errno=").put(ff.errno()).put(']');
+                        }
+                        textLoader.parse(buf, buf + read, executionContext.getCairoSecurityContext());
+                        n += read;
                     }
-                } finally {
-                    ff.close(fd);
+                    textLoader.wrapUp();
                 }
             } finally {
+                ff.close(fd);
                 textLoader.clear();
                 Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
             }
-        } catch (TextException e) {
-            // we do not expect JSON exception here
-        } finally {
             LOG.info().$("copied").$();
+        } catch (TextImportException | TextException e) {
+            LOG.error().$((Throwable) e).$();
+            throw SqlException.$(0, e.getMessage());
         }
     }
 
-    //sets insertCount to number of copied rows
+    private void addTextImportRequest(CopyModel model, @Nullable CharSequence fileName) throws SqlException {
+
+        final RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
+        final MPSequence textImportRequestPubSeq = messageBus.getTextImportRequestPubSeq();
+        final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
+        final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
+        final CharSequence tableName = GenericLexer.unquote(model.getTableName().token);
+
+        boolean isActive = textImportExecutionContext.isActive();
+        if (model.isCancel()) {
+            // The cancellation is based on the best effort, so we don't worry about potential races with imports.
+            if (isActive) {
+                if (textImportExecutionContext.equalsActiveTableName(tableName)) {
+                    circuitBreaker.cancel();
+                } else {
+                    throw SqlException.$(0, "Active import is on different table.");
+                }
+            } else {
+                throw SqlException.$(0, "No active import to cancel.");
+            }
+        } else {
+            if (!isActive) {
+                long processingCursor = textImportRequestPubSeq.next();
+                if (processingCursor > -1) {
+                    final TextImportRequestTask task = textImportRequestQueue.get(processingCursor);
+
+                    assert fileName != null;
+                    task.of(Objects.toString(tableName, null),
+                            Objects.toString(fileName, null),
+                            model.isHeader(),
+                            Objects.toString(model.getTimestampColumnName(), null),
+                            model.getDelimiter(),
+                            Objects.toString(model.getTimestampFormat(), null),
+                            model.getPartitionBy());
+
+                    circuitBreaker.reset();
+                    textImportExecutionContext.setActiveTableName(tableName);
+                    textImportRequestPubSeq.done(processingCursor);
+                } else {
+                    throw SqlException.$(0, "Unable to process the import request. Another import request may be in progress.");
+                }
+            } else {
+                throw SqlException.$(0, "Another import request is in progress.");
+            }
+        }
+    }
+
+    /**
+     * Sets insertCount to number of copied rows.
+     */
     private TableWriter copyTableData(CharSequence tableName, RecordCursor cursor, RecordMetadata cursorMetadata) {
         TableWriter writer = new TableWriter(
                 configuration,
@@ -1954,7 +2036,9 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    /* returns number of copied rows*/
+    /**
+     * Returns number of copied rows.
+     */
     private long copyTableData(RecordCursor cursor, RecordMetadata metadata, TableWriter writer, RecordMetadata
             writerMetadata, RecordToRowCopier recordToRowCopier) {
         int timestampIndex = writerMetadata.getTimestampIndex();
@@ -1965,7 +2049,9 @@ public class SqlCompiler implements Closeable {
         }
     }
 
-    //returns number of copied rows
+    /**
+     * Returns number of copied rows.
+     */
     private long copyUnordered(RecordCursor cursor, TableWriter writer, RecordToRowCopier copier) {
         long rowCount = 0;
         final Record record = cursor.getRecord();
@@ -2126,11 +2212,11 @@ public class SqlCompiler implements Closeable {
 
     @NotNull
     private CompiledQuery executeCopy(SqlExecutionContext executionContext, CopyModel executionModel) throws SqlException {
-        setupTextLoaderFromModel(executionModel);
-        if (Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
+        if (!executionModel.isCancel() && Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
+            setupTextLoaderFromModel(executionModel);
             return compiledQuery.ofCopyRemote(textLoader);
         }
-        copyTable(executionContext, executionModel);
+        executeCopy0(executionContext, executionModel);
         return compiledQuery.ofCopyLocal();
     }
 
@@ -2627,7 +2713,11 @@ public class SqlCompiler implements Closeable {
         // todo: configure the following
         //   - what happens when data row errors out, max errors may be?
         //   - we should be able to skip X rows from top, dodgy headers etc.
-        textLoader.configureDestination(model.getTableName().token, false, false, Atomicity.SKIP_ROW, PartitionBy.NONE, null);
+
+        textLoader.configureDestination(model.getTableName().token, false, false,
+                model.getAtomicity() != -1 ? model.getAtomicity() : Atomicity.SKIP_ROW,
+                model.getPartitionBy() < 0 ? PartitionBy.NONE : model.getPartitionBy(),
+                model.getTimestampColumnName());
     }
 
     private CompiledQuery snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
@@ -2730,6 +2820,7 @@ public class SqlCompiler implements Closeable {
         }
     }
 
+    @TestOnly
     ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
         clear();
         lexer.of(query);
@@ -2737,6 +2828,7 @@ public class SqlCompiler implements Closeable {
     }
 
     // this exposed for testing only
+    @TestOnly
     ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
@@ -2744,6 +2836,7 @@ public class SqlCompiler implements Closeable {
     }
 
     // test only
+    @TestOnly
     void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
         clear();
         lexer.of(expression);
