@@ -1305,7 +1305,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                         "6\t6\n" +
                         "7\t7\n" +
                         "8\t8\n" +
-                        "9\t9",
+                        "9\t9\n",
                 "select a as a1, a as a2 from x order by a1 asc, a2 desc;",
                 "create table x as (" +
                         "select" +
