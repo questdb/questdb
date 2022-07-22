@@ -67,7 +67,7 @@ https://questdb.slab.com/posts/how-to-release-a-new-aws-ami-w7rkjimy
 
 ## Update demo.questdb.io
 
-You need to SSH to the demo box. Either from your desktop, or AWS console via web broweser:
+You need to SSH to the demo box. Either from your desktop, or AWS console via web browser:
 
 https://questdb.slab.com/posts/update-demo-airbus-and-telemetry-box-kyyl1mnw
 

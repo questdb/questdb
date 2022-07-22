@@ -1,0 +1,12 @@
+line,d,txt,ts
+"line1",111.11,"some text
+spanning two lines","2022-05-10T11:52:00.000Z"
+"line2",222.22,"some text
+spanning 
+many 
+many 
+many 
+lines","2022-05-11T11:52:00.000Z",
+line3,333.33,line without ts
+line4,444.44,single line text without quotes,"2022-05-11T11:52:00.001Z
+

@@ -42,11 +42,13 @@ public final class Files {
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
     public static final char SEPARATOR;
-
+    public static final int POSIX_FADV_SEQUENTIAL;
+    public static final int POSIX_FADV_RANDOM;
+    public static final int FILES_RENAME_OK = 0;
+    public static final int FILES_RENAME_ERR_EXDEV = 1;
+    public static final int FILES_RENAME_ERR_OTHER = 2;
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
     private static LongHashSet openFds;
-    // io_uring seems to use its own fd sequence, so we have to track io_uring fds separately.
-    private static LongHashSet openUringFds;
 
     private Files() {
         // Prevent construction.
@@ -80,30 +82,6 @@ public final class Files {
         return true;
     }
 
-    public static synchronized boolean auditUringClose(long fd) {
-        if (fd < 0) {
-            throw new IllegalStateException("Invalid fd " + fd);
-        }
-        if (openUringFds.remove(fd) == -1) {
-            throw new IllegalStateException("io_uring fd " + fd + " is already closed!");
-        }
-        return true;
-    }
-
-    public static synchronized boolean auditUringOpen(long fd) {
-        if (null == openUringFds) {
-            openUringFds = new LongHashSet();
-        }
-        if (fd < 0) {
-            throw new IllegalStateException("Invalid io_uring fd " + fd);
-        }
-        if (openUringFds.contains(fd)) {
-            throw new IllegalStateException("io_uring fd " + fd + " is already open");
-        }
-        openUringFds.add(fd);
-        return true;
-    }
-
     public static long bumpFileCount(long fd) {
         if (fd != -1) {
             //noinspection AssertWithSideEffects
@@ -111,20 +89,6 @@ public final class Files {
             OPEN_FILE_COUNT.incrementAndGet();
         }
         return fd;
-    }
-
-    public static long bumpUringCount(long fd) {
-        if (fd != -1) {
-            //noinspection AssertWithSideEffects
-            assert auditUringOpen(fd);
-            OPEN_FILE_COUNT.incrementAndGet();
-        }
-        return fd;
-    }
-
-    public static void decrementUringCount(long fd) {
-        assert auditUringClose(fd);
-        OPEN_FILE_COUNT.decrementAndGet();
     }
 
     public static long ceilPageSize(long size) {
@@ -146,11 +110,28 @@ public final class Files {
         return copy(from.address(), to.address());
     }
 
+    /**
+     * close(fd) should be used instead of this method in most cases
+     * unless you don't need close sys call to happen.
+     */
+    public static void decrementFileCount(long fd) {
+        assert auditClose(fd);
+        OPEN_FILE_COUNT.decrementAndGet();
+    }
+
     public static native boolean exists(long fd);
 
     public static boolean exists(LPSZ lpsz) {
         return lpsz != null && exists0(lpsz.address());
     }
+
+    public static void fadvise(long fd, long offset, long len, int advise) {
+        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+            fadvise0(fd, offset, len, advise);
+        }
+    }
+
+    public static native void fadvise0(long fd, long offset, long len, int advise);
 
     public native static void findClose(long findPtr);
 
@@ -201,6 +182,12 @@ public final class Files {
 
     public native static long getStdOutFd();
 
+    public static native int hardLink(long lpszSrc, long lpszHardLink);
+
+    public static int hardLink(LPSZ src, LPSZ hardLink) {
+        return hardLink(src.address(), hardLink.address());
+    }
+
     public static boolean isDir(long pUtf8NameZ, long type, StringSink nameSink) {
         if (type == DT_DIR) {
             nameSink.clear();
@@ -225,12 +212,6 @@ public final class Files {
     public native static long length(long fd);
 
     public static native int lock(long fd);
-
-    public static native int hardLink(long lpszSrc, long lpszHardLink);
-
-    public static int hardLink(LPSZ src, LPSZ hardLink){
-        return hardLink(src.address(), hardLink.address());
-    }
 
     public static int mkdir(Path path, int mode) {
         return mkdir(path.address(), mode);
@@ -343,7 +324,7 @@ public final class Files {
         return remove(lpsz.address());
     }
 
-    public static boolean rename(LPSZ oldName, LPSZ newName) {
+    public static int rename(LPSZ oldName, LPSZ newName) {
         return rename(oldName.address(), newName.address());
     }
 
@@ -404,6 +385,10 @@ public final class Files {
 
     public native static long write(long fd, long address, long len, long offset);
 
+    private native static int getPosixFadvRandom();
+
+    private native static int getPosixFadvSequential();
+
     private static native int getFileSystemStatus(long lpszName);
 
     private native static int close0(long fd);
@@ -452,12 +437,19 @@ public final class Files {
 
     private native static boolean setLastModified(long lpszName, long millis);
 
-    private static native boolean rename(long lpszOld, long lpszNew);
+    private static native int rename(long lpszOld, long lpszNew);
 
     static {
         Os.init();
         UTF_8 = StandardCharsets.UTF_8;
         PAGE_SIZE = getPageSize();
         SEPARATOR = File.separatorChar;
+        if (Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64) {
+            POSIX_FADV_RANDOM = getPosixFadvRandom();
+            POSIX_FADV_SEQUENTIAL = getPosixFadvSequential();
+        } else {
+            POSIX_FADV_SEQUENTIAL = 0;
+            POSIX_FADV_RANDOM = 0;
+        }
     }
 }

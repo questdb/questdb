@@ -848,7 +848,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [0] Doesn't exist:");
+        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [0] path does not exist");
     }
 
     @Test
@@ -856,9 +856,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
-            public boolean rename(LPSZ from, LPSZ to) {
-                if (Chars.contains(to, "2020-01-01") && counter.decrementAndGet() == 0) {
-                    return false;
+            public int rename(LPSZ from, LPSZ to) {
+                if (Chars.endsWith(to, "2020-01-01") && counter.decrementAndGet() == 0) {
+                    return Files.FILES_RENAME_ERR_OTHER;
                 }
                 return super.rename(from, to);
             }

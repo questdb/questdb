@@ -31,6 +31,8 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.text.TextImportJob;
+import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -227,6 +229,18 @@ public class ServerMain {
             workerPool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
             workerPool.assign(new GroupByJob(cairoEngine.getMessageBus()));
             workerPool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
+            TextImportJob.assignToPool(cairoEngine.getMessageBus(), workerPool);
+
+            if (configuration.getCairoConfiguration().getSqlCopyInputRoot() != null) {
+                final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
+                        cairoEngine,
+                        // save CPU resources for collecting and processing jobs
+                        Math.max(1, workerPool.getWorkerCount() - 2),
+                        functionFactoryCache
+                );
+                workerPool.assign(textImportRequestJob);
+                workerPool.freeOnHalt(textImportRequestJob);
+            }
 
             instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
             instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
@@ -289,6 +303,7 @@ public class ServerMain {
             }));
         } catch (NetworkError e) {
             log.errorW().$((Sinkable) e).$();
+            System.err.println(e.getMessage());//prints error synchronously
             LockSupport.parkNanos(10000000L);
             System.exit(55);
         }
@@ -565,6 +580,7 @@ public class ServerMain {
     }
 
     protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
+        ShutdownFlag.INSTANCE.shutdown();
         workerPool.halt();
         Misc.freeObjList(instancesToClean);
     }

@@ -27,15 +27,12 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.cutlass.http.HttpChunkedResponseSocket;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.text.TextUtil;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
@@ -73,7 +70,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final int floatScale;
     private final int doubleScale;
     private final SCSequence eventSubSequence = new SCSequence();
-    private final long statementTimeoutNs;
+    private final long statementTimeout;
     private OperationFuture operationFuture;
     private Rnd rnd;
     private RecordCursorFactory recordCursorFactory;
@@ -117,10 +114,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.nanosecondClock = nanosecondClock;
         this.floatScale = floatScale;
         this.doubleScale = doubleScale;
-        this.statementTimeoutNs =
-                httpConnectionContext.getRequestHeader().getStatementTimeout() < (Long.MAX_VALUE >>> 6) ? // Overflow protection
-                        httpConnectionContext.getRequestHeader().getStatementTimeout() * 1_000_000L :
-                        httpConnectionContext.getRequestHeader().getStatementTimeout();
+        this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
     }
 
     @Override
@@ -200,7 +194,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return eventSubSequence;
     }
 
-    public long getExecutionTime() {
+    public long getExecutionTimeNanos() {
         return nanosecondClock.getTicks() - this.executeStartNanos;
     }
 
@@ -224,8 +218,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryType = type;
     }
 
-    public long getStatementTimeoutNs() {
-        return statementTimeoutNs;
+    public long getStatementTimeout() {
+        return statementTimeout;
     }
 
     public void setOperationFuture(QuietClosable op, OperationFuture fut) {

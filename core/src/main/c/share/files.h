@@ -291,9 +291,14 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
 /*
  * Class:     com_questdb_std_Files
  * Method:    rename
- * Signature: (JJ)Z
+ * Signature: (JJ)I
  */
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rename
+
+#define FILES_RENAME_ERR_OK 0
+#define FILES_RENAME_ERR_EXDEV 1
+#define FILES_RENAME_ERR_OTHER 2
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename
         (JNIEnv *, jclass, jlong, jlong);
 
 #ifdef __cplusplus

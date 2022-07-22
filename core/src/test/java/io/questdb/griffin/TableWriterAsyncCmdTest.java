@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.FanOut;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -102,7 +103,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 try (OperationFuture fut = cc.execute(tempSequence)) {
                     fut.await(0);
                     writer.tick();
-                    Assert.assertEquals(QUERY_NO_RESPONSE, fut.await(500_000));
+                    Assert.assertEquals(QUERY_NO_RESPONSE, fut.await(500));
                 }
 
                 // Remove sequence
@@ -162,9 +163,9 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 int attempt = 0;
 
                 @Override
-                public boolean rename(LPSZ from, LPSZ to) {
+                public int rename(LPSZ from, LPSZ to) {
                     if (Chars.endsWith(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
-                        return false;
+                        return Files.FILES_RENAME_ERR_OTHER;
                     }
                     return super.rename(from, to);
                 }
@@ -228,9 +229,9 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                 int attempt = 0;
 
                 @Override
-                public boolean rename(LPSZ from, LPSZ to) {
+                public int rename(LPSZ from, LPSZ to) {
                     if (Chars.endsWith(from, "_meta") && attempt++ < configuration.getFileOperationRetryCount()) {
-                        return false;
+                        return Files.FILES_RENAME_ERR_OTHER;
                     }
                     return super.rename(from, to);
                 }
@@ -244,7 +245,7 @@ public class TableWriterAsyncCmdTest extends AbstractGriffinTest {
                     writer.tick(true);
 
                     try {
-                        fut.await(Timestamps.SECOND_MICROS);
+                        fut.await(Timestamps.SECOND_MILLIS);
                         Assert.fail();
                     } catch (SqlException exception) {
                         Assert.assertNotNull(exception);
