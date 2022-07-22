@@ -1541,7 +1541,18 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImportCsvIntoNewTable() throws Exception {  //this
+    public void testImportCsvIntoNewTable() throws Exception {
+        testImportCsvIntoNewTable0();
+    }
+
+    @Test
+    public void testImportCsvSmallerFileBuffer() throws Exception {
+        // the buffer is enough to fit only a few lines
+        sqlCopyBufferSize = 256;
+        testImportCsvIntoNewTable0();
+    }
+
+    private void testImportCsvIntoNewTable0() throws Exception {
         executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             final String tableName = "tableName";
             try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
@@ -1549,6 +1560,10 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
             }
+            assertQuery("count\n" +
+                            "1000\n",
+                    "select count() from " + tableName,
+                    null, false, true);
             assertQuery("line\tts\td\tdescription\n" +
                             "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
                             "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
@@ -1567,7 +1582,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
     @Test
     public void testImportCsvIntoNewTableVanilla() throws Exception {
-        // this does not use io uring even on linux
+        // this does not use io_uring even on Linux
         ioURingFacade = new IOURingFacadeImpl() {
             @Override
             public boolean isAvailable() {
@@ -1758,23 +1773,23 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testImportSmallFileBufferVanilla() throws Exception {
+    public void testImportTooSmallFileBufferVanilla() throws Exception {
         ioURingFacade = new IOURingFacadeImpl() {
             @Override
             public boolean isAvailable() {
                 return false;
             }
         };
-        testImportSmallFileBuffer0();
+        testImportTooSmallFileBuffer0();
     }
 
     @Test
-    public void testImportSmallFileBufferURing() throws Exception {
+    public void testImportTooSmallFileBufferURing() throws Exception {
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
-        testImportSmallFileBuffer0();
+        testImportTooSmallFileBuffer0();
     }
 
-    private void testImportSmallFileBuffer0() throws Exception {
+    private void testImportTooSmallFileBuffer0() throws Exception {
         sqlCopyBufferSize = 50;
         executeWithPool(
                 2,
