@@ -1151,18 +1151,18 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             original.of(configuration.getRoot()).concat(src);
             int len = original.length();
             int dlen = detached.length();
-            Assert.assertEquals(0, Files.copy(
+            Files.copy(
                     original.trimTo(len).concat(TableUtils.META_FILE_NAME).$(),
                     detached.trimTo(dlen).concat(TableUtils.META_FILE_NAME).$()
-            ));
-            Assert.assertEquals(0, Files.copy(
+            );
+            Files.copy(
                     original.trimTo(len).concat(TableUtils.TXN_FILE_NAME).$(),
                     detached.trimTo(dlen).concat(TableUtils.TXN_FILE_NAME).$()
-            ));
-            Assert.assertEquals(0, Files.copy(
+            );
+            Files.copy(
                     original.trimTo(len).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
                     detached.trimTo(dlen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
-            ));
+            );
             original.trimTo(len).concat(srcDir).$();
             int olen = original.length();
             FilesFacadeImpl.INSTANCE.walk(original, (p, type) -> {
@@ -1173,10 +1173,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                             Chars.endsWith(original, ".v") ||
                             Chars.endsWith(original, ".c") ||
                             Chars.endsWith(original, ".o")) {
-                        Assert.assertEquals(0, Files.copy(
+                        Files.copy(
                                 original,
                                 detached.trimTo(dlen).concat(p).$()
-                        ));
+                        );
                     }
                 }
             });
