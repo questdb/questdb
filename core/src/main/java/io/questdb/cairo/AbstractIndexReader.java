@@ -136,7 +136,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
                 }
 
                 if (clock.getTicks() > deadline) {
-                    LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+                    LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("ms]").$();
                     throw CairoException.instance(0).put(INDEX_CORRUPT);
                 }
 
@@ -177,7 +177,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
             if (clock.getTicks() > deadline) {
                 this.keyCount = 0;
-                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutUs).utf8("ms]").$();
                 throw CairoException.instance(0).put(INDEX_CORRUPT);
             }
             Os.pause();

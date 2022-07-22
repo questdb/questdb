@@ -817,7 +817,7 @@ public final class TableUtils {
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
             if (clock.getTicks() > deadline) {
-                LOG.error().$("tx read timeout [timeout=").$(spinLockTimeout).utf8("μs]").$();
+                LOG.error().$("tx read timeout [timeout=").$(spinLockTimeout).utf8("ms]").$();
                 throw CairoException.instance(0).put("Transaction read timeout");
             }
 
