@@ -60,8 +60,8 @@ public class HttpLogRecordSinkTest {
             alertBuilder.clear();
             alertBuilder.putContentLengthMarker();
             message = "2021-11-26T19:22:47.8658077Z 2021-11-26T19:22:47.860908Z E i.q.c.BitmapIndexBwdReader cursor could not consistently read index header [corrupt?] [timeout=5000000ms]\n";
-            Assert.assertEquals(192, alertBuilder.encodeUtf8(message).$());
-            Assert.assertEquals("Content-Length:      192\r\n" + message, alertBuilder.toString());
+            Assert.assertEquals(191, alertBuilder.encodeUtf8(message).$());
+            Assert.assertEquals("Content-Length:      191\r\n" + message, alertBuilder.toString());
 
             alertBuilder.clear();
             alertBuilder.putContentLengthMarker();
