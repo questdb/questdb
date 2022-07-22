@@ -73,7 +73,7 @@ public class MetaExaminer {
 
     private void onRootSet(File root) {
         String absolutePath = root.getAbsolutePath();
-        selectedPath.trimTo(0).put(absolutePath).put(File.separatorChar);
+        selectedPath.trimTo(0).put(absolutePath).put(Files.SEPARATOR);
         rootLen = selectedPath.length();
     }
 

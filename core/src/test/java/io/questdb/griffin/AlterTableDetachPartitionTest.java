@@ -206,7 +206,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 public CharSequence getDetachedRoot() {
                     CharSequence r = getRoot();
                     int idx = r.length() - 1;
-                    while (idx > 0 && r.charAt(idx) != File.separatorChar) {
+                    while (idx > 0 && r.charAt(idx) != Files.SEPARATOR) {
                         idx--;
                     }
                     return r.subSequence(0, ++idx) + detachedFolderName;

@@ -24,10 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.DefaultTelemetryConfiguration;
-import io.questdb.MessageBus;
-import io.questdb.Metrics;
-import io.questdb.TelemetryConfiguration;
+import io.questdb.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DatabaseSnapshotAgent;
@@ -135,6 +132,11 @@ public class AbstractCairoTest {
             @Override
             public int getBinaryEncodingMaxLength() {
                 return binaryEncodingMaxLength > 0 ? binaryEncodingMaxLength : super.getBinaryEncodingMaxLength();
+            }
+
+            @Override
+            public CharSequence getDetachedRoot() {
+                return PropServerConfiguration.rootSubdir(getRoot(), "dbRoot_detached");
             }
 
             @Override

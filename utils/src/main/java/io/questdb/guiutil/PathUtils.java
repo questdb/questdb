@@ -24,6 +24,7 @@
 
 package io.questdb.guiutil;
 
+import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 
 import java.io.File;
@@ -72,7 +73,7 @@ final class PathUtils {
         int found = 0;
         while (idx > 0) {
             char c = p.charAt(idx);
-            if (c == File.separatorChar) {
+            if (c == Files.SEPARATOR) {
                 found++;
                 if (found == levelUpCount) {
                     break;

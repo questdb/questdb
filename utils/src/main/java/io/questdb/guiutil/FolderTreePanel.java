@@ -24,6 +24,8 @@
 
 package io.questdb.guiutil;
 
+import io.questdb.std.Files;
+
 import javax.swing.*;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
@@ -113,7 +115,7 @@ class FolderTreePanel extends JPanel {
 
     private static DefaultMutableTreeNode addNodes(DefaultMutableTreeNode currentRoot, File folder) {
         String folderPath = folder.getPath();
-        DefaultMutableTreeNode folderNode = new DefaultMutableTreeNode(folder.getName() + File.separatorChar);
+        DefaultMutableTreeNode folderNode = new DefaultMutableTreeNode(folder.getName() + Files.SEPARATOR);
         if (currentRoot != null) { // should only be null at root
             currentRoot.add(folderNode);
         }
