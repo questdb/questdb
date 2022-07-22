@@ -36,7 +36,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 
-import java.io.File;
 import java.util.function.Function;
 
 import static io.questdb.cairo.TableUtils.*;
@@ -912,27 +911,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
             }
         });
-    }
-
-    @Test
-    public void testDetachAttachPartitionBrokenMetadataTableId() throws Exception {
-        assertFailedAttachBecauseOfMetadata(
-                2,
-                "tabBrokenTableId",
-                "tabBrokenTableId2",
-                brokenMeta -> brokenMeta
-                        .timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG),
-                "insert into tabBrokenTableId2 " +
-                        "select " +
-                        "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
-                        "cast(x as int) i, " +
-                        "x l " +
-                        "from long_sequence(100))",
-                null,
-                "[-100] Detached partition metadata [id] is not compatible with current table metadata"
-        );
     }
 
     @Test

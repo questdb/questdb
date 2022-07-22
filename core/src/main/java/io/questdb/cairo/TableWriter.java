@@ -651,7 +651,6 @@ public class TableWriter implements Closeable {
             setPathForPartition(path.trimTo(rootLen), partitionBy, timestamp, false);
             path.slash$();
 
-            boolean metadataChecked = false;
             if (!ff.exists(path)) {
                 setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
                 detachedPath.put(DETACHED_DIR_MARKER).slash$();
@@ -659,7 +658,7 @@ public class TableWriter implements Closeable {
 
                     // check metadata, the files may not exist, for backwards compatibility
                     LOG.info().$("checking detached metadata: ").$(detachedPath).$();
-                    metadataChecked = checkDetachedMetadataOnPartitionAttach(timestamp);
+                    checkDetachedMetadataOnPartitionAttach(timestamp);
 
                     LOG.info().$("renaming partition dir: ").$(detachedPath).$(" to ").$(path).$();
                     if (ff.rename(detachedPath, path)) {
@@ -686,11 +685,6 @@ public class TableWriter implements Closeable {
                         commit();
                     }
 
-                    if (ColumnType.VERSION < 427 && !metadataChecked) {
-                        // this check is for backwards compatibility
-                        LOG.info().$("checking file sizes as there was no detached metadata: ").$(path).$();
-                        attachPartitionCheckFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
-                    }
                     long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
                     long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + Long.BYTES);
                     assert timestamp <= minPartitionTimestamp && minPartitionTimestamp <= maxPartitionTimestamp;
@@ -1776,9 +1770,6 @@ public class TableWriter implements Closeable {
             }
             detachedMetadata.deferredInit(other, ColumnType.VERSION);
             closeMeta = true;
-            if (metadata.getId() != detachedMetadata.getId()) {
-                throw CairoException.detachedMetadataMismatch("id");
-            }
             if (metadata.getStructureVersion() != detachedMetadata.getStructureVersion()) {
                 throw CairoException.detachedMetadataMismatch("structure_version");
             }
@@ -2090,176 +2081,6 @@ public class TableWriter implements Closeable {
             return;
         }
         throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
-    }
-
-    private void attachPartitionCheckFilesMatchMetadata(FilesFacade ff, Path path, RecordMetadata metadata, long partitionSize) throws CairoException {
-        // for each column, check that file exists in the partition folder
-        int rootLen = path.length();
-        for (int columnIndex = 0, size = metadata.getColumnCount(); columnIndex < size; columnIndex++) {
-            try {
-                int columnType = metadata.getColumnType(columnIndex);
-                final String columnName = metadata.getColumnName(columnIndex);
-                long columnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
-
-                switch (ColumnType.tagOf(columnType)) {
-                    case ColumnType.INT:
-                    case ColumnType.LONG:
-                    case ColumnType.BOOLEAN:
-                    case ColumnType.BYTE:
-                    case ColumnType.TIMESTAMP:
-                    case ColumnType.DATE:
-                    case ColumnType.DOUBLE:
-                    case ColumnType.CHAR:
-                    case ColumnType.SHORT:
-                    case ColumnType.FLOAT:
-                    case ColumnType.LONG256:
-                    case ColumnType.GEOBYTE:
-                    case ColumnType.GEOSHORT:
-                    case ColumnType.GEOINT:
-                    case ColumnType.GEOLONG:
-                        attachPartitionCheckFilesMatchFixedColumn(ff, path, columnType, partitionSize, columnName, columnNameTxn);
-                        break;
-                    case ColumnType.STRING:
-                    case ColumnType.BINARY:
-                        attachPartitionCheckFilesMatchVarLenColumn(ff, path, partitionSize, columnName, columnNameTxn);
-                        break;
-                    case ColumnType.SYMBOL:
-                        attachPartitionCheckSymbolColumn(ff, path, columnIndex, partitionSize, columnName, columnNameTxn);
-                        break;
-                }
-            } finally {
-                path.trimTo(rootLen);
-            }
-        }
-    }
-
-    private void attachPartitionCheckFilesMatchVarLenColumn(FilesFacade ff, Path path, long partitionSize, String columnName, long columnNameTxn) {
-        int pathLen = path.length();
-        TableUtils.dFile(path, columnName, columnNameTxn);
-        long dataLength = ff.length(path.$());
-
-        path.trimTo(pathLen);
-        TableUtils.iFile(path, columnName, columnNameTxn);
-
-        if (dataLength >= 0 && ff.exists(path.$())) {
-            int typeSize = Long.BYTES;
-            long indexFd = openRO(ff, path, LOG);
-            try {
-                long fileSize = ff.length(indexFd);
-                long expectedFileSize = (partitionSize + 1) * typeSize;
-                if (fileSize < expectedFileSize) {
-                    throw CairoException.instance(0)
-                            .put("Column file is too small. ")
-                            .put("Partition files inconsistent [file=")
-                            .put(path)
-                            .put(",expectedSize=")
-                            .put(expectedFileSize)
-                            .put(",actual=")
-                            .put(fileSize)
-                            .put(']');
-                }
-
-                long mappedAddr = mapRO(ff, indexFd, expectedFileSize, MemoryTag.MMAP_DEFAULT);
-                try {
-                    long prevDataAddress = dataLength - 4;
-                    for (long offset = partitionSize * typeSize; offset >= 0; offset -= typeSize) {
-                        long dataAddress = Unsafe.getUnsafe().getLong(mappedAddr + offset);
-                        if (dataAddress < 0 || dataAddress > dataLength) {
-                            throw CairoException.instance(0).put("Variable size column has invalid data address value [path=").put(path)
-                                    .put(", indexOffset=").put(offset)
-                                    .put(", dataAddress=").put(dataAddress)
-                                    .put(", dataFileSize=").put(dataLength)
-                                    .put(']');
-                        }
-
-                        // Check that addresses are monotonic
-                        if (dataAddress >= prevDataAddress) {
-                            throw CairoException.instance(0).put("Variable size column has invalid data address value [path=").put(path)
-                                    .put(", indexOffset=").put(offset)
-                                    .put(", dataAddress=").put(dataAddress)
-                                    .put(", prevDataAddress=").put(prevDataAddress)
-                                    .put(", dataFileSize=").put(dataLength)
-                                    .put(']');
-                        }
-                        prevDataAddress = dataAddress;
-                    }
-                    return;
-                } finally {
-                    ff.munmap(mappedAddr, expectedFileSize, MemoryTag.MMAP_DEFAULT);
-                }
-            } finally {
-                ff.close(indexFd);
-            }
-        }
-        throw CairoException.instance(0).put("Column file does not exist [path=").put(path).put(']');
-    }
-
-    private void attachPartitionCheckSymbolColumn(FilesFacade ff, Path path, int columnIndex, long partitionSize, String columnName, long columnNameTxn) {
-        int pathLen = path.length();
-        TableUtils.dFile(path, columnName, columnNameTxn);
-        long fd = openRO(ff, path.$(), LOG);
-        try {
-            long fileSize = ff.length(fd);
-            int typeSize = Integer.BYTES;
-            long expectedSize = partitionSize * typeSize;
-            if (fileSize < expectedSize) {
-                throw CairoException.instance(0)
-                        .put("Column file is too small. ")
-                        .put("Partition files inconsistent [file=")
-                        .put(path)
-                        .put(", expectedSize=")
-                        .put(expectedSize)
-                        .put(", actual=")
-                        .put(fileSize)
-                        .put(']');
-            }
-
-            long address = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
-            try {
-                int maxKey = Vect.maxInt(address, partitionSize);
-                int symbolValues = symbolMapWriters.getQuick(columnIndex).getSymbolCount();
-                if (maxKey >= symbolValues) {
-                    throw CairoException.instance(0)
-                            .put("Symbol file does not match symbol column [file=")
-                            .put(path)
-                            .put(", key=")
-                            .put(maxKey)
-                            .put(", columnKeys=")
-                            .put(symbolValues)
-                            .put(']');
-                }
-                int minKey = Vect.minInt(address, partitionSize);
-                if (minKey < 0) {
-                    throw CairoException.instance(0)
-                            .put("Symbol file does not match symbol column, invalid key [file=")
-                            .put(path)
-                            .put(", key=")
-                            .put(minKey)
-                            .put(']');
-                }
-            } finally {
-                ff.munmap(address, fileSize, MemoryTag.MMAP_DEFAULT);
-            }
-
-            if (metadata.isColumnIndexed(columnIndex)) {
-                BitmapIndexUtils.valueFileName(path.trimTo(pathLen), columnName, columnNameTxn);
-                if (!ff.exists(path.$())) {
-                    throw CairoException.instance(0)
-                            .put("Symbol index value file does not exist [file=")
-                            .put(path)
-                            .put(']');
-                }
-                BitmapIndexUtils.keyFileName(path.trimTo(pathLen), columnName, columnNameTxn);
-                if (!ff.exists(path.$())) {
-                    throw CairoException.instance(0)
-                            .put("Symbol index key file does not exist [file=")
-                            .put(path)
-                            .put(']');
-                }
-            }
-        } finally {
-            ff.close(fd);
-        }
     }
 
     private void bumpMasterRef() {
