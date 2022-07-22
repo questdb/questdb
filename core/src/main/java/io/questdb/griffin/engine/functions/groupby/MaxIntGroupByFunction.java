@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MaxIntGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
@@ -82,5 +83,10 @@ public class MaxIntGroupByFunction extends IntFunction implements GroupByFunctio
     @Override
     public int getInt(Record rec) {
         return rec.getInt(valueIndex);
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("MaxInt(").put(arg).put(')');
     }
 }
