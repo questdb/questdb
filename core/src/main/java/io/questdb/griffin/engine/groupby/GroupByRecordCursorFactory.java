@@ -31,6 +31,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -117,5 +118,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("GroupByRecord");
+        sink.meta("vectorized").val(false);
+        sink.attr("groupByFunctions").val(groupByFunctions);
+        sink.attr("recordFunctions").val(recordFunctions);
+        sink.child(base);
     }
 }

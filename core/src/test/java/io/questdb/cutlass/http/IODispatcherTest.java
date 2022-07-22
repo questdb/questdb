@@ -53,7 +53,9 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.Timeout;
 
+import java.io.File;
 import java.io.InputStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -102,6 +104,13 @@ public class IODispatcherTest {
             "\r\n";
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
+
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
@@ -135,6 +144,24 @@ public class IODispatcherTest {
                             "GET /query?query=SELECT%201%20as%20%22select%22 HTTP/1.1\r\n",
                             "67\r\n"
                                     + "{\"query\":\"SELECT 1 as \\\"select\\\"\",\"columns\":[{\"name\":\"select\",\"type\":\"INT\"}],\"dataset\":[[1]],\"count\":1}\r\n"
+                                    + "00\r\n"
+                                    + "\r\n"
+                    );
+                });
+    }
+
+    @Test
+    public void queryReturnsEncodedNonprintableCharacters() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> {
+                    new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
+                            "GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n",
+                            "72\r\n" +
+                                    "{\"query\":\"selecT 'NH\\u001c'; \",\"columns\":[{\"name\":\"NH\\u001c\",\"type\":\"STRING\"}],\"dataset\":[[\"NH\\u001c\"]],\"count\":1}\r\n"
                                     + "00\r\n"
                                     + "\r\n"
                     );
@@ -1747,7 +1774,7 @@ public class IODispatcherTest {
                         return "/upload";
                     }
                 });
-
+                workerPool.assignCleaner(Path.CLEANER);
                 workerPool.start(LOG);
 
                 // send multipart request to server
@@ -3027,8 +3054,8 @@ public class IODispatcherTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "b2\r\n" +
-                        "{\"query\":\"select cast(1.0\\/0.0 as float), cast(1.0\\/0.0 as double)\",\"columns\":[{\"name\":\"cast\",\"type\":\"FLOAT\"},{\"name\":\"cast1\",\"type\":\"DOUBLE\"}],\"dataset\":[[null,null]],\"count\":1}\r\n" +
+                        "b0\r\n" +
+                        "{\"query\":\"select cast(1.0/0.0 as float), cast(1.0/0.0 as double)\",\"columns\":[{\"name\":\"cast\",\"type\":\"FLOAT\"},{\"name\":\"cast1\",\"type\":\"DOUBLE\"}],\"dataset\":[[null,null]],\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3083,7 +3110,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testJsonQueryJsonReplaceZero() throws Exception {
+    public void testJsonQueryJsonEncodeZeroCharacter() throws Exception {
         testJsonQuery0(2, engine -> {
             // create table with all column types
             createTestTable(
@@ -3109,8 +3136,8 @@ public class IODispatcherTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0101\r\n" +
-                            "{\"query\":\"y\",\"columns\":[{\"name\":\"j\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"],[\"okok\"]],\"count\":20}\r\n" +
+                            "0179\r\n" +
+                            "{\"query\":\"y\",\"columns\":[{\"name\":\"j\",\"type\":\"SYMBOL\"}],\"dataset\":[[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"]],\"count\":20}\r\n" +
                             "00\r\n" +
                             "\r\n",
                     100,
@@ -6182,8 +6209,8 @@ public class IODispatcherTest {
                         "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "68\r\n" +
-                        "{\"query\":\"create table balance (money float)\",\"error\":\"\\/exp endpoint only accepts SELECT\",\"position\":0}\r\n" +
+                        "67\r\n" +
+                        "{\"query\":\"create table balance (money float)\",\"error\":\"/exp endpoint only accepts SELECT\",\"position\":0}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 1

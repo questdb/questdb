@@ -41,6 +41,11 @@ public class TimestampUtf8Adapter extends TimestampAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        write(row, column, value, utf8Sink);
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink utf8Sink) throws Exception {
         utf8Sink.clear();
         TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
         row.putDate(column, format.parse(utf8Sink, locale));

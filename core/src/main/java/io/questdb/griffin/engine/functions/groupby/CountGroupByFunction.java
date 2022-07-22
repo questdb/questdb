@@ -31,8 +31,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Sinkable;
+import io.questdb.std.str.CharSink;
 
-public class CountGroupByFunction extends LongFunction implements GroupByFunction {
+public class CountGroupByFunction extends LongFunction implements GroupByFunction, Sinkable {
     private int valueIndex;
 
     @Override
@@ -80,4 +82,9 @@ public class CountGroupByFunction extends LongFunction implements GroupByFunctio
     public boolean isReadThreadSafe() {
         return true;
     }
+
+    public void toSink(CharSink sink) {
+        sink.put("Count(").put(valueIndex).put(')');
+    }
+
 }

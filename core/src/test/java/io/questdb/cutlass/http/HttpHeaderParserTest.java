@@ -30,9 +30,20 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectByteCharSequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.Timeout;
+
+import java.util.concurrent.TimeUnit;
 
 public class HttpHeaderParserTest {
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
+
     private final static String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
             "Host: localhost:9000\r\n" +
             "Connection: keep-alive\r\n" +

@@ -25,6 +25,8 @@
 package io.questdb.std;
 
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.CoreMatchers;
+import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -59,20 +61,20 @@ public class VectTest {
 
             Unsafe.getUnsafe().putLong(struct + 6 * Long.BYTES, indexPtr4);
             Unsafe.getUnsafe().putLong(struct + 7 * Long.BYTES, count);
-            try {
 
-                long merged = Vect.mergeLongIndexesAsc(struct, 4, 1);
-                try {
-                    assertIndexAsc(count * 4, merged);
-                } finally {
-                    Vect.freeMergedIndex(merged, 1);
-                }
+            long targetSize = 4 * count * 2L * Long.BYTES;
+            long targetAddr = Unsafe.malloc(targetSize, MemoryTag.NATIVE_DEFAULT);
+
+            try {
+                Vect.mergeLongIndexesAsc(struct, 4, targetAddr);
+                assertIndexAsc(count * 4, targetAddr);
             } finally {
                 Unsafe.free(indexPtr1, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(indexPtr2, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(indexPtr3, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(indexPtr4, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(struct, Long.BYTES * 8, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(targetAddr, targetSize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -103,18 +105,19 @@ public class VectTest {
         Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count2);
         Unsafe.getUnsafe().putLong(struct + 4 * Long.BYTES, indexPtr3);
         Unsafe.getUnsafe().putLong(struct + 5 * Long.BYTES, count3);
+
+        long targetSize = (count1 + count2 + count3) * 2L * Long.BYTES;
+        long targetAddr = Unsafe.malloc(targetSize, MemoryTag.NATIVE_DEFAULT);
+
         try {
-            long merged = Vect.mergeLongIndexesAsc(struct, 3, 1);
-            try {
-                assertIndexAsc(count1 + count2 + count3, merged);
-            } finally {
-                Vect.freeMergedIndex(merged, 1);
-            }
+            Vect.mergeLongIndexesAsc(struct, 3, targetAddr);
+            assertIndexAsc(count1 + count2 + count3, targetAddr);
         } finally {
             Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(indexPtr3, count3 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(struct, Long.BYTES * 6, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(targetAddr, targetSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -130,17 +133,18 @@ public class VectTest {
         Unsafe.getUnsafe().putLong(struct + Long.BYTES, count1);
         Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
         Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count2);
+
+        long targetSize = (count1 + count2) * 2L * Long.BYTES;
+        long targetAddr = Unsafe.malloc(targetSize, MemoryTag.NATIVE_DEFAULT);
+
         try {
-            long merged = Vect.mergeLongIndexesAsc(struct, 2, 2);
-            try {
-                assertIndexAsc(count1 + count2, merged);
-            } finally {
-                Vect.freeMergedIndex(merged, 2);
-            }
+            Vect.mergeLongIndexesAsc(struct, 2, targetAddr);
+            assertIndexAsc(count1 + count2, targetAddr);
         } finally {
             Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(struct, Long.BYTES * 4, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(targetAddr, targetSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -156,17 +160,18 @@ public class VectTest {
         Unsafe.getUnsafe().putLong(struct + Long.BYTES, count1);
         Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
         Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count2);
+
+        long targetSize = (count1 + count2) * 2L * Long.BYTES;
+        long targetAddr = Unsafe.malloc(targetSize, MemoryTag.NATIVE_DEFAULT);
+
         try {
-            long merged = Vect.mergeLongIndexesAsc(struct, 2, 4);
-            try {
-                assertIndexAsc(count1 + count2, merged);
-            } finally {
-                Vect.freeMergedIndex(merged, 4);
-            }
+            Vect.mergeLongIndexesAsc(struct, 2, targetAddr);
+            assertIndexAsc(count1 + count2, targetAddr);
         } finally {
             Unsafe.free(indexPtr1, count1 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(indexPtr2, count2 * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(struct, Long.BYTES * 4, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(targetAddr, targetSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -181,23 +186,29 @@ public class VectTest {
         Unsafe.getUnsafe().putLong(struct + Long.BYTES, count);
         Unsafe.getUnsafe().putLong(struct + 2 * Long.BYTES, indexPtr2);
         Unsafe.getUnsafe().putLong(struct + 3 * Long.BYTES, count);
+
+        long targetSize = (2 * count) * 2L * Long.BYTES;
+        long targetAddr = Unsafe.malloc(targetSize, MemoryTag.NATIVE_DEFAULT);
+
         try {
-            long merged = Vect.mergeLongIndexesAsc(struct, 2, 2);
-            try {
-                assertIndexAsc(count * 2, merged);
-            } finally {
-                Vect.freeMergedIndex(merged, 2);
-            }
+            Vect.mergeLongIndexesAsc(struct, 2, targetAddr);
+            assertIndexAsc(count * 2, targetAddr);
         } finally {
             Unsafe.free(indexPtr1, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(indexPtr2, count * 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(struct, Long.BYTES * 4, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(targetAddr, targetSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
     @Test
     public void testMergeZero() {
-        Assert.assertEquals(0, Vect.mergeLongIndexesAsc(0, 0, 0));
+        try {
+            Vect.mergeLongIndexesAsc(0, 0, 0);
+            Assert.fail();
+        } catch (IllegalArgumentException e) {
+            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Count of indexes to merge should at least be 2."));
+        }
     }
 
     @Test

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 
 import static io.questdb.griffin.model.IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
 
@@ -75,6 +76,12 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
     @Override
     public boolean allIntervalsHitOnePartition(int partitionBy) {
         return !PartitionBy.isPartitioned(partitionBy) || allIntervalsHitOnePartition(PartitionBy.getPartitionFloorMethod(partitionBy));
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("[static=").put(intervals);
+        sink.put(" dynamic=").put(dynamicRangeList).put("]");
     }
 
     private boolean allIntervalsHitOnePartition(PartitionBy.PartitionFloorMethod floorMethod) {

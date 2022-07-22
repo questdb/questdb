@@ -73,7 +73,7 @@ public class LongObjHashMap<V> extends AbstractLongHashSet {
     }
 
     public void forEach(LongObjConsumer<V> action) {
-        for (int i = 0; i < values.length; i++) {
+        for (int i = 0, n = values.length; i < n; i++) {
             if (keys[i] == noEntryKeyValue) {
                 continue;
             }
@@ -121,5 +121,11 @@ public class LongObjHashMap<V> extends AbstractLongHashSet {
                 values[index] = oldValues[i];
             }
         }
+    }
+
+    @Override
+    public void clear() {
+        super.clear();
+        Arrays.fill(values, null);
     }
 }

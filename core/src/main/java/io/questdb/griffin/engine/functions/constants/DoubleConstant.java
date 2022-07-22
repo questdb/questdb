@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.str.CharSink;
 
 public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     public static final DoubleConstant NULL = new DoubleConstant(Double.NaN);
@@ -37,11 +38,16 @@ public class DoubleConstant extends DoubleFunction implements ConstantFunction {
     }
 
     public static DoubleConstant newInstance(double value) {
-        return  value == value ? new DoubleConstant(value) : DoubleConstant.NULL;
+        return value == value ? new DoubleConstant(value) : DoubleConstant.NULL;
     }
 
     @Override
     public double getDouble(Record rec) {
         return value;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put(value);
     }
 }
