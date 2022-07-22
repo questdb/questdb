@@ -301,20 +301,20 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         2);
 
                 String expected = "[-100] Detached partition metadata [column_count] is not compatible with current table metadata";
-                assertSchemaMismatch(src, dst -> dst.col("str", ColumnType.STRING), expected);
-                assertSchemaMismatch(src, dst -> dst.col("sym", ColumnType.SYMBOL), expected);
-                assertSchemaMismatch(src, dst -> dst.col("l1", ColumnType.LONG), expected);
-                assertSchemaMismatch(src, dst -> dst.col("i1", ColumnType.INT), expected);
-                assertSchemaMismatch(src, dst -> dst.col("b", ColumnType.BOOLEAN), expected);
-                assertSchemaMismatch(src, dst -> dst.col("db", ColumnType.DOUBLE), expected);
-                assertSchemaMismatch(src, dst -> dst.col("fl", ColumnType.FLOAT), expected);
-                assertSchemaMismatch(src, dst -> dst.col("dt", ColumnType.DATE), expected);
-                assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.TIMESTAMP), expected);
-                assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.LONG256), expected);
-                assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.BINARY), expected);
-                assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.BYTE), expected);
-                assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.CHAR), expected);
-                assertSchemaMismatch(src, dst -> dst.col("ts", ColumnType.SHORT), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("str", ColumnType.STRING), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("sym", ColumnType.SYMBOL), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("l1", ColumnType.LONG), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("i1", ColumnType.INT), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("b", ColumnType.BOOLEAN), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("db", ColumnType.DOUBLE), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("fl", ColumnType.FLOAT), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("dt", ColumnType.DATE), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.TIMESTAMP), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.LONG256), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.BINARY), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.BYTE), expected);
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.CHAR), expected);
+                assertSchemaMismatch(src,"dst12", dst -> dst.col("ts", ColumnType.SHORT), expected);
             }
         });
     }
@@ -337,7 +337,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 long value = 0L;
                 writeToStrIndexFile(src, "str.i", value, 16L);
 
-                assertSchemaMismatch(src, dst -> dst.col("str", ColumnType.STRING), "Variable size column has invalid data address value");
+                assertSchemaMismatch(src, "dst13", dst -> dst.col("str", ColumnType.STRING), "Variable size column has invalid data address value");
             }
         });
     }
@@ -359,11 +359,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                 long invalidValue = Long.MAX_VALUE;
                 writeToStrIndexFile(src, "str.i", invalidValue, 256L);
-                assertSchemaMismatch(src, dst -> dst.col("str", ColumnType.STRING), "dataAddress=" + invalidValue);
+                assertSchemaMismatch(src, "dst14a", dst -> dst.col("str", ColumnType.STRING), "dataAddress=" + invalidValue);
 
                 invalidValue = -1;
                 writeToStrIndexFile(src, "str.i", invalidValue, 256L);
-                assertSchemaMismatch(src, dst -> dst.col("str", ColumnType.STRING), "dataAddress=" + invalidValue);
+                assertSchemaMismatch(src, "dst14b", dst -> dst.col("str", ColumnType.STRING), "dataAddress=" + invalidValue);
             }
         });
     }
@@ -382,7 +382,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-01",
                         10);
 
-                assertSchemaMismatch(src, dst -> dst.col("str", ColumnType.STRING),
+                assertSchemaMismatch(src, "dst15", dst -> dst.col("str", ColumnType.STRING),
                         "[-100] Detached column [index=3, name=str, attribute=type] does not match current table metadata"
                 );
             }
@@ -410,7 +410,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     ff.touch(path);
                 }
 
-                assertSchemaMismatch(src, dst -> dst.col("sh", ColumnType.STRING),
+                assertSchemaMismatch(src, "dst16", dst -> dst.col("sh", ColumnType.STRING),
                         "[-100] Detached column [index=3, name=sh, attribute=type] does not match current table metadata"
                 );
             }
@@ -471,7 +471,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-09",
                         2);
 
-                assertSchemaMismatch(src, dst -> dst.col("sh", ColumnType.SYMBOL),
+                assertSchemaMismatch(src, "dst18", dst -> dst.col("sh", ColumnType.SYMBOL),
                         "[-100] Detached column [index=3, name=sh, attribute=type] does not match current table metadata"
                 );
             }
@@ -538,7 +538,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-09",
                         2);
 
-                assertSchemaMismatch(src, dst -> dst.col("sh", ColumnType.LONG),
+                assertSchemaMismatch(src, "dst20", dst -> dst.col("sh", ColumnType.LONG),
                         "[-100] Detached column [index=3, name=sh, attribute=type] does not match current table metadata"
                 );
             }
@@ -1007,8 +1007,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         tearDown();
     }
 
-    private void assertSchemaMismatch(TableModel src, AddColumn tm, String errorMessage) throws NumericException {
-        try (TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY);
+    private void assertSchemaMismatch(TableModel src, String dstTableName, AddColumn tm, String errorMessage) throws NumericException {
+        try (TableModel dst = new TableModel(configuration, dstTableName, PartitionBy.DAY);
              Path path = new Path()) {
             dst.timestamp("ts")
                     .col("i", ColumnType.INT)
@@ -1023,7 +1023,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
             }
-            Files.rmdir(path.concat(root).concat("dst").concat("2020-01-09").put(TableUtils.DETACHED_DIR_MARKER).$());
+            Files.rmdir(path.concat(root).concat(dstTableName).concat("2020-01-09").put(TableUtils.DETACHED_DIR_MARKER).$());
         }
     }
 
