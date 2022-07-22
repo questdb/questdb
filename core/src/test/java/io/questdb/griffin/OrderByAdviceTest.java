@@ -1188,7 +1188,7 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testOrderByPriority() throws Exception {
+    public void testOrderByPriority_columnNameLiteral() throws Exception {
         assertQuery("a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
                     "select a from x order by a asc, a desc;",
                     "create table x as (" +
@@ -1199,5 +1199,98 @@ public class OrderByAdviceTest extends AbstractGriffinTest {
                                 ")",
                     null,
                     true, true, true);
+    }
+
+    @Test
+    public void testOrderByPriority_columnNameLiteral_differentCases() throws Exception {
+        assertQuery("a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+                "select a from x order by a asc, A desc;",
+                "create table x as (" +
+                        "select" +
+                        " x a," +
+                        " x % 3 b" +
+                        " from long_sequence(9)" +
+                        ")",
+                null,
+                true, true, true);
+    }
+
+    @Test
+    public void testOrderByPriority_columnPositions() throws Exception {
+        assertQuery("a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+                "select a from x order by 1 asc, 1 desc;",
+                "create table x as (" +
+                        "select" +
+                        " x a," +
+                        " x % 3 b" +
+                        " from long_sequence(9)" +
+                        ")",
+                null,
+                true, true, true);
+    }
+
+    @Test
+    public void testOrderByPriority_columnAliases() throws Exception {
+        assertQuery("aliased\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+                "select a as aliased from x order by aliased asc, aliased desc;",
+                "create table x as (" +
+                        "select" +
+                        " x a," +
+                        " x % 3 b" +
+                        " from long_sequence(9)" +
+                        ")",
+                null,
+                true, true, true);
+    }
+
+    @Test
+    public void testOrderByPriority_columnsInterleaved() throws Exception {
+        assertQuery("a\tb\n" +
+                        "9\t0\n" +
+                        "6\t0\n" +
+                        "3\t0\n" +
+                        "7\t1\n" +
+                        "4\t1\n" +
+                        "1\t1\n" +
+                        "8\t2\n" +
+                        "5\t2\n" +
+                        "2\t2\n",
+                "select * from x order by b asc, a desc, b desc;",
+                "create table x as (" +
+                        "select" +
+                        " x a," +
+                        " x % 3 b" +
+                        " from long_sequence(9)" +
+                        ")",
+                null,
+                true, true, true);
+    }
+
+    @Test
+    public void testOrderByPriority_columnQuoted() throws Exception {
+        assertQuery("a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+                "select a from x order by \"a\" asc, \"a\" desc;",
+                "create table x as (" +
+                        "select" +
+                        " x a," +
+                        " x % 3 b" +
+                        " from long_sequence(9)" +
+                        ")",
+                null,
+                true, true, true);
+    }
+
+    @Test
+    public void testOrderByPriority_columnLiteralsMixedWithPositions() throws Exception {
+        assertQuery("a\n1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+                "select a from x order by a asc, 1 desc;",
+                "create table x as (" +
+                        "select" +
+                        " x a," +
+                        " x % 3 b" +
+                        " from long_sequence(9)" +
+                        ")",
+                null,
+                true, true, true);
     }
 }
