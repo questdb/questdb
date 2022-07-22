@@ -42,7 +42,7 @@ public interface OperationFuture extends Closeable {
 
     /***
      * Waits for completion within specified timeout. Can be called multiple times on the same OperationFuture instance.
-     * @param timeout - microseconds timeout
+     * @param timeout - millisecond timeout
      * @return
      *  - QUERY_NO_RESPONSE if no writer response received
      *  - QUERY_STARTED if writer command ACK received

@@ -29,6 +29,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -46,6 +47,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     protected String unsupportedColumnMessage = "Wrong column type";
     protected FilesFacade ff;
     private long lockFd;
+    private MillisecondClock clock;
 
     @Override
     public void clear() {
@@ -63,6 +65,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         this.rootLen = tablePath.length();
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
+        this.clock = configuration.getMillisecondClock();
         return this;
     }
 
@@ -78,8 +81,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             lock(ff);
             path.concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
             try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path)) {
-                final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
-                columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
+                final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
+                columnVersionReader.readSafe(clock, deadline);
                 path.trimTo(rootLen);
                 reindex0(columnVersionReader, partitionName, columnName);
             }

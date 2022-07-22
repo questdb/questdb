@@ -30,7 +30,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 
-public class TextException extends Exception implements Sinkable, FlyweightMessageContainer {
+public class TextException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
     private static final ThreadLocal<TextException> tlException = new ThreadLocal<>(TextException::new);
     private final StringSink message = new StringSink();
 

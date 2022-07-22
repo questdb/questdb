@@ -24,8 +24,6 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cutlass.text.types.TypeAdapter;
-import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -38,14 +36,13 @@ public class TextLexer implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(TextLexer.class);
     private final ObjList<DirectByteCharSequence> fields = new ObjList<>();
     private final ObjectPool<DirectByteCharSequence> csPool;
-    private final TextMetadataDetector metadataDetector;
     private final int lineRollBufLimit;
     private CharSequence tableName;
     private boolean ignoreEolOnce;
     private long lineRollBufCur;
     private Listener textLexerListener;
     private long lastLineStart;
-    private int lineRollBufLen;
+    private int lineRollBufSize;
     private long lineRollBufPtr;
     private boolean header;
     private long lastQuotePos = -1;
@@ -64,34 +61,18 @@ public class TextLexer implements Closeable, Mutable {
     private long fieldHi;
     private boolean skipLinesWithExtraValues;
 
-    public TextLexer(TextConfiguration textConfiguration, TypeManager typeManager) {
-        this.metadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
+    public TextLexer(TextConfiguration textConfiguration) {
         this.csPool = new ObjectPool<>(DirectByteCharSequence.FACTORY, textConfiguration.getTextLexerStringPoolCapacity());
-        this.lineRollBufLen = textConfiguration.getRollBufferSize();
+        this.lineRollBufSize = textConfiguration.getRollBufferSize();
         this.lineRollBufLimit = textConfiguration.getRollBufferLimit();
-        this.lineRollBufPtr = Unsafe.malloc(lineRollBufLen, MemoryTag.NATIVE_DEFAULT);
-    }
-
-    public void analyseStructure(
-            long lo,
-            long hi,
-            int lineCountLimit,
-            boolean forceHeader,
-            ObjList<CharSequence> names,
-            ObjList<TypeAdapter> types
-    ) {
-        metadataDetector.of(names, types, forceHeader);
-        parse(lo, hi, lineCountLimit, metadataDetector);
-        metadataDetector.evaluateResults(lineCount, errorCount);
-        restart(isHeaderDetected());
+        this.lineRollBufPtr = Unsafe.malloc(lineRollBufSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Override
-    public final void clear() {
+    public void clear() {
         restart(false);
         this.fields.clear();
         this.csPool.clear();
-        this.metadataDetector.clear();
         errorCount = 0;
         fieldMax = -1;
     }
@@ -99,10 +80,9 @@ public class TextLexer implements Closeable, Mutable {
     @Override
     public void close() {
         if (lineRollBufPtr != 0) {
-            Unsafe.free(lineRollBufPtr, lineRollBufLen, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(lineRollBufPtr, lineRollBufSize, MemoryTag.NATIVE_DEFAULT);
             lineRollBufPtr = 0;
         }
-        metadataDetector.close();
     }
 
     public long getErrorCount() {
@@ -111,14 +91,6 @@ public class TextLexer implements Closeable, Mutable {
 
     public long getLineCount() {
         return lineCount;
-    }
-
-    public boolean isSkipLinesWithExtraValues() {
-        return skipLinesWithExtraValues;
-    }
-
-    public void setSkipLinesWithExtraValues(boolean skipLinesWithExtraValues) {
-        this.skipLinesWithExtraValues = skipLinesWithExtraValues;
     }
 
     public void of(byte columnDelimiter) {
@@ -131,6 +103,35 @@ public class TextLexer implements Closeable, Mutable {
         this.fieldHi = useLineRollBuf ? lineRollBufCur : (this.fieldLo = lo);
         this.lineCountLimit = lineCountLimit;
         parse(lo, hi);
+    }
+
+    public void parseExactLines(long lo, long hi) {
+        this.fieldHi = this.fieldLo = lo;
+        long ptr = lo;
+
+        try {
+            while (ptr < hi) {
+                final byte c = Unsafe.getUnsafe().getByte(ptr++);
+
+                this.fieldHi++;
+
+                if (delayedOutQuote && c != '"') {
+                    inQuote = delayedOutQuote = false;
+                }
+
+                if (c == columnDelimiter) {
+                    onColumnDelimiter(lo);
+                } else if (c == '"') {
+                    onQuote();
+                } else if (c == '\n' || c == '\r') {
+                    onLineEnd(ptr);
+                } else {
+                    checkEol(lo);
+                }
+            }
+        } catch (LineLimitException ignore) {
+            // loop exit
+        }
     }
 
     public void parseLast() {
@@ -162,6 +163,15 @@ public class TextLexer implements Closeable, Mutable {
         csPool.clear();
     }
 
+    public void setSkipLinesWithExtraValues(boolean skipLinesWithExtraValues) {
+        this.skipLinesWithExtraValues = skipLinesWithExtraValues;
+    }
+
+    public void setupBeforeExactLines(Listener textLexerListener) {
+        this.textLexerListener = textLexerListener;
+        this.lineCountLimit = Integer.MAX_VALUE;
+    }
+
     private void addField() {
         fields.add(csPool.next());
         fieldMax++;
@@ -190,7 +200,12 @@ public class TextLexer implements Closeable, Mutable {
     }
 
     private void extraField(int fieldIndex) {
-        LogRecord logRecord = LOG.error().$("extra fields [table=").$(tableName).$(", fieldIndex=").$(fieldIndex).$(", fieldMax=").$(fieldMax).$("]\n\t").$(lineCount).$(" -> ");
+        LogRecord logRecord = LOG.error()
+                .$("extra fields [table=").$(tableName)
+                .$(", fieldIndex=").$(fieldIndex)
+                .$(", fieldMax=").$(fieldMax)
+                .$("]\n\t").$(lineCount)
+                .$(" -> ");
         for (int i = 0, n = fields.size(); i < n; i++) {
             if (i > 0) {
                 logRecord.$(',');
@@ -212,14 +227,6 @@ public class TextLexer implements Closeable, Mutable {
         }
     }
 
-    ObjList<CharSequence> getColumnNames() {
-        return metadataDetector.getColumnNames();
-    }
-
-    ObjList<TypeAdapter> getColumnTypes() {
-        return metadataDetector.getColumnTypes();
-    }
-
     private boolean growRollBuf(int requiredLength, boolean updateFields) {
         if (requiredLength > lineRollBufLimit) {
             LOG.info()
@@ -234,24 +241,24 @@ public class TextLexer implements Closeable, Mutable {
         }
 
         final int len = Math.min(lineRollBufLimit, requiredLength << 1);
-        LOG.info().$("resizing ").$(lineRollBufLen).$(" -> ").$(len).$(" [table=").$(tableName).$(']').$();
+        LOG.info().$("resizing ").$(lineRollBufSize).$(" -> ").$(len).$(" [table=").$(tableName).$(']').$();
         long p = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         long l = lineRollBufCur - lineRollBufPtr;
         if (l > 0) {
             Vect.memcpy(p, lineRollBufPtr, l);
         }
-        Unsafe.free(lineRollBufPtr, lineRollBufLen, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(lineRollBufPtr, lineRollBufSize, MemoryTag.NATIVE_DEFAULT);
         if (updateFields) {
             shift(lineRollBufPtr - p);
         }
         lineRollBufCur = p + l;
         lineRollBufPtr = p;
-        lineRollBufLen = len;
+        lineRollBufSize = len;
         return true;
     }
 
     private void growRollBufAndPut(byte c) {
-        if (growRollBuf(lineRollBufLen + 1, true)) {
+        if (growRollBuf(lineRollBufSize + 1, true)) {
             Unsafe.getUnsafe().putByte(lineRollBufCur++, c);
         }
     }
@@ -260,10 +267,6 @@ public class TextLexer implements Closeable, Mutable {
         eol = true;
         fieldIndex = 0;
         ignoreEolOnce = false;
-    }
-
-    boolean isHeaderDetected() {
-        return metadataDetector.isHeader();
     }
 
     private void onColumnDelimiter(long lo) {
@@ -361,7 +364,7 @@ public class TextLexer implements Closeable, Mutable {
     }
 
     private void putToRollBuf(byte c) {
-        if (lineRollBufCur - lineRollBufPtr == lineRollBufLen) {
+        if (lineRollBufCur - lineRollBufPtr == lineRollBufSize) {
             growRollBufAndPut(c);
         } else {
             Unsafe.getUnsafe().putByte(lineRollBufCur++, c);
@@ -372,7 +375,7 @@ public class TextLexer implements Closeable, Mutable {
         // lastLineStart is an offset from 'lo'
         // 'lo' is the address of incoming buffer
         int l = (int) (hi - lo - lastLineStart);
-        if (l < lineRollBufLen || growRollBuf(l, false)) {
+        if (l < lineRollBufSize || growRollBuf(l, false)) {
             assert lo + lastLineStart + l <= hi;
             Vect.memcpy(lineRollBufPtr, lo + lastLineStart, l);
             lineRollBufCur = lineRollBufPtr + l;
@@ -382,7 +385,6 @@ public class TextLexer implements Closeable, Mutable {
 
     void setTableName(CharSequence tableName) {
         this.tableName = tableName;
-        this.metadataDetector.setTableName(tableName);
     }
 
     private void shift(long d) {

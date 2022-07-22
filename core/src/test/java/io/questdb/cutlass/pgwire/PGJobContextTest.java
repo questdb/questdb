@@ -44,7 +44,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -78,7 +77,6 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
-import static io.questdb.std.Numbers.hexDigits;
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static org.junit.Assert.*;
 
@@ -4551,7 +4549,7 @@ nodejs code:
         assertMemoryLeak(() -> {
             compiler.compile("create table tab as (select rnd_double() d from long_sequence(10000000))", sqlExecutionContext);
             try (
-                    final PGWireServer ignored = createPGServer(1, Timestamps.SECOND_MICROS);
+                    final PGWireServer ignored = createPGServer(1, Timestamps.SECOND_MILLIS);
                     final Connection connection = getConnection(false, true);
                     final PreparedStatement statement = connection.prepareStatement("select * from tab order by d")
             ) {
@@ -4878,15 +4876,15 @@ nodejs code:
     @Test
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 1_000_000;
-            writerAsyncCommandMaxTimeout = 30_000_000;
+            writerAsyncCommandBusyWaitTimeout = 1_000;
+            writerAsyncCommandMaxTimeout = 30_000;
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         queryStartedCountDown.await();
-                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout());
                     }
                     return super.openRW(name, opts);
                 }
@@ -4905,7 +4903,8 @@ nodejs code:
                 public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         queryStartedCountDown.await();
-                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
+                        // wait for twice the time to allow busy wait to time out
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() * 2);
                     }
                     return super.openRW(name, opts);
                 }
@@ -4933,7 +4932,7 @@ nodejs code:
 
     @Test
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 10_000_000;
+        writerAsyncCommandBusyWaitTimeout = 10_000;
         assertMemoryLeak(() -> testAddColumnBusyWriter(true, new SOCountDownLatch()));
     }
 
