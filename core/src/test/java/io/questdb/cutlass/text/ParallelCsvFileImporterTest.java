@@ -1235,7 +1235,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                                 PartitionBy.YEAR,
                                 "ts",
                                 "yyyy-MM-ddTHH:mm:ss.SSSSSSZ",
-                                true
+                                true,
+                                1000
                         );
 
                         importAndCleanupTable(
@@ -1247,7 +1248,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                                 PartitionBy.MONTH,
                                 "tstmp",
                                 "yyyy-MM-ddTHH:mm:ss.SSSUUUZ",
-                                true
+                                true,
+                                10
                         );
 
                         importAndCleanupTable(
@@ -1259,7 +1261,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                                 PartitionBy.HOUR,
                                 "tstmp",
                                 "yyyy-MM-ddTHH:mm:ss.SSSSSSZ",
-                                true
+                                true,
+                                13
                         );
 
                         compiler.compile("create table testimport (StrSym symbol index,Int symbol,Int_Col int,DoubleCol double,IsoDate timestamp,Fmt1Date timestamp,Fmt2Date date,Phone string,boolean boolean,long long) timestamp(IsoDate) partition by DAY;", sqlExecutionContext);
@@ -1273,7 +1276,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                                 PartitionBy.DAY,
                                 "IsoDate",
                                 "yyyy-MM-ddTHH:mm:ss.SSSZ",
-                                false
+                                false,
+                                128
                         );
                     }
                 });
@@ -1290,7 +1294,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             int partitionBy,
             CharSequence timestampColumn,
             CharSequence tsFormat,
-            boolean forceHeader
+            boolean forceHeader,
+            int expectedCount
     ) throws Exception {
         importer.of(
                 tableName,
@@ -1305,14 +1310,9 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         );
         importer.process();
         importer.clear();
-        assertQuery(
-                "test\ntrue\n", "select case when cnt > 0 then true else false end as test from ( select count(*) cnt from " + tableName + " )",
-                null,
-                null,
-                false,
-                true,
-                true
-        );
+        assertQuery("cnt\n" + expectedCount + "\n",
+                "select count(*) cnt from " + tableName,
+                null, false, true);
         compiler.compile("drop table " + tableName, context);
     }
 
@@ -1560,9 +1560,9 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
             }
-            assertQuery("count\n" +
+            assertQuery("cnt\n" +
                             "1000\n",
-                    "select count() from " + tableName,
+                    "select count(*) cnt from " + tableName,
                     null, false, true);
             assertQuery("line\tts\td\tdescription\n" +
                             "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
@@ -1597,6 +1597,10 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
                 indexer.process();
             }
+            assertQuery("cnt\n" +
+                            "1000\n",
+                    "select count(*) cnt from " + tableName,
+                    null, false, true);
             assertQuery("line\tts\td\tdescription\n" +
                             "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
                             "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
@@ -1730,7 +1734,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not read from file");
+                TestUtils.assertContains(e.getFlyweightMessage(), "io_uring error");
             }
         });
     }
@@ -1767,7 +1771,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "u-ring error");
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not read from file");
             }
         });
     }
