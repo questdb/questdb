@@ -1757,6 +1757,8 @@ public class TableWriter implements Closeable {
         int otherLen = other.length();
         boolean closeMeta = false;
         boolean closeColumnVersion = false;
+        boolean closeTxn = false;
+        boolean closeSymbolMapReader = false;
         try {
             // _meta
             other.concat(META_FILE_NAME).$();
@@ -1828,20 +1830,23 @@ public class TableWriter implements Closeable {
             }
 
             // check symbols and indexes
-//            other.trimTp(otherLen).concat(TXN_FILE_NAME).$();
-//            detachedTxReader.ofRO(other, detachedMetadata.getPartitionBy());
-//            detachedTxReader.unsafeLoadAll();
-//            other.trimTo(otherLen);
-//            for (int colIdx=0; colIdx < columnCount; colIdx++) {
-//                if (ColumnType.isSymbol(metadata.getColumnType(colIdx))) {
-//                    String columnName = metadata.getColumnName(colIdx);
-//                    long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, colIdx);
-//                    if (metadata.isColumnIndexed(colIdx)) {
-//                        int symbolCount = detachedTxReader.unsafeReadSymbolCount(colIdx);
-//                        detachedSymbolMapReader.of(configuration, detachedPath, columnName, columnNameTxn, symbolCount);
-//                    }
-//                }
-//            }
+            other.trimTo(otherLen).concat(TXN_FILE_NAME).$();
+            detachedTxReader.ofRO(other, detachedMetadata.getPartitionBy());
+            detachedTxReader.unsafeLoadAll();
+            closeTxn = true;
+            other.trimTo(otherLen);
+            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                if (ColumnType.isSymbol(metadata.getColumnType(colIdx))) {
+                    if (metadata.isColumnIndexed(colIdx)) {
+                        String columnName = metadata.getColumnName(colIdx);
+                        long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, colIdx);
+                        int symbolCount = detachedTxReader.unsafeReadSymbolCount(colIdx);
+                        detachedSymbolMapReader.of(configuration, other, columnName, columnNameTxn, symbolCount);
+                        closeSymbolMapReader = true;
+                        // TODO consolidate
+                    }
+                }
+            }
 
             // remove _dm_ folder
             if (-1 == ff.rmdir(other.trimTo(otherLen).slash$())) { // remove .detached/_dm_
@@ -1857,6 +1862,12 @@ public class TableWriter implements Closeable {
             }
             if (closeColumnVersion) {
                 Misc.free(detachedColumnVersionReader);
+            }
+            if (closeTxn) {
+                Misc.free(detachedTxReader);
+            }
+            if (closeSymbolMapReader) {
+                Misc.free(detachedSymbolMapReader);
             }
         }
     }

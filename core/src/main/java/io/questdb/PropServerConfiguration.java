@@ -427,16 +427,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.maxFileNameLength = getInt(properties, env, PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 127);
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
+
+        String detached = getString(properties, env, PropertyKey.CAIRO_SQL_DETACHED_ROOT, DETACHED_DIRECTORY);
         if (new File(this.dbDirectory).isAbsolute()) {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
             this.snapshotRoot = rootSubdir(this.root, SNAPSHOT_DIRECTORY); // ../snapshot
-            this.detachedRoot = rootSubdir(this.root, DETACHED_DIRECTORY); // ../detached_partitions
+            this.detachedRoot = rootSubdir(this.root, detached); // ../detached_partitions
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
-            this.detachedRoot = new File(root, DETACHED_DIRECTORY).getAbsolutePath();
+            this.detachedRoot = new File(root, detached).getAbsolutePath();
         }
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");

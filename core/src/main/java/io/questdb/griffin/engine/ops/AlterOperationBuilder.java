@@ -93,6 +93,14 @@ public class AlterOperationBuilder {
         return this;
     }
 
+    public AlterOperationBuilder ofDetachPartition(int tableNamePosition, String tableName, int tableId) {
+        this.command = DETACH_PARTITION;
+        this.tableNamePosition = tableNamePosition;
+        this.tableName = tableName;
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofCacheSymbol(int tableNamePosition, String tableName, int tableId, CharSequence columnName) {
         this.command = ADD_SYMBOL_CACHE;
         this.tableNamePosition = tableNamePosition;
@@ -128,14 +136,6 @@ public class AlterOperationBuilder {
 
     public AlterOperationBuilder ofDropPartition(int tableNamePosition, String tableName, int tableId) {
         this.command = DROP_PARTITION;
-        this.tableNamePosition = tableNamePosition;
-        this.tableName = tableName;
-        this.tableId = tableId;
-        return this;
-    }
-
-    public AlterOperationBuilder ofDetachPartition(int tableNamePosition, String tableName, int tableId) {
-        this.command = DETACH_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableName = tableName;
         this.tableId = tableId;

@@ -343,7 +343,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
 
                     @Override
                     public int rename(LPSZ from, LPSZ to) {
-                        if (!copyCalled ) {
+                        if (!copyCalled) {
                             return super.rename(from, to);
                         }
                         return -1;
@@ -375,8 +375,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
                                 .timestamp("ts")
+                                .col("si", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
+                                .col("l", ColumnType.LONG)
+                                .col("s", ColumnType.SYMBOL),
                         10,
                         "2022-06-01",
                         3
@@ -385,17 +387,17 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertContent(
-                        "ts\ti\tl\n" +
-                                "2022-06-01T07:11:59.900000Z\t1\t1\n" +
-                                "2022-06-01T14:23:59.800000Z\t2\t2\n" +
-                                "2022-06-01T21:35:59.700000Z\t3\t3\n" +
-                                "2022-06-02T04:47:59.600000Z\t4\t4\n" +
-                                "2022-06-02T11:59:59.500000Z\t5\t5\n" +
-                                "2022-06-02T19:11:59.400000Z\t6\t6\n" +
-                                "2022-06-03T02:23:59.300000Z\t7\t7\n" +
-                                "2022-06-03T09:35:59.200000Z\t8\t8\n" +
-                                "2022-06-03T16:47:59.100000Z\t9\t9\n" +
-                                "2022-06-03T23:59:59.000000Z\t10\t10\n",
+                        "ts\tsi\ti\tl\ts\n" +
+                                "2022-06-01T07:11:59.900000Z\tPEHN\t1\t1\tSXUX\n" +
+                                "2022-06-01T14:23:59.800000Z\tVTJW\t2\t2\t\n" +
+                                "2022-06-01T21:35:59.700000Z\t\t3\t3\tSXUX\n" +
+                                "2022-06-02T04:47:59.600000Z\t\t4\t4\t\n" +
+                                "2022-06-02T11:59:59.500000Z\t\t5\t5\tGPGW\n" +
+                                "2022-06-02T19:11:59.400000Z\tPEHN\t6\t6\tRXGZ\n" +
+                                "2022-06-03T02:23:59.300000Z\tCPSW\t7\t7\t\n" +
+                                "2022-06-03T09:35:59.200000Z\t\t8\t8\t\n" +
+                                "2022-06-03T16:47:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
+                                "2022-06-03T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n",
                         tableName
                 );
             }
