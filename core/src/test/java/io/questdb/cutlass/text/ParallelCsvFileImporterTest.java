@@ -1310,9 +1310,14 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         );
         importer.process();
         importer.clear();
-        assertQuery("cnt\n" + expectedCount + "\n",
+        assertQuery(
+                "cnt\n" + expectedCount + "\n",
                 "select count(*) cnt from " + tableName,
-                null, false, true);
+                null,
+                false,
+                true,
+                true
+        );
         compiler.compile("drop table " + tableName, context);
     }
 
