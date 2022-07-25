@@ -1628,13 +1628,13 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
 
-        class TestURing extends IOURingImpl {
+        class TestIOURing extends IOURingImpl {
             private final LongList stuff = new LongList();
             private int stuffMax = 0;
             private int stuffIndex = 0;
             private final Rnd rnd = new Rnd();
 
-            public TestURing(IOURingFacade facade, int capacity) {
+            public TestIOURing(IOURingFacade facade, int capacity) {
                 super(facade, capacity);
             }
 
@@ -1678,28 +1678,28 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         ioURingFacade = new IOURingFacadeImpl() {
             @Override
             public IOURing newInstance(int capacity) {
-                return new TestURing(this, capacity);
+                return new TestIOURing(this, capacity);
             }
         };
 
         executeWithPool(2, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             final String tableName = "tableName";
-            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
-                indexer.setMinChunkSize(10);
-                indexer.of(tableName, "test-quotes-big.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
-                indexer.process();
+            try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                importer.setMinChunkSize(10);
+                importer.of(tableName, "test-quotes-big-reverseorder.csv", PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
+                importer.process();
             }
             assertQuery("line\tts\td\tdescription\n" +
-                            "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
-                            "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
-                            "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
-                            "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
-                            "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
-                            "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
-                            "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
-                            "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
-                            "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
-                            "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                            "line10\t1972-09-18T00:00:00.000000Z\t0.928671996857\tdesc 10\n" +
+                            "line9\t1972-09-19T00:00:00.000000Z\t0.123847438134\tdesc 9\n" +
+                            "line8\t1972-09-20T00:00:00.000000Z\t0.450854040396\tdesc 8\n" +
+                            "line7\t1972-09-21T00:00:00.000000Z\t0.207871778557\tdesc 7\n" +
+                            "line6\t1972-09-22T00:00:00.000000Z\t0.341597834365\tdesc 6\n" +
+                            "line5\t1972-09-23T00:00:00.000000Z\t0.5071712972\tdesc 5\n" +
+                            "line4\t1972-09-24T00:00:00.000000Z\t0.426072974125\tdesc 4\n" +
+                            "line3\t1972-09-25T00:00:00.000000Z\t0.525414887561\tdesc 3\n" +
+                            "line2\t1972-09-26T00:00:00.000000Z\t0.105484410855\tdesc 2\n" +
+                            "line1\t1972-09-27T00:00:00.000000Z\t0.490933692472\tdesc 1\n",
                     "select * from " + tableName + " limit -10",
                     "ts", true, false, true);
         });
@@ -1710,10 +1710,10 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
 
-        class TestURing extends IOURingImpl {
+        class TestIOURing extends IOURingImpl {
             private final Rnd rnd = new Rnd();
 
-            public TestURing(IOURingFacade facade, int capacity) {
+            public TestIOURing(IOURingFacade facade, int capacity) {
                 super(facade, capacity);
             }
 
@@ -1728,7 +1728,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         ioURingFacade = new IOURingFacadeImpl() {
             @Override
             public IOURing newInstance(int capacity) {
-                return new TestURing(this, capacity);
+                return new TestIOURing(this, capacity);
             }
         };
 
@@ -1750,10 +1750,10 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
 
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
 
-        class TestURing extends IOURingImpl {
+        class TestIOURing extends IOURingImpl {
             private final Rnd rnd = new Rnd();
 
-            public TestURing(IOURingFacade facade, int capacity) {
+            public TestIOURing(IOURingFacade facade, int capacity) {
                 super(facade, capacity);
             }
 
@@ -1765,7 +1765,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         ioURingFacade = new IOURingFacadeImpl() {
             @Override
             public IOURing newInstance(int capacity) {
-                return new TestURing(this, capacity);
+                return new TestIOURing(this, capacity);
             }
         };
 

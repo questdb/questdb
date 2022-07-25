@@ -873,7 +873,7 @@ public class TextImportTask {
             }
         }
 
-        private void consumeURing(
+        private void consumeIOURing(
                 FilesFacade ff,
                 long sqeMin,
                 TextLexer lexer,
@@ -1024,7 +1024,7 @@ public class TextImportTask {
 
                         if (cc == ringCapacity || (cc > 0 && addr + lineLength > lim)) {
                             // we are out of ring capacity or our buffer is exhausted
-                            consumeURing(ff, sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
+                            consumeIOURing(ff, sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
 
                             cc = 0;
                             addr = fileBufAddr;
@@ -1072,7 +1072,7 @@ public class TextImportTask {
 
                     // check if something is enqueued
                     if (cc > 0) {
-                        consumeURing(ff, sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
+                        consumeIOURing(ff, sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
                     }
                 }
 
