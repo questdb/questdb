@@ -29,6 +29,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 public interface IOURing extends Closeable {
+
     @Override
     void close();
 
@@ -38,10 +39,27 @@ public interface IOURing extends Closeable {
 
     int getCqeRes();
 
+    /**
+     * Checks if a cqe is ready and, if so, reads its data. Read data is
+     * then available via {@link #getCqeId} and {@link #getCqeRes} methods.
+     *
+     * @return true - if cqe was read; false - otherwise.
+     */
     boolean nextCqe();
 
+    /**
+     * Submits pending sqes, if any.
+     *
+     * @return number of submitted sqes.
+     */
     int submit();
 
+    /**
+     * Submits pending sqes, if any, and blocks until at least one operation result
+     * becomes available as a cqe.
+     *
+     * @return number of submitted sqes.
+     */
     int submitAndWait();
 
     @TestOnly
