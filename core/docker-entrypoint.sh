@@ -37,7 +37,7 @@ fi
 
 if [ "$(id -u)" = '0' ] && [ "${QUESTDB_DATA_DIR%/}" != "/root/.questdb" ] && [ "$RUN_AS_ROOT" = "false" ] ; then
     echo "Running as questdb user"
-#    find_and_own_dir ${QUESTDB_DATA_DIR}
+    find_and_own_dir ${QUESTDB_DATA_DIR}
     exec gosu questdb "$@"
 fi
 
