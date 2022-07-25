@@ -1882,14 +1882,15 @@ public class SqlCompiler implements Closeable {
             int workerCount = executionContext.getWorkerCount();
             ExpressionNode fileNameNode = model.getFileName();
             final CharSequence fileName = fileNameNode != null ? GenericLexer.assertNoDots(GenericLexer.unquote(fileNameNode.token), fileNameNode.position) : null;
-            if (model.isParallel()) {
                 if (workerCount < 1) {
                     throw SqlException.$(0, "Invalid worker count set [value=").put(workerCount).put("]");
                 }
-
                 if (model.isCancel()) {
                     addTextImportRequest(model, null);
                 } else {
+                    if (model.getTimestampColumnName() == null && (model.getPartitionBy() != -1 || model.getTimestampFormat() != null)) {
+                        throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
+                    }
                     if (model.getTimestampFormat() == null) {
                         model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
                     }
@@ -1898,55 +1899,6 @@ public class SqlCompiler implements Closeable {
                     }
                     addTextImportRequest(model, fileName);
                 }
-                return;
-            }
-
-            if (model.getTimestampColumnName() != null ||
-                    model.getTimestampFormat() != null ||
-                    model.getPartitionBy() != -1) {
-                throw SqlException.$(-1, "invalid option used for non-parallel import (timestamp, format or partition by)");
-            }
-
-            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-            int len = configuration.getSqlCopyBufferSize();
-            long buf = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-            setupTextLoaderFromModel(model);
-            path.of(configuration.getSqlCopyInputRoot()).concat(fileName).$();
-            long fd = ff.openRO(path);
-            try {
-                if (fd == -1) {
-                    throw SqlException.$(model.getFileName().position, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
-                }
-
-                long fileLen = ff.length(fd);
-                long n = ff.read(fd, buf, len, 0);
-                if (n > 0) {
-                    textLoader.setForceHeaders(model.isHeader());
-                    textLoader.setSkipRowsWithExtraValues(false);
-                    textLoader.parse(buf, buf + n, executionContext.getCairoSecurityContext());
-                    textLoader.setState(TextLoader.LOAD_DATA);
-                    int read;
-                    while (n < fileLen) {
-                        // We don't want import to stop on query timeout, but only on closed connection.
-                        circuitBreaker.resetTimer();
-                        if (circuitBreaker.checkIfTripped()) {
-                            throw SqlException.$(model.getFileName().position, "import was cancelled");
-                        }
-                        read = (int) ff.read(fd, buf, len, n);
-                        if (read < 1) {
-                            throw SqlException.$(model.getFileName().position, "could not read file [errno=").put(ff.errno()).put(']');
-                        }
-                        textLoader.parse(buf, buf + read, executionContext.getCairoSecurityContext());
-                        n += read;
-                    }
-                    textLoader.wrapUp();
-                }
-            } finally {
-                ff.close(fd);
-                textLoader.clear();
-                Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
-            }
-            LOG.info().$("copied").$();
         } catch (TextImportException | TextException e) {
             LOG.error().$((Throwable) e).$();
             throw SqlException.$(0, e.getMessage());
@@ -1986,7 +1938,8 @@ public class SqlCompiler implements Closeable {
                             Objects.toString(model.getTimestampColumnName(), null),
                             model.getDelimiter(),
                             Objects.toString(model.getTimestampFormat(), null),
-                            model.getPartitionBy());
+                            model.getPartitionBy(),
+                            model.getAtomicity());
 
                     circuitBreaker.reset();
                     textImportExecutionContext.setActiveTableName(tableName);
@@ -1995,7 +1948,7 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(0, "Unable to process the import request. Another import request may be in progress.");
                 }
             } else {
-                throw SqlException.$(0, "Another import request is in progress.");
+                throw SqlException.$(0, "Another import request is in progress. Current table name = " + tableName);
             }
         }
     }

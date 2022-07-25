@@ -435,7 +435,6 @@ public final class SqlParser {
         if (isCancelKeyword(tok)) {
             CopyModel model = copyModelPool.next();
             model.setCancel(true);
-            model.setParallel(true);
             model.setTableName(tableName);
             return model;
         }
@@ -456,9 +455,6 @@ public final class SqlParser {
                 while (tok != null && !isSemicolon(tok)) {
                     if (isHeaderKeyword(tok)) {
                         model.setHeader(isTrueKeyword(tok(lexer, "'true' or 'false'")));
-                        tok = optTok(lexer);
-                    } else if (isParallelKeyword(tok)) {
-                        model.setParallel(true);
                         tok = optTok(lexer);
                     } else if (isPartitionKeyword(tok)) {
                         expectTok(lexer, "by");

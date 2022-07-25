@@ -34,6 +34,7 @@ public class TextImportRequestTask implements Mutable {
     private byte delimiter;
     private String timestampFormat;
     private int partitionBy;
+    private int atomicity;
 
     public void of(String tableName,
                    String fileName,
@@ -41,7 +42,8 @@ public class TextImportRequestTask implements Mutable {
                    String timestampColumnName,
                    byte delimiter,
                    String timestampFormat,
-                   int partition_by
+                   int partition_by,
+                   int atomicity
     ) {
         this.clear();
         this.tableName = tableName;
@@ -51,6 +53,7 @@ public class TextImportRequestTask implements Mutable {
         this.delimiter = delimiter;
         this.timestampFormat = timestampFormat;
         this.partitionBy = partition_by;
+        this.atomicity = atomicity;
     }
 
     @Override
@@ -62,6 +65,7 @@ public class TextImportRequestTask implements Mutable {
         this.delimiter = 0;
         this.timestampFormat = null;
         this.partitionBy = -1;
+        this.atomicity = -1;
     }
 
     public byte getDelimiter() {
@@ -90,5 +94,9 @@ public class TextImportRequestTask implements Mutable {
 
     public boolean isHeaderFlag() {
         return headerFlag;
+    }
+
+    public int getAtomicity() {
+        return atomicity;
     }
 }
