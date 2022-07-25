@@ -284,6 +284,7 @@ public class ServerMain {
                 System.err.println(new Date() + " QuestDB is shutting down");
                 shutdownQuestDb(workerPool, instancesToClean);
                 System.err.println(new Date() + " QuestDB is down");
+                LogFactory.INSTANCE.flushJobsAndClose();
             }));
         } catch (NetworkError e) {
             log.errorW().$((Sinkable) e).$();
@@ -315,6 +316,7 @@ public class ServerMain {
             new ServerMain(args);
         } catch (ServerConfigurationException sce) {
             System.err.println(sce.getMessage());
+            LogFactory.INSTANCE.flushJobsAndClose();
             System.exit(1);
         }
     }
