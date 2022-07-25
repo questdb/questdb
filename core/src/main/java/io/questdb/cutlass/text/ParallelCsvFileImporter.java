@@ -124,9 +124,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private byte status = TextImportTask.STATUS_STARTED;
     private byte phase = TextImportTask.PHASE_SETUP;
     private CharSequence errorMessage;
+    //row stats are only incremented in phase 3
     private long rowsHandled;
     private long rowsImported;
     private int errors;
+    private int phaseErrors;
     private final Consumer<TextImportTask> checkStatusRef = this::updateStatus;
     private final Consumer<TextImportTask> collectChunkStatsRef = this::collectChunkStats;
     private final Consumer<TextImportTask> collectDataImportStatsRef = this::collectDataImportStats;
@@ -243,6 +245,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         rowsHandled = 0;
         rowsImported = 0;
         errors = 0;
+        phaseErrors = 0;
         inputFileName = null;
         tableName = null;
         timestampColumn = null;
@@ -360,6 +363,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         long fd = -1;
         try {
             try {
+                updateImportStatus(TextImportTask.STATUS_STARTED, null);
+
                 try {
                     fd = TableUtils.openRO(ff, inputFilePath, LOG);
                 } catch (CairoException e) {
@@ -385,6 +390,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         cleanUp(writer);
                         throw t;
                     }
+                    updateImportStatus(TextImportTask.STATUS_FINISHED, null);
                 } catch (Throwable t) {
                     cleanUp();
                     throw t;
@@ -423,9 +429,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.statusReporter = reporter;
     }
 
-    public void updateStatus(byte phase, byte status, @Nullable final CharSequence msg) {
+    public void updateImportStatus(byte status, @Nullable final CharSequence msg) {
         if (this.statusReporter != null) {
-            this.statusReporter.report(phase, status, msg, rowsHandled, rowsImported, errors);
+            this.statusReporter.report(TextImportTask.ALL_PHASES, status, msg, rowsHandled, rowsImported, errors);
+        }
+    }
+
+    public void updatePhaseStatus(byte phase, byte status, @Nullable final CharSequence msg) {
+        if (this.statusReporter != null) {
+            this.statusReporter.report(phase, status, msg, 0, 0, phaseErrors);
         }
     }
 
@@ -555,6 +567,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
         rowsHandled += stage.getRowsHandled();
         rowsImported += stage.getRowsImported();
+        phaseErrors = stage.getErrors();
         errors += stage.getErrors();
     }
 
@@ -910,9 +923,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 .$("finished [phase=").$(phase)
                 .$(", file=`").$(inputFilePath)
                 .$("`, duration=").$((endMs - startMs) / 1000).$('s')
-                .$(", errors=").$(errors)
+                .$(", errors=").$(phaseErrors)
                 .I$();
-        updateStatus(phase, TextImportTask.STATUS_FINISHED, null);
+        updatePhaseStatus(phase, TextImportTask.STATUS_FINISHED, null);
     }
 
     void phaseIndexing() throws TextException {
@@ -1031,11 +1044,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void phasePrologue(byte phase) {
-        rowsHandled = 0;
-        rowsImported = 0;
-        errors = 0;
+        phaseErrors = 0;
         LOG.info().$("started  [phase=").$(phase).$(", file=`").$(inputFilePath).$('`').$(", workerCount=").$(workerCount).I$();
-        updateStatus(phase, TextImportTask.STATUS_STARTED, null);
+        updatePhaseStatus(phase, TextImportTask.STATUS_STARTED, null);
         startMs = getCurrentTimeMs();
     }
 

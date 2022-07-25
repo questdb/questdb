@@ -152,12 +152,12 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 importer.process();
             } catch (TextImportException e) {
                 updateStatus(
-                        e.getPhase(),
+                        TextImportTask.ALL_PHASES,
                         e.isCancelled() ? TextImportTask.STATUS_CANCELLED : TextImportTask.STATUS_FAILED,
                         e.getMessage(),
                         0,
                         0,
-                        1
+                        0
                 );
             } finally {
                 requestSubSeq.done(cursor);

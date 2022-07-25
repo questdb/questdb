@@ -45,6 +45,7 @@ import static io.questdb.cutlass.text.ParallelCsvFileImporter.createTable;
 
 public class TextImportTask {
 
+    public static final byte ALL_PHASES = -1;
     public static final byte PHASE_SETUP = 0;
     public static final byte PHASE_BOUNDARY_CHECK = 1;
     public static final byte PHASE_INDEXING = 2;
@@ -1382,6 +1383,7 @@ public class TextImportTask {
     }
 
     static {
+        // ALL_PHASES is not included into the map intentionally, so that map.get() return a null for this key.
         PHASE_NAME_MAP.put(PHASE_SETUP, "SETUP");
         PHASE_NAME_MAP.put(PHASE_BOUNDARY_CHECK, "BOUNDARY_CHECK");
         PHASE_NAME_MAP.put(PHASE_INDEXING, "INDEXING");
