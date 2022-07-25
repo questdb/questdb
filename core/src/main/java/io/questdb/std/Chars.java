@@ -39,6 +39,24 @@ public final class Chars {
     private Chars() {
     }
 
+    public static void asciiCopyTo(char[] chars, int start, int len, long dest) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(dest + i, (byte) chars[i + start]);
+        }
+    }
+
+    public static void asciiStrCpy(final CharSequence value, final int len, final long address) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));
+        }
+    }
+
+    public static void asciiStrCpy(final CharSequence value, int lo, final int len, final long address) {
+        for (int i = 0; i < len; i++) {
+            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(lo + i));
+        }
+    }
+
     public static void base64Encode(BinarySequence sequence, final int maxLength, CharSink buffer) {
         if (sequence == null) {
             return;
@@ -68,24 +86,6 @@ public final class Chars {
 
         for (int j = 0; j < pad; j++) {
             buffer.put("=");
-        }
-    }
-
-    public static void asciiCopyTo(char[] chars, int start, int len, long dest) {
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(dest + i, (byte) chars[i + start]);
-        }
-    }
-
-    public static void asciiStrCpy(final CharSequence value, final int len, final long address) {
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(i));
-        }
-    }
-
-    public static void asciiStrCpy(final CharSequence value, int lo, final int len, final long address) {
-        for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putByte(address + i, (byte) value.charAt(lo + i));
         }
     }
 
@@ -120,30 +120,34 @@ public final class Chars {
     }
 
     public static boolean contains(CharSequence sequence, CharSequence term) {
+        return contains(sequence, 0, sequence.length(), term) != -1;
+    }
+
+    public static int contains(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
         int m = term.length();
         if (m == 0) {
-            return false;
+            return -1;
         }
 
-        for (int i = 0, n = sequence.length(); i < n; i++) {
+        for (int i = sequenceLo; i < sequenceHi; i++) {
             if (sequence.charAt(i) == term.charAt(0)) {
-                if (n - i < m) {
-                    return false;
+                if (sequenceHi - i < m) {
+                    return -1;
                 }
                 boolean found = true;
-                for (int k = 1; k < m && k + i < n; k++) {
+                for (int k = 1; k < m && k + i < sequenceHi; k++) {
                     if (sequence.charAt(i + k) != term.charAt(k)) {
                         found = false;
                         break;
                     }
                 }
                 if (found) {
-                    return true;
+                    return i;
                 }
             }
         }
 
-        return false;
+        return -1;
     }
 
     public static void copyStrChars(CharSequence value, int pos, int len, long address) {
@@ -382,17 +386,6 @@ public final class Chars {
         return true;
     }
 
-    public static boolean isOnlyDecimals(CharSequence s) {
-        int len = s.length();
-        for (int i = len - 1; i > -1; i--) {
-            int digit = s.charAt(i);
-            if (digit < '0' || digit > '9') {
-                return false;
-            }
-        }
-        return len > 0;
-    }
-
     public static boolean isMalformed3(int b1, int b2, int b3) {
         return b1 == -32 && (b2 & 224) == 128 || (b2 & 192) != 128 || (b3 & 192) != 128;
     }
@@ -403,6 +396,17 @@ public final class Chars {
 
     public static boolean isNotContinuation(int b) {
         return (b & 192) != 128;
+    }
+
+    public static boolean isOnlyDecimals(CharSequence s) {
+        int len = s.length();
+        for (int i = len - 1; i > -1; i--) {
+            int digit = s.charAt(i);
+            if (digit < '0' || digit > '9') {
+                return false;
+            }
+        }
+        return len > 0;
     }
 
     public static boolean isQuote(char c) {
@@ -686,7 +690,7 @@ public final class Chars {
             }
         }
     }
-    
+
     /* Decodes bytes between lo,hi addresses into sink.
      *  Note: operation might fail in the middle and leave sink in inconsistent  state .
      *  @return true if input is proper utf8 and false otherwise . */

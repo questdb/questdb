@@ -46,6 +46,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import sun.misc.Signal;
 
@@ -187,6 +188,8 @@ public class ServerMain {
         } else {
             metrics = Metrics.disabled();
         }
+
+        reportCrashFiles(configuration.getCairoConfiguration().getRoot(), log);
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration(), metrics);
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
@@ -331,6 +334,23 @@ public class ServerMain {
         } catch (ServerConfigurationException sce) {
             System.err.println(sce.getMessage());
             System.exit(1);
+        }
+    }
+
+    static void reportCrashFiles(CharSequence dbRoot, Log log) {
+        NativeLPSZ name = new NativeLPSZ();
+        try (Path path = new Path().of(dbRoot).slash$()) {
+            FilesFacadeImpl.INSTANCE.iterateDir(
+                    path,
+                    (pUtf8NameZ, type) -> {
+                        if (Files.notDots(pUtf8NameZ)) {
+                            name.of(pUtf8NameZ);
+                            if (Chars.startsWith(name, "hs_err_pid")) {
+                                log.criticalW().$("found crash file [path=").$(name).I$();
+                            }
+                        }
+                    }
+            );
         }
     }
 

@@ -22,50 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.std.str;
 
-public final class OpenBarrier implements Barrier {
-    public final static OpenBarrier INSTANCE = new OpenBarrier();
+import io.questdb.std.Unsafe;
 
-    private OpenBarrier() {
+/**
+ * Represents C LPSZ as Java' CharSequence. Byes in native memory are interpreted as ASCII characters. Multi-byte
+ * characters are NOT decoded.
+ */
+public class NativeLPSZ extends AbstractCharSequence {
+    private long address;
+    private int len;
+
+    @Override
+    public int length() {
+        return len;
     }
 
     @Override
-    public long current() {
-        return -1;
+    public char charAt(int index) {
+        return (char) Unsafe.getUnsafe().getByte(address + index);
     }
 
-    @Override
-    public void setCurrent(long value) {
-        // ignored
-    }
-
-    @Override
-    public long availableIndex(long lo) {
-        return Long.MAX_VALUE - 1;
-    }
-
-    @Override
-    public WaitStrategy getWaitStrategy() {
-        return NullWaitStrategy.INSTANCE;
-    }
-
-    @Override
-    public Barrier root() {
+    @SuppressWarnings("StatementWithEmptyBody")
+    public NativeLPSZ of(long address) {
+        this.address = address;
+        long p = address;
+        while (Unsafe.getUnsafe().getByte(p++) != 0) ;
+        this.len = (int) (p - address - 1);
         return this;
-    }
-
-    @Override
-    public void setBarrier(Barrier barrier) {
-    }
-
-    @Override
-    public Barrier then(Barrier barrier) {
-        return null;
-    }
-
-    @Override
-    public Barrier getBarrier() {
-        return null;
     }
 }
