@@ -13,7 +13,9 @@ WORKDIR /build
 
 RUN curl -L "https://www.mirrorservice.org/sites/ftp.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip" --output maven.zip \
   && unzip maven.zip \
-  && git clone --depth=1 --progress --verbose https://github.com/questdb/questdb.git
+  && git clone  https://github.com/questdb/questdb.git \
+  && cd questdb \
+  && git chckout vi_docker_err
 
 WORKDIR /build/questdb
 
@@ -55,7 +57,7 @@ RUN groupadd -g 10001 questdb && \
     chown -R questdb:questdb /var/lib/questdb
 
 # Make working folder the quest db folder
-WORKDIR /var/lib/questdb
+WORKDIR /root/.questdb/db
 
 # Make port 9000 available to the world outside this container
 EXPOSE 9000/tcp
