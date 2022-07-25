@@ -272,7 +272,7 @@ public class LogFactory implements Closeable {
     }
 
     /**
-     * Flush remaining log lines before close
+     * Flush remaining log lines and close
      */
     public void flushJobsAndClose() {
         haltThread();
