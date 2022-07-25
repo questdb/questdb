@@ -141,7 +141,7 @@ public class LogFactory implements Closeable {
         boolean initialized = false;
         String logDir = rootDir != null ? Paths.get(rootDir, "log").toString() : "log";
         File logDirFile = new File(logDir);
-
+        new Exception().printStackTrace();
         System.out.println("root dir: "+rootDir);
         if (!logDirFile.exists() && logDirFile.mkdir()) {
             System.err.printf("Created log directory: %s%n", logDir);
