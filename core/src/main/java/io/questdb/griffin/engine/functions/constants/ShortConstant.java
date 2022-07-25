@@ -43,4 +43,5 @@ public class ShortConstant extends ShortFunction implements ConstantFunction {
     public short getShort(Record rec) {
         return value;
     }
+
 }

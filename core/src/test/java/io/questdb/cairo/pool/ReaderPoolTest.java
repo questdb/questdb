@@ -491,7 +491,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             }
 
             @Override
-            public long getSpinLockTimeoutUs() {
+            public long getSpinLockTimeout() {
                 return 1000;
             }
         });

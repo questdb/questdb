@@ -34,6 +34,7 @@ import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -132,6 +133,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
                     runSerially();
                 }
                 LOG.info().$("shutdown").$();
+                Path.clearThreadLocals();
                 halted.countDown();
             }).start();
         }

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -84,6 +85,14 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("GroupByNotKeyed");
+        sink.meta("vectorized").val(false);
+        sink.attr("groupByFunctions").val(groupByFunctions);
+        sink.child(base);
     }
 
     private class GroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {

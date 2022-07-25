@@ -27,11 +27,9 @@ package io.questdb.std;
 import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.Closeable;
-
 import static io.questdb.std.IOUringAccessor.*;
 
-public final class IOUring implements Closeable {
+public class IOURingImpl implements IOURing {
 
     private final long ringPtr;
     private final int ringFd;
@@ -45,14 +43,13 @@ public final class IOUring implements Closeable {
     private final long cqKheadPtr;
     private final long cqKtailPtr;
     private final int cqKringMask;
-
+    private final IOURingFacade facade;
     private long lastCqeId = -1;
     private int lastCqeRes;
     private long idSeq;
-    private final IOUringFacade facade;
     private boolean closed = false;
 
-    public IOUring(IOUringFacade facade, int capacity) {
+    public IOURingImpl(IOURingFacade facade, int capacity) {
         assert Numbers.isPow2(capacity);
         this.facade = facade;
         final long res = facade.create(capacity);
@@ -84,9 +81,48 @@ public final class IOUring implements Closeable {
         if (closed) {
             return;
         }
-        facade.close(ringPtr);
         Files.decrementFileCount(ringFd);
+        facade.close(ringPtr);
         closed = true;
+    }
+
+    @Override
+    public long enqueueRead(long fd, long offset, long bufPtr, int len) {
+        return enqueueSqe(IORING_OP_READ, fd, offset, bufPtr, len);
+    }
+
+    @Override
+    public long getCqeId() {
+        return lastCqeId;
+    }
+
+    @Override
+    public int getCqeRes() {
+        return lastCqeRes;
+    }
+
+    /**
+     * Checks if a cqe is ready and, if so, reads its data. Read data is
+     * then available via {@link #getCqeId} and {@link #getCqeRes} methods.
+     *
+     * @return true - if cqe was read; false - otherwise.
+     */
+    @Override
+    public boolean nextCqe() {
+        final int tail = Unsafe.getUnsafe().getInt(cqKtailPtr);
+        Unsafe.getUnsafe().loadFence();
+        final int head = Unsafe.getUnsafe().getInt(cqKheadPtr);
+        if (tail == head) {
+            lastCqeId = -1;
+            lastCqeRes = 0;
+            return false;
+        }
+        final long cqePtr = cqesPtr + (long) (head & cqKringMask) * SIZEOF_CQE;
+        lastCqeId = Unsafe.getUnsafe().getLong(cqePtr + CQE_USER_DATA_OFFSET);
+        lastCqeRes = Unsafe.getUnsafe().getInt(cqePtr + CQE_RES_OFFSET);
+        Unsafe.getUnsafe().putInt(cqKheadPtr, head + 1);
+        Unsafe.getUnsafe().storeFence();
+        return true;
     }
 
     /**
@@ -94,6 +130,7 @@ public final class IOUring implements Closeable {
      *
      * @return number of submitted sqes.
      */
+    @Override
     public int submit() {
         return facade.submit(ringPtr);
     }
@@ -104,17 +141,15 @@ public final class IOUring implements Closeable {
      *
      * @return number of submitted sqes.
      */
+    @Override
     public int submitAndWait() {
         return facade.submitAndWait(ringPtr, 1);
     }
 
+    @Override
     @TestOnly
-    long enqueueNop() {
+    public long enqueueNop() {
         return enqueueSqe(IORING_OP_NOP, 0, 0, 0, 0);
-    }
-
-    public long enqueueRead(long fd, long offset, long bufPtr, int len) {
-        return enqueueSqe(IORING_OP_READ, fd, offset, bufPtr, len);
     }
 
     private long enqueueSqe(byte op, long fd, long offset, long bufPtr, int len) {
@@ -145,36 +180,5 @@ public final class IOUring implements Closeable {
             return ptr;
         }
         return 0;
-    }
-
-    /**
-     * Checks if a cqe is ready and, if so, reads its data. Read data is
-     * then available via {@link #getCqeId} and {@link #getCqeRes} methods.
-     *
-     * @return true - if cqe was read; false - otherwise.
-     */
-    public boolean nextCqe() {
-        final int tail = Unsafe.getUnsafe().getInt(cqKtailPtr);
-        Unsafe.getUnsafe().loadFence();
-        final int head = Unsafe.getUnsafe().getInt(cqKheadPtr);
-        if (tail == head) {
-            lastCqeId = -1;
-            lastCqeRes = 0;
-            return false;
-        }
-        final long cqePtr = cqesPtr + (long) (head & cqKringMask) * SIZEOF_CQE;
-        lastCqeId = Unsafe.getUnsafe().getLong(cqePtr + CQE_USER_DATA_OFFSET);
-        lastCqeRes = Unsafe.getUnsafe().getInt(cqePtr + CQE_RES_OFFSET);
-        Unsafe.getUnsafe().putInt(cqKheadPtr, head + 1);
-        Unsafe.getUnsafe().storeFence();
-        return true;
-    }
-
-    public long getCqeId() {
-        return lastCqeId;
-    }
-
-    public int getCqeRes() {
-        return lastCqeRes;
     }
 }

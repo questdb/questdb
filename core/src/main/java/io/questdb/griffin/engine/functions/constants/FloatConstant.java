@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.std.str.CharSink;
 
 public class FloatConstant extends FloatFunction implements ConstantFunction {
     public static final FloatConstant NULL = new FloatConstant(Float.NaN);
@@ -42,5 +43,10 @@ public class FloatConstant extends FloatFunction implements ConstantFunction {
     @Override
     public float getFloat(Record rec) {
         return value;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put(value).put('f');
     }
 }
