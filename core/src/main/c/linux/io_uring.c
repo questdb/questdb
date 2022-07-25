@@ -138,6 +138,11 @@ JNIEXPORT jshort JNICALL Java_io_questdb_std_IOUringAccessor_getCqKringMaskOffse
     return (jshort) offsetof(struct io_uring_cq, kring_mask);
 }
 
+JNIEXPORT jshort JNICALL Java_io_questdb_std_IOUringAccessor_getCqKringEntriesOffset
+        (JNIEnv *e, jclass cl) {
+    return (jshort) offsetof(struct io_uring_cq, kring_entries);
+}
+
 JNIEXPORT jshort JNICALL Java_io_questdb_std_IOUringAccessor_getCqCqesOffset
         (JNIEnv *e, jclass cl) {
     return (jshort) offsetof(struct io_uring_cq, cqes);
