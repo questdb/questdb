@@ -24,6 +24,8 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.log.*;
 import io.questdb.std.*;
 import io.questdb.std.str.NativeLPSZ;
@@ -114,7 +116,8 @@ public class ServerMainTest {
     @Test
     public void testReportCrashFiles() throws IOException {
         final File x = temp.newFile();
-        final String y = x.getAbsolutePath();
+        final String logFileName = x.getAbsolutePath();
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
         try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
@@ -134,7 +137,7 @@ public class ServerMainTest {
                     Files.touch(path.trimTo(plen).concat("hs_err_pid2.log").$());
                 }
 
-                ServerMain.reportCrashFiles(temp.getRoot().getAbsolutePath(), logger);
+                ServerMain.reportCrashFiles(configuration, logger);
 
                 // wait until sequence is consumed and written to file
                 while (logger.getCriticalSequence().getBarrier().current() < 1) {
@@ -146,7 +149,7 @@ public class ServerMainTest {
         }
 
         // make sure we check disk contents after factory is closed
-        try (Path log = new Path().of(y).$()) {
+        try (Path log = new Path().of(logFileName).$()) {
             int bufSize = 4096;
             long buf = Unsafe.calloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             // we should read sub-4k bytes from the file
@@ -157,7 +160,7 @@ public class ServerMainTest {
                     int len = (int) Files.read(fd, buf, bufSize, 0);
                     if (len > 0) {
                         NativeLPSZ str = new NativeLPSZ().of(buf);
-                        int index1 = Chars.contains(str, 0, len, "hs_err_pid1.log");
+                        int index1 = Chars.contains(str, 0, len, "crash_0.log");
                         Assert.assertTrue(index1 > -1);
                         int index2 = Chars.contains(str, index1 + 1, len, "hs_err_pid2.log");
                         Assert.assertTrue(index2 > -1 && index2 > index1);

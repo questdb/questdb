@@ -392,4 +392,6 @@ public interface CairoConfiguration {
     int getSqlCopyLogRetentionDays();
 
     boolean isIOURingEnabled();
+
+    int getMaxCrashFiles();
 }

@@ -53,6 +53,7 @@ import sun.misc.Signal;
 import java.io.*;
 import java.net.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -189,7 +190,7 @@ public class ServerMain {
             metrics = Metrics.disabled();
         }
 
-        reportCrashFiles(configuration.getCairoConfiguration().getRoot(), log);
+        reportCrashFiles(configuration.getCairoConfiguration(), log);
 
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration(), metrics);
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
@@ -337,16 +338,47 @@ public class ServerMain {
         }
     }
 
-    static void reportCrashFiles(CharSequence dbRoot, Log log) {
+    static void reportCrashFiles(CairoConfiguration configuration, Log log) {
+        final CharSequence dbRoot = configuration.getRoot();
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int maxFiles = configuration.getMaxCrashFiles();
+
         NativeLPSZ name = new NativeLPSZ();
-        try (Path path = new Path().of(dbRoot).slash$()) {
+        try (
+                Path path = new Path().of(dbRoot).slash$();
+                Path other = new Path().of(dbRoot).slash$()
+        ) {
+            int plen = path.length();
+            AtomicInteger counter = new AtomicInteger(0);
             FilesFacadeImpl.INSTANCE.iterateDir(
                     path,
                     (pUtf8NameZ, type) -> {
                         if (Files.notDots(pUtf8NameZ)) {
                             name.of(pUtf8NameZ);
                             if (Chars.startsWith(name, "hs_err_pid")) {
-                                log.criticalW().$("found crash file [path=").$(name).I$();
+
+                                path.trimTo(plen).concat(pUtf8NameZ).$();
+
+                                boolean shouldRename = false;
+                                do {
+                                    other.trimTo(plen).concat("crash_").put(counter.getAndIncrement()).put(".log").$();
+                                    if (!ff.exists(other)) {
+                                        shouldRename = true;
+                                        break;
+                                    }
+                                } while (counter.get() < maxFiles);
+
+                                if (shouldRename && ff.rename(path, other) == 0 && counter.get() <= maxFiles) {
+                                    log.criticalW().$("found crash file [path=").$(other).I$();
+                                } else {
+                                    log.criticalW()
+                                            .$("could not rename crash file [path=").$(path)
+                                            .$(", errno=").$(ff.errno())
+                                            .$(", index=").$(counter.get())
+                                            .$(", max=").$(maxFiles)
+                                            .I$();
+                                }
+
                             }
                         }
                     }
