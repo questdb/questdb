@@ -73,8 +73,12 @@ public class WalReader implements Closeable {
             columnCount = metadata.getColumnCount();
             events = new WalEventReader(ff);
             LOG.debug().$("open [table=").$(tableName).I$();
-            eventCursor = events.of(path.slash().concat(segmentId), WalWriter.WAL_FORMAT_VERSION);
+            int pathLen = path.length();
+            eventCursor = events.of(path.slash().put(segmentId), WalWriter.WAL_FORMAT_VERSION, -1L);
+            path.trimTo(pathLen);
             openSymbolMaps(eventCursor, configuration);
+            path.slash().put(segmentId);
+            eventCursor.reset();
 
             final int capacity = 2 * columnCount + 2;
             columns = new ObjList<>(capacity);
@@ -136,7 +140,6 @@ public class WalReader implements Closeable {
     }
 
     public long openSegment() {
-        path.slash().put(segmentId);
         try {
             if (ff.exists(path.$())) {
                 path.chop$();

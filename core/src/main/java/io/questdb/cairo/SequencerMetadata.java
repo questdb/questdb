@@ -47,6 +47,10 @@ public class SequencerMetadata extends BaseRecordMetadata implements Closeable {
         columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     }
 
+    public void abortClose() {
+        metaMem.close(false);
+    }
+
     public int getTableId() {
         return tableId;
     }

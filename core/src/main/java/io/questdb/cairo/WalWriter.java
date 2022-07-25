@@ -28,7 +28,6 @@ import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.*;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -81,6 +80,7 @@ public class WalWriter implements Closeable {
     private boolean rollSegmentOnNextRow = false;
     private WalWriterRollStrategy rollStrategy = new WalWriterRollStrategy() {
     };
+    private long lastSegmentTxn = -1L;
 
     public WalWriter(CairoEngine engine, String tableName, int walId, Sequencer sequencer) {
         LOG.info().$("open '").utf8(tableName).$('\'').$();
@@ -539,12 +539,16 @@ public class WalWriter implements Closeable {
         return commit(false);
     }
 
+    public long getLastSegmentTxn() {
+        return lastSegmentTxn;
+    }
+
     private long commit(boolean rollSegment) {
         rollSegmentOnNextRow = rollSegment;
         final long transientRowCount = getTransientRowCount();
         if (transientRowCount != 0) {
-            long segmentTxn = events.data(startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
-            long txn = sequencer.nextTxn(tableDescriptor.getSchemaVersion(), walId, segmentId, segmentTxn);
+            lastSegmentTxn = events.data(startRowCount, rowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+            long txn = sequencer.nextTxn(tableDescriptor.getSchemaVersion(), walId, segmentId, lastSegmentTxn);
             if (txn == Sequencer.NO_TXN) {
                 throw new UnsupportedOperationException("WAL schema changes not supported yet");
             }

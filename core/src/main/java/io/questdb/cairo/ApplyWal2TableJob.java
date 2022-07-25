@@ -61,8 +61,6 @@ public class ApplyWal2TableJob {
     private static void applyOutstandingWalTransactions(TableWriter writer, CairoEngine engine) {
         Sequencer sequencer = engine.getSequencer(writer.getTableName());
         long sequenceMaxTxn = sequencer.getMaxTxn();
-        FilesFacade ff = engine.getConfiguration().getFilesFacade();
-
         long lastCommitted = writer.getTxn();
 
         while (lastCommitted < sequenceMaxTxn) {
@@ -70,34 +68,12 @@ public class ApplyWal2TableJob {
             while(sequencerCursor.hasNext()) {
                 CharSequence walPath = sequencerCursor.getWalPath();
                 long segmentTxn = sequencerCursor.getWalTxn();
-                int segmentId = sequencerCursor.getSegment();
-                long tableTxn = sequencerCursor.getTxn();
+                long nextTableTxn = sequencerCursor.getTxn();
 
-                try (
-                        Path path = new Path();
-                        WalEventReader wre = new WalEventReader(ff)
-                ) {
-                    path.of(walPath);
-                    WalEventCursor waleCursor = wre.of(path.slash().put(segmentId), WalWriter.WAL_FORMAT_VERSION);
-//                    if (wre.goTo(segmentTxn)) {
-//
-//                        WalEventCursor.DataInfo dataInfo = waleCursor.getDataInfo();
-//                        writer.processWalCommit(                                walPath, segmentId, segmentTxn                        );
-//                        writer.processWalCommit(
-//                                path,
-//                                segmentId,
-//                                !dataInfo.isOutOfOrder(),
-//                                dataInfo.getStartRowID(),
-//                                dataInfo.getEndRowID(),
-//                                dataInfo.getMinTimestamp(),
-//                                dataInfo.getMaxTimestamp() + 1,
-//                                dataInfo
-//                        );
-//
-//                    } else {
-//                        // Oh, no WAL does not have the expected transaction!
-//                    }
+                if (nextTableTxn != writer.getTxn() + 1) {
+                    throw CairoException.instance(0).put("Unexpected WAL segment transaction ").put(nextTableTxn).put(" expected ").put((writer.getTxn() + 1));
                 }
+                writer.processWalCommit(walPath, segmentTxn);
             }
             lastCommitted = writer.getTxn();
         }

@@ -50,18 +50,22 @@ public class WalEventReader implements Closeable {
         Misc.free(eventMem);
     }
 
-    public WalEventCursor of(Path path, int expectedVersion) {
+    public WalEventCursor of(Path path, int expectedVersion, long segmentTxn) {
         try {
             openSmallFile(ff, path, path.length(), eventMem, EVENT_FILE_NAME, MemoryTag.MMAP_TABLE_WAL_READER);
 
             // minimum we need is WAL_FORMAT_VERSION (int) and END_OF_EVENTS (long)
             checkMemSize(eventMem, Integer.BYTES + Long.BYTES);
             validateMetaVersion(eventMem, 0, expectedVersion);
-            eventCursor.reset();
+
+            if (eventCursor.setPosition(segmentTxn)) {
+                return eventCursor;
+            }
+
+            throw CairoException.instance(0).put("segment does not have txn with id ").put(segmentTxn);
         } catch (Throwable e) {
             close();
             throw e;
         }
-        return eventCursor;
     }
 }

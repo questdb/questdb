@@ -47,8 +47,38 @@ public class WalEventCursor {
         this.eventMem = eventMem;
     }
 
-    public boolean tryHasNext() {
-        return nextOffset < memSize && eventMem.getInt(nextOffset) != END_OF_EVENTS;
+    public void reset() {
+        memSize = eventMem.size();
+        nextOffset = Integer.BYTES; // skip wal meta version
+        txn = END_OF_EVENTS;
+        type = WalTxnType.NONE;
+    }
+
+    public boolean setPosition(long segmentTxn) {
+        reset();
+
+        if (segmentTxn > -1) {
+            while (true) {
+                offset = nextOffset;
+                int length = readInt();
+                if (length < 1) {
+                    // EOF
+                    return false;
+                }
+                nextOffset = length + nextOffset;
+                txn = readLong();
+
+                if (txn == segmentTxn) {
+                    readRecord();
+                    return true;
+                } else if (txn == END_OF_EVENTS) {
+                    return false;
+                }
+            }
+        }
+
+        // Read all from beginning
+        return true;
     }
 
     public boolean hasNext() {
@@ -64,6 +94,11 @@ public class WalEventCursor {
         if (txn == END_OF_EVENTS) {
             return false;
         }
+        readRecord();
+        return true;
+    }
+
+    private void readRecord() {
         type = readByte();
         switch (type) {
             case DATA:
@@ -78,14 +113,6 @@ public class WalEventCursor {
             default:
                 throw CairoException.instance(CairoException.METADATA_VALIDATION).put("Unsupported WAL event type: ").put(type);
         }
-        return true;
-    }
-
-    public void reset() {
-        memSize = eventMem.size();
-        nextOffset = Integer.BYTES; // skip wal meta version
-        txn = END_OF_EVENTS;
-        type = WalTxnType.NONE;
     }
 
     public DataInfo getDataInfo() {

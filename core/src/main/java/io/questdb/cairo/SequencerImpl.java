@@ -39,7 +39,7 @@ public class SequencerImpl implements Sequencer {
 
     private final CairoEngine engine;
     private final String tableName;
-    private final Path path;
+    private Path path;
     private final int rootLen;
     private final SequencerMetadata metadata;
     private final TxnCatalog catalog;
@@ -65,6 +65,18 @@ public class SequencerImpl implements Sequencer {
         } catch (Throwable th) {
             close();
             throw th;
+        }
+    }
+
+    public void abortClose() {
+        schemaLock.writeLock().lock();
+        try {
+            metadata.abortClose();
+            catalog.abortClose();
+            Misc.free(walIdGenerator);
+            path = Misc.free(path);
+        } finally {
+            schemaLock.writeLock().unlock();
         }
     }
 

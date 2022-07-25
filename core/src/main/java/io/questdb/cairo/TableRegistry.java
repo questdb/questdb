@@ -54,18 +54,19 @@ public class TableRegistry implements Closeable {
         sequencer.close();
     }
 
-    Sequencer getSequencer(CharSequence tableName) {
+    Sequencer getSequencer(String tableName) {
         Sequencer sequencer = tableRegistry.get(tableName);
         if (sequencer == null) {
-            sequencer = new SequencerImpl(engine, Chars.toString(tableName));
-            sequencer.open();
+            SequencerImpl newSequencer = new SequencerImpl(engine, tableName);
+            newSequencer.open();
 
-            final Sequencer other = tableRegistry.putIfAbsent(Chars.toString(tableName), sequencer);
+            final Sequencer other = tableRegistry.putIfAbsent(tableName, newSequencer);
             if (other != null) {
                 // Race is lost
-                sequencer.close();
+                newSequencer.abortClose();
                 return other;
             }
+            return newSequencer;
         }
         return sequencer;
     }

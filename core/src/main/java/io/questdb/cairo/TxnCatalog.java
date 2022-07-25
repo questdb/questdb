@@ -36,13 +36,17 @@ import static io.questdb.cairo.TableUtils.*;
 public class TxnCatalog implements Closeable {
     private final FilesFacade ff;
     private final MemoryCMARW txnListMem = Vm.getCMARWInstance();
-    private final int RECORD_SIZE = Integer.BYTES + Long.BYTES + Long.BYTES;
-    private final int HEADER_SIZE = Integer.BYTES + Long.BYTES;
+    private static final int RECORD_SIZE = Integer.BYTES + Long.BYTES + Long.BYTES;
+    private static final int HEADER_SIZE = Integer.BYTES + Long.BYTES;
     private final long COUNT_OFFSET = Integer.BYTES;
     private long txnCount;
 
     TxnCatalog(FilesFacade ff) {
         this.ff = ff;
+    }
+
+    public void abortClose() {
+        txnListMem.close(false);
     }
 
     @Override

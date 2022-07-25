@@ -393,29 +393,10 @@ public class WalTableWriterTest extends AbstractGriffinTest {
                 assertEquals("WalWriter{name=" + tableName + "}", walWriter.toString());
 
                 try (
-                        Path path = new Path();
-                        WalEventReader wre = new WalEventReader(configuration.getFilesFacade())
+                        Path path = new Path()
                 ) {
-                    path.of(configuration.getRoot()).concat(tableWriter.getTableName()).concat(walWriter.getWalName());
-                    WalEventCursor waleCursor = wre.of(path.slash().put(0), WalWriter.WAL_FORMAT_VERSION);
-
-                    while (waleCursor.tryHasNext()) {
-                        Assert.assertTrue(waleCursor.hasNext());
-                    }
-
-                    WalEventCursor.DataInfo dataInfo = waleCursor.getDataInfo();
-                    Assert.assertEquals(inOrder, !dataInfo.isOutOfOrder());
-
-                    tableWriter.processWalCommit(
-                            path,
-                            walWriter.getSegment(),
-                            !dataInfo.isOutOfOrder(),
-                            dataInfo.getStartRowID(),
-                            dataInfo.getEndRowID(),
-                            dataInfo.getMinTimestamp(),
-                            dataInfo.getMaxTimestamp() + 1,
-                            dataInfo
-                    );
+                    path.of(configuration.getRoot()).concat(tableWriter.getTableName()).concat(walWriter.getWalName()).slash().put(walWriter.getSegment());
+                    tableWriter.processWalCommit(path, walWriter.getLastSegmentTxn());
                 }
             } else {
                 tableWriter.commit();

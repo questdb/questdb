@@ -82,6 +82,9 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnPurgeTask> columnPurgeQueue;
     private final SCSequence columnPurgeSubSeq;
     private final MPSequence columnPurgePubSeq;
+    private final RingQueue<WalTxnNotificationTask> walTxnNotificationQueue;
+    private final Sequence walTxnNotificationPubSequence;
+    private final Sequence walTxnNotificationSubSequence;
 
     public MessageBusImpl(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -151,6 +154,11 @@ public class MessageBusImpl implements MessageBus {
         pageFrameReducePubSeq = new MPSequence[pageFrameReduceShardCount];
         pageFrameReduceSubSeq = new MCSequence[pageFrameReduceShardCount];
         pageFrameCollectFanOut = new FanOut[pageFrameReduceShardCount];
+
+        walTxnNotificationQueue = new RingQueue<>(WalTxnNotificationTask::new,256);
+        walTxnNotificationPubSequence = new MPSequence(walTxnNotificationQueue.getCycle());
+        walTxnNotificationSubSequence = new MCSequence(walTxnNotificationQueue.getCycle());
+        walTxnNotificationPubSequence.then(walTxnNotificationSubSequence).then(walTxnNotificationPubSequence);
 
         int reduceQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
         for (int i = 0; i < pageFrameReduceShardCount; i++) {
@@ -370,16 +378,16 @@ public class MessageBusImpl implements MessageBus {
 
     @Override
     public RingQueue<WalTxnNotificationTask> getWalTxnNotificationQueue() {
-        return null;
+        return walTxnNotificationQueue;
     }
 
     @Override
     public Sequence getWalTxnNotificationPubSequence() {
-        return null;
+        return walTxnNotificationPubSequence;
     }
 
     @Override
     public Sequence getWalTxnNotificationSubSequence() {
-        return null;
+        return walTxnNotificationSubSequence;
     }
 }

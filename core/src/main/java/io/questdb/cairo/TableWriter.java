@@ -1009,7 +1009,6 @@ public class TableWriter implements Closeable {
 
     public boolean processO3Append(
             Path walPath,
-            long segmentId,
             int timestampIndex,
             boolean ordered,
             long rowLo,
@@ -1023,9 +1022,6 @@ public class TableWriter implements Closeable {
         int walRootPathLen = walPath.length();
 
         try {
-            if (segmentId > -1L) {
-                walPath.slash().put(segmentId);
-            }
             mmapWalColumn(walPath, timestampIndex, rowLo, rowHi);
 
             try {
@@ -1080,7 +1076,18 @@ public class TableWriter implements Closeable {
 
     public void processWalCommit(CharSequence walPath, long segmentTxn) {
         Path path = Path.getThreadLocal(walPath);
-        walEventReader.of(path, WalWriter.WAL_FORMAT_VERSION);
+        var walCursor = walEventReader.of(path, WalWriter.WAL_FORMAT_VERSION, segmentTxn);
+        var dataInfo = walCursor.getDataInfo();
+
+        processWalCommit(
+                path,
+                !dataInfo.isOutOfOrder(),
+                dataInfo.getStartRowID(),
+                dataInfo.getEndRowID(),
+                dataInfo.getMinTimestamp(),
+                dataInfo.getMaxTimestamp() + 1,
+                dataInfo
+        );
     }
 
     private void mmapWalColumn(Path walPath, int timestampIndex, long rowLo, long rowHi) {
@@ -1153,7 +1160,6 @@ public class TableWriter implements Closeable {
 
     public void processWalCommit(
             Path walPath,
-            long segmentId,
             boolean inOrder,
             long rowLo,
             long rowHi,
@@ -1166,7 +1172,7 @@ public class TableWriter implements Closeable {
         }
 
         txWriter.beginPartitionSizeUpdate();
-        if (processO3Append(walPath, segmentId, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor)) {
+        if (processO3Append(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor)) {
             return;
         }
 
@@ -2516,6 +2522,7 @@ public class TableWriter implements Closeable {
         Misc.free(columnVersionWriter);
         Misc.free(o3ColumnTopSink);
         Misc.free(commandQueue);
+        Misc.free(walEventReader);
         updateOperator = Misc.free(updateOperator);
         dropIndexOperator = Misc.free(dropIndexOperator);
         freeColumns(truncate & !distressed);
