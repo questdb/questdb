@@ -141,8 +141,6 @@ public class LogFactory implements Closeable {
         boolean initialized = false;
         String logDir = rootDir != null ? Paths.get(rootDir, "log").toString() : "log";
         File logDirFile = new File(logDir);
-        new Exception().printStackTrace();
-        System.out.println("root dir: "+rootDir);
         if (!logDirFile.exists() && logDirFile.mkdir()) {
             System.err.printf("Created log directory: %s%n", logDir);
         }
@@ -195,10 +193,6 @@ public class LogFactory implements Closeable {
             }
         }
         factory.startThread();
-    }
-
-    public static void configureFromSystemProperties(WorkerPool workerPool) {
-        configureFromSystemProperties(INSTANCE, workerPool);
     }
 
     public static void configureSync() {
