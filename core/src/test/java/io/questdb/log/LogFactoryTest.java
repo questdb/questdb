@@ -44,6 +44,7 @@ import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.hamcrest.CoreMatchers.is;
 
@@ -79,6 +80,57 @@ public class LogFactoryTest {
             assertEnabled(logger.debug());
             assertEnabled(logger.advisory());
         }
+    }
+
+    @Test
+    public void testFlushJobsAndClose() {
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log.conf");
+
+        final int messageCount = 20;
+        AtomicInteger counter = new AtomicInteger();
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> new LogWriter() {
+                @Override
+                public void bindProperties(LogFactory factory) {
+                }
+
+                @Override
+                public boolean run(int workerId) {
+                    long cursor = seq.next();
+                    if (cursor > -1) {
+                        counter.incrementAndGet();
+                        seq.done(cursor);
+                        Os.pause();
+                        return true;
+                    }
+                    Os.pause();
+                    return false;
+                }
+            }));
+
+            // Misbehaving Logger
+            factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> new LogWriter() {
+                @Override
+                public void bindProperties(LogFactory factory) {
+                }
+
+                @Override
+                public boolean run(int workerId) {
+                    throw new UnsupportedOperationException();
+                }
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            Log logger1 = factory.create("com.questdb.x.y");
+            for (int i = 0; i < messageCount; i++) {
+                logger1.criticalW().$("test ").$(i).$();
+            }
+
+            factory.flushJobsAndClose();
+        }
+        Assert.assertEquals(messageCount, counter.get());
     }
 
     @Test
