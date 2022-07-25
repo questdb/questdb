@@ -1693,9 +1693,9 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             }
 
             @Override
-            public long enqueueRead(long fd, long offset, long bufPtr, int len) {
+            public long enqueueRead(long fd, long offset, long bufAddr, int len) {
                 if (rnd.nextBoolean()) {
-                    return super.enqueueRead(fd, offset, bufPtr, len);
+                    return super.enqueueRead(fd, offset, bufAddr, len);
                 }
                 return -1;
             }
