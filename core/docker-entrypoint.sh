@@ -42,5 +42,5 @@ if [ "$(id -u)" = '0' ] && [ "${QUESTDB_DATA_DIR%/}" != "/root/.questdb" ] && [ 
 fi
 
 echo "Running as $(id -un) user"
-cd  ${QUESTDB_DATA_DIR}
+echo "${QUESTDB_DATA_DIR}"
 exec "$@"

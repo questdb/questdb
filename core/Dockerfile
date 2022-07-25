@@ -57,7 +57,7 @@ RUN groupadd -g 10001 questdb && \
     chown -R questdb:questdb /var/lib/questdb
 
 # Make working folder the quest db folder
-WORKDIR /root/.questdb/db
+WORKDIR /var/lib/questdb
 
 # Make port 9000 available to the world outside this container
 EXPOSE 9000/tcp
