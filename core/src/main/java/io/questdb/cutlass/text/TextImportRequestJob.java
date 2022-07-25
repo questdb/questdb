@@ -39,10 +39,7 @@ import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -56,8 +53,6 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private final CharSequence statusTableName;
     private final MicrosecondClock clock;
     private final int logRetentionDays;
-    private final Rnd rnd;
-    private final StringSink idSink = new StringSink();
     private final LongList partitionsToRemove = new LongList();
     private TableWriter writer;
     private SqlCompiler sqlCompiler;
@@ -99,7 +94,6 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 sqlExecutionContext
         );
         this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, statusTableName, "QuestDB system");
-        this.rnd = new Rnd(this.clock.getTicks(), this.clock.getTicks());
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
         this.textImportExecutionContext = engine.getTextImportExecutionContext();
         enforceLogRetention();
@@ -134,8 +128,6 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     protected boolean runSerially() {
         long cursor = requestSubSeq.next();
         if (cursor > -1) {
-            idSink.clear();
-            Numbers.appendHex(idSink, rnd.nextPositiveLong(), true);
             task = requestQueue.get(cursor);
             try {
                 importer.of(
@@ -161,7 +153,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 );
             } finally {
                 requestSubSeq.done(cursor);
-                textImportExecutionContext.resetActiveTableName();
+                textImportExecutionContext.resetActiveImportId();
             }
             enforceLogRetention();
             return true;
@@ -180,7 +172,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         if (writer != null) {
             try {
                 TableWriter.Row row = writer.newRow(clock.getTicks());
-                row.putSym(1, idSink);
+                row.putSym(1, task.getImportId());
                 row.putSym(2, task.getTableName());
                 row.putSym(3, task.getFileName());
                 row.putSym(4, TextImportTask.getPhaseName(phase));

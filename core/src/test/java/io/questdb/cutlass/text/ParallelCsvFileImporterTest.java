@@ -2532,7 +2532,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
             try {
                 compiler.compile("copy xy from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
-                engine.getTextImportExecutionContext().resetActiveTableName();
+                engine.getTextImportExecutionContext().resetActiveImportId();
                 compiler.compile("copy xy from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
             } catch (Exception e) {

@@ -24,32 +24,46 @@
 
 package io.questdb.cutlass.text;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.std.Chars;
+import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 
 public class TextImportExecutionContext {
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
     // Access is synchronized on the context instance.
-    private final StringSink activeTableName = new StringSink();
+    private final StringSink activeImportId = new StringSink();
+    // Access is synchronized on the context instance.
+    private final Rnd rnd;
+
+    public TextImportExecutionContext(CairoConfiguration configuration) {
+        MicrosecondClock clock = configuration.getMicrosecondClock();
+        this.rnd = new Rnd(clock.getTicks(), clock.getTicks());
+    }
 
     public AtomicBooleanCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
 
     public synchronized boolean isActive() {
-        return activeTableName.length() > 0;
+        return activeImportId.length() > 0;
     }
 
-    public synchronized boolean equalsActiveTableName(CharSequence tableName) {
-        return Chars.equalsNc(activeTableName, tableName);
+    public synchronized boolean equalsActiveImportId(CharSequence importId) {
+        return Chars.equalsNc(activeImportId, importId);
     }
 
-    public synchronized void setActiveTableName(CharSequence tableName) {
-        activeTableName.clear();
-        activeTableName.put(tableName);
+    public synchronized void setActiveImportId(CharSequence importId) {
+        activeImportId.clear();
+        activeImportId.put(importId);
     }
 
-    public synchronized void resetActiveTableName() {
-        activeTableName.clear();
+    public synchronized void resetActiveImportId() {
+        activeImportId.clear();
+    }
+
+    public synchronized long nextImportId() {
+        return rnd.nextPositiveLong();
     }
 }
