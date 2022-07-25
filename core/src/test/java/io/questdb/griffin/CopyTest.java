@@ -377,23 +377,23 @@ public class CopyTest extends AbstractGriffinTest {
 
         ParallelCopyRunnable test = () -> assertQuery("stage\tstatus\trows_handled\trows_imported\terrors\n" +
                         "\tSTARTED\t0\t0\t0\n" +
-                        "ANALYZE_FILE_STRUCTURE\tSTARTED\t0\t0\t0\n" +
-                        "ANALYZE_FILE_STRUCTURE\tFINISHED\t0\t0\t0\n" +
-                        "BOUNDARY_CHECK\tSTARTED\t0\t0\t0\n" +
-                        "INDEXING\tSTARTED\t0\t0\t0\n" +
-                        "INDEXING\tFINISHED\t0\t0\t0\n" +
-                        "PARTITION_IMPORT\tSTARTED\t0\t0\t0\n" +
-                        "PARTITION_IMPORT\tFINISHED\t0\t0\t0\n" +
-                        "SYMBOL_TABLE_MERGE\tSTARTED\t0\t0\t0\n" +
-                        "SYMBOL_TABLE_MERGE\tFINISHED\t0\t0\t0\n" +
-                        "UPDATE_SYMBOL_KEYS\tSTARTED\t0\t0\t0\n" +
-                        "UPDATE_SYMBOL_KEYS\tFINISHED\t0\t0\t0\n" +
-                        "BUILD_SYMBOL_INDEX\tSTARTED\t0\t0\t0\n" +
-                        "BUILD_SYMBOL_INDEX\tFINISHED\t0\t0\t0\n" +
-                        "MOVE_PARTITIONS\tSTARTED\t0\t0\t0\n" +
-                        "MOVE_PARTITIONS\tFINISHED\t0\t0\t0\n" +
-                        "ATTACH_PARTITIONS\tSTARTED\t0\t0\t0\n" +
-                        "ATTACH_PARTITIONS\tFINISHED\t0\t0\t0\n" +
+                        "ANALYZE_FILE_STRUCTURE\tSTARTED\tNaN\tNaN\t0\n" +
+                        "ANALYZE_FILE_STRUCTURE\tFINISHED\tNaN\tNaN\t0\n" +
+                        "BOUNDARY_CHECK\tSTARTED\tNaN\tNaN\t0\n" +
+                        "INDEXING\tSTARTED\tNaN\tNaN\t0\n" +
+                        "INDEXING\tFINISHED\tNaN\tNaN\t0\n" +
+                        "PARTITION_IMPORT\tSTARTED\tNaN\tNaN\t0\n" +
+                        "PARTITION_IMPORT\tFINISHED\tNaN\tNaN\t0\n" +
+                        "SYMBOL_TABLE_MERGE\tSTARTED\tNaN\tNaN\t0\n" +
+                        "SYMBOL_TABLE_MERGE\tFINISHED\tNaN\tNaN\t0\n" +
+                        "UPDATE_SYMBOL_KEYS\tSTARTED\tNaN\tNaN\t0\n" +
+                        "UPDATE_SYMBOL_KEYS\tFINISHED\tNaN\tNaN\t0\n" +
+                        "BUILD_SYMBOL_INDEX\tSTARTED\tNaN\tNaN\t0\n" +
+                        "BUILD_SYMBOL_INDEX\tFINISHED\tNaN\tNaN\t0\n" +
+                        "MOVE_PARTITIONS\tSTARTED\tNaN\tNaN\t0\n" +
+                        "MOVE_PARTITIONS\tFINISHED\tNaN\tNaN\t0\n" +
+                        "ATTACH_PARTITIONS\tSTARTED\tNaN\tNaN\t0\n" +
+                        "ATTACH_PARTITIONS\tFINISHED\tNaN\tNaN\t0\n" +
                         "\tFINISHED\t1000\t1000\t0\n",
                 "select stage, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log",
                 null,

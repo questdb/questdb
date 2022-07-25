@@ -437,7 +437,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     public void updatePhaseStatus(byte phase, byte status, @Nullable final CharSequence msg) {
         if (this.statusReporter != null) {
-            this.statusReporter.report(phase, status, msg, 0, 0, phaseErrors);
+            this.statusReporter.report(phase, status, msg, Numbers.LONG_NaN, Numbers.LONG_NaN, phaseErrors);
         }
     }
 
