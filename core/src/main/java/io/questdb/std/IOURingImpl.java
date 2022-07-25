@@ -31,21 +31,26 @@ import static io.questdb.std.IOUringAccessor.*;
 
 public class IOURingImpl implements IOURing {
 
-    private final long ringPtr;
+    private final long ringAddr;
     private final int ringFd;
 
-    private final long sqesPtr;
-    private final long sqKheadPtr;
+    private final long sqesAddr;
+    private final long sqKheadAddr;
     private final int sqKringMask;
     private final int sqKringEntries;
 
-    private final long cqesPtr;
-    private final long cqKheadPtr;
-    private final long cqKtailPtr;
+    private final long cqesAddr;
+    private final long cqKheadAddr;
+    private final long cqKtailAddr;
     private final int cqKringMask;
+
     private final IOURingFacade facade;
-    private long lastCqeId = -1;
-    private int lastCqeRes;
+    // Holds <id, res> tuples for recently consumed cqes.
+    private final long[] cachedCqes;
+    // Index of cached cqe tuple.
+    private int cachedIndex;
+    // Count of cached cqe tuples.
+    private int cachedSize;
     private long idSeq;
     private boolean closed = false;
 
@@ -56,22 +61,25 @@ public class IOURingImpl implements IOURing {
         if (res < 0) {
             throw CairoException.instance((int) -res).put("Cannot create io_uring instance");
         }
-        this.ringPtr = res;
+        this.ringAddr = res;
 
-        this.ringFd = Unsafe.getUnsafe().getInt(ringPtr + RING_FD_OFFSET);
+        this.ringFd = Unsafe.getUnsafe().getInt(ringAddr + RING_FD_OFFSET);
 
-        this.sqesPtr = Unsafe.getUnsafe().getLong(ringPtr + SQ_SQES_OFFSET);
-        this.sqKheadPtr = Unsafe.getUnsafe().getLong(ringPtr + SQ_KHEAD_OFFSET);
-        final long sqMaskPtr = Unsafe.getUnsafe().getLong(ringPtr + SQ_KRING_MASK_OFFSET);
-        this.sqKringMask = Unsafe.getUnsafe().getInt(sqMaskPtr);
-        final long sqEntriesPtr = Unsafe.getUnsafe().getLong(ringPtr + SQ_KRING_ENTRIES_OFFSET);
-        this.sqKringEntries = Unsafe.getUnsafe().getInt(sqEntriesPtr);
+        this.sqesAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_SQES_OFFSET);
+        this.sqKheadAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_KHEAD_OFFSET);
+        final long sqMaskAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_KRING_MASK_OFFSET);
+        this.sqKringMask = Unsafe.getUnsafe().getInt(sqMaskAddr);
+        final long sqEntriesAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_KRING_ENTRIES_OFFSET);
+        this.sqKringEntries = Unsafe.getUnsafe().getInt(sqEntriesAddr);
 
-        this.cqesPtr = Unsafe.getUnsafe().getLong(ringPtr + CQ_CQES_OFFSET);
-        this.cqKheadPtr = Unsafe.getUnsafe().getLong(ringPtr + CQ_KHEAD_OFFSET);
-        this.cqKtailPtr = Unsafe.getUnsafe().getLong(ringPtr + CQ_KTAIL_OFFSET);
-        final long cqMaskPtr = Unsafe.getUnsafe().getLong(ringPtr + CQ_KRING_MASK_OFFSET);
-        this.cqKringMask = Unsafe.getUnsafe().getInt(cqMaskPtr);
+        this.cqesAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_CQES_OFFSET);
+        this.cqKheadAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_KHEAD_OFFSET);
+        this.cqKtailAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_KTAIL_OFFSET);
+        final long cqMaskAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_KRING_MASK_OFFSET);
+        this.cqKringMask = Unsafe.getUnsafe().getInt(cqMaskAddr);
+        final long cqEntriesAddr = Unsafe.getUnsafe().getLong(ringAddr + CQ_KRING_ENTRIES_OFFSET);
+        int cqKringEntries = Unsafe.getUnsafe().getInt(cqEntriesAddr);
+        cachedCqes = new long[2 * cqKringEntries];
 
         Files.bumpFileCount(ringFd);
     }
@@ -82,68 +90,63 @@ public class IOURingImpl implements IOURing {
             return;
         }
         Files.decrementFileCount(ringFd);
-        facade.close(ringPtr);
+        facade.close(ringAddr);
         closed = true;
     }
 
     @Override
-    public long enqueueRead(long fd, long offset, long bufPtr, int len) {
-        return enqueueSqe(IORING_OP_READ, fd, offset, bufPtr, len);
+    public long enqueueRead(long fd, long offset, long bufAddr, int len) {
+        return enqueueSqe(IORING_OP_READ, fd, offset, bufAddr, len);
     }
 
     @Override
     public long getCqeId() {
-        return lastCqeId;
+        if (cachedIndex < cachedSize) {
+            return cachedCqes[2 * cachedIndex];
+        }
+        return -1;
     }
 
     @Override
     public int getCqeRes() {
-        return lastCqeRes;
+        if (cachedIndex < cachedSize) {
+            return (int) cachedCqes[2 * cachedIndex + 1];
+        }
+        return -1;
     }
 
-    /**
-     * Checks if a cqe is ready and, if so, reads its data. Read data is
-     * then available via {@link #getCqeId} and {@link #getCqeRes} methods.
-     *
-     * @return true - if cqe was read; false - otherwise.
-     */
     @Override
     public boolean nextCqe() {
-        final int tail = Unsafe.getUnsafe().getInt(cqKtailPtr);
+        if (++cachedIndex < cachedSize) {
+            return true;
+        }
+        // Consume all available cqes and store them in the cache.
+        final int tail = Unsafe.getUnsafe().getInt(cqKtailAddr);
         Unsafe.getUnsafe().loadFence();
-        final int head = Unsafe.getUnsafe().getInt(cqKheadPtr);
+        final int head = Unsafe.getUnsafe().getInt(cqKheadAddr);
         if (tail == head) {
-            lastCqeId = -1;
-            lastCqeRes = 0;
             return false;
         }
-        final long cqePtr = cqesPtr + (long) (head & cqKringMask) * SIZEOF_CQE;
-        lastCqeId = Unsafe.getUnsafe().getLong(cqePtr + CQE_USER_DATA_OFFSET);
-        lastCqeRes = Unsafe.getUnsafe().getInt(cqePtr + CQE_RES_OFFSET);
-        Unsafe.getUnsafe().putInt(cqKheadPtr, head + 1);
+        for (int i = head; i < tail; i++) {
+            final long cqeAddr = cqesAddr + (long) (i & cqKringMask) * SIZEOF_CQE;
+            cachedCqes[2 * (i - head)] = Unsafe.getUnsafe().getLong(cqeAddr + CQE_USER_DATA_OFFSET);
+            cachedCqes[2 * (i - head) + 1] = Unsafe.getUnsafe().getInt(cqeAddr + CQE_RES_OFFSET);
+        }
+        cachedSize = tail - head;
+        cachedIndex = 0;
+        Unsafe.getUnsafe().putInt(cqKheadAddr, tail);
         Unsafe.getUnsafe().storeFence();
         return true;
     }
 
-    /**
-     * Submits pending sqes, if any.
-     *
-     * @return number of submitted sqes.
-     */
     @Override
     public int submit() {
-        return facade.submit(ringPtr);
+        return facade.submit(ringAddr);
     }
 
-    /**
-     * Submits pending sqes, if any, and blocks until at least one operation result
-     * becomes available as a cqe.
-     *
-     * @return number of submitted sqes.
-     */
     @Override
     public int submitAndWait() {
-        return facade.submitAndWait(ringPtr, 1);
+        return facade.submitAndWait(ringAddr, 1);
     }
 
     @Override
@@ -152,18 +155,18 @@ public class IOURingImpl implements IOURing {
         return enqueueSqe(IORING_OP_NOP, 0, 0, 0, 0);
     }
 
-    private long enqueueSqe(byte op, long fd, long offset, long bufPtr, int len) {
-        final long sqePtr = nextSqe();
-        if (sqePtr == 0) {
+    private long enqueueSqe(byte op, long fd, long offset, long bufAddr, int len) {
+        final long sqeAddr = nextSqe();
+        if (sqeAddr == 0) {
             return -1;
         }
-        Unsafe.getUnsafe().putByte(sqePtr + SQE_OPCODE_OFFSET, op);
-        Unsafe.getUnsafe().putInt(sqePtr + SQE_FD_OFFSET, (int) fd);
-        Unsafe.getUnsafe().putLong(sqePtr + SQE_OFF_OFFSET, offset);
-        Unsafe.getUnsafe().putLong(sqePtr + SQE_ADDR_OFFSET, bufPtr);
-        Unsafe.getUnsafe().putInt(sqePtr + SQE_LEN_OFFSET, len);
+        Unsafe.getUnsafe().putByte(sqeAddr + SQE_OPCODE_OFFSET, op);
+        Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, (int) fd);
+        Unsafe.getUnsafe().putLong(sqeAddr + SQE_OFF_OFFSET, offset);
+        Unsafe.getUnsafe().putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);
+        Unsafe.getUnsafe().putInt(sqeAddr + SQE_LEN_OFFSET, len);
         final long id = idSeq++;
-        Unsafe.getUnsafe().putLong(sqePtr + SQE_USER_DATA_OFFSET, id);
+        Unsafe.getUnsafe().putLong(sqeAddr + SQE_USER_DATA_OFFSET, id);
         return id;
     }
 
@@ -171,13 +174,13 @@ public class IOURingImpl implements IOURing {
      * Returns a pointer to sqe to fill. If there are sqes no available, returns 0.
      */
     private long nextSqe() {
-        final int head = Unsafe.getUnsafe().getInt(sqKheadPtr);
+        final int head = Unsafe.getUnsafe().getInt(sqKheadAddr);
         Unsafe.getUnsafe().loadFence();
-        final int tail = Unsafe.getUnsafe().getInt(ringPtr + SQ_SQE_TAIL_OFFSET);
+        final int tail = Unsafe.getUnsafe().getInt(ringAddr + SQ_SQE_TAIL_OFFSET);
         if (tail - head < sqKringEntries) {
-            final long ptr = sqesPtr + (long) (tail & sqKringMask) * SIZEOF_SQE;
-            Unsafe.getUnsafe().putInt(ringPtr + SQ_SQE_TAIL_OFFSET, tail + 1);
-            return ptr;
+            final long addr = sqesAddr + (long) (tail & sqKringMask) * SIZEOF_SQE;
+            Unsafe.getUnsafe().putInt(ringAddr + SQ_SQE_TAIL_OFFSET, tail + 1);
+            return addr;
         }
         return 0;
     }
