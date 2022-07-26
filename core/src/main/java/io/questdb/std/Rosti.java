@@ -28,8 +28,6 @@ import io.questdb.cairo.ColumnTypes;
 
 public final class Rosti {
 
-    public static final int FAKE_ALLOC_SIZE = 1024;
-
     public static long alloc(ColumnTypes types, long capacity) {
         final int columnCount = types.getColumnCount();
         final long mem = Unsafe.malloc(4L * columnCount, MemoryTag.NATIVE_DEFAULT);
@@ -43,7 +41,7 @@ public final class Rosti {
             // track that we free these maps
             long pRosti = alloc(mem, columnCount, Numbers.ceilPow2(capacity) - 1);
             if (pRosti != 0) {
-                Unsafe.recordMemAlloc(FAKE_ALLOC_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.recordMemAlloc(getAllocMemory(pRosti), MemoryTag.NATIVE_ROSTI);
             }
             return pRosti;
         } finally {
@@ -53,9 +51,20 @@ public final class Rosti {
 
     public static native void clear(long pRosti);
 
+    public static boolean reset(long pRosti, int size) {
+        long oldSize = Rosti.getAllocMemory(pRosti);
+        boolean success = reset0(pRosti, size);
+        updateMemoryUsage(pRosti, oldSize);
+        return success;
+    }
+
+    //clears and shrinks to given size
+    private static native boolean reset0(long pRosti, int size);
+
     public static void free(long pRosti) {
+        long size = getAllocMemory(pRosti);
         free0(pRosti);
-        Unsafe.recordMemAlloc(-FAKE_ALLOC_SIZE, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.recordMemAlloc(-size, MemoryTag.NATIVE_ROSTI);
     }
 
     public static long getCtrl(long pRosti) {
@@ -72,6 +81,10 @@ public final class Rosti {
 
     public static long getSize(long pRosti) {
         return Unsafe.getUnsafe().getLong(pRosti + 2 * Long.BYTES);
+    }
+
+    public static long getCapacity(long pRosti) {
+        return Unsafe.getUnsafe().getLong(pRosti + 3 * Long.BYTES);
     }
 
     public static long getSlotShift(long pRosti) {
@@ -237,4 +250,11 @@ public final class Rosti {
     private static native long alloc(long pKeyTypes, int keyTypeCount, long capacity);
 
     private static native void free0(long pRosti);
+
+    public static native long getAllocMemory(long pRosti);
+
+    public static void updateMemoryUsage(long pRosti, long oldSize) {
+        long newSize = Rosti.getAllocMemory(pRosti);
+        Unsafe.recordMemAlloc(newSize - oldSize, MemoryTag.NATIVE_ROSTI);
+    }
 }

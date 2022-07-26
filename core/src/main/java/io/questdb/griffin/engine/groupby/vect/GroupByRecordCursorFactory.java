@@ -64,6 +64,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RostiAllocFacade raf;
     private final AtomicInteger oomCounter = new AtomicInteger();
 
+    private final CairoConfiguration configuration;
+
     public GroupByRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
@@ -76,6 +78,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient IntList symbolTableSkewIndex
     ) {
         super(metadata);
+        this.configuration = configuration;
         this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
         this.activeEntries = new ObjList<>(configuration.getGroupByPoolCapacity());
         // columnTypes and functions must align in the following way:
@@ -144,9 +147,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         if (symbolTableSkewIndex.size() > 0) {
             final IntList symbolSkew = new IntList(symbolTableSkewIndex.size());
             symbolSkew.addAll(symbolTableSkewIndex);
-            this.cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew);
+            this.cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew, configuration.getGroupByMapCapacity());
         } else {
-            this.cursor = new RostiRecordCursor(pRosti, columnSkewIndex, null);
+            this.cursor = new RostiRecordCursor(pRosti, columnSkewIndex, null, configuration.getGroupByMapCapacity());
         }
     }
 
@@ -239,9 +242,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         if (keyAddress == 0) {
                             vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, workerId);
                         } else {
+                            long oldSize = Rosti.getAllocMemory(pRosti[workerId]);
                             if (!vaf.aggregate(pRosti[workerId], keyAddress, valueAddress, valueAddressSize, columnSizeShr, workerId)) {
                                 oomCounter.incrementAndGet();
                             }
+                            Rosti.updateMemoryUsage(pRosti[workerId], oldSize);
                         }
                         ownCount++;
                     } else {
@@ -283,25 +288,45 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         // merge maps only when cursor was fetched successfully
         // otherwise assume error and save CPU cycles
-        long pRosti0 = pRosti[0];
+        long pRostiBig = pRosti[0];
 
         if (pRosti.length > 1) {
             LOG.debug().$("merging").$();
 
+            //due to uneven load distribution some rostis could be much bigger and some empty
+            long size = Rosti.getSize(pRostiBig);
+            for (int i = 1, n = pRosti.length; i < n; i++) {
+                long curSize = Rosti.getSize(pRosti[i]);
+                if (curSize > size) {
+                    size = curSize;
+                    pRostiBig = pRosti[i];
+                }
+            }
+
             for (int j = 0; j < vafCount; j++) {
                 final VectorAggregateFunction vaf = vafList.getQuick(j);
-                for (int i = 1, n = pRosti.length; i < n; i++) {
-                    vaf.merge(pRosti0, pRosti[i]);
+                for (int i = 0, n = pRosti.length; i < n; i++) {
+                    if (pRostiBig == pRosti[i]) {
+                        continue;
+                    }
+                    long oldSize = Rosti.getAllocMemory(pRostiBig);
+                    vaf.merge(pRostiBig, pRosti[i]);
+                    Rosti.updateMemoryUsage(pRostiBig, oldSize);
+
+                    if (!Rosti.reset(pRosti[i], configuration.getGroupByMapCapacity())) {
+                        Misc.free(cursor);
+                        throw new OutOfMemoryError();
+                    }
                 }
-                vaf.wrapUp(pRosti0);
+                vaf.wrapUp(pRostiBig);
             }
         } else {
             for (int j = 0; j < vafCount; j++) {
-                vafList.getQuick(j).wrapUp(pRosti0);
+                vafList.getQuick(j).wrapUp(pRostiBig);
             }
         }
         LOG.info().$("done [total=").$(total).$(", ownCount=").$(ownCount).$(", reclaimed=").$(reclaimed).$(", queuedCount=").$(queuedCount).$(']').$();
-        return this.cursor.of(cursor);
+        return this.cursor.of(pRostiBig, cursor);
     }
 
     @Override
@@ -325,7 +350,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static class RostiRecordCursor implements RecordCursor {
         private final RostiRecord record;
-        private final long pRosti;
+        private long pRosti;
         private final IntList symbolTableSkewIndex;
         private final IntList columnSkewIndex;
         private RostiRecord recordB;
@@ -336,15 +361,18 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private long size;
         private long count;
         private PageFrameCursor parent;
+        private final int defaultMapSize;
 
-        public RostiRecordCursor(long pRosti, IntList columnSkewIndex, IntList symbolTableSkewIndex) {
+        public RostiRecordCursor(long pRosti, IntList columnSkewIndex, IntList symbolTableSkewIndex, int defaultMapSize) {
             this.pRosti = pRosti;
             this.record = new RostiRecord();
             this.symbolTableSkewIndex = symbolTableSkewIndex;
             this.columnSkewIndex = columnSkewIndex;
+            this.defaultMapSize = defaultMapSize;
         }
 
-        public RostiRecordCursor of(PageFrameCursor parent) {
+        public RostiRecordCursor of(long pRosti, PageFrameCursor parent) {
+            this.pRosti = pRosti;
             this.parent = parent;
             this.toTop();
             return this;
@@ -353,6 +381,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             Misc.free(parent);
+            Rosti.reset(pRosti, defaultMapSize);
         }
 
         @Override
