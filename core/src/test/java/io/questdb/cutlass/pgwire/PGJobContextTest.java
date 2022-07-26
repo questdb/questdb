@@ -50,6 +50,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
+import org.junit.Rule;
 import org.junit.Test;
 import org.postgresql.PGResultSetMetaData;
 import org.postgresql.copy.CopyIn;
@@ -78,6 +79,7 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
+import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.*;
 
 @SuppressWarnings("SqlNoDataSourceInspection")
@@ -99,6 +101,9 @@ public class PGJobContextTest extends BasePGTest {
                 .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new java.util.Date(ts))});
         datesArr = dates.collect(Collectors.toList());
     }
+
+    @Rule
+    public TextImportRequestJobRule textImportRequestJobRule = TextImportRequestJobRule.forEngine(engine);
 
     @Test
 //this looks like the same script as the preparedStatementHex()
@@ -3464,17 +3469,21 @@ nodejs code:
         try (final PGWireServer ignored = createPGServer(2);
              final Connection connection = getConnection(false, true);
              final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true")) {
-
             copyStatement.execute();
 
-            try (final PreparedStatement selectStatement = connection.prepareStatement("select * FROM testLocalCopyFrom");
-                 final ResultSet rs = selectStatement.executeQuery()) {
-                sink.clear();
-                assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
-                        + "ABC,xy,a,brown fox jumped over the fence,10\n"
-                        + "CDE,bb,b,sentence 1\n"
-                        + "sentence 2,12\n", sink, rs);
-            }
+            assertEventually(() -> {
+                        try (final PreparedStatement selectStatement = connection.prepareStatement("select * FROM testLocalCopyFrom");
+                             final ResultSet rs = selectStatement.executeQuery()) {
+                            sink.clear();
+                            assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
+                                    + "ABC,xy,a,brown fox jumped over the fence,10\n"
+                                    + "CDE,bb,b,sentence 1\n"
+                                    + "sentence 2,12\n", sink, rs);
+                        } catch (IOException | SQLException e) {
+                            throw new AssertionError(e);
+                        }
+                    }
+            );
         }
     }
 
