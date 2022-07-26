@@ -356,13 +356,13 @@ public class ServerMain {
                     (pUtf8NameZ, type) -> {
                         if (Files.notDots(pUtf8NameZ)) {
                             name.of(pUtf8NameZ);
-                            if (Chars.startsWith(name, "hs_err_pid")) {
+                            if (Chars.startsWith(name, configuration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
 
                                 path.trimTo(plen).concat(pUtf8NameZ).$();
 
                                 boolean shouldRename = false;
                                 do {
-                                    other.trimTo(plen).concat("crash_").put(counter.getAndIncrement()).put(".log").$();
+                                    other.trimTo(plen).concat(configuration.getArchivedCrashFilePrefix()).put(counter.getAndIncrement()).put(".log").$();
                                     if (!ff.exists(other)) {
                                         shouldRename = counter.get() <= maxFiles;
                                         break;

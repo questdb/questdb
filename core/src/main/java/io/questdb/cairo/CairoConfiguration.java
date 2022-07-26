@@ -394,4 +394,14 @@ public interface CairoConfiguration {
     boolean isIOURingEnabled();
 
     int getMaxCrashFiles();
+
+    // the '+' is used to prevent overlap with table names
+    default String getOGCrashFilePrefix() {
+        return "hs_err_pid+";
+    }
+
+    // the '+' is used to prevent overlap with table names
+    default String getArchivedCrashFilePrefix() {
+        return "crash+";
+    }
 }

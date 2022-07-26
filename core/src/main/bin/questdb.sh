@@ -173,6 +173,7 @@ function start {
     JAVA_OPTS="
     -D$QDB_PROCESS_LABEL
     -ea -Dnoebug
+    -XX:ErrorFile=${QDB_ROOT}/db/hs_err_pid+%p.log
     -XX:+UnlockExperimentalVMOptions
     -XX:+AlwaysPreTouch
     -XX:+UseParallelGC
