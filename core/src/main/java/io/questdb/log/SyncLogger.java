@@ -309,6 +309,11 @@ public class SyncLogger implements LogRecord, Log {
         return this;
     }
 
+    @Override
+    public Sequence getCriticalSequence() {
+        return criticalSeq;
+    }
+
     public LogRecord xAdvisoryW() {
         return next(infoSeq, infoRing, LogLevel.ADVISORY);
     }
