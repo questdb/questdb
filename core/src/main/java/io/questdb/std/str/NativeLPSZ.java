@@ -27,7 +27,7 @@ package io.questdb.std.str;
 import io.questdb.std.Unsafe;
 
 /**
- * Represents C LPSZ as Java' CharSequence. Byes in native memory are interpreted as ASCII characters. Multi-byte
+ * Represents C LPSZ as Java' CharSequence. Bytes in native memory are interpreted as ASCII characters. Multi-byte
  * characters are NOT decoded.
  */
 public class NativeLPSZ extends AbstractCharSequence {
