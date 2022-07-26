@@ -305,7 +305,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                                 reader.getColumnVersionReader().dumpTo(mem);
                                 mem.close(false);
                             } else {
-                                LOG.error().$("cannot include table into snapshot, invalid table name or missing metadata [table=").$(tableName).I$();
+                                LOG.error().$("skipping, invalid table name or missing metadata [table=").$(tableName).I$();
                             }
                         }
 
