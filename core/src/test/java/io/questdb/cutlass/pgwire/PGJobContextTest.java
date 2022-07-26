@@ -3495,7 +3495,7 @@ nodejs code:
                 cancelStatement.execute();
             }
 
-            try (final PreparedStatement incorrectCancelStatement = connection.prepareStatement("copy 'foobar' cancel")) {
+            try (final PreparedStatement incorrectCancelStatement = connection.prepareStatement("copy 'ffffffffffffffff' cancel")) {
                 incorrectCancelStatement.execute();
                 Assert.fail();
             } catch (SQLException e) {

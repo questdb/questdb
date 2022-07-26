@@ -437,6 +437,7 @@ public class CopyTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel partition by jiffy;", sqlExecutionContext);
+                Assert.fail();
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected"));
             }
@@ -448,6 +449,7 @@ public class CopyTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel on error EXPLODE;", sqlExecutionContext);
+                Assert.fail();
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("invalid 'on error' copy option found"));
             }
@@ -459,6 +461,7 @@ public class CopyTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel YadaYadaYada;", sqlExecutionContext);
+                Assert.fail();
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("unexpected option"));
             }
@@ -470,6 +473,7 @@ public class CopyTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel delimiter '';", sqlExecutionContext);
+                Assert.fail();
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("delimiter is empty or contains more than 1 character"));
             }
@@ -481,6 +485,7 @@ public class CopyTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel delimiter '____';", sqlExecutionContext);
+                Assert.fail();
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("delimiter is empty or contains more than 1 character"));
             }
@@ -492,9 +497,40 @@ public class CopyTest extends AbstractGriffinTest {
         assertMemoryLeak(() -> {
             try {
                 compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel delimiter 'ą';", sqlExecutionContext);
+                Assert.fail();
             } catch (Exception e) {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("delimiter is not an ascii character"));
             }
+        });
+    }
+
+    @Test
+    public void testParallelCopyCancelThrowsExceptionOnNoActiveImport() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy 'foobar' cancel;", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("No active import to cancel."));
+            }
+        });
+    }
+
+    @Test
+    public void testParallelCopyCancelThrowsExceptionOnInvalidImportId() throws Exception {
+        assertMemoryLeak(() -> {
+            // we need to have an active import in place before the cancellation attempt
+            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
+
+            try {
+                compiler.compile("copy 'foobar' cancel;", sqlExecutionContext);
+                Assert.fail();
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Provided id has invalid format."));
+            }
+
+            drainProcessingQueue();
         });
     }
 
@@ -530,16 +566,16 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelCopyRejectChecksTableName() throws Exception {
+    public void testParallelCopyCancelChecksTableName() throws Exception {
         String importId = runAndFetchImportId("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;");
 
         // this one should be rejected
         try {
-            compiler.compile("copy 'foobar' cancel", sqlExecutionContext);
+            compiler.compile("copy 'ffffffffffffffff' cancel", sqlExecutionContext);
             Assert.fail();
         } catch (Exception e) {
-            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("different table"));
+            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Active import has different id."));
         }
         // this one should succeed
         try {
@@ -556,7 +592,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testParallelCopyRejectSecondReq() throws Exception {
+    public void testParallelCopyCancelRejectsSecondReq() throws Exception {
         String importId = runAndFetchImportId("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;");
 

@@ -1972,8 +1972,14 @@ public class SqlCompiler implements Closeable {
         if (model.isCancel()) {
             // The cancellation is based on the best effort, so we don't worry about potential races with imports.
             if (isActive) {
-                final CharSequence importId = GenericLexer.unquote(model.getTarget().token);
-                if (textImportExecutionContext.equalsActiveImportId(importId)) {
+                long importId;
+                try {
+                    final CharSequence idString = GenericLexer.unquote(model.getTarget().token);
+                    importId = Numbers.parseHexLong(idString);
+                } catch (NumericException e) {
+                    throw SqlException.$(0, "Provided id has invalid format.");
+                }
+                if (textImportExecutionContext.sameAsActiveImportId(importId)) {
                     circuitBreaker.cancel();
                     return -1;
                 } else {
@@ -1991,7 +1997,7 @@ public class SqlCompiler implements Closeable {
                     final TextImportRequestTask task = textImportRequestQueue.get(processingCursor);
                     final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
 
-                    long importId = textImportExecutionContext.nextImportId();
+                    long importId = textImportExecutionContext.assignActiveImportId();
                     importIdSink.clear();
                     Numbers.appendHex(importIdSink, importId, true);
                     task.of(importIdSink.toString(),
@@ -2004,7 +2010,6 @@ public class SqlCompiler implements Closeable {
                             model.getPartitionBy());
 
                     circuitBreaker.reset();
-                    textImportExecutionContext.setActiveImportId(importIdSink);
                     textImportRequestPubSeq.done(processingCursor);
                     return importId;
                 } else {

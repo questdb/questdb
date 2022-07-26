@@ -6398,7 +6398,7 @@ public class IODispatcherTest {
                             true
                     );
 
-                    final String incorrectCancelQuery = "copy 'foobar' cancel";
+                    final String incorrectCancelQuery = "copy 'ffffffffffffffff' cancel";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
                             "GET /query?query=" + HttpUtils.urlEncodeQuery(incorrectCancelQuery) + "&count=true HTTP/1.1\r\n" +
@@ -6420,8 +6420,8 @@ public class IODispatcherTest {
                                     "Content-Type: application/json; charset=utf-8\r\n" +
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
-                                    "57\r\n" +
-                                    "{\"query\":\"copy 'foobar' cancel\",\"error\":\"Active import has different id.\",\"position\":0}\r\n" +
+                                    "61\r\n" +
+                                    "{\"query\":\"copy 'ffffffffffffffff' cancel\",\"error\":\"Active import has different id.\",\"position\":0}\r\n" +
                                     "00\r\n\r\n",
                             1,
                             0,

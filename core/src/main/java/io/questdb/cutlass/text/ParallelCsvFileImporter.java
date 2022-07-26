@@ -431,7 +431,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     public void updateImportStatus(byte status, @Nullable final CharSequence msg) {
         if (this.statusReporter != null) {
-            this.statusReporter.report(TextImportTask.ALL_PHASES, status, msg, rowsHandled, rowsImported, errors);
+            this.statusReporter.report(TextImportTask.NO_PHASE, status, msg, rowsHandled, rowsImported, errors);
         }
     }
 
@@ -985,7 +985,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void phasePartitionImport() throws TextImportException {
         if (partitions.size() == 0) {
-            throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT, "No partitions to merge and load found. Possible reasons: timestamp format mismatch or no rows in input file.");
+            throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT,
+                    "No partitions to merge and load found. Possible reasons: timestamp format mismatch or no rows in input file.");
         }
 
         phasePrologue(TextImportTask.PHASE_PARTITION_IMPORT);

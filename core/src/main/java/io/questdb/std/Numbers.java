@@ -25,11 +25,8 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
+import io.questdb.std.str.StringSink;
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -326,6 +323,12 @@ public final class Numbers {
         int bit = value == 0 ? 0 : 64 - Long.numberOfLeadingZeros(value);
         LongHexAppender[] array = pad ? longHexAppenderPad64 : longHexAppender;
         array[bit].append(sink, value);
+    }
+
+    public static void main(String[] args) {
+        StringSink s = new StringSink();
+        appendHex(s, -1, true);
+        System.out.println(s);
     }
 
     public static void appendHexPadded(CharSink sink, final int value) {
@@ -807,6 +810,10 @@ public final class Numbers {
             val = r;
         }
         return val;
+    }
+
+    public static long parseHexLong(CharSequence sequence) throws NumericException {
+        return parseHexLong(sequence, 0, sequence.length());
     }
 
     public static long parseHexLong(CharSequence sequence, int lo, int hi) throws NumericException {
