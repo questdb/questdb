@@ -54,9 +54,7 @@ RUN groupadd -g 10001 questdb && \
     mkdir -p /var/lib/questdb && \
     chown -R questdb:questdb /var/lib/questdb
 
-# Make working folder the questdb "db" folder
-# This is the most significant setting for the working directory in docker container
-WORKDIR /var/lib/questdb/db
+WORKDIR /var/lib/questdb
 
 # Make port 9000 available to the world outside this container
 EXPOSE 9000/tcp
