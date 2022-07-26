@@ -185,7 +185,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public CharSequence getSystemTableNamePrefix() {
-        return "__sys";
+        return "__sys.";
     }
 
     @Override

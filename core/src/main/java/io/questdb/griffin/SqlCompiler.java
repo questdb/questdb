@@ -1977,7 +1977,7 @@ public class SqlCompiler implements Closeable {
                     circuitBreaker.cancel();
                     return -1;
                 } else {
-                    throw SqlException.$(0, "Active import is on different table.");
+                    throw SqlException.$(0, "Active import has different id.");
                 }
             } else {
                 throw SqlException.$(0, "No active import to cancel.");
