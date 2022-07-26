@@ -50,7 +50,7 @@ public class SnapshotTest extends AbstractGriffinTest {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         super.setUp();
-        path.of(configuration.getSnapshotRoot()).slash();
+        path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash();
         rootLen = path.length();
         testFilesFacade.errorOnSync = false;
     }
@@ -224,6 +224,28 @@ public class SnapshotTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testSnapshotPrepareEmptyFolder() throws Exception {
+        final String tableName = "test";
+        path.of(configuration.getRoot()).concat("empty_folder").slash$();
+        FilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
+
+        testSnapshotPrepareCheckTableMetadataFiles(
+                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                null,
+                tableName
+        );
+
+        // Assert snapshot folder exists
+        Assert.assertTrue(FilesFacadeImpl.INSTANCE.exists(
+                path.of(configuration.getSnapshotRoot()).slash$())
+        );
+        // But snapshot/db folder does not
+        Assert.assertFalse(FilesFacadeImpl.INSTANCE.exists(
+                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash$())
+        );
+    }
+
+    @Test
     public void testSnapshotPrepareCheckTableMetadataFilesForTableWithDroppedColumns() throws Exception {
         final String tableName = "test";
         testSnapshotPrepareCheckTableMetadataFiles(
@@ -309,7 +331,7 @@ public class SnapshotTest extends AbstractGriffinTest {
                 compile("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))", sqlExecutionContext);
                 compiler.compile("snapshot prepare", sqlExecutionContext);
 
-                path.of(configuration.getSnapshotRoot());
+                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
                 FilesFacade ff = configuration.getFilesFacade();
                 try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                     mem.smallFile(ff, path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
