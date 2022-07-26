@@ -169,6 +169,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlCopyQueueCapacity() {
+        return 32;
+    }
+
+    @Override
     public CharSequence getSnapshotRoot() {
         return snapshotRoot;
     }
@@ -304,8 +309,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getInputRoot() {
+    public CharSequence getSqlCopyInputRoot() {
         return null;
+    }
+
+    @Override
+    public CharSequence getSqlCopyInputWorkRoot() {
+        return null;
+    }
+
+    @Override
+    public long getSqlCopyMaxIndexChunkSize() {
+        return 1024 * 1024L;
     }
 
     @Override
@@ -394,6 +409,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlCopyLogRetentionDays() {
+        return 3;
+    }
+
+    @Override
     public int getPageFrameReduceQueueCapacity() {
         return 32;
     }
@@ -459,8 +479,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getSpinLockTimeoutUs() {
-        return 5000000;
+    public long getSpinLockTimeout() {
+        return 5000;
     }
 
     @Override
@@ -727,12 +747,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getWriterAsyncCommandBusyWaitTimeout() {
-        return 500_000L;
+        return 500L;
     }
 
     @Override
     public long getWriterAsyncCommandMaxTimeout() {
-        return 30_000_000L;
+        return 30_000L;
     }
 
     @Override
@@ -792,5 +812,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getQueryCacheEventQueueCapacity() {
         return 4;
+    }
+
+    @Override
+    public boolean isIOURingEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getMaxCrashFiles() {
+        return 1;
     }
 }

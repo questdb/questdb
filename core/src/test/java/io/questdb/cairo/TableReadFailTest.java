@@ -38,7 +38,7 @@ import org.junit.Test;
 public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileCannotOpenConstructor() throws Exception {
-        spinLockTimeoutUs = 1000;
+        spinLockTimeout = 1;
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
@@ -53,7 +53,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
     @Test
     public void testMetaFileMissingConstructor() throws Exception {
-        spinLockTimeoutUs = 1000;
+        spinLockTimeout = 1;
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
@@ -69,7 +69,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testReloadTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            spinLockTimeoutUs = 1000;
+            spinLockTimeout = 1;
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.LONG)
@@ -212,7 +212,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public long getSpinLockTimeoutUs() {
+                    public long getSpinLockTimeout() {
                         return 1000;
                     }
                 }, "all");

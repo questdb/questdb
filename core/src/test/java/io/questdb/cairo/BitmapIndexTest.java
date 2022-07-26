@@ -192,7 +192,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardCursorTimeout() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
+            public long getSpinLockTimeout() {
                 return 100;
             }
         };
@@ -227,7 +227,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardReaderConstructorBadSequence() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
+            public long getSpinLockTimeout() {
                 return 100;
             }
         };
@@ -242,7 +242,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardReaderConstructorBadSig() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
+            public long getSpinLockTimeout() {
                 return 100;
             }
         };
@@ -259,7 +259,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardReaderConstructorFileTooSmall() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
+            public long getSpinLockTimeout() {
                 return 100;
             }
         };
@@ -329,7 +329,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardReaderKeyUpdateFail() {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
+            public long getSpinLockTimeout() {
                 return 400;
             }
         };
@@ -797,7 +797,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testForwardCursorTimeout() throws Exception {
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
+            public long getSpinLockTimeout() {
                 return 100;
             }
         };
@@ -891,7 +891,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
+            public long getSpinLockTimeout() {
                 return 3000;
             }
         };
