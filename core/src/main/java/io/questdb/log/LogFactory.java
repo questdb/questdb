@@ -271,6 +271,31 @@ public class LogFactory implements Closeable {
         }
     }
 
+    /**
+     * Flush remaining log lines and close
+     */
+    public void flushJobsAndClose() {
+        haltThread();
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            LogWriter job = jobs.get(i);
+            if (job != null) {
+                try {
+                    // noinspection StatementWithEmptyBody
+                    while (job.run(0)) {
+                        // Keep running the job until it returns false to log all the buffered messages
+                    }
+                } catch (Exception th) {
+                    // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                    // Switch to the next job.
+                }
+                Misc.free(job);
+            }
+        }
+        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+            Misc.free(scopeConfigs.getQuick(i));
+        }
+    }
+
     public Log create(CharSequence key) {
         if (!configured) {
             throw new LogError("Not configured");

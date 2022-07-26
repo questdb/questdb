@@ -882,7 +882,8 @@ public class TextImportTask {
             }
         }
 
-        private void consumeURing(
+        private void consumeIOURing(
+                FilesFacade ff,
                 long sqeMin,
                 TextLexer lexer,
                 long fileBufAddr,
@@ -897,29 +898,31 @@ public class TextImportTask {
             long nextCqe = sqeMin;
             int writtenMax = 0;
             // consume submitted tasks
-            for (int j = 0; j < submitted; j++) {
+            for (int i = 0; i < submitted; i++) {
 
                 while (!ring.nextCqe()) {
                     Os.pause();
                 }
 
                 if (ring.getCqeRes() < 0) {
-                    throw TextException.$("u-ring error [path='").put(tmpPath)
-                            .put("', cqeRes=").put(-ring.getCqeRes())
+                    throw TextException
+                            .$("could not read from file [path='").put(tmpPath)
+                            .put("', errno=").put(ff.errno())
+                            .put(", offset=").put(offset)
                             .put("]");
                 }
 
                 if (ring.getCqeId() == nextCqe) {
                     // only parse lines in order of submissions
                     nextCqe++;
-                    parseLineAndWrite(lexer, fileBufAddr, offsets, writtenMax);
+                    parseLinesAndWrite(lexer, fileBufAddr, offsets, writtenMax);
                     writtenMax++;
                 }
             }
 
-            // if reads came out of order, the writtenMax + 1 should be less than submitted
-            for (int j = writtenMax; j < submitted; j++) {
-                parseLineAndWrite(lexer, fileBufAddr, offsets, j);
+            // if reads came out of order, the writtenMax should be less than submitted
+            for (int i = writtenMax; i < submitted; i++) {
+                parseLinesAndWrite(lexer, fileBufAddr, offsets, i);
             }
         }
 
@@ -940,7 +943,7 @@ public class TextImportTask {
 
         private void importPartitionData(
                 final IOURingFacade rf,
-                final boolean uringEnabled,
+                final boolean ioURingEnabled,
                 final TextLexer lexer,
                 long address,
                 long size,
@@ -949,8 +952,8 @@ public class TextImportTask {
                 DirectCharSink utf8Sink,
                 Path tmpPath
         ) throws TextException {
-            if (uringEnabled && rf.isAvailable()) {
-                importPartitionDataIO_URing(
+            if (ioURingEnabled && rf.isAvailable()) {
+                importPartitionDataURing(
                         rf,
                         lexer,
                         address,
@@ -973,7 +976,7 @@ public class TextImportTask {
             }
         }
 
-        private void importPartitionDataIO_URing(
+        private void importPartitionDataURing(
                 final IOURingFacade rf,
                 TextLexer lexer,
                 long address,
@@ -997,8 +1000,8 @@ public class TextImportTask {
 
                 final long len = ff.length(fd);
                 if (len == -1) {
-                    throw CairoException.instance(ff.errno()).put(
-                                    "could not get length of file [path=").put(tmpPath)
+                    throw CairoException.instance(ff.errno())
+                            .put("could not get length of file [path=").put(tmpPath)
                             .put(']');
                 }
 
@@ -1014,56 +1017,71 @@ public class TextImportTask {
                     long addr = fileBufAddr;
                     long lim = fileBufAddr + fileBufSize;
                     int cc = 0;
+                    int bytesToRead;
+                    int additionalLines;
                     for (long i = 0; i < count; i++) {
                         throwIfCancelled();
 
-                        long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
-                        int lineLength = (int) (lengthAndOffset >>> 48);
+                        final long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
+                        final int lineLength = (int) (lengthAndOffset >>> 48);
                         // the offset is used by the callback to report errors
                         offset = lengthAndOffset & MASK;
+                        bytesToRead = lineLength;
 
                         // schedule reads until we either run out of ring capacity or
                         // our read buffer size
-                        if (cc < ringCapacity && addr + lineLength < lim) {
-                            sqeMax = ring.enqueueRead(
-                                    fd,
-                                    offset,
-                                    addr,
-                                    lineLength
-                            );
-                            if (sqeMax == -1) {
-                                throw TextException
-                                        .$("could not read from file [path='").put(tmpPath)
-                                        .put("', errno=").put(ff.errno())
-                                        .put(", offset=").put(offset)
-                                        .put("]");
-                            }
 
-                            offsets.add(addr - fileBufAddr, lineLength);
-
-                            cc++;
-                            addr += lineLength;
-                        } else {
+                        if (cc == ringCapacity || (cc > 0 && addr + lineLength > lim)) {
                             // we are out of ring capacity or our buffer is exhausted
-                            if (cc == 0) {
-                                throw TextException
-                                        .$("buffer overflow [path='").put(tmpPath)
-                                        .put("', lineLength=").put(lineLength)
-                                        .put(", fileBufSize=").put(fileBufSize)
-                                        .put("]");
-                            }
-                            consumeURing(sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
+                            consumeIOURing(ff, sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
 
                             cc = 0;
                             addr = fileBufAddr;
                             offsets.clear();
                             sqeMin = sqeMax + 1;
                         }
+                        if (addr + lineLength > lim) {
+                            throw TextException.$("buffer overflow [path='").put(tmpPath)
+                                    .put("', lineLength=").put(lineLength)
+                                    .put(", fileBufSize=").put(fileBufSize)
+                                    .put("]");
+                        }
+
+                        // try to coalesce ahead lines into the same read, if they're sequential
+                        additionalLines = 0;
+                        for (long j = i + 1; j < count; j++) {
+                            long nextLengthAndOffset = Unsafe.getUnsafe().getLong(address + j * 2L * Long.BYTES + Long.BYTES);
+                            int nextLineLength = (int) (nextLengthAndOffset >>> 48);
+                            long nextOffset = nextLengthAndOffset & MASK;
+
+                            // line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
+                            long diff = nextOffset - offset - bytesToRead;
+                            long nextBytesToRead = diff + nextLineLength;
+                            if (diff > -1 && diff < 2 && addr + bytesToRead + nextBytesToRead <= lim) {
+                                bytesToRead += nextBytesToRead;
+                                additionalLines++;
+                            } else {
+                                break;
+                            }
+                        }
+                        i += additionalLines;
+
+                        sqeMax = ring.enqueueRead(fd, offset, addr, bytesToRead);
+                        if (sqeMax == -1) {
+                            throw TextException.$("io_uring error [path='").put(tmpPath)
+                                    .put("', cqeRes=").put(-ring.getCqeRes())
+                                    .put("]");
+                        }
+
+                        offsets.add(addr - fileBufAddr, bytesToRead);
+
+                        cc++;
+                        addr += bytesToRead;
                     } // for
 
                     // check if something is enqueued
                     if (cc > 0) {
-                        consumeURing(sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
+                        consumeIOURing(ff, sqeMin, lexer, fileBufAddr, offsets, ring, cc, tmpPath);
                     }
                 }
 
@@ -1105,33 +1123,34 @@ public class TextImportTask {
 
                 final long MASK = ~((255L) << 56 | (255L) << 48);
                 final long count = size / (2 * Long.BYTES);
-                long bytesToRead;
+                int bytesToRead;
                 int additionalLines;
 
                 for (long i = 0; i < count; i++) {
                     throwIfCancelled();
 
                     long lengthAndOffset = Unsafe.getUnsafe().getLong(address + i * 2L * Long.BYTES + Long.BYTES);
-                    long lineLength = lengthAndOffset >>> 48;
+                    int lineLength = (int) (lengthAndOffset >>> 48);
                     offset = lengthAndOffset & MASK;
                     bytesToRead = lineLength;
-                    additionalLines = 0;
 
+                    // try to coalesce ahead lines into the same read, if they're sequential
+                    additionalLines = 0;
                     for (long j = i + 1; j < count; j++) {
                         long nextLengthAndOffset = Unsafe.getUnsafe().getLong(address + j * 2L * Long.BYTES + Long.BYTES);
-                        long nextLineLength = nextLengthAndOffset >>> 48;
+                        int nextLineLength = (int) (nextLengthAndOffset >>> 48);
                         long nextOffset = nextLengthAndOffset & MASK;
 
-                        //line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
+                        // line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
                         long diff = nextOffset - offset - bytesToRead;
-                        if (diff > -1 && diff < 2 && bytesToRead + nextLineLength < fileBufSize) {
+                        long nextBytesToRead = diff + nextLineLength;
+                        if (diff > -1 && diff < 2 && bytesToRead + nextBytesToRead <= fileBufSize) {
                             bytesToRead += diff + nextLineLength;
                             additionalLines++;
                         } else {
                             break;
                         }
                     }
-
                     i += additionalLines;
 
                     if (bytesToRead > fileBufSize) {
@@ -1173,7 +1192,7 @@ public class TextImportTask {
         private void mergePartitionIndexAndImportData(
                 final FilesFacade ff,
                 final IOURingFacade rf,
-                boolean uringEnabled,
+                boolean ioURingEnabled,
                 Path partitionPath,
                 final TextLexer lexer,
                 long fileBufAddr,
@@ -1205,7 +1224,7 @@ public class TextImportTask {
 
                     importPartitionData(
                             rf,
-                            uringEnabled,
+                            ioURingEnabled,
                             lexer,
                             mergeIndexAddr,
                             mergedIndexSize,
@@ -1217,7 +1236,7 @@ public class TextImportTask {
                 } else { // we can use the single chunk as is
                     importPartitionData(
                             rf,
-                            uringEnabled,
+                            ioURingEnabled,
                             lexer,
                             unmergedIndexes.get(0),
                             mergedIndexSize,
@@ -1354,7 +1373,7 @@ public class TextImportTask {
             return mergedIndexSize;
         }
 
-        private void parseLineAndWrite(TextLexer lexer, long fileBufAddr, LongList offsets, int j) {
+        private void parseLinesAndWrite(TextLexer lexer, long fileBufAddr, LongList offsets, int j) {
             final long lo = fileBufAddr + offsets.getQuick(j * 2);
             final long hi = lo + offsets.getQuick(j * 2 + 1);
             lexer.parseExactLines(lo, hi);
