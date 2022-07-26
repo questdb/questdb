@@ -54,7 +54,6 @@ import java.io.*;
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -304,9 +303,8 @@ public class ServerMain {
                 LogFactory.INSTANCE.flushJobsAndClose();
             }));
         } catch (NetworkError e) {
-            log.errorW().$((Sinkable) e).$();
-            System.err.println(e.getMessage());//prints error synchronously
-            LockSupport.parkNanos(10000000L);
+            log.error().$((Sinkable) e).$();
+            LogFactory.INSTANCE.flushJobsAndClose();
             System.exit(55);
         }
     }
