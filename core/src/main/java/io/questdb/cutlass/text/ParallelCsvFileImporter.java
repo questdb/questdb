@@ -985,7 +985,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void phasePartitionImport() throws TextImportException {
         if (partitions.size() == 0) {
-            throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT, "No partitions to merge and load found");
+            throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT, "No partitions to merge and load found. Possible reasons: timestamp format mismatch or no rows in input file.");
         }
 
         phasePrologue(TextImportTask.PHASE_PARTITION_IMPORT);

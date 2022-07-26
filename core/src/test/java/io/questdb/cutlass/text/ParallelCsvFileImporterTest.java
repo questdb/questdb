@@ -938,7 +938,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
-                Assert.assertEquals("No partitions to merge and load found", e.getMessage());
+                Assert.assertEquals("No partitions to merge and load found. Possible reasons: timestamp format mismatch or no rows in input file.", e.getMessage());
             }
         });
     }
