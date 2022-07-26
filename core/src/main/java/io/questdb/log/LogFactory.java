@@ -139,14 +139,15 @@ public class LogFactory implements Closeable {
         }
 
         boolean initialized = false;
-        String logDir = rootDir != null ? Paths.get(rootDir, "log").toString() : "log";
-        File logDirFile = new File(logDir);
-
-        if (!logDirFile.exists() && logDirFile.mkdir()) {
-            System.err.printf("Created log directory: %s%n", logDir);
-        }
-
+        // prevent creating blank log dir from unit tests
+        String logDir = ".";
         if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
+            logDir = Paths.get(rootDir, "log").toString();
+            File logDirFile = new File(logDir);
+            if (!logDirFile.exists() && logDirFile.mkdir()) {
+                System.err.printf("Created log directory: %s%n", logDir);
+            }
+
             String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toString();
             File f = new File(logPath);
             if (f.isFile() && f.canRead()) {
@@ -194,10 +195,6 @@ public class LogFactory implements Closeable {
             }
         }
         factory.startThread();
-    }
-
-    public static void configureFromSystemProperties(WorkerPool workerPool) {
-        configureFromSystemProperties(INSTANCE, workerPool);
     }
 
     public static void configureSync() {
