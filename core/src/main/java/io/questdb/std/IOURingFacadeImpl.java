@@ -24,9 +24,9 @@
 
 package io.questdb.std;
 
-public class IOUringFacadeImpl implements IOUringFacade {
+public class IOURingFacadeImpl implements IOURingFacade {
 
-    public static final IOUringFacadeImpl INSTANCE = new IOUringFacadeImpl();
+    public static final IOURingFacadeImpl INSTANCE = new IOURingFacadeImpl();
     private static final boolean available;
 
     @Override
@@ -59,13 +59,9 @@ public class IOUringFacadeImpl implements IOUringFacade {
         return Os.errno();
     }
 
-    static {
-        if (Os.type != Os.LINUX_AMD64 && Os.type != Os.LINUX_ARM64) {
-            available = false;
-        } else {
-            String kernelVersion = IOUringAccessor.kernelVersion();
-            available = isAvailableOn(kernelVersion);
-        }
+    @Override
+    public IOURing newInstance(int capacity) {
+        return new IOURingImpl(this, capacity);
     }
 
     /**
@@ -99,5 +95,14 @@ public class IOUringFacadeImpl implements IOUringFacade {
         }
 
         return minor > 11;
+    }
+
+    static {
+        if (Os.type != Os.LINUX_AMD64 && Os.type != Os.LINUX_ARM64) {
+            available = false;
+        } else {
+            String kernelVersion = IOUringAccessor.kernelVersion();
+            available = isAvailableOn(kernelVersion);
+        }
     }
 }

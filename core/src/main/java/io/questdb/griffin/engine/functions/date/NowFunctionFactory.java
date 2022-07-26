@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSink;
 
 public class NowFunctionFactory implements FunctionFactory {
 
@@ -73,6 +74,11 @@ public class NowFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             executionContext.initNow();
             context = executionContext;
+        }
+
+        @Override
+        public void toSink(CharSink sink) {
+            sink.put("NowFunction");
         }
     }
 }

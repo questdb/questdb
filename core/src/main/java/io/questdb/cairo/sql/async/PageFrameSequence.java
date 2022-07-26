@@ -33,7 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -53,7 +53,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final PageFrameReducer reducer;
     private final PageAddressCache pageAddressCache;
     private final MessageBus messageBus;
-    private final MicrosecondClock microsecondClock;
+    private final MillisecondClock clock;
     private long id;
     private int shard;
     private int dispatchStartFrameIndex;
@@ -68,7 +68,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     // Local reduce task used when there is no slots in the queue to dispatch tasks.
     private PageFrameReduceTask localTask;
     private final WeakClosableObjectPool<PageFrameReduceTask> localTaskPool;
-    private long startTimeUs;
+    private long startTime;
     private long circuitBreakerFd;
     private SqlExecutionContext sqlExecutionContext;
 
@@ -81,7 +81,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         this.pageAddressCache = new PageAddressCache(configuration);
         this.messageBus = messageBus;
         this.reducer = reducer;
-        this.microsecondClock = configuration.getMicrosecondClock();
+        this.clock = configuration.getMillisecondClock();
         this.localTaskPool = localTaskPool;
     }
 
@@ -166,7 +166,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     ) throws SqlException {
 
         this.sqlExecutionContext = executionContext;
-        this.startTimeUs = microsecondClock.getTicks();
+        this.startTime = clock.getTicks();
         this.circuitBreakerFd = executionContext.getCircuitBreaker().getFd();
 
         initRecord(executionContext.getCircuitBreaker());
@@ -243,8 +243,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return sqlExecutionContext;
     }
 
-    public long getStartTimeUs() {
-        return startTimeUs;
+    public long getStartTime() {
+        return startTime;
     }
 
     public SymbolTableSource getSymbolTableSource() {

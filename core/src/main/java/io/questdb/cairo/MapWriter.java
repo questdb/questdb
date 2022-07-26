@@ -81,4 +81,7 @@ public interface MapWriter extends SymbolCountProvider {
     void updateCacheFlag(boolean flag);
 
     void updateNullFlag(boolean flag);
+
+    boolean getNullFlag();
+
 }

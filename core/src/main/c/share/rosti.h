@@ -363,6 +363,7 @@ bool resize(rosti_t *map, uint64_t new_capacity, HASH_M hash_m, CPY cpy) {
     const uint64_t old_capacity = map->capacity_;
     map->capacity_ = new_capacity;
     if (initialize_slots(&map)) {
+        cpy(map->slot_initial_values_, old_init, map->slot_size_);
 
         uint64_t total_probe_length = 0;
         for (uint64_t i = 0; i != old_capacity; ++i) {

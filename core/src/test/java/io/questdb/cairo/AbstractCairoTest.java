@@ -31,13 +31,11 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.DatabaseSnapshotAgent;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.Rnd;
-import io.questdb.std.RostiAllocFacade;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -55,6 +53,7 @@ import java.util.concurrent.TimeUnit;
 
 public class AbstractCairoTest {
 
+    protected static final PlanSink planSink = new PlanSink();
     protected static final StringSink sink = new StringSink();
     protected static final RecordCursorPrinter printer = new RecordCursorPrinter();
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
@@ -71,6 +70,9 @@ public class AbstractCairoTest {
     protected static CairoEngine engine;
     protected static DatabaseSnapshotAgent snapshotAgent;
     protected static String inputRoot = null;
+    protected static String inputWorkRoot = null;
+    protected static int sqlCopyBufferSize = 1024 * 1024;
+    protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
     protected static FilesFacade ff;
     protected static CharSequence backupDir;
     protected static DateFormat backupDirTimestampFormat;
@@ -93,10 +95,12 @@ public class AbstractCairoTest {
     protected static int pageFrameReduceQueueCapacity = -1;
     protected static int columnVersionTaskPoolCapacity = -1;
     protected static RostiAllocFacade rostiAllocFacade = null;
+    protected static int parallelImportStatusLogKeepNDays = -1;
+    protected static Boolean ioURingEnabled = null;
 
     @Rule
     public TestName testName = new TestName();
-    public static long spinLockTimeoutUs = -1;
+    public static long spinLockTimeout = -1;
     protected static boolean hideTelemetryTable = false;
     private static TelemetryConfiguration telemetryConfiguration;
     protected static int writerCommandQueueCapacity = 4;
@@ -176,8 +180,13 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public CharSequence getInputRoot() {
+            public CharSequence getSqlCopyInputRoot() {
                 return inputRoot;
+            }
+
+            @Override
+            public CharSequence getSqlCopyInputWorkRoot() {
+                return inputWorkRoot;
             }
 
             @Override
@@ -186,11 +195,11 @@ public class AbstractCairoTest {
             }
 
             @Override
-            public long getSpinLockTimeoutUs() {
-                if (spinLockTimeoutUs > -1) {
-                    return spinLockTimeoutUs;
+            public long getSpinLockTimeout() {
+                if (spinLockTimeout > -1) {
+                    return spinLockTimeout;
                 }
-                return 5_000_000;
+                return 5_000;
             }
 
             @Override
@@ -315,13 +324,23 @@ public class AbstractCairoTest {
             }
 
             @Override
+            public int getSqlCopyLogRetentionDays() {
+                return parallelImportStatusLogKeepNDays >= 0 ? parallelImportStatusLogKeepNDays : super.getSqlCopyLogRetentionDays();
+            }
+
+            @Override
             public RostiAllocFacade getRostiAllocFacade() {
-                return rostiAllocFacade != null? rostiAllocFacade : super.getRostiAllocFacade();
+                return rostiAllocFacade != null ? rostiAllocFacade : super.getRostiAllocFacade();
             }
 
             @Override
             public boolean getWallEnabledDefault() {
                 return defaultTableWriteMode < 0 ? super.getWallEnabledDefault() : defaultTableWriteMode == 1;
+            }
+
+            @Override
+            public boolean isIOURingEnabled() {
+                return ioURingEnabled != null ? ioURingEnabled : super.isIOURingEnabled();
             }
         };
         engine = new CairoEngine(configuration, metrics);
@@ -365,7 +384,7 @@ public class AbstractCairoTest {
         jitMode = SqlJitMode.JIT_MODE_ENABLED;
         rndFunctionMemoryPageSize = -1;
         rndFunctionMemoryMaxPages = -1;
-        spinLockTimeoutUs = -1;
+        spinLockTimeout = -1;
         snapshotInstanceId = null;
         snapshotRecoveryEnabled = null;
         enableParallelFilter = null;
@@ -378,7 +397,6 @@ public class AbstractCairoTest {
         columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
-        defaultTableWriteMode = -1;
     }
 
     protected static void configureForBackups() throws IOException {

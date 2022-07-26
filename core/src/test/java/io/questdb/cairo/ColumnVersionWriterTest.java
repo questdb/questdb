@@ -96,7 +96,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
                 w.commit();
 
-                r.readSafe(configuration.getMicrosecondClock(), 1000);
+                r.readSafe(configuration.getMillisecondClock(), 1);
                 for (int i = 0; i < 100; i++) {
                     long colTop = r.getColumnTopQuick(i, i % 10);
                     Assert.assertEquals(i % 2 == 0 ? i * 10 : 0, colTop);
@@ -166,7 +166,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
                 w.commit();
 
-                r.readSafe(configuration.getMicrosecondClock(), 1000);
+                r.readSafe(configuration.getMillisecondClock(), 1);
                 for (int i = 0; i < 100; i++) {
                     long colTop = r.getColumnTopQuick(i, i % 10);
                     Assert.assertEquals(i % 2 == 0 ? i * 10 : 0, colTop);
@@ -175,13 +175,13 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
 
                 r.ofRO(ff, path);
-                r.readSafe(configuration.getMicrosecondClock(), 1000);
+                r.readSafe(configuration.getMillisecondClock(), 1);
                 TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
 
                 MemoryCMR mem = Vm.getCMRInstance();
                 mem.of(ff, path, 0, HEADER_SIZE, MemoryTag.MMAP_TABLE_READER);
                 r.ofRO(mem);
-                r.readSafe(configuration.getMicrosecondClock(), 1000);
+                r.readSafe(configuration.getMillisecondClock(), 1);
                 TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
                 mem.close();
             }
@@ -209,7 +209,7 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                     }
 
                     w.commit();
-                    r.readSafe(configuration.getMicrosecondClock(), 1000);
+                    r.readSafe(configuration.getMillisecondClock(), 1);
                     Assert.assertTrue(w.getCachedList().size() > 0);
                     TestUtils.assertEquals(w.getCachedList(), r.getCachedList());
                     // assert list is ordered by (timestamp,column_index)
@@ -247,10 +247,10 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     @Test
     public void testFuzzWithTimeout() throws Exception {
-        testFuzzConcurrent(5_000_000);
+        testFuzzConcurrent(5_000);
     }
 
-    private void testFuzzConcurrent(int spinLockTimeoutUs) throws Exception {
+    private void testFuzzConcurrent(int spinLockTimeout) throws Exception {
         assertMemoryLeak(() -> {
             final int N = 10_000;
             try (
@@ -291,9 +291,9 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                         barrier.await();
                         while (done.get() == 0) {
                             try {
-                                r.readSafe(configuration.getMicrosecondClock(), spinLockTimeoutUs);
+                                r.readSafe(configuration.getMillisecondClock(), spinLockTimeout);
                             } catch (CairoException ex) {
-                                if (spinLockTimeoutUs == 0 && Chars.contains(ex.getFlyweightMessage(), "timeout")) {
+                                if (spinLockTimeout == 0 && Chars.contains(ex.getFlyweightMessage(), "timeout")) {
                                     continue;
                                 }
                                 throw ex;

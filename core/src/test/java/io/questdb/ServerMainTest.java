@@ -24,13 +24,14 @@
 
 package io.questdb;
 
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.log.*;
+import io.questdb.std.*;
+import io.questdb.std.str.NativeLPSZ;
+import io.questdb.std.str.Path;
 import org.hamcrest.MatcherAssert;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
@@ -83,18 +84,6 @@ public class ServerMainTest {
     }
 
     @Test
-    public void testExtractSiteExtractsDefaultLogConfFileIfItsMissing() throws IOException {
-        Log log = LogFactory.getLog("server-main");
-        File logConf = Paths.get(temp.getRoot().getPath(), "conf", LogFactory.DEFAULT_CONFIG_NAME).toFile();
-
-        MatcherAssert.assertThat(logConf.exists(), is(false));
-
-        ServerMain.extractSite(BuildInformationHolder.INSTANCE, temp.getRoot().getPath(), log);
-
-        MatcherAssert.assertThat(logConf.exists(), is(true));
-    }
-
-    @Test
     public void testExtractSiteExtractsDefaultConfDirIfItsMissing() throws IOException {
         Log log = LogFactory.getLog("server-main");
 
@@ -110,6 +99,89 @@ public class ServerMainTest {
         assertExists(serverConf);
         assertExists(mimeTypes);
         //assertExists(dateFormats); date.formats is referenced in method but doesn't exist in SCM/jar
+    }
+
+    @Test
+    public void testExtractSiteExtractsDefaultLogConfFileIfItsMissing() throws IOException {
+        Log log = LogFactory.getLog("server-main");
+        File logConf = Paths.get(temp.getRoot().getPath(), "conf", LogFactory.DEFAULT_CONFIG_NAME).toFile();
+
+        MatcherAssert.assertThat(logConf.exists(), is(false));
+
+        ServerMain.extractSite(BuildInformationHolder.INSTANCE, temp.getRoot().getPath(), log);
+
+        MatcherAssert.assertThat(logConf.exists(), is(true));
+    }
+
+    @Test
+    public void testReportCrashFiles() throws IOException {
+        final File x = temp.newFile();
+        final String logFileName = x.getAbsolutePath();
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(temp.getRoot().getAbsolutePath());
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> {
+                LogFileWriter w = new LogFileWriter(ring, seq, level);
+                w.setLocation(x.getAbsolutePath());
+                return w;
+            }));
+
+            factory.bind();
+            factory.startThread();
+            try {
+                Log logger = factory.create("x");
+
+                // create crash files
+                try (Path path = new Path().of(temp.getRoot().getAbsolutePath())) {
+                    int plen = path.length();
+                    Files.touch(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(1).put(".log").$());
+                    Files.touch(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(2).put(".log").$());
+                    Files.mkdirs(path.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(3).slash$(), configuration.getMkDirMode());
+                }
+
+                ServerMain.reportCrashFiles(configuration, logger);
+
+                // wait until sequence is consumed and written to file
+                while (logger.getCriticalSequence().getBarrier().current() < 1) {
+                    Os.pause();
+                }
+            } finally {
+                factory.haltThread();
+            }
+        }
+
+        // make sure we check disk contents after factory is closed
+        try (Path path = new Path().of(logFileName).$()) {
+            int bufSize = 4096;
+            long buf = Unsafe.calloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+            // we should read sub-4k bytes from the file
+            long fd = Files.openRO(path);
+            Assert.assertTrue(fd > -1);
+            try {
+                while (true) {
+                    int len = (int) Files.read(fd, buf, bufSize, 0);
+                    if (len > 0) {
+                        NativeLPSZ str = new NativeLPSZ().of(buf);
+                        int index1 = Chars.indexOf(str, 0, len, configuration.getArchivedCrashFilePrefix() + "0.log");
+                        Assert.assertTrue(index1 > -1);
+                        // make sure max files (1) limit is not exceeded
+                        int index2 = Chars.indexOf(str, index1 + 1, len, configuration.getArchivedCrashFilePrefix() + "1.log");
+                        Assert.assertEquals(-1, index2);
+                        index2 = Chars.indexOf(str, index1 + 1, len, configuration.getOGCrashFilePrefix()+"2.log");
+                        Assert.assertTrue(index2 > -1 && index2 > index1);
+                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix()+"2.log").$()));
+                        int index3 = Chars.indexOf(str, index2 + 1, len, configuration.getOGCrashFilePrefix()+"3");
+                        Assert.assertEquals(-1, index3);
+                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat(configuration.getOGCrashFilePrefix()+"3").$()));
+                        break;
+                    } else {
+                        Os.pause();
+                    }
+                }
+            } finally {
+                Files.close(fd);
+                Unsafe.free(buf, bufSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
     }
 
     private static void assertExists(File f) {

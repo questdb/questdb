@@ -30,14 +30,17 @@ import io.questdb.cairo.AbstractCairoTest;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordCursorPrinter;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -280,23 +283,20 @@ public class AsyncOffloadTest extends AbstractGriffinTest {
     private void testAsyncOffloadTimeout() throws SqlException {
         SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
         currentMicros = 0;
-        SqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(new DefaultSqlExecutionCircuitBreakerConfiguration(), MemoryTag.NATIVE_DEFAULT) {
-            @Override
-            public SqlExecutionCircuitBreakerConfiguration getConfiguration() {
-                return new DefaultSqlExecutionCircuitBreakerConfiguration() {
+        SqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
+                new DefaultSqlExecutionCircuitBreakerConfiguration() {
                     @Override
-                    public MicrosecondClock getClock() {
-                        return () -> 10;
+                    public MillisecondClock getClock() {
+                        return () -> Long.MAX_VALUE;
                     }
 
                     @Override
-                    public long getMaxTime() {
-                        return 1; // getClock will be 10, make first check trigger the timeout
+                    public long getTimeout() {
+                        return 1;
                     }
-                };
-            }
-        };
-
+                },
+                MemoryTag.NATIVE_DEFAULT
+        );
 
         compiler.compile("create table x ( " +
                         "v long, " +

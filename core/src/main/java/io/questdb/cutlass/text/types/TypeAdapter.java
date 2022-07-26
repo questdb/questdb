@@ -26,6 +26,7 @@ package io.questdb.cutlass.text.types;
 
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectCharSink;
 
 public interface TypeAdapter {
     int getType();
@@ -37,4 +38,8 @@ public interface TypeAdapter {
     boolean probe(CharSequence text);
 
     void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception;
+
+    default void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink utf8Sink) throws Exception {
+        write(row, column, value);
+    }
 }

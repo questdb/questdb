@@ -24,17 +24,103 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.TextImportRequestJob;
+import io.questdb.griffin.model.CopyModel;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Os;
+import org.hamcrest.CoreMatchers;
+import org.hamcrest.MatcherAssert;
+import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
+import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
+
+import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.Assert.*;
 
 public class CopyTest extends AbstractGriffinTest {
+
     @BeforeClass
     public static void setUpStatic() {
         inputRoot = new File(".").getAbsolutePath();
+        try {
+            inputWorkRoot = temp.newFolder("imports" + System.nanoTime()).getAbsolutePath();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
         AbstractGriffinTest.setUpStatic();
+    }
+
+    @Test
+    public void testSequentialCopyDoesntAcceptNewKeywords() {
+        assertFailsWith("copy x from 'somefile.csv' with partition by HOUR ;");
+        assertFailsWith("copy x from 'somefile.csv' with timestamp 'ts' ;");
+        assertFailsWith("copy x from 'somefile.csv' with format 'XYZ';");
+    }
+
+    private void assertFailsWith(String sql) {
+        try {
+            compiler.compile(sql, sqlExecutionContext);
+            Assert.fail();
+        } catch (SqlException e) {
+            assertThat(e.getMessage(), containsString("invalid option used for non-parallel import (timestamp, format or partition by)"));
+        }
+    }
+
+    @Test
+    public void testParallelCopyRequiresWithBeforeOptions() {
+        try {
+            compiler.testCompileModel("copy x from 'somefile.csv' partition by HOUR ;", sqlExecutionContext);
+            Assert.fail();
+        } catch (SqlException e) {
+            assertEquals("[27] 'with' expected", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testSetParallelParallelCopyOptions() throws SqlException {
+        CopyModel model = (CopyModel) compiler.testCompileModel("copy y from 'somefile.csv' with parallel;", sqlExecutionContext);
+
+        assertEquals("y", model.getTableName().token.toString());
+        assertEquals("'somefile.csv'", model.getFileName().token.toString());
+        assertFalse(model.isHeader());
+        assertTrue(model.isParallel());
+        assertEquals(-1, model.getPartitionBy());
+        assertNull(model.getTimestampColumnName());
+        assertNull(model.getTimestampFormat());
+        assertEquals(-1, model.getDelimiter());
+    }
+
+    @Test
+    public void testSetAllParallelCopyOptions() throws SqlException {
+        Object[] partitionBy = new Object[]{"HOUR", PartitionBy.HOUR, "DAY", PartitionBy.DAY, "MONTH", PartitionBy.MONTH, "YEAR", PartitionBy.YEAR};
+        Object[] onError = new Object[]{"SKIP_COLUMN", Atomicity.SKIP_COL, "SKIP_ROW", Atomicity.SKIP_ROW, "ABORT", Atomicity.SKIP_ALL};
+
+        for (int p = 0; p < partitionBy.length / 2; p += 2) {
+            for (int o = 0; o < onError.length / 2; o += 2) {
+
+                CopyModel model = (CopyModel) compiler.testCompileModel("copy x from 'somefile.csv' with header true parallel " +
+                        "partition by " + partitionBy[p] + " timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' on error " + onError[o] + ";'", sqlExecutionContext);
+
+                assertEquals("x", model.getTableName().token.toString());
+                assertEquals("'somefile.csv'", model.getFileName().token.toString());
+                assertTrue(model.isHeader());
+                assertTrue(model.isParallel());
+                assertEquals(partitionBy[p + 1], model.getPartitionBy());
+                assertEquals("ts1", model.getTimestampColumnName().toString());
+                assertEquals("yyyy-MM-ddTHH:mm:ss", model.getTimestampFormat().toString());
+                assertEquals(';', model.getDelimiter());
+                assertEquals(onError[o + 1], model.getAtomicity());
+            }
+        }
     }
 
     @Test
@@ -254,9 +340,268 @@ public class CopyTest extends AbstractGriffinTest {
         });
     }
 
+    @Test
+    public void testParallelCopyIntoExistingTable() throws Exception {
+        ParallelCopyRunnable stmt = () -> {
+            compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW; ", sqlExecutionContext);
+        };
+
+        ParallelCopyRunnable test = this::assertQuotesTableContent;
+
+        testParallelCopy(stmt, test);
+    }
+
+    @Test
+    public void testParallelCopyIntoNewTable() throws Exception {
+        ParallelCopyRunnable stmt = () -> compiler.compile(
+                "copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ",
+                sqlExecutionContext
+        );
+
+        ParallelCopyRunnable test = this::assertQuotesTableContent;
+
+        testParallelCopy(stmt, test);
+    }
+
+    @Test
+    public void testParallelCopyIntoNewTableWithUringDisabled() throws Exception {
+        Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
+        ioURingEnabled = false;
+
+        ParallelCopyRunnable stmt = () -> compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
+
+        ParallelCopyRunnable test = this::assertQuotesTableContent;
+
+        testParallelCopy(stmt, test);
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionWhenValidationFails() throws Exception {
+        ParallelCopyRunnable stmt = () -> compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT; ", sqlExecutionContext);
+
+        ParallelCopyRunnable test = () -> assertQuery("message\n" +
+                        "partition by unit must be set when importing to new table\n",
+                "select message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                null,
+                true
+        );
+
+        testParallelCopy(stmt, test);
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionOnBadPartitionByUnit() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel partition by jiffy;", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected"));
+            }
+        });
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionOnBadOnErrorOption() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel on error EXPLODE;", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("invalid 'on error' copy option found"));
+            }
+        });
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionOnUnexpectedOption() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel YadaYadaYada;", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("unexpected option"));
+            }
+        });
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionOnEmptyDelimiter() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel delimiter '';", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("delimiter is empty or contains more than 1 character"));
+            }
+        });
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionOnMultiCharDelimiter() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel delimiter '____';", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("delimiter is empty or contains more than 1 character"));
+            }
+        });
+    }
+
+    @Test
+    public void testParallelCopyThrowsExceptionOnNonAsciiDelimiter() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel delimiter 'ą';", sqlExecutionContext);
+            } catch (Exception e) {
+                MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("delimiter is not an ascii character"));
+            }
+        });
+    }
+
+    @Test
+    public void testWhenWorkIsTheSameAsDataDirThenParallelCopyThrowsException() throws Exception {
+        String inputRootTmp = inputRoot;
+        String inputWorkRootTmp = inputWorkRoot;
+
+        inputRoot = new File(".").getAbsolutePath();
+        inputWorkRoot = temp.getRoot().getAbsolutePath();
+
+        ParallelCopyRunnable stmt = () -> compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
+
+        ParallelCopyRunnable test = () -> assertQuery("message\ncannot remove work dir because it points to one of main instance directories\n",
+                "select left(message, 76) message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                null,
+                true
+        );
+
+        testParallelCopy(stmt, test);
+
+        inputRoot = inputRootTmp;
+        inputWorkRoot = inputWorkRootTmp;
+    }
+
+    private void drainProcessingQueue() throws Exception {
+        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
+            while (processingJob.run(0)) {
+                Os.pause();
+            }
+        }
+    }
+
+    @Test
+    public void testParallelCopyRejectChecksTableName() throws Exception {
+        compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
+
+        // this one should be rejected
+        try {
+            compiler.compile("copy y cancel", sqlExecutionContext);
+            Assert.fail();
+        } catch (Exception e) {
+            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("different table"));
+        }
+        // this one should succeed
+        try {
+            compiler.compile("copy x cancel", sqlExecutionContext);
+        } catch (Exception e) {
+            Assert.fail();
+        }
+
+        drainProcessingQueue();
+        assertQuery("status\nCANCELLED\n",
+                "select status from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                null,
+                true );
+    }
+
+    @Test
+    public void testParallelCopyRejectSecondReq() throws Exception {
+        compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
+
+        // this import should be rejected
+        try {
+            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
+            Assert.fail();
+        } catch (Exception e) {
+            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Another import request is in progress"));
+        }
+        // cancel request should succeed
+        try {
+            compiler.compile("copy x cancel", sqlExecutionContext);
+        } catch (Exception e) {
+            Assert.fail();
+        }
+
+        drainProcessingQueue();
+        assertQuery("status\nCANCELLED\n",
+                "select status from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                null,
+                true );
+    }
+
+    private void assertQuotesTableContent() throws SqlException {
+        assertQuery("line\tts\td\tdescription\n" +
+                        "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
+                        "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
+                        "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
+                        "line994\t1972-09-21T00:00:00.000000Z\t0.81272025622\tdesc 994\n" +
+                        "line995\t1972-09-22T00:00:00.000000Z\t0.566736320714\tdesc 995\n" +
+                        "line996\t1972-09-23T00:00:00.000000Z\t0.415739766699\tdesc 996\n" +
+                        "line997\t1972-09-24T00:00:00.000000Z\t0.378956184893\tdesc 997\n" +
+                        "line998\t1972-09-25T00:00:00.000000Z\t0.736755687844\tdesc 998\n" +
+                        "line999\t1972-09-26T00:00:00.000000Z\t0.910141500002\tdesc 999\n" +
+                        "line1000\t1972-09-27T00:00:00.000000Z\t0.918270255022\tdesc 1000\n",
+                "select line,ts,d,description from x limit -10",
+                "ts",
+                true
+        );
+
+        assertQuery("cnt\n1000\n", "select count(*) cnt from x", null, false);
+    }
+
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {
         try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
             assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, true, true);
         }
+    }
+
+    private Thread createJobThread(SynchronizedJob job, CountDownLatch latch) {
+        return new Thread(() -> {
+            while (latch.getCount() > 0) {
+                if (job.run(0)) {
+                    latch.countDown();
+                }
+                Os.sleep(1);
+            }
+        });
+    }
+
+    private void testParallelCopy(ParallelCopyRunnable statement, ParallelCopyRunnable test) throws Exception {
+        assertMemoryLeak(() -> {
+            CountDownLatch processed = new CountDownLatch(1);
+
+            compiler.compile("drop table if exists " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log" , sqlExecutionContext);
+            try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
+
+                Thread processingThread = createJobThread(processingJob, processed);
+
+                processingThread.start();
+                statement.run();
+                processed.await();
+                test.run();
+                processingThread.join();
+            }
+            drainProcessingQueue();
+        });
+    }
+
+    @FunctionalInterface
+    interface ParallelCopyRunnable {
+        void run() throws Exception;
     }
 }

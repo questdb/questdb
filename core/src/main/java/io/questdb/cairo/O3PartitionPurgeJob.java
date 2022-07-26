@@ -286,7 +286,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             txnScoreboard.ofRO(path);
             path.trimTo(tableRootLen);
             txReader.ofRO(path, partitionBy);
-            TableUtils.safeReadTxn(txReader, this.configuration.getMicrosecondClock(), this.configuration.getSpinLockTimeoutUs());
+            TableUtils.safeReadTxn(txReader, this.configuration.getMillisecondClock(), this.configuration.getSpinLockTimeout());
 
             for (int i = 0; i < n; i += 2) {
                 long currentPartitionTs = partitionList.get(i + 1);

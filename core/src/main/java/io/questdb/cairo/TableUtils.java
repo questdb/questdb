@@ -38,7 +38,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -74,6 +74,7 @@ public final class TableUtils {
     public static final long META_OFFSET_WAL_ENABLED = 40; // INT
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
+    public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final String DEFAULT_PARTITION_NAME = "default";
@@ -196,8 +197,35 @@ public final class TableUtils {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
         final int mkDirMode = configuration.getMkDirMode();
-        LOG.debug().$("create table [name=").$(structure.getTableName()).$(']').$();
-        path.of(root).concat(structure.getTableName());
+        createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId);
+    }
+
+    public static void createTable(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            Path path,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        createTable(ff, root, mkDirMode, memory, path, structure.getTableName(), structure, tableVersion, tableId);
+    }
+
+    public static void createTable(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            Path path,
+            CharSequence tableName,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        LOG.debug().$("create table [name=").$(tableName).$(']').$();
+        path.of(root).concat(tableName);
 
         if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create [dir=").put(path).put(']');
@@ -537,10 +565,10 @@ public final class TableUtils {
                 case '\u000B':
                 case '\u000c':
                 case '\r':
+                case '\n':
                 case '\u000e':
                 case '\u000f':
                 case '\u007f':
-                case '\n':
                 case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
                     return false;
             }
@@ -623,7 +651,11 @@ public final class TableUtils {
         if (addr > -1) {
             return addr;
         }
-        throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
+        int errno = ff.errno();
+        if (Os.type != Os.WINDOWS || errno != 112) {
+            throw CairoException.instance(ff.errno()).put("could not mmap column [fd=").put(fd).put(", size=").put(size).put(']');
+        }
+        throw CairoException.instance(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
     }
 
     public static long mapRWOrClose(FilesFacade ff, long fd, long size, int memoryTag) {
@@ -716,7 +748,7 @@ public final class TableUtils {
     }
 
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
-        if (!ff.rename(src, dst)) {
+        if (ff.rename(src, dst) != Files.FILES_RENAME_OK) {
             throw CairoException.instance(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
         }
     }
@@ -769,8 +801,8 @@ public final class TableUtils {
         txMem.putInt(baseOffset + getPartitionTableSizeOffset(symbolMapCount), 0);
     }
 
-    public static void safeReadTxn(TxReader txReader, MicrosecondClock microsecondClock, long spinLockTimeoutUs) {
-        long deadline = microsecondClock.getTicks() + spinLockTimeoutUs;
+    public static void safeReadTxn(TxReader txReader, MillisecondClock clock, long spinLockTimeout) {
+        long deadline = clock.getTicks() + spinLockTimeout;
         if (txReader.unsafeReadVersion() == txReader.getVersion()) {
             LOG.debug().$("checked clean txn, version ").$(txReader.getVersion()).$(", txn=").$(txReader.getTxn()).$();
             return;
@@ -787,8 +819,8 @@ public final class TableUtils {
             }
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
-            if (microsecondClock.getTicks() > deadline) {
-                LOG.error().$("tx read timeout [timeout=").$(spinLockTimeoutUs).utf8("μs]").$();
+            if (clock.getTicks() > deadline) {
+                LOG.error().$("tx read timeout [timeout=").$(spinLockTimeout).utf8("ms]").$();
                 throw CairoException.instance(0).put("Transaction read timeout");
             }
 
@@ -1131,7 +1163,7 @@ public final class TableUtils {
                     ff.close(fd);
                 }
             } else {
-                throw CairoException.instance(0).put("Doesn't exist: ").put(path);
+                throw CairoException.instance(0).put("path does not exist [path=").put(path).put(']');
             }
         } finally {
             path.trimTo(plen);

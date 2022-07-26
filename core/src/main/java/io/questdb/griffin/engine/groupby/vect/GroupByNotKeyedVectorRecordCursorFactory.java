@@ -29,6 +29,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -41,6 +42,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
+import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
@@ -177,6 +179,14 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         log.info().$("waiting for parts [queuedCount=").$(queuedCount).$(']').$();
         doneLatch.await(queuedCount);
         return reclaimed;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("GroupByNotKeyed");
+        sink.meta("vectorized").val(true);
+        sink.attr("groupByFunctions").val(vafList);
+        sink.child(base);
     }
 
     private static class GroupByNotKeyedVectorRecordCursor implements NoRandomAccessRecordCursor {
