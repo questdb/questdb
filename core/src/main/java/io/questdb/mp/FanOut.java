@@ -111,6 +111,11 @@ public class FanOut implements Barrier {
     }
 
     @Override
+    public Barrier getBarrier() {
+        return barrier;
+    }
+
+    @Override
     public void setCurrent(long value) {
         ObjList<Barrier> barriers = holder.barriers;
         for (int i = 0, n = barriers.size(); i < n; i++) {
