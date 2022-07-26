@@ -323,7 +323,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                     } catch (Throwable e) {
                         unsafeReleaseReaders();
                         LOG.error()
-                                .$("snapshot prepare error [e=").$(e)
+                                .$("snapshot error [e=").$(e)
                                 .I$();
                         throw e;
                     }
