@@ -278,7 +278,7 @@ public class DatabaseSnapshotAgent implements Closeable {
                                             && ff.exists(path.of(configuration.getRoot()).concat(tableName).concat(TableUtils.META_FILE_NAME).$())
                             ) {
                                 path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-                                LOG.info().$("including in the snapshot [table=").$(tableName).$(']').$();
+                                LOG.info().$("preparing for snapshot [table=").$(tableName).I$();
 
                                 TableReader reader = engine.getReaderForStatement(executionContext, tableName, "snapshot");
                                 snapshotReaders.add(reader);
