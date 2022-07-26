@@ -131,7 +131,7 @@ public class ServerMainTest {
                 Log logger = factory.create("x");
 
                 // create crash files
-                try (Path path = new Path().of(temp.getRoot().getAbsolutePath()).$()) {
+                try (Path path = new Path().of(temp.getRoot().getAbsolutePath())) {
                     int plen = path.length();
                     Files.touch(path.trimTo(plen).concat("hs_err_pid1.log").$());
                     Files.touch(path.trimTo(plen).concat("hs_err_pid2.log").$());
@@ -149,21 +149,22 @@ public class ServerMainTest {
         }
 
         // make sure we check disk contents after factory is closed
-        try (Path log = new Path().of(logFileName).$()) {
+        try (Path path = new Path().of(logFileName).$()) {
             int bufSize = 4096;
             long buf = Unsafe.calloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             // we should read sub-4k bytes from the file
-            long fd = Files.openRO(log);
+            long fd = Files.openRO(path);
             Assert.assertTrue(fd > -1);
             try {
                 while (true) {
-                    int len = (int) Files.read(fd, buf, bufSize, 0);
+                    int len =  (int) Files.read(fd, buf, bufSize, 0);
                     if (len > 0) {
                         NativeLPSZ str = new NativeLPSZ().of(buf);
                         int index1 = Chars.contains(str, 0, len, "crash_0.log");
                         Assert.assertTrue(index1 > -1);
                         int index2 = Chars.contains(str, index1 + 1, len, "hs_err_pid2.log");
                         Assert.assertTrue(index2 > -1 && index2 > index1);
+                        Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat("hs_err_pid2.log").$()));
                         break;
                     } else {
                         Os.pause();

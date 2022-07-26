@@ -364,12 +364,12 @@ public class ServerMain {
                                 do {
                                     other.trimTo(plen).concat("crash_").put(counter.getAndIncrement()).put(".log").$();
                                     if (!ff.exists(other)) {
-                                        shouldRename = true;
+                                        shouldRename = counter.get() <= maxFiles;
                                         break;
                                     }
                                 } while (counter.get() < maxFiles);
 
-                                if (shouldRename && ff.rename(path, other) == 0 && counter.get() <= maxFiles) {
+                                if (shouldRename && ff.rename(path, other) == 0) {
                                     log.criticalW().$("found crash file [path=").$(other).I$();
                                 } else {
                                     log.criticalW()
