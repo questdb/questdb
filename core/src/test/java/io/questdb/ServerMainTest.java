@@ -160,9 +160,9 @@ public class ServerMainTest {
                     int len =  (int) Files.read(fd, buf, bufSize, 0);
                     if (len > 0) {
                         NativeLPSZ str = new NativeLPSZ().of(buf);
-                        int index1 = Chars.contains(str, 0, len, "crash_0.log");
+                        int index1 = Chars.indexOf(str, 0, len, "crash_0.log");
                         Assert.assertTrue(index1 > -1);
-                        int index2 = Chars.contains(str, index1 + 1, len, "hs_err_pid2.log");
+                        int index2 = Chars.indexOf(str, index1 + 1, len, "hs_err_pid2.log");
                         Assert.assertTrue(index2 > -1 && index2 > index1);
                         Assert.assertTrue(Files.exists(path.of(temp.getRoot().getAbsolutePath()).concat("hs_err_pid2.log").$()));
                         break;

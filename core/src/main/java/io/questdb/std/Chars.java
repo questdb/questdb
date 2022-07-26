@@ -120,10 +120,10 @@ public final class Chars {
     }
 
     public static boolean contains(CharSequence sequence, CharSequence term) {
-        return contains(sequence, 0, sequence.length(), term) != -1;
+        return indexOf(sequence, 0, sequence.length(), term) != -1;
     }
 
-    public static int contains(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
+    public static int indexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
         int m = term.length();
         if (m == 0) {
             return -1;
