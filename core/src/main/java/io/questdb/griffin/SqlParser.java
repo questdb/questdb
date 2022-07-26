@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -531,7 +534,7 @@ public final class SqlParser {
             if (tok != null) {
                 if (isWalKeyword(tok)) {
                     if (!PartitionBy.isPartitioned(model.getPartitionBy())) {
-                        throw SqlException.position(lexer.getPosition()).put("WAL Write Mode can only be used on partitioned tables");
+                        throw SqlException.position(lexer.lastTokenPosition()).put("WAL Write Mode can only be used on partitioned tables");
                     }
                     walSetting = walEnabled;
                     tok = optTok(lexer);
@@ -541,7 +544,10 @@ public final class SqlParser {
                         walSetting = walDisabled;
                         tok = optTok(lexer);
                     } else {
-                        throw SqlException.position(lexer.getPosition()).put(" invalid syntax, should be BYPASS WAL but was BYPASS " + tok);
+                        throw SqlException.position(
+                                        tok == null ? lexer.getPosition() : lexer.lastTokenPosition()
+                                ).put(" invalid syntax, should be BYPASS WAL but was BYPASS ")
+                                .put(tok != null ? tok : "");
                     }
                 }
             }
