@@ -333,6 +333,17 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
+    public Path parent$() {
+        if (ptr != 0) {
+            int idx = len - 2;
+            while (idx > 0 && charAt(idx) != Files.SEPARATOR) {
+                idx--;
+            }
+            trimTo(idx).$();
+        }
+        return this;
+    }
+
     private void checkClosed() {
         if (ptr == 0) {
             this.ptr = this.wptr = Unsafe.malloc(capacity + 1, MemoryTag.NATIVE_PATH);

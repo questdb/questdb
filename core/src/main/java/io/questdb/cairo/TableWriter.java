@@ -85,11 +85,19 @@ public class TableWriter implements Closeable {
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final Path path;
     private final Path other;
+    private final Path other2;
     private final Path detachedPath;
+    private final int detachedRootLen;
+    private final TableReaderMetadata detachedMetadata;
+    private ColumnVersionReader detachedColumnVersionReader;
+    private final TxReader detachedTxReader;
+    private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
+    private final SymbolMapReaderImpl detachedSymbolMapReader = new SymbolMapReaderImpl();
+    private final IntList detachedSymColIndexRemap = new IntList();
+    private final IndexBuilder detachedSymbolColumnIndexer = new IndexBuilder();
     private final LongList rowValueIsNotNull = new LongList();
     private final Row regularRow = new RowImpl();
     private final int rootLen;
-    private final int detachedRootLen;
     private final MemoryMR metaMem;
     private final int partitionBy;
     private final LongList columnTops;
@@ -100,8 +108,6 @@ public class TableWriter implements Closeable {
     private final int fileOperationRetryCount;
     private final String tableName;
     private final TableWriterMetadata metadata;
-    private final TableReaderMetadata detachedMetadata;
-    private final SymbolMapReaderImpl detachedSymbolMapReader = new SymbolMapReaderImpl();
     private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
@@ -133,7 +139,6 @@ public class TableWriter implements Closeable {
     private final AtomicInteger o3ErrorCount = new AtomicInteger();
     private final MemoryMARW todoMem = Vm.getMARWInstance();
     private final TxWriter txWriter;
-    private final TxReader detachedTxReader;
     private final LongList o3PartitionRemoveCandidates = new LongList();
     private final ObjectPool<O3MutableAtomicInteger> o3ColumnCounters = new ObjectPool<>(O3MutableAtomicInteger::new, 64);
     private final ObjectPool<O3Basket> o3BasketPool = new ObjectPool<>(O3Basket::new, 64);
@@ -155,7 +160,6 @@ public class TableWriter implements Closeable {
     private final LongLongHashMap cmdSequences = new LongLongHashMap();
     private final AlterOperation alterTableStatement = new AlterOperation();
     private final ColumnVersionWriter columnVersionWriter;
-    private ColumnVersionReader detachedColumnVersionReader;
     private final Metrics metrics;
     private final RingQueue<TableWriterTask> commandQueue;
     private final SCSequence commandSubSeq;
@@ -235,6 +239,7 @@ public class TableWriter implements Closeable {
         this.o3ColumnMemorySize = configuration.getO3ColumnMemorySize();
         this.path = new Path().of(root).concat(tableName);
         this.other = new Path().of(root).concat(tableName);
+        this.other2 = new Path();
         this.rootLen = path.length();
         this.detachedPath = new Path().of(configuration.getDetachedRoot()).concat(tableName);
         this.detachedRootLen = detachedPath.length();
@@ -645,6 +650,12 @@ public class TableWriter implements Closeable {
             return PARTITION_ALREADY_ATTACHED;
         }
 
+        if (inTransaction()) {
+            LOG.info().$("committing open transaction before applying attach partition command [table=").$(tableName)
+                    .$(", partition=").$ts(timestamp).I$();
+            commit();
+        }
+
         boolean rollbackRename = false;
         try {
             // final name of partition folder after attach
@@ -656,7 +667,7 @@ public class TableWriter implements Closeable {
                 detachedPath.put(DETACHED_DIR_MARKER).slash$();
                 if (ff.exists(detachedPath)) {
 
-                    // check metadata, the files may not exist, for backwards compatibility
+                    // check metadata
                     LOG.info().$("checking detached metadata: ").$(detachedPath).$();
                     checkDetachedMetadataOnPartitionAttach(timestamp);
 
@@ -679,12 +690,6 @@ public class TableWriter implements Closeable {
                 CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
                 final long partitionSize = readPartitionSizeMinMax(ff, path, timestampCol, tempMem16b, timestamp);
                 if (partitionSize > 0) {
-                    if (inTransaction()) {
-                        LOG.info().$("committing open transaction before applying attach partition command [table=").$(tableName)
-                                .$(",partition=").$ts(timestamp).I$();
-                        commit();
-                    }
-
                     long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
                     long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + Long.BYTES);
                     assert timestamp <= minPartitionTimestamp && minPartitionTimestamp <= maxPartitionTimestamp;
@@ -1752,15 +1757,16 @@ public class TableWriter implements Closeable {
     }
 
     private void checkDetachedMetadataOnPartitionAttach(long timestamp) {
-        // detached metadata resides within folder _dm_ inside the detached partition folder itself
-        other.of(detachedPath).concat(DETACHED_DIR_META_FOLDER_NAME);
-        int otherLen = other.length();
-        boolean closeMeta = false;
-        boolean closeColumnVersion = false;
-        boolean closeTxn = false;
+        boolean closeDMetaReader = false;
+        boolean closeDColumnVersionReader = false;
+        boolean closeDTxReader = false;
+        boolean closeDSymbolMapReader = false;
         boolean closeSymbolMapReader = false;
         try {
-            // _meta
+            // load/check _meta
+            // detached metadata resides within folder _dm_ (inside the detached partition folder)
+            other.of(detachedPath).concat(DETACHED_DIR_META_FOLDER_NAME);
+            int otherLen = other.length();
             other.concat(META_FILE_NAME).$();
             if (!ff.exists(other)) {
                 // Backups and older versions of detached partitions will not have _meta
@@ -1772,33 +1778,36 @@ public class TableWriter implements Closeable {
                 return;
             }
             detachedMetadata.deferredInit(other, ColumnType.VERSION);
-            closeMeta = true;
+            closeDMetaReader = true;
+            // TODO check table id
             if (metadata.getStructureVersion() != detachedMetadata.getStructureVersion()) {
+                // TODO: addColumn should fail here
                 throw CairoException.detachedMetadataMismatch("structure_version");
+                // delete cols that have been deleted
             }
-            if (metadata.getTimestampIndex() != detachedMetadata.getTimestampIndex()) {
-                throw CairoException.detachedMetadataMismatch("timestamp_index");
-            }
-            if (partitionBy != detachedMetadata.getPartitionBy()) {
-                throw CairoException.detachedMetadataMismatch("partition_by");
-            }
-            if (columnCount != detachedMetadata.getColumnCount()) {
-                throw CairoException.detachedMetadataMismatch("column_count");
-            }
-            for (int i = 0; i < columnCount; i++) {
-                String name = metadata.getColumnName(i);
-                if (!name.equals(detachedMetadata.getColumnName(i))) {
-                    throw CairoException.detachedColumnMetadataMismatch(i, name, "name");
-                }
-                if (metadata.getColumnType(i) != detachedMetadata.getColumnType(i)) {
-                    throw CairoException.detachedColumnMetadataMismatch(i, name, "type");
-                }
-                if (metadata.isColumnIndexed(i) != detachedMetadata.isColumnIndexed(i)) {
-                    throw CairoException.detachedColumnMetadataMismatch(i, name, "is_indexed");
-                }
-            }
+//            if (metadata.getTimestampIndex() != detachedMetadata.getTimestampIndex()) {
+//                throw CairoException.detachedMetadataMismatch("timestamp_index");
+//            }
+//            if (partitionBy != detachedMetadata.getPartitionBy()) {
+//                throw CairoException.detachedMetadataMismatch("partition_by");
+//            }
+//            if (columnCount != detachedMetadata.getColumnCount()) {
+//                throw CairoException.detachedMetadataMismatch("column_count");
+//            }
+//            for (int i = 0; i < columnCount; i++) {
+//                String name = metadata.getColumnName(i);
+//                if (!name.equals(detachedMetadata.getColumnName(i))) {
+//                    throw CairoException.detachedColumnMetadataMismatch(i, name, "name");
+//                }
+//                if (metadata.getColumnType(i) != detachedMetadata.getColumnType(i)) {
+//                    throw CairoException.detachedColumnMetadataMismatch(i, name, "type");
+//                }
+//                if (metadata.isColumnIndexed(i) != detachedMetadata.isColumnIndexed(i)) {
+//                    throw CairoException.detachedColumnMetadataMismatch(i, name, "is_indexed");
+//                }
+//            }
 
-            // _cv
+            // load/check _cv, updating local column tops
             other.trimTo(otherLen).concat(COLUMN_VERSION_FILE_NAME).$();
             if (!ff.exists(other)) {
                 // Backups and older versions of detached partitions will not have _cv
@@ -1814,36 +1823,90 @@ public class TableWriter implements Closeable {
             }
             detachedColumnVersionReader.ofRO(ff, other);
             detachedColumnVersionReader.readSafe(MillisecondClockImpl.INSTANCE, Long.MAX_VALUE);
-            closeColumnVersion = true;
-            LongList detachedEntries = detachedColumnVersionReader.getCachedList();
+            closeDColumnVersionReader = true;
             LongList entries = columnVersionWriter.getCachedList();
+            LongList detachedEntries = detachedColumnVersionReader.getCachedList();
             for (int i = 0, limit = detachedEntries.size(); i < limit; i += 4) {
-                long partitionTimestamp = detachedEntries.getQuick(i);
-                if (timestamp == partitionTimestamp) {
-                    int columnIndex = (int) detachedEntries.getQuick(i + 1);
-                    long columnTop = detachedEntries.getQuick(i + 3);
-                    if (columnTop != entries.getQuick(i + 3)) {
-                        long columnNameTxn = detachedEntries.getQuick(i + 2);
-                        columnVersionWriter.upsert(timestamp, columnIndex, columnNameTxn, columnTop);
-                    }
+                // detachedEntries: [partitionTimestamp, columnIndex, columnNameTxn, columnTop]*
+                long columnTop = detachedEntries.getQuick(i + 3);
+                if (timestamp == detachedEntries.getQuick(i) && columnTop != entries.getQuick(i + 3)) {
+                    columnVersionWriter.upsert(
+                            timestamp,
+                            (int) detachedEntries.getQuick(i + 1),
+                            detachedEntries.getQuick(i + 2),
+                            columnTop
+                    );
                 }
             }
 
-            // check symbols and indexes
+            // check indexed symbols and their indexes
             other.trimTo(otherLen).concat(TXN_FILE_NAME).$();
+            if (!ff.exists(other)) {
+                // Backups and older versions of detached partitions will not have _txn
+                LOG.info()
+                        .$("Partition column version metadata not found, skipping compatibility check [path=")
+                        .$(other)
+                        .$(']')
+                        .$();
+                return;
+            }
             detachedTxReader.ofRO(other, detachedMetadata.getPartitionBy());
-            detachedTxReader.unsafeLoadAll();
-            closeTxn = true;
-            other.trimTo(otherLen);
+            detachedTxReader.unsafeLoadAll(); // needed to get the symbol count
+            closeDTxReader = true;
+            other2.of(path).parent$(); // table folder (1 level up from partition)
+            detachedSymColIndexRemap.clear();
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                 if (ColumnType.isSymbol(metadata.getColumnType(colIdx))) {
                     if (metadata.isColumnIndexed(colIdx)) {
+                        // for each indexed symbol column
                         String columnName = metadata.getColumnName(colIdx);
                         long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, colIdx);
-                        int symbolCount = detachedTxReader.unsafeReadSymbolCount(colIdx);
-                        detachedSymbolMapReader.of(configuration, other, columnName, columnNameTxn, symbolCount);
+
+                        // load detached symbol map reader
+                        int detachedSymbolCount = detachedTxReader.unsafeReadSymbolCount(colIdx);
+                        detachedSymbolMapReader.of(configuration, other.trimTo(otherLen), columnName, columnNameTxn, detachedSymbolCount);
+                        closeDSymbolMapReader = true;
+
+                        // load local symbol map reader
+                        int symbolCount = txWriter.unsafeReadSymbolCount(colIdx);
+                        symbolMapReader.of(configuration, other2, columnName, columnNameTxn, symbolCount);
                         closeSymbolMapReader = true;
-                        // TODO consolidate
+
+                        // get hold of the local symbol map writer
+                        SymbolMapWriter symbolMapWriter = (SymbolMapWriter) symbolMapWriters.getQuick(colIdx);
+                        for (int symKey = 0; symKey < detachedSymbolCount; symKey++) {
+                            // for each symbol in the union of both local and detached
+                            CharSequence sym = symKey < symbolCount ? symbolMapReader.valueOf(symKey) : null;
+                            CharSequence dsym = detachedSymbolMapReader.valueOf(symKey);
+                            if (!Chars.equals(sym, dsym)) {
+                                detachedSymColIndexRemap.add(symKey);
+                                detachedSymColIndexRemap.add(symbolMapWriter.put(dsym));
+                            }
+                        }
+
+                        int remapSize = detachedSymColIndexRemap.size();
+                        if (remapSize > 0) {
+                            other2.of(other).parent$();
+                            String[] tmp = other2.toString().split("" + Files.SEPARATOR);
+                            String partitionName = tmp[tmp.length - 1];
+                            int partitionIndex = detachedTxReader.getPartitionIndex(timestamp);
+                            other2.parent$();
+                            detachedSymbolColumnIndexer.of(other2, configuration);
+                            detachedSymbolColumnIndexer.doReindex(
+                                    columnVersionWriter,
+                                    detachedMetadata.getWriterIndex(colIdx),
+                                    columnName,
+                                    partitionName,
+                                    -1L,
+                                    detachedTxReader.getPartitionSize(partitionIndex),
+                                    timestamp,
+                                    detachedMetadata.getIndexValueBlockCapacity(columnName)
+                            );
+                            for (int i = 0; i < remapSize; i += 2) {
+                                int symKey = detachedSymColIndexRemap.getQuick(i);
+                                int symNewKey = detachedSymColIndexRemap.getQuick(i + 1);
+                            }
+                        }
                     }
                 }
             }
@@ -1857,17 +1920,20 @@ public class TableWriter implements Closeable {
             }
         } finally {
             other.trimTo(rootLen);
-            if (closeMeta) {
+            if (closeDMetaReader) {
                 Misc.free(detachedMetadata);
             }
-            if (closeColumnVersion) {
+            if (closeDColumnVersionReader) {
                 Misc.free(detachedColumnVersionReader);
             }
-            if (closeTxn) {
+            if (closeDTxReader) {
                 Misc.free(detachedTxReader);
             }
-            if (closeSymbolMapReader) {
+            if (closeDSymbolMapReader) {
                 Misc.free(detachedSymbolMapReader);
+            }
+            if (closeSymbolMapReader) {
+                Misc.free(symbolMapReader);
             }
         }
     }
@@ -2468,17 +2534,20 @@ public class TableWriter implements Closeable {
         freeSymbolMapWriters();
         freeIndexers();
         Misc.free(txWriter);
-        Misc.free(detachedTxReader);
         Misc.free(metaMem);
         Misc.free(ddlMem);
         Misc.free(indexMem);
         Misc.free(other);
+        Misc.free(other2);
         Misc.free(detachedPath);
         Misc.free(todoMem);
-        Misc.free(columnVersionWriter);
-        Misc.free(detachedColumnVersionReader);
         Misc.free(detachedMetadata);
+        Misc.free(detachedTxReader);
+        Misc.free(detachedColumnVersionReader);
         Misc.free(detachedSymbolMapReader);
+        Misc.free(symbolMapReader);
+        Misc.free(detachedSymbolColumnIndexer);
+        Misc.free(columnVersionWriter);
         updateOperator = Misc.free(updateOperator);
         Misc.free(o3ColumnTopSink);
         Misc.free(commandQueue);

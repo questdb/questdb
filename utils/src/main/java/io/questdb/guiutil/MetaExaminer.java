@@ -233,7 +233,7 @@ public class MetaExaminer {
     }
 
     private void displayCOFileContent() {
-        int metaLevelUp = insidePartitionFolder() ? 2 : 1;
+        int metaLevelUp = isInsidePartitionFolder() ? 2 : 1;
         if (openRequiredMetaFile(metaLevelUp) && openRequiredTxnFile(metaLevelUp)) {
             auxPath.of(selectedPath);
             PathUtils.ColumnNameTxn cnTxn = PathUtils.columnNameTxnOf(auxPath);
@@ -274,7 +274,7 @@ public class MetaExaminer {
     }
 
     private void displayKVFileContent() {
-        int metaLevelUp = insidePartitionFolder() ? 2 : 1;
+        int metaLevelUp = isInsidePartitionFolder() ? 2 : 1;
         if (openRequiredMetaFile(metaLevelUp) && openRequiredCvFile(metaLevelUp) && openRequiredTxnFile(metaLevelUp)) {
             auxPath.of(selectedPath);
             PathUtils.ColumnNameTxn cnTxn = PathUtils.columnNameTxnOf(auxPath);
@@ -370,7 +370,7 @@ public class MetaExaminer {
         return true;
     }
 
-    private boolean insidePartitionFolder() {
+    private boolean isInsidePartitionFolder() {
         if (potentialPartitionFolderName != null) {
             int len = potentialPartitionFolderName.length();
             int i = 0;

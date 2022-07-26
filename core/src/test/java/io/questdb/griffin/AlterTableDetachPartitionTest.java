@@ -821,7 +821,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         });
     }
 
-    @Ignore("not quite there yet")
     @Test
     public void testDetachPartitionsColumnSymbolIndexes() throws Exception {
         assertMemoryLeak(() -> {
@@ -829,44 +828,75 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 createPopulateTable(tab
                                 .col("s", ColumnType.SYMBOL)
+                                .col("si", ColumnType.SYMBOL).indexed(true, 32)
                                 .col("l", ColumnType.INT)
                                 .timestamp("ts"),
                         12,
                         "2022-06-01",
                         4);
                 assertContent(
-                        "s\tl\tts\n" +
-                                "CPSW\t1\t2022-06-01T07:59:59.916666Z\n" +
-                                "HYRX\t2\t2022-06-01T15:59:59.833332Z\n" +
-                                "\t3\t2022-06-01T23:59:59.749998Z\n" +
-                                "VTJW\t4\t2022-06-02T07:59:59.666664Z\n" +
-                                "PEHN\t5\t2022-06-02T15:59:59.583330Z\n" +
-                                "\t6\t2022-06-02T23:59:59.499996Z\n" +
-                                "VTJW\t7\t2022-06-03T07:59:59.416662Z\n" +
-                                "\t8\t2022-06-03T15:59:59.333328Z\n" +
-                                "CPSW\t9\t2022-06-03T23:59:59.249994Z\n" +
-                                "\t10\t2022-06-04T07:59:59.166660Z\n" +
-                                "PEHN\t11\t2022-06-04T15:59:59.083326Z\n" +
-                                "CPSW\t12\t2022-06-04T23:59:58.999992Z\n",
+                        "s\tsi\tl\tts\n" +
+                                "PEHN\tSXUX\t1\t2022-06-01T07:59:59.916666Z\n" +
+                                "VTJW\t\t2\t2022-06-01T15:59:59.833332Z\n" +
+                                "\tSXUX\t3\t2022-06-01T23:59:59.749998Z\n" +
+                                "\t\t4\t2022-06-02T07:59:59.666664Z\n" + // detached
+                                "\tGPGW\t5\t2022-06-02T15:59:59.583330Z\n" + // detached
+                                "PEHN\tRXGZ\t6\t2022-06-02T23:59:59.499996Z\n" + // detached
+                                "CPSW\t\t7\t2022-06-03T07:59:59.416662Z\n" +
+                                "\t\t8\t2022-06-03T15:59:59.333328Z\n" +
+                                "PEHN\tRXGZ\t9\t2022-06-03T23:59:59.249994Z\n" +
+                                "VTJW\tIBBT\t10\t2022-06-04T07:59:59.166660Z\n" +
+                                "HYRX\tRXGZ\t11\t2022-06-04T15:59:59.083326Z\n" +
+                                "HYRX\tGPGW\t12\t2022-06-04T23:59:58.999992Z\n",
                         tableName
                 );
 
+                // detach a partition
                 engine.clear();
                 String timestampDay = "2022-06-02";
                 long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T23:59:59.999995Z");
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
                     writer.detachPartition(timestamp);
-                    writer.truncate();
                 }
+
+                // delete the table and recreate it with different data
+                compile("DROP TABLE " + tableName, sqlExecutionContext);
+                compile(
+                        "CREATE TABLE " + tableName + "(" +
+                                "s SYMBOL, " +
+                                "si SYMBOL, " +
+                                "l INT, " +
+                                "ts TIMESTAMP " +
+                                "), INDEX(si CAPACITY 32) TIMESTAMP(ts) PARTITION BY DAY",
+                        sqlExecutionContext
+                );
+                compile("INSERT INTO " + tableName + " VALUES('QUESTDB', 'TS', 70, " + timestamp + ")", sqlExecutionContext);
+                compile("INSERT INTO " + tableName + " VALUES('CHARLIE', 'SIERRA', 71, " + (timestamp + 1L) + ")", sqlExecutionContext);
+                long timestamp2 = TimestampFormatUtils.parseTimestamp("2022-06-03T23:59:59.999995Z");
+                compile("INSERT INTO " + tableName + " VALUES('TO', 'DROP', 72, " + timestamp2 + ")", sqlExecutionContext);
+                compile("INSERT INTO " + tableName + " VALUES('NON', 'ACTIVE', 73, " + (timestamp2 + 1L) + ")", sqlExecutionContext);
+
+                assertContent(
+                        "s\tsi\tl\tts\n" +
+                                "QUESTDB\tTS\t70\t2022-06-02T23:59:59.999995Z\n" +
+                                "CHARLIE\tSIERRA\t71\t2022-06-02T23:59:59.999996Z\n" +
+                                "TO\tDROP\t72\t2022-06-03T23:59:59.999995Z\n" +
+                                "NON\tACTIVE\t73\t2022-06-03T23:59:59.999996Z\n",
+                        tableName
+                );
+
+                compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
 
                 // reattach old version
                 engine.clear();
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
-                        "s\tl\tts\n" +
-                                "VTJW\t4\t2022-06-02T07:59:59.666664Z\n" +
-                                "PEHN\t5\t2022-06-02T15:59:59.583330Z\n" +
-                                "\t6\t2022-06-02T23:59:59.499996Z\n",
+                        "s\tsi\tl\tts\n" +
+                                "\t\t4\t2022-06-02T07:59:59.666664Z\n" +
+                                "\tGPGW\t5\t2022-06-02T15:59:59.583330Z\n" +
+                                "PEHN\tRXGZ\t6\t2022-06-02T23:59:59.499996Z\n" +
+                                "TO\tDROP\t72\t2022-06-03T23:59:59.999995Z\n" +
+                                "NON\tACTIVE\t73\t2022-06-03T23:59:59.999996Z\n",
                         tableName
                 );
             }
