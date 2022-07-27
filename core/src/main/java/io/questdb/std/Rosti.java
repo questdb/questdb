@@ -26,6 +26,8 @@ package io.questdb.std;
 
 import io.questdb.cairo.ColumnTypes;
 
+import static io.questdb.std.Numbers.hexDigits;
+
 public final class Rosti {
 
     public static long alloc(ColumnTypes types, long capacity) {
@@ -53,7 +55,7 @@ public final class Rosti {
 
     public static boolean reset(long pRosti, int size) {
         long oldSize = Rosti.getAllocMemory(pRosti);
-        boolean success = reset0(pRosti, size);
+        boolean success = reset0(pRosti, Numbers.ceilPow2(size) - 1);
         updateMemoryUsage(pRosti, oldSize);
         return success;
     }
@@ -85,6 +87,10 @@ public final class Rosti {
 
     public static long getCapacity(long pRosti) {
         return Unsafe.getUnsafe().getLong(pRosti + 3 * Long.BYTES);
+    }
+
+    public static long getSlotSize(long pRosti) {
+        return Unsafe.getUnsafe().getLong(pRosti + 4 * Long.BYTES);
     }
 
     public static long getSlotShift(long pRosti) {
@@ -236,6 +242,33 @@ public final class Rosti {
         long ctrl = getCtrl(pRosti);
         final long start = ctrl;
         long count = getSize(pRosti);
+        System.out.println("size=" + count);
+        System.out.println("capacity=" + getCapacity(pRosti));
+        System.out.println("slot size=" + getSlotSize(pRosti));
+        System.out.println("slot shift=" + getSlotShift(pRosti));
+        System.out.print("initial slot=");
+        long initialSlot = getInitialValuesSlot(pRosti);
+        for (long i = 0, n = getSlotSize(pRosti); i < n; i++) {
+
+            byte b = Unsafe.getUnsafe().getByte(initialSlot + i);
+            final int v;
+            if (b < 0) {
+                v = 256 + b;
+            } else {
+                v = b;
+            }
+
+            if (v < 0x10) {
+                System.out.print('0');
+                System.out.print(hexDigits[b]);
+            } else {
+                System.out.print(hexDigits[v / 0x10]);
+                System.out.print(hexDigits[v % 0x10]);
+            }
+
+            System.out.print(' ');
+        }
+        System.out.println();
         while (count > 0) {
             byte b = Unsafe.getUnsafe().getByte(ctrl);
             if ((b & 0x80) == 0) {
@@ -257,4 +290,5 @@ public final class Rosti {
         long newSize = Rosti.getAllocMemory(pRosti);
         Unsafe.recordMemAlloc(newSize - oldSize, MemoryTag.NATIVE_ROSTI);
     }
+
 }
