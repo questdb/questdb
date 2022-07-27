@@ -9,7 +9,7 @@ RUN_AS_ROOT=${RUN_AS_ROOT:-"false"}
 
 find_and_own_dir() {
     if [ "$IGNORE_FIND_AND_OWN_DIR" = "false" ]; then
-        find "$1" \( ! -user questdb -o ! -group questdb \) -exec chown questdb:questdb '{}' +
+        find "$1" \( ! -user questdb -o ! -group questdb \) -exec chown questdb:questdb '{}' \;
     fi
 }
 
