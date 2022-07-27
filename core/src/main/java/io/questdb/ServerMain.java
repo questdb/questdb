@@ -559,7 +559,15 @@ public class ServerMain {
         }
         setPublicVersion(publicDir, thisVersion);
         copyConfResource(dir, false, buffer, "conf/date.formats", log);
-        copyConfResource(dir, true, buffer, "conf/mime.types", log);
+        try {
+            copyConfResource(dir, true, buffer, "conf/mime.types", log);
+        } catch (IOException exception) {
+            // conf can be read-only, this is not critical
+            if (exception.getMessage() == null ||
+                    (!exception.getMessage().contains("Read-only file system") && !exception.getMessage().contains("Permission denied"))) {
+                throw exception;
+            }
+        }
         copyConfResource(dir, false, buffer, "conf/server.conf", log);
         copyConfResource(dir, false, buffer, "conf/log.conf", log);
     }
