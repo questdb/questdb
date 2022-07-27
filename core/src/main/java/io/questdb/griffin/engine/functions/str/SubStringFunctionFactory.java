@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -145,7 +146,7 @@ public class SubStringFunctionFactory implements FunctionFactory {
                 return null;
             }
             if (len < 0) {
-                throw new RuntimeException("negative substring length is not allowed");
+                throw CairoException.instance(0).put("negative substring length is not allowed");
             }
 
             sink.clear();

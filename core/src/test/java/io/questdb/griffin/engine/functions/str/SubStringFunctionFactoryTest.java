@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.str;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.AbstractFunctionFactoryTest;
@@ -82,7 +83,7 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
         try {
             call("foo", 3, -1).andAssert(null);
             fail("non-const negative len is not allowed");
-        } catch (RuntimeException e) {
+        } catch (CairoException e) {
             // negative substring length is not allowed
         }
 
