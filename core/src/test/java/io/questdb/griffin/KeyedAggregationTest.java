@@ -36,10 +36,8 @@ import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
-@Ignore
 public class KeyedAggregationTest extends AbstractGriffinTest {
 
     @Test
