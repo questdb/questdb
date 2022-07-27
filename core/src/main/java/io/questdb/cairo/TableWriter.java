@@ -1799,7 +1799,7 @@ public class TableWriter implements Closeable {
         // what remains on disk
 
         for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-            columnVersionWriter.upsertColumnTop(timestamp, colIdx, -2L); // detached
+            columnVersionWriter.upsertColumnTop(timestamp, colIdx, -1L);
         }
 
         // find out if we are removing min partition
