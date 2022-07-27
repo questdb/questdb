@@ -27,6 +27,8 @@ package io.questdb.cutlass.text;
 import io.questdb.Metrics;
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
 import io.questdb.griffin.*;
@@ -2453,6 +2455,57 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testImportIntoExistingTableWithIndex() throws Exception {
+        executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            compiler.compile("create table alltypes (\n" +
+                    "  bo boolean,\n" +
+                    "  by byte,\n" +
+                    "  sh short,\n" +
+                    "  ch char,\n" +
+                    "  in_ int,\n" +
+                    "  lo long,\n" +
+                    "  dat date, \n" +
+                    "  tstmp timestamp, \n" +
+                    "  ft float,\n" +
+                    "  db double,\n" +
+                    "  str string,\n" +
+                    "  sym symbol index,\n" +
+                    "  l256 long256," +
+                    "  ge geohash(20b)" +
+                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                indexer.of("alltypes", "test-alltypes.csv", PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
+                indexer.process();
+            }
+
+            // verify that the index is present
+            try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), "alltypes")) {
+                TableReaderMetadata metadata = reader.getMetadata();
+                int columnIndex = metadata.getColumnIndex("sym");
+                Assert.assertTrue("Column sym must exist", columnIndex >= 0);
+
+                BitmapIndexReader indexReader = reader.getBitmapIndexReader(0, columnIndex, BitmapIndexReader.DIR_FORWARD);
+                Assert.assertNotNull(indexReader);
+                Assert.assertTrue(indexReader.getKeyCount() > 0);
+                Assert.assertTrue(indexReader.getValueMemorySize() > 0);
+
+                // expect only the very first row in zero partition to have 'sy1' symbol value
+                StaticSymbolTable symbolTable = reader.getSymbolTable(columnIndex);
+                RowCursor ic = indexReader.getCursor(true, TableUtils.toIndexKey(symbolTable.keyOf("sy1")), 0, 1);
+                Assert.assertTrue(ic.hasNext());
+                Assert.assertEquals(0, ic.next());
+                Assert.assertFalse(ic.hasNext());
+            }
+
+            // run a query that uses the index
+            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
+                            "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
+                            "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
+                    "select * from alltypes where sym in ('sy1','sy10')", "tstmp", true, false, true);
+        });
+    }
+
+    @Test
     public void testImportCleansUpAllTemporaryFiles() throws Exception {
         executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table t ( ts timestamp, line string, description string, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
@@ -2469,7 +2522,6 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 MatcherAssert.assertThat(foundFiles, equalTo(new String[0]));
             }
         });
-
     }
 
     @Test
