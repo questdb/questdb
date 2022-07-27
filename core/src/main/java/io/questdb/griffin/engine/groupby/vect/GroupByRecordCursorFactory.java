@@ -211,7 +211,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         if (thread instanceof Worker) {
             workerId = ((Worker) thread).getWorkerId();
         } else {
-            workerId = 0;
+            workerId = pRosti.length - 1;//to avoid clashing with other worker with id=0 in tests 
         }
 
         try {
@@ -310,16 +310,26 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         continue;
                     }
                     long oldSize = Rosti.getAllocMemory(pRostiBig);
-                    vaf.merge(pRostiBig, pRosti[i]);
-                    Rosti.updateMemoryUsage(pRostiBig, oldSize);
-
-                    if (!Rosti.reset(pRosti[i], configuration.getGroupByMapCapacity())) {
+                    if (!vaf.merge(pRostiBig, pRosti[i])) {
                         Misc.free(cursor);
                         throw new OutOfMemoryError();
                     }
+                    Rosti.updateMemoryUsage(pRostiBig, oldSize);
                 }
                 vaf.wrapUp(pRostiBig);
             }
+
+            for (int i = 0, n = pRosti.length; i < n; i++) {
+                if (pRostiBig == pRosti[i]) {
+                    continue;
+                }
+
+                if (!Rosti.reset(pRosti[i], configuration.getGroupByMapCapacity())) {
+                    Misc.free(cursor);
+                    throw new OutOfMemoryError();
+                }
+            }
+
         } else {
             for (int j = 0; j < vafCount; j++) {
                 vafList.getQuick(j).wrapUp(pRostiBig);
