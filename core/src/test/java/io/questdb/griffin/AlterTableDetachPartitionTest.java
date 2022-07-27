@@ -345,6 +345,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
+                renameDetachedToAttachable(tableName, "2022-06-01", "2022-06-02");
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertContent(
                         "ts\tsi\ti\tl\ts\n" +
@@ -422,6 +423,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         .put(DETACHED_DIR_MARKER)
                         .$();
                 Assert.assertTrue(Files.exists(path));
+
+                renameDetachedToAttachable(tableName, timestampDay);
 
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
                 assertContent(
@@ -513,6 +516,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 dropCurrentVersionOfPartition(tableName, timestampDay);
+                renameDetachedToAttachable(tableName, timestampDay);
 
                 // reattach old version
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'");
@@ -611,6 +615,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 );
 
                 dropCurrentVersionOfPartition(tableName, timestampDay);
+                renameDetachedToAttachable(tableName, timestampDay);
 
                 // reattach old version
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
@@ -662,6 +667,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Assert.assertTrue(Files.remove(path));
                 path.parent().concat(COLUMN_VERSION_FILE_NAME).$();
                 Assert.assertTrue(Files.remove(path));
+                renameDetachedToAttachable(tableName, "2022-06-01", "2022-06-02");
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertContent(
                         "ts\ts1\ti\tl\ts2\n" +
@@ -746,17 +752,9 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 .col("l", ColumnType.LONG)
                                 .col("s2", ColumnType.SYMBOL)
                                 .col("ss", ColumnType.SHORT),
-                        1)
-                ;
-                compile("insert into " + brokenTableName + " " +
-                        "select " +
-                        "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
-                        "CAST(x AS SYMBOL) s1, " +
-                        "cast(x as int) i, " +
-                        "x l, " +
-                        "CAST(x*2 AS SYMBOL) s2, " +
-                        "x ss " +
-                        "from long_sequence(100))", sqlExecutionContext);
+                        1
+                );
+                TestUtils.insertFromSelectIntoTable(compiler, sqlExecutionContext, brokenMeta, 100, "2022-06-01", 3);
                 compile("ALTER TABLE " + brokenTableName + " ADD COLUMN s SHORT", sqlExecutionContext);
 
                 // detach partitions and override detached metadata with broken metadata
@@ -782,6 +780,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 Assert.assertTrue(Files.remove(path));
                 other.parent().concat(COLUMN_VERSION_FILE_NAME).$();
                 Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
+
+                renameDetachedToAttachable(tableName, "2022-06-02");
 
                 // attempt to reattach
                 compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-02'");
@@ -953,6 +953,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                         .$();
                 Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
 
+                renameDetachedToAttachable(tableName, "2022-06-02");
+
                 // attempt to reattach
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-02'",
@@ -972,6 +974,14 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '" + partitionName + "'", sqlExecutionContext);
         // resurface the hidden detached partition
         Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(other, path));
+    }
+
+    private void renameDetachedToAttachable(String tableName, String... partitions) {
+        for (String partition : partitions) {
+            path.of(configuration.getDetachedRoot()).concat(tableName).concat(partition).put(DETACHED_DIR_MARKER).$();
+            other.of(configuration.getDetachedRoot()).concat(tableName).concat(partition).put(ATTACHABLE_DIR_MARKER).$();
+            Assert.assertTrue(Files.rename(path, other) > -1);
+        }
     }
 
     private static void assertContent(String expected, String tableName) throws Exception {

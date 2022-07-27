@@ -641,6 +641,7 @@ public class TableWriter implements Closeable {
 
         if (txWriter.attachedPartitionsContains(timestamp)) {
             LOG.info().$("partition is already attached [path=").$(path).$(']').$();
+            // TODO: potentially we can merge with existing data
             return PARTITION_ALREADY_ATTACHED;
         }
 
@@ -658,7 +659,7 @@ public class TableWriter implements Closeable {
 
             if (!ff.exists(path)) {
                 setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
-                detachedPath.put(DETACHED_DIR_MARKER).slash$();
+                detachedPath.put(ATTACHABLE_DIR_MARKER).slash$();
                 if (ff.exists(detachedPath)) {
 
                     // check detached _meta and _cv
@@ -678,54 +679,49 @@ public class TableWriter implements Closeable {
                 }
             }
 
-            if (ff.exists(path)) {
-                // find out lo, hi ranges of partition attached as well as size
-                CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
-                final long partitionSize = readPartitionSizeMinMax(ff, path, timestampCol, tempMem16b, timestamp);
-                if (partitionSize > 0) {
-                    long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
-                    long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + Long.BYTES);
-                    assert timestamp <= minPartitionTimestamp && minPartitionTimestamp <= maxPartitionTimestamp;
-
-                    long nextMinTimestamp = Math.min(minPartitionTimestamp, txWriter.getMinTimestamp());
-                    long nextMaxTimestamp = Math.max(maxPartitionTimestamp, txWriter.getMaxTimestamp());
-                    boolean appendPartitionAttached = size() == 0 || getPartitionLo(nextMaxTimestamp) > getPartitionLo(txWriter.getMaxTimestamp());
-
-                    txWriter.beginPartitionSizeUpdate();
-                    txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, -1L);
-                    txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
-                    txWriter.bumpTruncateVersion();
-                    txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-                    if (appendPartitionAttached) {
-                        freeColumns(true);
-                        configureAppendPosition();
-                    }
-
-                    LOG.info().$("partition attached [path=").$(path).$(']').$();
-                    rollbackRename = false;
-                } else {
-                    LOG.error().$("cannot detect partition size [path=").$(path).$(",timestampColumn=").$(timestampCol).$(']').$();
-                    return PARTITION_EMPTY;
-                }
-            } else {
-                LOG.error().$("cannot attach missing partition [path=").$(path).$(']').$();
+            if (!ff.exists(path)) {
+                LOG.error().$("cannot attach missing partition [path=").$(detachedPath).$(']').$();
                 return PARTITION_CANNOT_ATTACH_MISSING;
             }
+
+            // find out lo, hi ranges of partition attached as well as size
+            CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
+            final long partitionSize = readPartitionSizeMinMax(ff, path, timestampCol, tempMem16b, timestamp);
+            long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
+            long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + Long.BYTES);
+            assert timestamp <= minPartitionTimestamp && minPartitionTimestamp <= maxPartitionTimestamp;
+
+            long nextMinTimestamp = Math.min(minPartitionTimestamp, txWriter.getMinTimestamp());
+            long nextMaxTimestamp = Math.max(maxPartitionTimestamp, txWriter.getMaxTimestamp());
+            boolean appendPartitionAttached = size() == 0 || getPartitionLo(nextMaxTimestamp) > getPartitionLo(txWriter.getMaxTimestamp());
+
+            txWriter.beginPartitionSizeUpdate();
+            txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, -1L);
+            txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
+            txWriter.bumpTruncateVersion();
+            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+            if (appendPartitionAttached) {
+                freeColumns(true);
+                configureAppendPosition();
+            }
+
+            LOG.info().$("partition attached [path=").$(path).$(']').$();
+            rollbackRename = false;
+            return StatusCode.OK;
         } finally {
             if (rollbackRename) {
                 // rename back to .detached
                 // otherwise it can be deleted on writer re-open
-                if (ff.rename(path.$(), detachedPath.$()) == Files.FILES_RENAME_OK) {
+                if (ff.rename(path, detachedPath) == Files.FILES_RENAME_OK) {
                     LOG.info().$("moved partition dir after failed attach attempt: ").$(path).$(" to ").$(detachedPath).$();
                 } else {
-                    LOG.info().$("file system error on trying to rename partition folder [errno=").$(ff.errno())
-                            .$(",from=").$(path).$(",to=").$(detachedPath).I$();
+                    LOG.info().$("fs error renaming partition folder [errno=").$(ff.errno())
+                            .$(", from=").$(path).$(", to=").$(detachedPath).I$();
                 }
             }
             path.trimTo(rootLen);
             detachedPath.trimTo(detachedRootLen);
         }
-        return StatusCode.OK;
     }
 
     public StatusCode detachPartition(long timestamp) {
@@ -4526,7 +4522,7 @@ public class TableWriter implements Closeable {
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
         if (Files.isDir(pUtf8NameZ, type, fileNameSink)) {
-            if (Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER)) {
+            if (Chars.endsWith(fileNameSink, DETACHED_DIR_MARKER) || Chars.endsWith(fileNameSink, ATTACHABLE_DIR_MARKER)) {
                 // Do not remove detached partitions
                 // They are probably about to be attached.
                 return;

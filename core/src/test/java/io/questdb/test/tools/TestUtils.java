@@ -741,6 +741,25 @@ public final class TestUtils {
         return sql.toString();
     }
 
+    public static void insertFromSelectIntoTable(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
+    ) throws NumericException, SqlException {
+        compiler.compile(
+                insertFromSelectPopulateTableStmt(
+                        tableModel,
+                        totalRows,
+                        startDate,
+                        partitionCount
+                ),
+                sqlExecutionContext
+        );
+    }
+
     public static String insertFromSelectPopulateTableStmt(
             TableModel tableModel,
             int totalRows,

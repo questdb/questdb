@@ -274,7 +274,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("i", ColumnType.INT)
                         .col("l", ColumnType.LONG));
 
-                copyPartitionToDetached(src.getName(), "2020-01-01", dst.getName(), "2020-01-02");
+                copyPartitionToAttachable(src.getName(), "2020-01-01", dst.getName(), "2020-01-02");
                 try {
                     String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'";
                     compile(alterCommand, sqlExecutionContext);
@@ -471,7 +471,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         .col("l", ColumnType.LONG));
 
                 long timestamp = TimestampFormatUtils.parseTimestamp("2020-01-09T00:00:00.000z");
-                copyPartitionToDetached(src.getName(), "2020-01-09", dst.getName(), "2020-01-09");
+                copyPartitionToAttachable(src.getName(), "2020-01-09", dst.getName(), "2020-01-09");
 
                 // Add 1 row without commit
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getName(), "testing")) {
@@ -784,7 +784,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
                     try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, dst.getTableName(), "testing")) {
                         writer.removePartition(timestamp);
-                        copyPartitionToDetached(src.getName(), "2020-01-09", dst.getName(), "2020-01-09");
+                        copyPartitionToAttachable(src.getName(), "2020-01-09", dst.getName(), "2020-01-09");
                         Assert.assertEquals(StatusCode.OK, writer.attachPartition(timestamp));
                     }
 
@@ -906,7 +906,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
         if (!skipCopy) {
             for (String partitionFolder : partitionList) {
-                copyPartitionToDetached(src.getName(), partitionFolder, dst.getName(), partitionFolder);
+                copyPartitionToAttachable(src.getName(), partitionFolder, dst.getName(), partitionFolder);
             }
         }
 
@@ -957,32 +957,32 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         );
     }
 
-    private void copyPartitionToDetached(String src, String srcDir, String dst, String dstDir) {
+    private void copyPartitionToAttachable(String src, String srcDir, String dst, String dstDir) {
         try (Path original = new Path().of(configuration.getRoot())
                 .concat(src)
                 .concat(srcDir)
                 .slash$();
-             Path detached = new Path().of(configuration.getDetachedRoot())
+             Path attachable = new Path().of(configuration.getDetachedRoot())
                      .concat(dst)
                      .concat(dstDir)
-                     .put(TableUtils.DETACHED_DIR_MARKER)
+                     .put(TableUtils.ATTACHABLE_DIR_MARKER)
                      .slash$()
         ) {
-            copyDirectory(original, detached);
+            copyDirectory(original, attachable);
 
-            if (!Files.exists(detached)) {
-                Assert.assertEquals(0, Files.mkdirs(detached, 509));
+            if (!Files.exists(attachable)) {
+                Assert.assertEquals(0, Files.mkdirs(attachable, 509));
             }
 
             // copy _meta
             Files.copy(
                     original.parent().parent().concat(TableUtils.META_FILE_NAME).$(),
-                    detached.parent().concat(TableUtils.META_FILE_NAME).$()
+                    attachable.parent().concat(TableUtils.META_FILE_NAME).$()
             );
             // copy _cv
             Files.copy(
                     original.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
-                    detached.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
+                    attachable.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
             );
         }
     }
