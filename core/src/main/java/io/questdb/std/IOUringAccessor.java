@@ -50,6 +50,7 @@ public class IOUringAccessor {
     static final short CQ_KHEAD_OFFSET;
     static final short CQ_KTAIL_OFFSET;
     static final short CQ_KRING_MASK_OFFSET;
+    static final short CQ_KRING_ENTRIES_OFFSET;
     static final short CQ_CQES_OFFSET;
 
     static final short SIZEOF_CQE;
@@ -80,6 +81,7 @@ public class IOUringAccessor {
         CQ_KHEAD_OFFSET = (short) (cqOffset + getCqKheadOffset());
         CQ_KTAIL_OFFSET = (short) (cqOffset + getCqKtailOffset());
         CQ_KRING_MASK_OFFSET = (short) (cqOffset + getCqKringMaskOffset());
+        CQ_KRING_ENTRIES_OFFSET = (short) (sqOffset + getCqKringEntriesOffset());
         CQ_CQES_OFFSET = (short) (cqOffset + getCqCqesOffset());
 
         SIZEOF_CQE = getCqeSize();
@@ -136,6 +138,8 @@ public class IOUringAccessor {
     static native short getCqKtailOffset();
 
     static native short getCqKringMaskOffset();
+
+    static native short getCqKringEntriesOffset();
 
     static native short getCqCqesOffset();
 

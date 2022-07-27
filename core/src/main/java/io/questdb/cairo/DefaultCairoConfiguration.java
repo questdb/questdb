@@ -818,4 +818,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public boolean isIOURingEnabled() {
         return true;
     }
+
+    @Override
+    public int getMaxCrashFiles() {
+        return 1;
+    }
 }
