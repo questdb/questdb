@@ -401,6 +401,7 @@ public class AbstractCairoTest {
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
         ioURingEnabled = null;
         parallelImportStatusLogKeepNDays = -1;
+        defaultTableWriteMode = -1;
     }
 
     protected static void configureForBackups() throws IOException {
