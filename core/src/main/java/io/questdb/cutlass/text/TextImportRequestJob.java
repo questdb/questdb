@@ -27,6 +27,8 @@ package io.questdb.cutlass.text;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -38,14 +40,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -66,17 +64,15 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private final StringSink idSink = new StringSink();
     private final LongList partitionsToRemove = new LongList();
     private final TextImportExecutionContext textImportExecutionContext;
-    private final int sqlCopyBufferSize;
-    private final CharSequence sqlCopyInputRoot;
-    private TextLoader textLoader;
     private TableWriter writer;
     private SqlCompiler sqlCompiler;
     private SqlExecutionContextImpl sqlExecutionContext;
     private TextImportRequestTask task;
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
     private Path path;
-    private ParallelCsvFileImporter importer;
-    private final FilesFacade ff;
+    private ParallelCsvFileImporter parallelImporter;
+    private final CairoEngine engine;
+    private SerialCsvFileImporter serialImporter;
 
 
     public TextImportRequestJob(
@@ -86,7 +82,8 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     ) throws SqlException {
         this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();
         this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
-        this.importer = new ParallelCsvFileImporter(engine, workerCount);
+        this.parallelImporter = new ParallelCsvFileImporter(engine, workerCount);
+        this.serialImporter = new SerialCsvFileImporter(engine);
 
         CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
@@ -111,21 +108,18 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         this.rnd = new Rnd(this.clock.getTicks(), this.clock.getTicks());
         this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
         this.textImportExecutionContext = engine.getTextImportExecutionContext();
-        this.textLoader = new TextLoader(engine);
-        this.sqlCopyBufferSize = configuration.getSqlCopyBufferSize();
-        this.sqlCopyInputRoot = configuration.getSqlCopyInputRoot();
         this.path = new Path();
-        this.ff = configuration.getFilesFacade();
+        this.engine = engine;
         enforceLogRetention();
     }
 
     @Override
     public void close() throws IOException {
-        this.importer = Misc.free(importer);
+        this.parallelImporter = Misc.free(parallelImporter);
+        this.serialImporter = Misc.free(serialImporter);
         this.writer = Misc.free(this.writer);
         this.sqlCompiler = Misc.free(sqlCompiler);
         this.sqlExecutionContext = Misc.free(sqlExecutionContext);
-        this.textLoader = Misc.free(textLoader);
         this.path = Misc.free(path);
     }
 
@@ -146,6 +140,22 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         }
     }
 
+    private boolean existsTargetTableAndPartitioned() {
+        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, task.getTableName()) != TableUtils.TABLE_EXISTS) {
+            return false;
+        }
+        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), task.getTableName())) {
+            return reader.getPartitionedBy() != PartitionBy.NONE;
+        }
+    }
+
+    private boolean useParallelImport() {
+        if (task.getTimestampColumnName() != null) {
+            return true;
+        }
+        return existsTargetTableAndPartitioned();
+    }
+
     @Override
     protected boolean runSerially() {
         long cursor = requestSubSeq.next();
@@ -154,8 +164,8 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             Numbers.appendHex(idSink, rnd.nextPositiveLong(), true);
             task = requestQueue.get(cursor);
             try {
-                if (task.getTimestampColumnName() != null) {
-                    importer.of(
+                if (useParallelImport()) {
+                    parallelImporter.of(
                             task.getTableName(),
                             task.getFileName(),
                             task.getPartitionBy(),
@@ -165,54 +175,20 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                             task.isHeaderFlag(),
                             textImportExecutionContext.getCircuitBreaker()
                     );
-                    importer.setStatusReporter(updateStatusRef);
-                    importer.process();
+                    parallelImporter.setStatusReporter(updateStatusRef);
+                    parallelImporter.process();
                 } else {
-                    // todo: extract this into SerialCsvFileImporter
-                    long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_PARALLEL_IMPORT);
-                    setupTextLoaderFromModel();
-                    path.of(sqlCopyInputRoot).concat(task.getFileName()).$();
-                    long fd = ff.openRO(path);
-                    AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
-                    try {
-                        updateStatusRef.report(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, TextImportTask.STATUS_STARTED, null);
-                        if (fd == -1) {
-                            throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
-                        }
-
-                        long fileLen = ff.length(fd);
-                        long n = ff.read(fd, buf, sqlCopyBufferSize, 0);
-                        if (n > 0) {
-                            textLoader.setForceHeaders(task.isHeaderFlag());
-                            textLoader.setSkipRowsWithExtraValues(false);
-                            textLoader.parse(buf, buf + n, sqlExecutionContext.getCairoSecurityContext());
-                            textLoader.setState(TextLoader.LOAD_DATA);
-                            int read;
-                            updateStatusRef.report(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, TextImportTask.STATUS_FINISHED, null);
-                            updateStatusRef.report(TextImportTask.PHASE_PARTITION_IMPORT, TextImportTask.STATUS_STARTED, null);
-                            while (n < fileLen) {
-                                if (circuitBreaker.checkIfTripped()) {
-                                    TextImportException ex = TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT, "import was cancelled");
-                                    ex.setCancelled(true);
-                                    throw ex;
-                                }
-                                read = (int) ff.read(fd, buf, sqlCopyBufferSize, n);
-                                if (read < 1) {
-                                    throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT, "could not read file [errno=").put(ff.errno()).put(']');
-                                }
-                                textLoader.parse(buf, buf + read, sqlExecutionContext.getCairoSecurityContext());
-                                n += read;
-                            }
-                            textLoader.wrapUp();
-                            updateStatusRef.report(TextImportTask.PHASE_PARTITION_IMPORT, TextImportTask.STATUS_FINISHED, null);
-                        }
-                    } finally {
-                        if (fd != -1) {
-                            ff.close(fd);
-                        }
-                        textLoader.clear();
-                        Unsafe.free(buf, sqlCopyBufferSize, MemoryTag.NATIVE_PARALLEL_IMPORT);
-                    }
+                    serialImporter.of(
+                            task.getTableName(),
+                            task.getFileName(),
+                            task.getPartitionBy(),
+                            task.getTimestampColumnName(),
+                            task.isHeaderFlag(),
+                            task.getAtomicity(),
+                            textImportExecutionContext.getCircuitBreaker()
+                    );
+                    serialImporter.setStatusReporter(updateStatusRef);
+                    serialImporter.process();
                 }
             } catch (TextImportException e) {
                 updateStatus(
@@ -228,20 +204,6 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             return true;
         }
         return false;
-    }
-
-    private void setupTextLoaderFromModel() {
-        // todo: this is a copy&paste from SqlCompiler!
-        textLoader.clear();
-        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        // todo: configure the following
-        //   - what happens when data row errors out, max errors may be?
-        //   - we should be able to skip X rows from top, dodgy headers etc.
-
-        textLoader.configureDestination(task.getTableName(), false, false,
-                task.getAtomicity() != -1 ? task.getAtomicity() : Atomicity.SKIP_ROW,
-                task.getPartitionBy() < 0 ? PartitionBy.NONE : task.getPartitionBy(),
-                task.getTimestampColumnName());
     }
 
     private void updateStatus(byte phase, byte status, final CharSequence msg) {
