@@ -313,8 +313,6 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "detach partition")) {
                     StatusCode statusCode = writer.detachPartition(timestamp);
                     Assert.assertEquals(StatusCode.PARTITION_FOLDER_CANNOT_UNDO_RENAME, statusCode);
-                } finally {
-                    AbstractCairoTest.ff = null;
                 }
                 try {
                     assertContent("does not matter", tableName);
@@ -360,6 +358,31 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 "2022-06-03T16:47:59.100000Z\tPEHN\t9\t9\tRXGZ\n" +
                                 "2022-06-03T23:59:59.000000Z\tVTJW\t10\t10\tIBBT\n",
                         tableName
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDetachAttachPartitionFailsYouDidNotRenameTheFolderToAttachable() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tabDetachAttachNotAttachable";
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(tab
+                                .timestamp("ts")
+                                .col("si", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
+                );
+
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
+                assertFailure(
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
+                        "attach partition failed, folder '2022-06-01' does not exist"
                 );
             }
         });
@@ -536,6 +559,71 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                                 "12\t12\t2022-06-04T23:59:58.999992Z\n",
                         tableName
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testAttachWillFailIfThePartitionWasRecreated() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "tabTimeTravel";
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                String timestampDay = "2022-06-01";
+                createPopulateTable(tab
+                                .col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts"),
+                        12,
+                        timestampDay,
+                        4);
+                assertContent(
+                        "l\ti\tts\n" +
+                                "1\t1\t2022-06-01T07:59:59.916666Z\n" +
+                                "2\t2\t2022-06-01T15:59:59.833332Z\n" +
+                                "3\t3\t2022-06-01T23:59:59.749998Z\n" +
+                                "4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                                "5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                                "6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                                "7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                                "8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                                "9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                                "10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                                "11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                                "12\t12\t2022-06-04T23:59:58.999992Z\n",
+                        tableName
+                );
+
+                // drop the partition
+                compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "'", sqlExecutionContext);
+
+                // insert data, which will create the partition again
+                engine.clear();
+                long timestamp = TimestampFormatUtils.parseTimestamp(timestampDay + "T09:59:59.999999Z");
+                try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "testing")) {
+                    TableWriter.Row row = writer.newRow(timestamp);
+                    row.putLong(0, 137L);
+                    row.putInt(1, 137);
+                    row.append();
+                    writer.commit();
+                }
+                String expected = "l\ti\tts\n" +
+                        "137\t137\t2022-06-01T09:59:59.999999Z\n" +
+                        "4\t4\t2022-06-02T07:59:59.666664Z\n" +
+                        "5\t5\t2022-06-02T15:59:59.583330Z\n" +
+                        "6\t6\t2022-06-02T23:59:59.499996Z\n" +
+                        "7\t7\t2022-06-03T07:59:59.416662Z\n" +
+                        "8\t8\t2022-06-03T15:59:59.333328Z\n" +
+                        "9\t9\t2022-06-03T23:59:59.249994Z\n" +
+                        "10\t10\t2022-06-04T07:59:59.166660Z\n" +
+                        "11\t11\t2022-06-04T15:59:59.083326Z\n" +
+                        "12\t12\t2022-06-04T23:59:58.999992Z\n";
+                assertContent(expected, tableName);
+                renameDetachedToAttachable(tableName, timestampDay);
+                assertFailure(
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
+                        "failed to attach partition '2022-06-01', partition already attached to the table"
+                );
+                assertContent(expected, tableName);
             }
         });
     }
