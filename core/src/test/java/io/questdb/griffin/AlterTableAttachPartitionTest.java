@@ -975,15 +975,15 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
 
             // copy _meta
-            Assert.assertEquals(0, Files.copy(
+            Files.copy(
                     original.parent().parent().concat(TableUtils.META_FILE_NAME).$(),
                     detached.parent().concat(TableUtils.META_FILE_NAME).$()
-            ));
+            );
             // copy _cv
-            Assert.assertEquals(0, Files.copy(
+            Files.copy(
                     original.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
                     detached.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
-            ));
+            );
         }
     }
 
