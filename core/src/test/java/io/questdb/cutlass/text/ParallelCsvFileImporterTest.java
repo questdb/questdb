@@ -910,7 +910,8 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
         });
     }
 
-    @Test//missing symbols column is filled with nulls
+    @Test
+    //missing symbols column is filled with nulls
     public void testImportCsvWithMissingAndReorderedSymbolColumns() throws Exception {
         executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table tab (other symbol, txt symbol, line symbol, ts timestamp, d symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
