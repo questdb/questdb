@@ -1120,6 +1120,27 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testRostiWithManyAggregateFunctions() throws Exception {
+        executeWithPool(4, 32, KeyedAggregationTest::runGroupByIntWithAgg);
+    }
+
+    private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        compiler.compile("create table tab as ( select cast(x as int) i, cast(x as date) dat, cast(x as timestamp) ts, cast(x as double) d, rnd_long256() l256  from long_sequence(1000));", sqlExecutionContext);
+
+        CompiledQuery query = compiler.compile("select count(*) cnt from (select i, count(*), min(i), avg(i), max(i), sum(i), " +
+                "min(dat), avg(dat), max(dat), sum(dat), " +
+                "min(ts), avg(ts), max(ts), sum(ts), " +
+                "min(d), avg(d), max(d), sum(d), nsum(d), ksum(d)," +
+                "sum(l256) from tab group by i )", sqlExecutionContext);
+
+        try {
+            assertCursor("cnt\n1000\n", query.getRecordCursorFactory(), false, true, true, false, sqlExecutionContext);
+        } finally {
+            Misc.free(query.getRecordCursorFactory());
+        }
+    }
+
+    @Test
     public void testRostiWithManyWorkers() throws Exception {
         executeWithPool(4, 32, KeyedAggregationTest::runGroupByTest);
     }
