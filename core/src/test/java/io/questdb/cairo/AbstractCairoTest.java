@@ -397,8 +397,10 @@ public class AbstractCairoTest {
         columnVersionPurgeQueueCapacity = -1;
         columnVersionTaskPoolCapacity = -1;
         rostiAllocFacade = null;
-        ioURingFacade = IOURingFacadeImpl.INSTANCE;
         sqlCopyBufferSize = 1024 * 1024;
+        ioURingFacade = IOURingFacadeImpl.INSTANCE;
+        ioURingEnabled = null;
+        parallelImportStatusLogKeepNDays = -1;
     }
 
     protected static void configureForBackups() throws IOException {
