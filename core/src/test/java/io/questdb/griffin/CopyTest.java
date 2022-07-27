@@ -376,7 +376,7 @@ public class CopyTest extends AbstractGriffinTest {
         );
 
         ParallelCopyRunnable test = () -> assertQuery("stage\tstatus\trows_handled\trows_imported\terrors\n" +
-                        "\tSTARTED\t0\t0\t0\n" +
+                        "\tSTARTED\tNaN\tNaN\t0\n" +
                         "ANALYZE_FILE_STRUCTURE\tSTARTED\tNaN\tNaN\t0\n" +
                         "ANALYZE_FILE_STRUCTURE\tFINISHED\tNaN\tNaN\t0\n" +
                         "BOUNDARY_CHECK\tSTARTED\tNaN\tNaN\t0\n" +

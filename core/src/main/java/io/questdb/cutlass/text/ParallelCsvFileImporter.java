@@ -363,7 +363,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         long fd = -1;
         try {
             try {
-                updateImportStatus(TextImportTask.STATUS_STARTED, null);
+                updateImportStatus(TextImportTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
 
                 try {
                     fd = TableUtils.openRO(ff, inputFilePath, LOG);
@@ -390,7 +390,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         cleanUp(writer);
                         throw t;
                     }
-                    updateImportStatus(TextImportTask.STATUS_FINISHED, null);
+                    updateImportStatus(TextImportTask.STATUS_FINISHED, rowsHandled, rowsImported, errors);
                 } catch (Throwable t) {
                     cleanUp();
                     throw t;
@@ -429,9 +429,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.statusReporter = reporter;
     }
 
-    public void updateImportStatus(byte status, @Nullable final CharSequence msg) {
+    public void updateImportStatus(byte status, long rowsHandled, long rowsImported, int errors) {
         if (this.statusReporter != null) {
-            this.statusReporter.report(TextImportTask.NO_PHASE, status, msg, rowsHandled, rowsImported, errors);
+            this.statusReporter.report(TextImportTask.NO_PHASE, status, null, rowsHandled, rowsImported, errors);
         }
     }
 
