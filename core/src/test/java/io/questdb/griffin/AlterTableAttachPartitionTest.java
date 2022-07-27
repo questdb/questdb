@@ -685,14 +685,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             @Override
             public long openRO(LPSZ name) {
                 long fd = super.openRO(name);
-                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
+                if (Chars.contains(name, "ts") && counter.decrementAndGet() == 0) {
                     this.tsdFd = fd;
                 }
                 return fd;
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "could not mmap");
+        testSqlFailedOnFsOperation(ff);
     }
 
     @Test
@@ -717,14 +717,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ name) {
-                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
+                if (Chars.contains(name, "ts") && counter.decrementAndGet() == 0) {
                     return false;
                 }
                 return super.exists(name);
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [0] path does not exist");
+        testSqlFailedOnFsOperation(ff);
     }
 
     @Test
