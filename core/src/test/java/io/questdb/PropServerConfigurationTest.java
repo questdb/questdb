@@ -37,9 +37,11 @@ import io.questdb.network.SelectFacadeImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.tools.TestUtils;
+import org.hamcrest.MatcherAssert;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
 
@@ -49,6 +51,8 @@ import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+
+import static org.hamcrest.CoreMatchers.*;
 
 public class PropServerConfigurationTest {
 
@@ -92,7 +96,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
-        Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getSleepMs());
+        Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getSleepTimeout());
 
         // this is going to need interesting validation logic
         // configuration path is expected to be relative, and we need to check if absolute path is good
@@ -155,7 +159,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
-        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSpinLockTimeoutUs());
+        Assert.assertEquals(1_000, configuration.getCairoConfiguration().getSpinLockTimeout());
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlColumnPoolCapacity());
@@ -194,6 +198,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
         Assert.assertEquals(1, configuration.getCairoConfiguration().getPartitionPurgeListCapacity());
         Assert.assertEquals(CairoConfiguration.O_NONE, configuration.getCairoConfiguration().getWriterFileOpenOpts());
+        Assert.assertTrue(configuration.getCairoConfiguration().isIOURingEnabled());
 
         Assert.assertEquals(0, configuration.getLineUdpReceiverConfiguration().getBindIPv4Address());
         Assert.assertEquals(9009, configuration.getLineUdpReceiverConfiguration().getPort());
@@ -287,8 +292,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
         Assert.assertEquals(2048, configuration.getCairoConfiguration().getWriterCommandQueueSlotSize());
-        Assert.assertEquals(500_000, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
-        Assert.assertEquals(30_000_000, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
+        Assert.assertEquals(500, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
+        Assert.assertEquals(30_000, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
         Assert.assertEquals(1023, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
@@ -639,7 +644,7 @@ public class PropServerConfigurationTest {
 
             Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
             Assert.assertEquals(100000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
-            Assert.assertEquals(1000, configuration.getWorkerPoolConfiguration().getSleepMs());
+            Assert.assertEquals(1000, configuration.getWorkerPoolConfiguration().getSleepTimeout());
 
             Assert.assertEquals(new File(root, "public_ok").getAbsolutePath(),
                     configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getPublicDirectory());
@@ -696,7 +701,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(509, configuration.getCairoConfiguration().getMkDirMode());
             Assert.assertEquals(1000000, configuration.getCairoConfiguration().getParallelIndexThreshold());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
-            Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getSpinLockTimeoutUs());
+            Assert.assertEquals(5_000_000, configuration.getCairoConfiguration().getSpinLockTimeout());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlCharacterStoreCapacity());
             Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
             Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlColumnPoolCapacity());
@@ -742,6 +747,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(7770001, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
             Assert.assertEquals(15, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
             Assert.assertEquals(CairoConfiguration.O_DIRECT | CairoConfiguration.O_SYNC, configuration.getCairoConfiguration().getWriterFileOpenOpts());
+            Assert.assertFalse(configuration.getCairoConfiguration().isIOURingEnabled());
 
             Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCommitLag());
             Assert.assertEquals(100000, configuration.getCairoConfiguration().getMaxUncommittedRows());
@@ -1053,5 +1059,52 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.integer.default.column.type", "BITE");
         configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
+    }
+
+    @Test
+    public void testImportWorkRootCantBeTheSameAsOtherInstanceDirectories() throws JsonException, ServerConfigurationException {
+        Properties properties = new Properties();
+
+        PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        MatcherAssert.assertThat(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot(), is(nullValue()));
+
+        //direct cases 
+        assertInputWorkRootCantBeSetTo(properties, root);
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toString());
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getSnapshotRoot().toString());
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getConfRoot().toString());
+
+        //relative cases
+        assertInputWorkRootCantBeSetTo(properties, getRelativePath(root));
+        assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getRoot().toString()));
+        assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getSnapshotRoot().toString()));
+        assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getConfRoot().toString()));
+    }
+
+    @Test
+    public void testImportWorkRootCantBeTheSameAsOtherInstanceDirectories2() throws JsonException, ServerConfigurationException {
+        Assume.assumeTrue(Os.type == Os.WINDOWS);
+
+        Properties properties = new Properties();
+
+        PropServerConfiguration configuration = new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+        MatcherAssert.assertThat(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot(), is(nullValue()));
+
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toString().toUpperCase());
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toString().toLowerCase());
+    }
+
+    private String getRelativePath(String path) {
+        return path + File.separator + ".." + File.separator + new File(path).getName();
+    }
+
+    private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws JsonException {
+        try {
+            properties.setProperty(PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath(), value);
+            new PropServerConfiguration(root, properties, null, LOG, new BuildInformationHolder());
+            Assert.fail("Should fail for " + value);
+        } catch (ServerConfigurationException e) {
+            MatcherAssert.assertThat(e.getMessage(), containsString("cairo.sql.copy.work.root can't point to root, data, conf or snapshot dirs"));
+        }
     }
 }

@@ -45,10 +45,12 @@ import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.Timeout;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class DispatcherWriterQueueTest {
@@ -58,6 +60,12 @@ public class DispatcherWriterQueueTest {
     private SqlCompiler compiler;
     private SqlExecutionContextImpl sqlExecutionContext;
     private Error error = null;
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     public void setupSql(CairoEngine engine) {
         compiler = new SqlCompiler(engine);
@@ -110,8 +118,8 @@ public class DispatcherWriterQueueTest {
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
                 )
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
-                .withAlterTableStartWaitTimeout(30_000_000)
-                .withAlterTableMaxWaitTimeout(50_000_000)
+                .withAlterTableStartWaitTimeout(30_000)
+                .withAlterTableMaxWaitTimeout(50_000)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
@@ -162,8 +170,8 @@ public class DispatcherWriterQueueTest {
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
                 )
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
-                .withAlterTableStartWaitTimeout(30_000_000)
-                .withAlterTableMaxWaitTimeout(50_000_000)
+                .withAlterTableStartWaitTimeout(30_000)
+                .withAlterTableMaxWaitTimeout(50_000)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
@@ -195,15 +203,15 @@ public class DispatcherWriterQueueTest {
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
                 )
-                .withAlterTableStartWaitTimeout(500_000)
-                .withAlterTableMaxWaitTimeout(10_000)
+                .withAlterTableStartWaitTimeout(100)
+                .withAlterTableMaxWaitTimeout(10)
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(alterAckReceived))
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
                         if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "\\default\\s.v")) {
                             alterAckReceived.await();
-                            Os.sleep(600);
+                            Os.sleep(500);
                         }
                         return super.openRW(name, opts);
                     }
@@ -228,7 +236,7 @@ public class DispatcherWriterQueueTest {
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
                 )
-                .withAlterTableStartWaitTimeout(30_000_000)
+                .withAlterTableStartWaitTimeout(30_000)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
@@ -262,7 +270,7 @@ public class DispatcherWriterQueueTest {
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
                 )
-                .withAlterTableStartWaitTimeout(30_000_000);
+                .withAlterTableStartWaitTimeout(30_000);
 
         runUpdateOnBusyTable((writer, rdr) ->
                         TestUtils.assertReader(
@@ -356,12 +364,12 @@ public class DispatcherWriterQueueTest {
 
     @Test
     public void testUpdateSucceedsAfterReaderOutOfDateException() throws Exception {
-        testUpdateSucceedsAfterReaderOutOfDateException(1, 30_000_000L);
+        testUpdateSucceedsAfterReaderOutOfDateException(1, 30_000L);
     }
 
     @Test
     public void testUpdateContinuesAfterStartTimeoutExpiredAndSucceedsAfterReaderOutOfDateException() throws Exception {
-        testUpdateSucceedsAfterReaderOutOfDateException(2, 1_000_000L);
+        testUpdateSucceedsAfterReaderOutOfDateException(2, 1_000L);
     }
 
     @Test
@@ -371,16 +379,18 @@ public class DispatcherWriterQueueTest {
 
     @Test
     public void testUpdateFailsAfterReaderOutOfDateException() throws Exception {
-        testUpdateFailsAfterReaderOutOfDateException(1, 30_000_000L);
+        testUpdateFailsAfterReaderOutOfDateException(1, 30_000L);
     }
 
     @Test
     public void testUpdateContinuesAfterStartTimeoutExpiredAndFailsAfterReaderOutOfDateException() throws Exception {
-        testUpdateFailsAfterReaderOutOfDateException(2, 1_000_000L);
+        testUpdateFailsAfterReaderOutOfDateException(2, 1_000L);
     }
 
-    private void testUpdateSucceedsAfterReaderOutOfDateException(int updateScheduledCount,
-                                                                 long startWaitTimeout) throws Exception {
+    private void testUpdateSucceedsAfterReaderOutOfDateException(
+            int updateScheduledCount,
+            long startWaitTimeout
+    ) throws Exception {
         SOCountDownLatch updateScheduled = new SOCountDownLatch(updateScheduledCount);
 
         testUpdateAfterReaderOutOfDateException(
@@ -409,12 +419,14 @@ public class DispatcherWriterQueueTest {
                 updateScheduled,
                 startWaitTimeout,
                 null,
-                120_000_000_000L,
+                120_000_000L,
                 9);
     }
 
-    private void testUpdateFailsAfterReaderOutOfDateException(int updateScheduledCount,
-                                                              long startWaitTimeout) throws Exception {
+    private void testUpdateFailsAfterReaderOutOfDateException(
+            int updateScheduledCount,
+            long startWaitTimeout
+    ) throws Exception {
         final SOCountDownLatch updateScheduled = new SOCountDownLatch(updateScheduledCount);
 
         testUpdateAfterReaderOutOfDateException(
@@ -459,13 +471,15 @@ public class DispatcherWriterQueueTest {
                 0);
     }
 
-    private void testUpdateAfterReaderOutOfDateException(AlterVerifyAction alterVerifyAction,
-                                                         OnTickAction onTick,
-                                                         SOCountDownLatch updateScheduled,
-                                                         long startWaitTimeout,
-                                                         String errorHeader,
-                                                         long statementTimeout,
-                                                         int updatedCount) throws Exception {
+    private void testUpdateAfterReaderOutOfDateException(
+            AlterVerifyAction alterVerifyAction,
+            OnTickAction onTick,
+            SOCountDownLatch updateScheduled,
+            long startWaitTimeout,
+            String errorHeader,
+            long statementTimeout,
+            int updatedCount
+    ) throws Exception {
         final SOCountDownLatch updateAckReceived = new SOCountDownLatch(1);
 
         final HttpQueryTestBuilder queryTestBuilder = new HttpQueryTestBuilder()
@@ -476,7 +490,7 @@ public class DispatcherWriterQueueTest {
                 )
                 .withQueryFutureUpdateListener(waitUntilCommandStarted(updateAckReceived, updateScheduled))
                 .withAlterTableStartWaitTimeout(startWaitTimeout)
-                .withAlterTableMaxWaitTimeout(50_000_000L)
+                .withAlterTableMaxWaitTimeout(50_000L)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {
@@ -487,8 +501,17 @@ public class DispatcherWriterQueueTest {
                     }
                 });
 
-        runUpdateOnBusyTable(alterVerifyAction, onTick, 0, queryTestBuilder, null, errorHeader,
-                statementTimeout, updatedCount, URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8.toString()));
+        runUpdateOnBusyTable(
+                alterVerifyAction,
+                onTick,
+                0,
+                queryTestBuilder,
+                null,
+                errorHeader,
+                statementTimeout,
+                updatedCount,
+                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8.toString())
+        );
     }
 
     private void runAlterOnBusyTable(
@@ -503,7 +526,7 @@ public class DispatcherWriterQueueTest {
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
                 )
-                .withAlterTableStartWaitTimeout(30_000_000);
+                .withAlterTableStartWaitTimeout(30_000);
 
         runAlterOnBusyTable(alterVerifyAction, errorsExpected, queryTestBuilder, null, httpAlterQueries);
     }
@@ -518,7 +541,7 @@ public class DispatcherWriterQueueTest {
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder().withReceiveBufferSize(50)
                 )
-                .withAlterTableStartWaitTimeout(30_000_000)
+                .withAlterTableStartWaitTimeout(30_000)
                 .withFilesFacade(new FilesFacadeImpl() {
                     @Override
                     public long openRW(LPSZ name, long opts) {

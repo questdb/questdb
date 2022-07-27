@@ -41,6 +41,7 @@ import org.junit.ComparisonFailure;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.Timeout;
 
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
@@ -135,6 +136,12 @@ public class RetryIODispatcherTest {
             "\r\n";
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @Test
     public void testImportProcessedWhenClientDisconnectedLoop() throws Exception {

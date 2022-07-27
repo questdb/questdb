@@ -829,7 +829,12 @@ class SqlOptimiser {
         if (n > 0) {
             final IntList orderByDirection = model.getOrderByDirection();
             for (int i = 0; i < n; i++) {
-                hash.put(orderBy.getQuick(i).token, orderByDirection.getQuick(i));
+                // if a column appears multiple times in the ORDER BY clause then we use only the first occurrence.
+                // why? consider this clause: ORDER BY A DESC, A ASC. In this case we want to order to be "A DESC" only.
+                // why? "A ASC" is a lower in priority, and it's applicable if and only if the items within first clause
+                // are equal. but if the items are already equal then there is no point in ordering by the same column again.
+                // unconditional put() would be a bug as a lower priority ordering would replace ordering with a higher priority.
+                hash.putIfAbsent(orderBy.getQuick(i).token, orderByDirection.getQuick(i));
             }
         }
 

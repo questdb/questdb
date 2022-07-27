@@ -47,7 +47,7 @@ public interface WorkerPoolConfiguration {
         return 10000;
     }
 
-    default long getSleepMs() {
+    default long getSleepTimeout() {
         return 100;
     }
 }

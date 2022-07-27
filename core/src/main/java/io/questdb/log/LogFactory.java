@@ -139,14 +139,15 @@ public class LogFactory implements Closeable {
         }
 
         boolean initialized = false;
-        String logDir = rootDir != null ? Paths.get(rootDir, "log").toString() : "log";
-        File logDirFile = new File(logDir);
-
-        if (!logDirFile.exists() && logDirFile.mkdir()) {
-            System.err.printf("Created log directory: %s%n", logDir);
-        }
-
+        // prevent creating blank log dir from unit tests
+        String logDir = ".";
         if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
+            logDir = Paths.get(rootDir, "log").toString();
+            File logDirFile = new File(logDir);
+            if (!logDirFile.exists() && logDirFile.mkdir()) {
+                System.err.printf("Created log directory: %s%n", logDir);
+            }
+
             String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toString();
             File f = new File(logPath);
             if (f.isFile() && f.canRead()) {
@@ -194,10 +195,6 @@ public class LogFactory implements Closeable {
             }
         }
         factory.startThread();
-    }
-
-    public static void configureFromSystemProperties(WorkerPool workerPool) {
-        configureFromSystemProperties(INSTANCE, workerPool);
     }
 
     public static void configureSync() {
@@ -265,6 +262,31 @@ public class LogFactory implements Closeable {
         haltThread();
         for (int i = 0, n = jobs.size(); i < n; i++) {
             Misc.free(jobs.get(i));
+        }
+        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+            Misc.free(scopeConfigs.getQuick(i));
+        }
+    }
+
+    /**
+     * Flush remaining log lines and close
+     */
+    public void flushJobsAndClose() {
+        haltThread();
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            LogWriter job = jobs.get(i);
+            if (job != null) {
+                try {
+                    // noinspection StatementWithEmptyBody
+                    while (job.run(0)) {
+                        // Keep running the job until it returns false to log all the buffered messages
+                    }
+                } catch (Exception th) {
+                    // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                    // Switch to the next job.
+                }
+                Misc.free(job);
+            }
         }
         for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
             Misc.free(scopeConfigs.getQuick(i));

@@ -34,6 +34,7 @@
 #include <sys/stat.h>
 #include <sys/fcntl.h>
 #include <sys/vfs.h>
+#include <fcntl.h>
 
 static inline jlong _io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
@@ -80,6 +81,19 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     close(output);
 
     return result;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fadvise0
+        (JNIEnv *e, jclass cls, jlong fd, jlong offset, jlong len, jint advise) {
+    return posix_fadvise((int) fd, (off_t) offset, (off_t) len, advise);
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixFadvRandom(JNIEnv *e, jclass cls) {
+    return POSIX_FADV_RANDOM;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_getPosixFadvSequential(JNIEnv *e, jclass cls) {
+    return POSIX_FADV_SEQUENTIAL;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus

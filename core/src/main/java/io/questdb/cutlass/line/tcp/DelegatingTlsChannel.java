@@ -26,7 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.Sender;
+import io.questdb.client.Sender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;

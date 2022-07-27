@@ -37,11 +37,39 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 
-public class IOUringTest {
+public class IOURingImplTest {
 
+    private static final IOURingFacade rf = new IOURingFacadeImpl();
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
-    private static final IOUringFacade rf = new IOUringFacadeImpl();
+
+    @Test(expected = CairoException.class)
+    public void testFailsToInit() {
+        final IOURingFacade rf = new IOURingFacadeImpl() {
+            @Override
+            public long create(int capacity) {
+                return -42;
+            }
+        };
+        try (IOURing ignored = rf.newInstance(32)) {
+            Assert.fail();
+        }
+    }
+
+    @Test
+    public void testIsAvailableOn() {
+        Assert.assertFalse(IOURingFacadeImpl.isAvailableOn("6.1"));
+        Assert.assertFalse(IOURingFacadeImpl.isAvailableOn("4.0.0"));
+        Assert.assertFalse(IOURingFacadeImpl.isAvailableOn("5.0.0"));
+        Assert.assertFalse(IOURingFacadeImpl.isAvailableOn("5.1.0"));
+        Assert.assertFalse(IOURingFacadeImpl.isAvailableOn("5.10.2"));
+
+        Assert.assertTrue(IOURingFacadeImpl.isAvailableOn("5.12.0"));
+        Assert.assertTrue(IOURingFacadeImpl.isAvailableOn("5.14.0-1044-oem"));
+        Assert.assertTrue(IOURingFacadeImpl.isAvailableOn("5.13.1"));
+        Assert.assertTrue(IOURingFacadeImpl.isAvailableOn("6.2.2"));
+        Assert.assertTrue(IOURingFacadeImpl.isAvailableOn("7.1.1"));
+    }
 
     @Test
     public void testRead() throws Exception {
@@ -69,7 +97,7 @@ public class IOUringTest {
                     bufs[i] = Unsafe.malloc(txtLen, MemoryTag.NATIVE_DEFAULT);
                 }
 
-                try (IOUring ring = new IOUring(rf, Numbers.ceilPow2(inFlight))) {
+                try (IOURing ring = rf.newInstance(Numbers.ceilPow2(inFlight))) {
                     LongList expectedIds = new LongList();
                     for (int i = 0; i < inFlight; i++) {
                         long id = ring.enqueueRead(fd, i * txtLen, bufs[i], txtLen);
@@ -107,49 +135,13 @@ public class IOUringTest {
     }
 
     @Test
-    public void testSubmitAndWait() throws Exception {
-        Assume.assumeTrue(rf.isAvailable());
-
-        TestUtils.assertMemoryLeak(() -> {
-            String txt = "1234";
-            final int txtLen = txt.length();
-            File file = temp.newFile();
-            TestUtils.writeStringToFile(file, txt);
-
-            try (Path path = new Path()) {
-                long fd = Files.openRO(path.of(file.getAbsolutePath()).$());
-                Assert.assertTrue(fd > -1);
-                long buf = Unsafe.malloc(txtLen, MemoryTag.NATIVE_DEFAULT);
-
-                try (IOUring ring = new IOUring(rf, 4)) {
-                    long id = ring.enqueueRead(fd, 0, buf, txtLen);
-                    Assert.assertTrue(id > -1);
-
-                    int submitted = ring.submitAndWait();
-                    Assert.assertEquals(1, submitted);
-
-                    Assert.assertTrue(ring.nextCqe());
-                    Assert.assertEquals(id, ring.getCqeId());
-                    Assert.assertEquals(txtLen, ring.getCqeRes());
-
-                    DirectByteCharSequence txtInBuf = new DirectByteCharSequence().of(buf, buf + txtLen);
-                    TestUtils.assertEquals(txt.substring(0, txtLen), txtInBuf);
-                } finally {
-                    Files.close(fd);
-                    Unsafe.free(buf, txtLen, MemoryTag.NATIVE_DEFAULT);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testSqOverflow() throws Exception {
         Assume.assumeTrue(rf.isAvailable());
 
         TestUtils.assertMemoryLeak(() -> {
             final int inFlight = 32;
             final int iterations = 100;
-            try (IOUring ring = new IOUring(rf, inFlight)) {
+            try (IOURing ring = rf.newInstance(inFlight)) {
                 for (int it = 0; it < iterations; it++) {
                     for (int i = 0; i < inFlight; i++) {
                         long id = ring.enqueueNop();
@@ -168,34 +160,46 @@ public class IOUringTest {
                         Assert.assertTrue(ring.getCqeRes() > -1);
                     }
                     Assert.assertFalse(ring.nextCqe());
+                    Assert.assertEquals(-1, ring.getCqeId());
+                    Assert.assertEquals(-1, ring.getCqeRes());
                 }
             }
         });
     }
 
-    @Test(expected = CairoException.class)
-    public void testFailsToInit() {
-        final IOUringFacade rf = new IOUringFacadeImpl() {
-            @Override
-            public long create(int capacity) {
-                return -42;
-            }
-        };
-        try (IOUring ignored = new IOUring(rf, 32)) {
-            Assert.fail();
-        }
-    }
-
     @Test
-    public void testIsIOUringAvailable() {
-        Assert.assertFalse(IOUringFacadeImpl.isAvailableOn("6.1"));
-        Assert.assertFalse(IOUringFacadeImpl.isAvailableOn("4.0.0"));
-        Assert.assertFalse(IOUringFacadeImpl.isAvailableOn("5.0.0"));
+    public void testSubmitAndWait() throws Exception {
+        Assume.assumeTrue(rf.isAvailable());
 
-        Assert.assertTrue(IOUringFacadeImpl.isAvailableOn("5.1.0"));
-        Assert.assertTrue(IOUringFacadeImpl.isAvailableOn("5.14.0-1044-oem"));
-        Assert.assertTrue(IOUringFacadeImpl.isAvailableOn("5.10.2"));
-        Assert.assertTrue(IOUringFacadeImpl.isAvailableOn("6.2.2"));
-        Assert.assertTrue(IOUringFacadeImpl.isAvailableOn("7.1.1"));
+        TestUtils.assertMemoryLeak(() -> {
+            String txt = "1234";
+            final int txtLen = txt.length();
+            File file = temp.newFile();
+            TestUtils.writeStringToFile(file, txt);
+
+            try (Path path = new Path()) {
+                long fd = Files.openRO(path.of(file.getAbsolutePath()).$());
+                Assert.assertTrue(fd > -1);
+                long buf = Unsafe.malloc(txtLen, MemoryTag.NATIVE_DEFAULT);
+
+                try (IOURing ring = rf.newInstance(4)) {
+                    long id = ring.enqueueRead(fd, 0, buf, txtLen);
+                    Assert.assertTrue(id > -1);
+
+                    int submitted = ring.submitAndWait();
+                    Assert.assertEquals(1, submitted);
+
+                    Assert.assertTrue(ring.nextCqe());
+                    Assert.assertEquals(id, ring.getCqeId());
+                    Assert.assertEquals(txtLen, ring.getCqeRes());
+
+                    DirectByteCharSequence txtInBuf = new DirectByteCharSequence().of(buf, buf + txtLen);
+                    TestUtils.assertEquals(txt.substring(0, txtLen), txtInBuf);
+                } finally {
+                    Files.close(fd);
+                    Unsafe.free(buf, txtLen, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
     }
 }

@@ -35,6 +35,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -76,6 +77,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long txn = TableUtils.INITIAL_TXN;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private boolean txnAcquired = false;
+    private final MillisecondClock clock;
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName) {
         this(configuration, tableName, null);
@@ -83,6 +85,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public TableReader(CairoConfiguration configuration, CharSequence tableName, @Nullable MessageBus messageBus) {
         this.configuration = configuration;
+        this.clock = configuration.getMillisecondClock();
         this.ff = configuration.getFilesFacade();
         this.tableName = Chars.toString(tableName);
         this.messageBus = messageBus;
@@ -695,7 +698,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
     }
 
-    long getTxn() {
+    public long getTxn() {
         return txn;
     }
 
@@ -706,13 +709,13 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void handleMetadataLoadException(long deadline, CairoException ex) {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
         if (isMetaFileMissingFileSystemError(ex)) {
-            if (configuration.getMicrosecondClock().getTicks() < deadline) {
+            if (clock.getTicks() < deadline) {
                 LOG.info().$("error reloading metadata [table=").$(tableName)
                         .$(", errno=").$(ex.getErrno())
                         .$(", error=").$(ex.getFlyweightMessage()).I$();
                 Os.pause();
             } else {
-                LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
+                LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
                 throw CairoException.instance(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
             }
         } else {
@@ -768,23 +771,23 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private TableReaderMetadata openMetaFile() {
-        long deadline = this.configuration.getMicrosecondClock().getTicks() + this.configuration.getSpinLockTimeoutUs();
+        long deadline = clock.getTicks() + this.configuration.getSpinLockTimeout();
         TableReaderMetadata metadata = new TableReaderMetadata(ff);
         path.concat(TableUtils.META_FILE_NAME).$();
         try {
-            boolean existanceChecked = false;
+            boolean existenceChecked = false;
             while (true) {
                 try {
                     return metadata.deferredInit(path, ColumnType.VERSION);
                 } catch (CairoException ex) {
-                    if (!existanceChecked) {
+                    if (!existenceChecked) {
                         path.trimTo(rootLen).put(Files.SEPARATOR).$();
                         if (!ff.exists(path)) {
                             throw CairoException.instance(2).put("table does not exist [table=").put(tableName).put(']');
                         }
                         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
                     }
-                    existanceChecked = true;
+                    existenceChecked = true;
                     handleMetadataLoadException(deadline, ex);
                 }
             }
@@ -934,8 +937,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
             count++;
-            if (configuration.getMicrosecondClock().getTicks() > deadline) {
-                LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
+            if (clock.getTicks() > deadline) {
+                LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
                 throw CairoException.instance(0).put("Transaction read timeout");
             }
             Os.pause();
@@ -1091,7 +1094,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private boolean reloadColumnVersion(long columnVersion, long deadline) {
         if (columnVersionReader.getVersion() != columnVersion) {
-            columnVersionReader.readSafe(configuration.getMicrosecondClock(), deadline);
+            columnVersionReader.readSafe(clock, deadline);
         }
         return columnVersionReader.getVersion() == columnVersion;
     }
@@ -1107,10 +1110,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             try {
                 pTransitionIndex = metadata.createTransitionIndex(txnStructureVersion);
                 if (pTransitionIndex < 0) {
-                    if (configuration.getMicrosecondClock().getTicks() < deadline) {
+                    if (clock.getTicks() < deadline) {
                         return false;
                     }
-                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeoutUs()).utf8("μs]").$();
+                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
                     throw CairoException.instance(0).put("Metadata read timeout");
                 }
             } catch (CairoException ex) {
@@ -1194,7 +1197,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reloadSlow(boolean reshuffle) {
-        final long deadline = configuration.getMicrosecondClock().getTicks() + configuration.getSpinLockTimeoutUs();
+        final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
         do {
             // Reload txn
             readTxnSlow(deadline);
@@ -1256,7 +1259,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             // 1. Column has been forced out of the reader via closeColumnForRemove(). This is required
                             //    on Windows before column can be deleted. In this case we must check for marker
                             //    instance and the column from disk
-                            // 2. Column hasn't been altered and we can skip to next column.
+                            // 2. Column hasn't been altered, and we can skip to next column.
                             MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
                             if (col instanceof NullMemoryMR) {
                                 reloadColumnAt(

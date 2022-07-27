@@ -636,4 +636,316 @@ public class SymbolMapTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testMergeAppend() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10;
+            try (Path path = new Path().of(configuration.getRoot())) {
+                create(path, "x", N, true);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR
+                        )
+                ) {
+                    int prev = -1;
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = String.valueOf(i);
+                        int key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        Assert.assertEquals(key, writer.put(cs));
+                        prev = key;
+                    }
+                }
+
+                create(path, "y", N, true);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "y",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR
+                        )
+                ) {
+                    int prev = -1;
+                    for (int i = N; i < 2 * N; i++) {
+                        CharSequence cs = String.valueOf(i);
+                        int key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        Assert.assertEquals(key, writer.put(cs));
+                        prev = key;
+                    }
+                }
+
+                create(path, "z", 2 * N, true);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "z",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR
+                        )
+                ) {
+                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, N)) {
+                        boolean remapped = SymbolMapWriter.mergeSymbols(writer, reader);
+                        Assert.assertFalse(remapped);
+                    }
+
+                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "y", COLUMN_NAME_TXN_NONE, N)) {
+                        boolean remapped = SymbolMapWriter.mergeSymbols(writer, reader);
+                        Assert.assertTrue(remapped);
+                    }
+                }
+
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "z", COLUMN_NAME_TXN_NONE, 2 * N)) {
+
+                    for (int i = 0; i < 2 * N; i++) {
+                        CharSequence cs = String.valueOf(i);
+                        TestUtils.assertEquals(cs, reader.valueOf(i));
+                        Assert.assertEquals(i, reader.keyOf(cs));
+                    }
+
+                    Assert.assertEquals(2 * N, reader.getSymbolCount());
+                    Assert.assertNull(reader.valueOf(-1));
+                    Assert.assertNull(reader.valueOf(2 * N));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("hola"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMergeIntoEmpty() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000;
+            try (Path path = new Path().of(configuration.getRoot())) {
+                create(path, "x", N, false);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR
+                        )
+                ) {
+                    int prev = -1;
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = String.valueOf(i);
+                        int key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        prev = key;
+                    }
+
+                }
+
+                create(path, "y", N, true);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "y",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR
+                        )
+                ) {
+                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, N)) {
+                        boolean remapped = SymbolMapWriter.mergeSymbols(writer, reader);
+                        Assert.assertFalse(remapped);
+
+                        for (int i = 0; i < N; i++) {
+                            CharSequence cs = String.valueOf(i);
+                            TestUtils.assertEquals(cs, reader.valueOf(i));
+                            Assert.assertEquals(i, reader.keyOf(cs));
+                        }
+
+                        Assert.assertEquals(N, reader.getSymbolCount());
+                        Assert.assertNull(reader.valueOf(-1));
+                        Assert.assertNull(reader.valueOf(N));
+                        Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("hola"));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMergeOverlapped() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10;
+            try (Path path = new Path().of(configuration.getRoot())) {
+                int plen = path.length();
+                create(path, "x", N, true);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR
+                        )
+                ) {
+                    int prev = -1;
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = String.valueOf(i);
+                        int key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        Assert.assertEquals(key, writer.put(cs));
+                        prev = key;
+                    }
+                }
+
+                create(path, "y", N, true);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "y",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR
+                        )
+                ) {
+                    int prev = -1;
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = String.valueOf(i + N / 2);
+                        int key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        Assert.assertEquals(key, writer.put(cs));
+                        prev = key;
+                    }
+                }
+
+                int T = N + N / 2;
+                create(path, "z", T, true);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "z",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR
+                        )
+                ) {
+                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, N)) {
+                        try (
+                                MemoryCMARW mem = Vm.getSmallCMARWInstance(
+                                        configuration.getFilesFacade(),
+                                        path.concat("x").put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),
+                                        MemoryTag.MMAP_DEFAULT,
+                                        configuration.getWriterFileOpenOpts()
+                                )
+                        ) {
+                            SymbolMapWriter.mergeSymbols(writer, reader, mem);
+                            for (int i = 0; i < N; i++) {
+                                long newId = mem.getInt(i * Integer.BYTES);
+                                Assert.assertEquals(i, newId);
+                            }
+                        }
+                    }
+
+                    path.trimTo(plen);
+                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "y", COLUMN_NAME_TXN_NONE, N)) {
+                        try (
+                                MemoryCMARW mem = Vm.getSmallCMARWInstance(
+                                        configuration.getFilesFacade(),
+                                        path.concat("y").put(TableUtils.SYMBOL_KEY_REMAP_FILE_SUFFIX).$(),
+                                        MemoryTag.MMAP_DEFAULT,
+                                        configuration.getWriterFileOpenOpts()
+                                )
+                        ) {
+                            SymbolMapWriter.mergeSymbols(writer, reader, mem);
+                            for (int i = 0; i < N; i++) {
+                                long newId = mem.getInt(i * Integer.BYTES);
+                                Assert.assertEquals(i + N / 2, newId);
+                            }
+                        }
+                    }
+                }
+
+                path.trimTo(plen);
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "z", COLUMN_NAME_TXN_NONE, T)) {
+
+                    for (int i = 0; i < T; i++) {
+                        CharSequence cs = String.valueOf(i);
+                        TestUtils.assertEquals(cs, reader.valueOf(i));
+                        Assert.assertEquals(i, reader.keyOf(cs));
+                    }
+
+                    Assert.assertEquals(T, reader.getSymbolCount());
+                    Assert.assertNull(reader.valueOf(-1));
+                    Assert.assertNull(reader.valueOf(T));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("hola"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMergeWithEmpty() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 10000;
+            try (Path path = new Path().of(configuration.getRoot())) {
+                create(path, "x", N, false);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR
+                        )
+                ) {
+                    int prev = -1;
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = String.valueOf(i);
+                        int key = writer.put(cs);
+                        Assert.assertEquals(prev + 1, key);
+                        prev = key;
+                    }
+                    create(path, "y", N, true);
+                    try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "y", COLUMN_NAME_TXN_NONE, 0)) {
+                        boolean remapped = SymbolMapWriter.mergeSymbols(writer, reader);
+                        Assert.assertFalse(remapped);
+                    }
+                }
+
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, N)) {
+                    for (int i = 0; i < N; i++) {
+                        CharSequence cs = String.valueOf(i);
+                        TestUtils.assertEquals(cs, reader.valueOf(i));
+                        Assert.assertEquals(i, reader.keyOf(cs));
+                    }
+
+                    Assert.assertEquals(N, reader.getSymbolCount());
+                    Assert.assertNull(reader.valueOf(-1));
+                    Assert.assertNull(reader.valueOf(N));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("hola"));
+                }
+            }
+        });
+    }
 }

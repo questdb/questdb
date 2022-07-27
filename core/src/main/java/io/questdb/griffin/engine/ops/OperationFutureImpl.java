@@ -43,7 +43,7 @@ import io.questdb.std.AbstractSelfReturningObject;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.WeakSelfReturningObjectPool;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.tasks.TableWriterTask;
 
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.OK;
@@ -62,17 +62,19 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private int tableNamePositionInSql;
     private boolean closing;
+    private final long busyWaitTimeout;
 
     OperationFutureImpl(CairoEngine engine, WeakSelfReturningObjectPool<OperationFutureImpl> pool) {
         super(pool);
         this.engine = engine;
+        this.busyWaitTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
     }
 
     @Override
     public void await() throws SqlException {
-        await(engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
+        await(busyWaitTimeout);
         if (status == QUERY_STARTED) {
-            await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout());
+            await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - busyWaitTimeout);
         }
         if (status != QUERY_COMPLETE) {
             throw SqlTimeoutException.timeout("Timeout expired on waiting for the async command execution result [instance=").put(correlationId).put(']');
@@ -81,6 +83,10 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
 
     @Override
     public int await(long timeout) throws SqlException {
+        return await0(timeout > 0 ? timeout : busyWaitTimeout);
+    }
+
+    private int await0(long timeout) throws SqlException {
         if (status == QUERY_COMPLETE) {
             return status;
         }
@@ -179,11 +185,12 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         }
     }
 
-    private int awaitWriterEvent(long writerAsyncCommandBusyWaitTimeout) throws SqlException {
+    private int awaitWriterEvent(long timeout) throws SqlException {
         assert eventSubSeq != null : "No sequence to wait on";
         assert correlationId > -1 : "No command id to wait for";
+        assert timeout > 0;
 
-        final MicrosecondClock clock = engine.getConfiguration().getMicrosecondClock();
+        final MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
         final long start = clock.getTicks();
         final RingQueue<TableWriterTask> tableWriterEventQueue = engine.getMessageBus().getTableWriterEventQueue();
 
@@ -192,7 +199,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             long seq = eventSubSeq.next();
             if (seq < 0) {
                 // Queue is empty, check if the execution blocked for too long.
-                if (clock.getTicks() - start > writerAsyncCommandBusyWaitTimeout) {
+                if (clock.getTicks() - start > timeout) {
                     queryFutureUpdateListener.reportBusyWaitExpired(tableName, correlationId);
                     return status;
                 }

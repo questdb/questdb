@@ -79,4 +79,9 @@ public class NullMapWriter implements MapWriter {
     public void updateNullFlag(boolean flag) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public boolean getNullFlag() {
+        return false;
+    }
 }
