@@ -669,14 +669,7 @@ public final class TestUtils {
             int partitionCount
     ) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
-
-        long increment = 0;
-        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
-            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
-            assert partitionAddMethod != null;
-            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
-            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
-        }
+        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
 
         StringBuilder sql = new StringBuilder();
         StringBuilder indexes = new StringBuilder();
@@ -746,6 +739,71 @@ public final class TestUtils {
             sql.append(" Partition By ").append(PartitionBy.toString(tableModel.getPartitionBy()));
         }
         return sql.toString();
+    }
+
+    public static String insertFromSelectPopulateTableStmt(
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
+    ) throws NumericException {
+        long fromTimestamp = IntervalUtils.parseFloorPartialDate(startDate);
+        long increment = partitionIncrement(tableModel, fromTimestamp, totalRows, partitionCount);
+
+        StringBuilder insertFromSelect = new StringBuilder();
+        insertFromSelect.append("INSERT INTO ").append(tableModel.getTableName()).append(" SELECT").append(Misc.EOL);
+        for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            CharSequence colName = tableModel.getColumnName(i);
+            switch (ColumnType.tagOf(tableModel.getColumnType(i))) {
+                case ColumnType.INT:
+                    insertFromSelect.append("cast(x as int) ").append(colName);
+                    break;
+                case ColumnType.STRING:
+                    insertFromSelect.append("CAST(x as STRING) ").append(colName);
+                    break;
+                case ColumnType.LONG:
+                    insertFromSelect.append("x ").append(colName);
+                    break;
+                case ColumnType.DOUBLE:
+                    insertFromSelect.append("x / 1000.0 ").append(colName);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    insertFromSelect.append("CAST(").append(fromTimestamp).append("L AS TIMESTAMP) + x * ").append(increment).append("  ").append(colName);
+                    break;
+                case ColumnType.SYMBOL:
+                    insertFromSelect.append("rnd_symbol(4,4,4,2) ").append(colName);
+                    break;
+                case ColumnType.BOOLEAN:
+                    insertFromSelect.append("rnd_boolean() ").append(colName);
+                    break;
+                case ColumnType.FLOAT:
+                    insertFromSelect.append("CAST(x / 1000.0 AS FLOAT) ").append(colName);
+                    break;
+                case ColumnType.DATE:
+                    insertFromSelect.append("CAST(").append(fromTimestamp).append("L AS DATE) ").append(colName);
+                    break;
+                case ColumnType.LONG256:
+                    insertFromSelect.append("CAST(x AS LONG256) ").append(colName);
+                    break;
+                case ColumnType.BYTE:
+                    insertFromSelect.append("CAST(x AS BYTE) ").append(colName);
+                    break;
+                case ColumnType.CHAR:
+                    insertFromSelect.append("CAST(x AS CHAR) ").append(colName);
+                    break;
+                case ColumnType.SHORT:
+                    insertFromSelect.append("CAST(x AS SHORT) ").append(colName);
+                    break;
+                default:
+                    throw new UnsupportedOperationException();
+            }
+            if (i < tableModel.getColumnCount() - 1) {
+                insertFromSelect.append("," + Misc.EOL);
+            }
+        }
+        insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
+        insertFromSelect.append(")" + Misc.EOL);
+        return insertFromSelect.toString();
     }
 
     public static void createTestPath(CharSequence root) {
@@ -998,6 +1056,17 @@ public final class TestUtils {
         try (FileOutputStream fos = new FileOutputStream(file)) {
             fos.write(s.getBytes(Files.UTF_8));
         }
+    }
+
+    private static long partitionIncrement(TableModel tableModel, long fromTimestamp, int totalRows, int partitionCount) {
+        long increment = 0;
+        if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
+            final PartitionBy.PartitionAddMethod partitionAddMethod = PartitionBy.getPartitionAddMethod(tableModel.getPartitionBy());
+            assert partitionAddMethod != null;
+            long toTs = partitionAddMethod.calculate(fromTimestamp, partitionCount) - fromTimestamp - Timestamps.SECOND_MICROS;
+            increment = totalRows > 0 ? Math.max(toTs / totalRows, 1) : 0;
+        }
+        return increment;
     }
 
     private static void putGeoHash(long hash, int bits, CharSink sink) {

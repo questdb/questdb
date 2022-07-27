@@ -35,7 +35,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -288,87 +287,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAttachPartitionMissingColumnType() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src12", PartitionBy.DAY)) {
-
-                createPopulateTable(
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG),
-                        45000,
-                        "2020-01-09",
-                        2);
-
-                String expected = "[-100] Detached partition metadata [column_count] is not compatible with current table metadata";
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("str", ColumnType.STRING), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("sym", ColumnType.SYMBOL), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("l1", ColumnType.LONG), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("i1", ColumnType.INT), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("b", ColumnType.BOOLEAN), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("db", ColumnType.DOUBLE), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("fl", ColumnType.FLOAT), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("dt", ColumnType.DATE), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.TIMESTAMP), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.LONG256), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.BINARY), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.BYTE), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.CHAR), expected);
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("ts", ColumnType.SHORT), expected);
-            }
-        });
-    }
-
-    @Test
-    @Ignore
-    // TODO: check also *.i files
-    public void testAttachPartitionStringColIndexMessedNotInOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src13", PartitionBy.DAY)) {
-                createPopulateTable(
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("str", ColumnType.STRING),
-                        10000,
-                        "2020-01-01",
-                        10);
-
-                long value = 0L;
-                writeToStrIndexFile(src, "str.i", value, 16L);
-
-                assertSchemaMismatch(src, "dst13", dst -> dst.col("str", ColumnType.STRING), "Variable size column has invalid data address value");
-            }
-        });
-    }
-
-    @Test
-    @Ignore
-    // TODO: check also *.i files
-    public void testAttachPartitionStringColIndexMessedOffsetOutsideFileBounds() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src14", PartitionBy.DAY)) {
-                createPopulateTable(
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("str", ColumnType.STRING),
-                        10000,
-                        "2020-01-01",
-                        10);
-
-                long invalidValue = Long.MAX_VALUE;
-                writeToStrIndexFile(src, "str.i", invalidValue, 256L);
-                assertSchemaMismatch(src, "dst14a", dst -> dst.col("str", ColumnType.STRING), "dataAddress=" + invalidValue);
-
-                invalidValue = -1;
-                writeToStrIndexFile(src, "str.i", invalidValue, 256L);
-                assertSchemaMismatch(src, "dst14b", dst -> dst.col("str", ColumnType.STRING), "dataAddress=" + invalidValue);
-            }
-        });
-    }
-
-    @Test
     public void testAttachPartitionStringColNoIndex() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src15", PartitionBy.DAY)) {
@@ -461,7 +379,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "[-100] Detached column [index=0, name=ts1, attribute=name] does not match current table metadata"
+                            "-100] Detached partition metadata [missing_column: ts1] is not compatible with current table metadata"
                     );
                 }
             }
@@ -595,6 +513,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 assertSql("select count() from " + src.getName() + " where ts in '2020-01-09' and s = null", "count\n302\n");
 
                 createPopulateTable(
+                        1,
                         dst.timestamp("ts")
                                 .col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
@@ -620,7 +539,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 createPopulateTable(
                         src.timestamp("ts")
                                 .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL)
+                                .col("s2", ColumnType.SYMBOL)
                                 .col("l", ColumnType.LONG),
                         10000,
                         "2020-01-01",
@@ -636,7 +555,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "[-100] Detached column [index=2, name=l, attribute=name] does not match current table metadata"
+                            "[-100] Detached partition metadata [missing_column: s] is not compatible with current table metadata"
                     );
                 }
             }
@@ -662,6 +581,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 assertSql("select count() from " + src.getName() + " where ts in '2020-01-09' and s = null", "count\n302\n");
 
                 createPopulateTable(
+                        1,
                         dst.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL)
@@ -693,6 +613,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         10);
 
                 createPopulateTable(
+                        1,
                         dst.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .col("s", ColumnType.SYMBOL).indexed(true, 4096)
@@ -708,51 +629,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 } catch (SqlException ex) {
                     TestUtils.assertContains(ex.getFlyweightMessage(),
                             "[-100] Detached column [index=2, name=s, attribute=is_indexed] does not match current table metadata"
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    @Ignore
-    // TODO check symbols and indexes in metadata check
-    public void testAttachPartitionsWithSymbolsValueMatchWithNoIndexKeyFile() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src27", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst27", PartitionBy.DAY)) {
-
-                createPopulateTable(
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 4096)
-                                .timestamp("ts"),
-                        10000,
-                        "2020-01-01",
-                        10);
-
-                createPopulateTable(
-                        dst.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 4096)
-                                .timestamp("ts"),
-                        10000,
-                        "2020-01-01",
-                        10);
-
-                compile("alter table " + dst.getName() + " drop partition list '2020-01-09'");
-                FilesFacade ff = FilesFacadeImpl.INSTANCE;
-                try (Path path = new Path()) {
-                    // remove .k
-                    path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat("s").put(".k").$();
-                    ff.remove(path);
-                }
-
-                try {
-                    copyAttachPartition(src, dst, 9000, "2020-01-09");
-                } catch (SqlException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(),
-                            "[-100] Detached partition metadata [id] is not compatible with current table metadata"
                     );
                 }
             }
@@ -890,6 +766,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         2);
 
                 createPopulateTable(
+                        1,
                         dst.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .col("str", ColumnType.STRING)
@@ -1093,50 +970,20 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         ) {
             copyDirectory(original, detached);
 
-            // create _dm_
-            detached.of(configuration.getDetachedRoot())
-                    .concat(dst)
-                    .concat(dstDir)
-                    .put(TableUtils.DETACHED_DIR_MARKER)
-                    .concat(TableUtils.DETACHED_DIR_META_FOLDER_NAME)
-                    .$();
             if (!Files.exists(detached)) {
-                Assert.assertEquals(0, Files.mkdir(detached, 509));
+                Assert.assertEquals(0, Files.mkdirs(detached, 509));
             }
 
-            // copy relevant metadata files
-            original.of(configuration.getRoot()).concat(src);
-            int len = original.length();
-            int dlen = detached.length();
-            Files.copy(
-                    original.trimTo(len).concat(TableUtils.META_FILE_NAME).$(),
-                    detached.trimTo(dlen).concat(TableUtils.META_FILE_NAME).$()
-            );
-            Files.copy(
-                    original.trimTo(len).concat(TableUtils.TXN_FILE_NAME).$(),
-                    detached.trimTo(dlen).concat(TableUtils.TXN_FILE_NAME).$()
-            );
-            Files.copy(
-                    original.trimTo(len).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
-                    detached.trimTo(dlen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
-            );
-            original.trimTo(len).concat(srcDir).$();
-            int olen = original.length();
-            FilesFacadeImpl.INSTANCE.walk(original, (p, type) -> {
-                original.trimTo(olen).concat(p).$();
-                if (type == Files.DT_FILE) {
-                    original.trimTo(olen).concat(p).$();
-                    if (Chars.endsWith(original, ".k") ||
-                            Chars.endsWith(original, ".v") ||
-                            Chars.endsWith(original, ".c") ||
-                            Chars.endsWith(original, ".o")) {
-                        Files.copy(
-                                original,
-                                detached.trimTo(dlen).concat(p).$()
-                        );
-                    }
-                }
-            });
+            // copy _meta
+            Assert.assertEquals(0, Files.copy(
+                    original.parent().parent().concat(TableUtils.META_FILE_NAME).$(),
+                    detached.parent().concat(TableUtils.META_FILE_NAME).$()
+            ));
+            // copy _cv
+            Assert.assertEquals(0, Files.copy(
+                    original.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$(),
+                    detached.parent().concat(TableUtils.COLUMN_VERSION_FILE_NAME).$()
+            ));
         }
     }
 

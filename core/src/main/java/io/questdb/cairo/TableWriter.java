@@ -90,11 +90,6 @@ public class TableWriter implements Closeable {
     private final int detachedRootLen;
     private final TableReaderMetadata detachedMetadata;
     private ColumnVersionReader detachedColumnVersionReader;
-    private final TxReader detachedTxReader;
-    private final SymbolMapReaderImpl symbolMapReader = new SymbolMapReaderImpl();
-    private final SymbolMapReaderImpl detachedSymbolMapReader = new SymbolMapReaderImpl();
-    private final IntList detachedSymColIndexRemap = new IntList();
-    private final IndexBuilder detachedSymbolColumnIndexer = new IndexBuilder();
     private final LongList rowValueIsNotNull = new LongList();
     private final Row regularRow = new RowImpl();
     private final int rootLen;
@@ -268,7 +263,6 @@ public class TableWriter implements Closeable {
             this.metadata = new TableWriterMetadata(metaMem);
             this.partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             this.txWriter = new TxWriter(ff).ofRW(path, partitionBy);
-            this.detachedTxReader = new TxReader(ff);
             this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             path.trimTo(rootLen);
             // we have to do truncate repair at this stage of constructor
@@ -667,12 +661,11 @@ public class TableWriter implements Closeable {
                 detachedPath.put(DETACHED_DIR_MARKER).slash$();
                 if (ff.exists(detachedPath)) {
 
-                    // check metadata
-                    LOG.info().$("checking detached metadata: ").$(detachedPath).$();
-                    checkDetachedMetadataOnPartitionAttach(timestamp);
+                    // check detached _meta and _cv
+                    checkDetachedMetadata(timestamp);
 
-                    LOG.info().$("renaming partition dir: ").$(detachedPath).$(" to ").$(path).$();
                     if (ff.rename(detachedPath, path) == Files.FILES_RENAME_OK) {
+                        LOG.info().$("renamed partition dir: ").$(detachedPath).$(" to ").$(path).$();
                         rollbackRename = true;
                     } else {
                         throw CairoException.instance(ff.errno())
@@ -740,18 +733,21 @@ public class TableWriter implements Closeable {
         // SQL compiler will check that table is partitioned
         assert metadata.getTimestampIndex() > -1;
 
-        // check timestamp boundaries
+        // check timestamp
         long minTimestamp = txWriter.getMinTimestamp();
         long maxTimestamp = txWriter.getMaxTimestamp();
+
         timestamp = getPartitionLo(timestamp);
         if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
             return PARTITION_EMPTY;
         }
+
         int partitionIndex = txWriter.getPartitionIndex(timestamp);
         if (partitionIndex == -1) {
             assert !txWriter.attachedPartitionsContains(timestamp);
             return PARTITION_ALREADY_DETACHED;
         }
+
         if (timestamp == getPartitionLo(maxTimestamp)) {
             return PARTITION_IS_ACTIVE;
         }
@@ -766,9 +762,9 @@ public class TableWriter implements Closeable {
             commit(CommitMode.SYNC, 0);
         }
 
-        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         try {
             // path: partition folder to be detached
+            long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
             setPathForPartition(path, rootLen, partitionBy, timestamp, partitionNameTxn);
             if (!ff.exists(path.$())) {
                 LOG.error()
@@ -794,7 +790,7 @@ public class TableWriter implements Closeable {
             }
             setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
             detachedPath.put(DETACHED_DIR_MARKER).$();
-            int detachedPathLen = detachedPath.length();
+            final int detachedPathLen = detachedPath.length();
             if (ff.exists(detachedPath)) {
                 LOG.error()
                         .$("detached partition folder already exist [path=")
@@ -818,16 +814,44 @@ public class TableWriter implements Closeable {
                 return StatusCode.PARTITION_FOLDER_CANNOT_RENAME;
             }
 
-            StatusCode statusCode = copyRequiredFilesToDetachedPartitionFolderOrRollback(timestamp, detachedPathLen);
+            // copy _meta and _cv to partition.detached
+            other.of(path).trimTo(rootLen).concat(META_FILE_NAME).$(); // exists already checked
+            other2.of(detachedPath).trimTo(detachedPathLen).concat(META_FILE_NAME).$();
+            StatusCode statusCode = StatusCode.OK;
+            boolean copiedDetachedMeta = false;
+            if (-1 == ff.copy(other, other2)) {
+                statusCode = StatusCode.PARTITION_CANNOT_COPY_META;
+                LOG.error().$("cannot copy [errno=").$(ff.errno())
+                        .$(", from=").$(other)
+                        .$(", to=").$(other2)
+                        .I$();
+            } else {
+                copiedDetachedMeta = true;
+                other.parent().concat(COLUMN_VERSION_FILE_NAME).$();
+                other2.parent().concat(COLUMN_VERSION_FILE_NAME).$();
+                if (-1 == ff.copy(other, other2)) {
+                    statusCode = StatusCode.PARTITION_CANNOT_COPY_META;
+                    LOG.error().$("cannot copy [errno=").$(ff.errno())
+                            .$(", from=").$(other)
+                            .$(", to=").$(other2)
+                            .I$();
+                }
+            }
             if (statusCode == StatusCode.OK) {
                 // all good, commit
                 commitDetachPartition(timestamp, minTimestamp);
             } else {
-                // undo folder rename
-                setPathForPartition(path, rootLen, partitionBy, timestamp, partitionNameTxn);
-                setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
-                detachedPath.put(DETACHED_DIR_MARKER);
-                if (ff.rename(detachedPath.$(), path.$()) != Files.FILES_RENAME_OK) {
+                if (copiedDetachedMeta) {
+                    other2.parent().concat(META_FILE_NAME).$();
+                    if (!ff.remove(other2)) {
+                        LOG.error().$("cannot remove [errno=").$(ff.errno())
+                                .$(", path=").$(other2)
+                                .I$();
+                    }
+                }
+
+                // rollback rename
+                if (ff.rename(detachedPath, path) != Files.FILES_RENAME_OK) {
                     LOG.error()
                             .$("undo rename partition folder (admin needs to rename this file) [errno=").$(ff.errno())
                             .$(", undo=").$(detachedPath)
@@ -1662,168 +1686,88 @@ public class TableWriter implements Closeable {
         }
     }
 
-    private StatusCode copyRequiredFilesToDetachedPartitionFolderOrRollback(long timestamp, int detachedPathLen) {
-        // copy required metadata files to partition.detached/_dm_
-        detachedPath.trimTo(detachedPathLen).concat(DETACHED_DIR_META_FOLDER_NAME);
-        detachedPathLen = detachedPath.length();
-        if (!ff.exists(detachedPath.slash$())) {
-            // create the folder within partition.detached to keep the metadata
-            if (ff.mkdirs(detachedPath, mkDirMode) != 0) {
-                return PARTITION_DETACHED_FOLDER_CANNOT_CREATE_META;
-            }
+    private void checkDetachedMetadata(long timestamp) {
+        // load/check _meta
+        other2.of(detachedPath).concat(META_FILE_NAME).$();
+        if (!ff.exists(other2)) {
+            // Backups and older versions of detached partitions will not have _meta
+            LOG.info().$("detached _meta not found, skipping check [path=").$(other2).I$();
+            return;
         }
-        // copy _meta
-        path.trimTo(rootLen).concat(META_FILE_NAME).$(); // exists already checked
-        detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME).$();
-        boolean copySuccess = copyToDetachedPartitionFolderOrLogError();
-        if (copySuccess) {
-            // copy _cv
-            path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(); // exists already checked
-            detachedPath.trimTo(detachedPathLen).concat(COLUMN_VERSION_FILE_NAME).$();
-            copySuccess = copyToDetachedPartitionFolderOrLogError();
-            if (copySuccess) {
-                // copy _txn
-                path.trimTo(rootLen).concat(TXN_FILE_NAME).$(); // exists already checked
-                detachedPath.trimTo(detachedPathLen).concat(TXN_FILE_NAME).$();
-                copySuccess = copyToDetachedPartitionFolderOrLogError();
-                if (copySuccess) {
-                    // copy static symbol column files .c.txn, .o.txn, .k.txn, .v.txn
-                    for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-                        if (ColumnType.isSymbol(metadata.getColumnType(colIdx))) {
-                            String columnName = metadata.getColumnName(colIdx);
-                            long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, colIdx);
-                            // copy *.c.txn to partition.detached/_dm_/*.c
-                            TableUtils.charFileName(path.trimTo(rootLen), columnName, columnNameTxn);
-                            TableUtils.charFileName(detachedPath.trimTo(detachedPathLen), columnName, -1L);
-                            copySuccess = copyToDetachedPartitionFolderOrLogError();
-                            if (!copySuccess) {
-                                break;
-                            }
-                            // copy *.o.txn to partition.detached/_dm_/*.o
-                            TableUtils.offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
-                            TableUtils.offsetFileName(detachedPath.trimTo(detachedPathLen), columnName, -1L);
-                            copySuccess = copyToDetachedPartitionFolderOrLogError();
-                            if (!copySuccess) {
-                                break;
-                            }
-                            if (metadata.isColumnIndexed(colIdx)) {
-                                // copy *.k.txn to partition.detached/_dm_/*.k
-                                BitmapIndexUtils.keyFileName(path.trimTo(rootLen), columnName, columnNameTxn);
-                                BitmapIndexUtils.keyFileName(detachedPath.trimTo(detachedPathLen), columnName, -1L);
-                                copySuccess = copyToDetachedPartitionFolderOrLogError();
-                                if (!copySuccess) {
-                                    break;
+        try {
+            detachedMetadata.deferredInit(other2, ColumnType.VERSION);
+            if (metadata.getId() != detachedMetadata.getId()) {
+                throw CairoException.detachedMetadataMismatch("table_id");
+            }
+            if (metadata.getTimestampIndex() != detachedMetadata.getTimestampIndex()) {
+                throw CairoException.detachedMetadataMismatch("timestamp_index");
+            }
+            // check column name, type and isIndexed
+            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                String columnName = metadata.getColumnName(colIdx);
+                int detColIdx = detachedMetadata.getColumnIndexQuiet(columnName);
+                if (detColIdx == -1) {
+                    throw CairoException.detachedMetadataMismatch("missing_column: " + columnName);
+                }
+                if (metadata.getColumnType(colIdx) != detachedMetadata.getColumnType(detColIdx)) {
+                    throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "type");
+                }
+                if (metadata.isColumnIndexed(colIdx) != detachedMetadata.isColumnIndexed(detColIdx)) {
+                    throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "is_indexed");
+                }
+            }
+            // structural changes mean columns may have been removed
+            if (metadata.getStructureVersion() != detachedMetadata.getStructureVersion()) {
+                for (int i = 0, limit = detachedMetadata.getColumnCount(); i < limit; i++) {
+                    String columnName = detachedMetadata.getColumnName(i);
+                    if (metadata.getColumnIndexQuiet(columnName) == -1) {
+                        ff.walk(detachedPath, (pUtf8NameZ, type) -> {
+                            if (type == Files.DT_FILE) {
+                                fileNameSink.clear();
+                                Chars.utf8DecodeZ(pUtf8NameZ, fileNameSink);
+                                int len = fileNameSink.length();
+                                int dotIdx = len - 1;
+                                while (dotIdx > 0 && fileNameSink.charAt(dotIdx) != '.') {
+                                    dotIdx--;
                                 }
-                                // copy *.v.txn to partition.detached/_dm_/*.v
-                                BitmapIndexUtils.valueFileName(path.trimTo(rootLen), columnName, columnNameTxn);
-                                BitmapIndexUtils.valueFileName(detachedPath.trimTo(detachedPathLen), columnName, -1L);
-                                copySuccess = copyToDetachedPartitionFolderOrLogError();
-                                if (!copySuccess) {
-                                    break;
+                                if (dotIdx > 0) {
+                                    CharSequence cn = fileNameSink.subSequence(0, dotIdx);
+                                    if (Chars.equals(cn, columnName)) {
+                                        other2.parent().concat(fileNameSink).$();
+                                        if (!ff.remove(other2)) {
+                                            LOG.info().$("failed to remove [path=").$(other2).I$();
+                                        }
+                                    }
                                 }
                             }
-                        }
+                        });
                     }
                 }
             }
-        }
-        if (!copySuccess) {
-            // remove _dm_ folder
-            if (-1 == ff.rmdir(detachedPath.trimTo(detachedPathLen).slash$())) { // remove .detached/_dm_
-                LOG.error()
-                        .$("cannot remove [errno=").$(ff.errno())
-                        .$(", path=").$(detachedPath)
+        } finally {
+            Misc.free(detachedMetadata);
+            // remove _meta
+            if (!ff.remove(other2)) {
+                LOG.error().$("cannot remove [errno=").$(ff.errno())
+                        .$(", path=").$(other2)
                         .I$();
             }
-            return StatusCode.PARTITION_CANNOT_COPY_META;
         }
-        return StatusCode.OK;
-    }
 
-    private boolean copyToDetachedPartitionFolderOrLogError() {
-        if (-1 == ff.copy(path.$(), detachedPath.$())) {
-            LOG.error()
-                    .$("cannot copy [errno=")
-                    .$(ff.errno())
-                    .$(", from=")
-                    .$(path)
-                    .$(", to=")
-                    .$(detachedPath)
-                    .$(']')
-                    .$();
-            return false;
+        // load/check _cv, updating local column tops
+        // set current _cv to where the partition was
+        other2.parent().concat(COLUMN_VERSION_FILE_NAME).$();
+        if (!ff.exists(other2)) {
+            // Backups and older versions of detached partitions will not have _cv
+            LOG.info().$("detached _cv not found, skipping check [path=").$(other2).I$();
+            return;
         }
-        return true;
-    }
-
-    private void checkDetachedMetadataOnPartitionAttach(long timestamp) {
-        boolean closeDMetaReader = false;
-        boolean closeDColumnVersionReader = false;
-        boolean closeDTxReader = false;
-        boolean closeDSymbolMapReader = false;
-        boolean closeSymbolMapReader = false;
         try {
-            // load/check _meta
-            // detached metadata resides within folder _dm_ (inside the detached partition folder)
-            other.of(detachedPath).concat(DETACHED_DIR_META_FOLDER_NAME);
-            int otherLen = other.length();
-            other.concat(META_FILE_NAME).$();
-            if (!ff.exists(other)) {
-                // Backups and older versions of detached partitions will not have _meta
-                LOG.info()
-                        .$("Partition metadata not found, skipping compatibility check [path=")
-                        .$(other)
-                        .$(']')
-                        .$();
-                return;
-            }
-            detachedMetadata.deferredInit(other, ColumnType.VERSION);
-            closeDMetaReader = true;
-            // TODO check table id
-            if (metadata.getStructureVersion() != detachedMetadata.getStructureVersion()) {
-                // TODO: addColumn should fail here
-                throw CairoException.detachedMetadataMismatch("structure_version");
-                // delete cols that have been deleted
-            }
-//            if (metadata.getTimestampIndex() != detachedMetadata.getTimestampIndex()) {
-//                throw CairoException.detachedMetadataMismatch("timestamp_index");
-//            }
-//            if (partitionBy != detachedMetadata.getPartitionBy()) {
-//                throw CairoException.detachedMetadataMismatch("partition_by");
-//            }
-//            if (columnCount != detachedMetadata.getColumnCount()) {
-//                throw CairoException.detachedMetadataMismatch("column_count");
-//            }
-//            for (int i = 0; i < columnCount; i++) {
-//                String name = metadata.getColumnName(i);
-//                if (!name.equals(detachedMetadata.getColumnName(i))) {
-//                    throw CairoException.detachedColumnMetadataMismatch(i, name, "name");
-//                }
-//                if (metadata.getColumnType(i) != detachedMetadata.getColumnType(i)) {
-//                    throw CairoException.detachedColumnMetadataMismatch(i, name, "type");
-//                }
-//                if (metadata.isColumnIndexed(i) != detachedMetadata.isColumnIndexed(i)) {
-//                    throw CairoException.detachedColumnMetadataMismatch(i, name, "is_indexed");
-//                }
-//            }
-
-            // load/check _cv, updating local column tops
-            other.trimTo(otherLen).concat(COLUMN_VERSION_FILE_NAME).$();
-            if (!ff.exists(other)) {
-                // Backups and older versions of detached partitions will not have _cv
-                LOG.info()
-                        .$("Partition column version metadata not found, skipping compatibility check [path=")
-                        .$(other)
-                        .$(']')
-                        .$();
-                return;
-            }
             if (detachedColumnVersionReader == null) {
                 detachedColumnVersionReader = new ColumnVersionReader();
             }
-            detachedColumnVersionReader.ofRO(ff, other);
+            detachedColumnVersionReader.ofRO(ff, other2);
             detachedColumnVersionReader.readSafe(MillisecondClockImpl.INSTANCE, Long.MAX_VALUE);
-            closeDColumnVersionReader = true;
             LongList entries = columnVersionWriter.getCachedList();
             LongList detachedEntries = detachedColumnVersionReader.getCachedList();
             for (int i = 0, limit = detachedEntries.size(); i < limit; i += 4) {
@@ -1838,102 +1782,13 @@ public class TableWriter implements Closeable {
                     );
                 }
             }
-
-            // check indexed symbols and their indexes
-            other.trimTo(otherLen).concat(TXN_FILE_NAME).$();
-            if (!ff.exists(other)) {
-                // Backups and older versions of detached partitions will not have _txn
-                LOG.info()
-                        .$("Partition column version metadata not found, skipping compatibility check [path=")
-                        .$(other)
-                        .$(']')
-                        .$();
-                return;
-            }
-            detachedTxReader.ofRO(other, detachedMetadata.getPartitionBy());
-            detachedTxReader.unsafeLoadAll(); // needed to get the symbol count
-            closeDTxReader = true;
-            other2.of(path).parent$(); // table folder (1 level up from partition)
-            detachedSymColIndexRemap.clear();
-            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-                if (ColumnType.isSymbol(metadata.getColumnType(colIdx))) {
-                    if (metadata.isColumnIndexed(colIdx)) {
-                        // for each indexed symbol column
-                        String columnName = metadata.getColumnName(colIdx);
-                        long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, colIdx);
-
-                        // load detached symbol map reader
-                        int detachedSymbolCount = detachedTxReader.unsafeReadSymbolCount(colIdx);
-                        detachedSymbolMapReader.of(configuration, other.trimTo(otherLen), columnName, columnNameTxn, detachedSymbolCount);
-                        closeDSymbolMapReader = true;
-
-                        // load local symbol map reader
-                        int symbolCount = txWriter.unsafeReadSymbolCount(colIdx);
-                        symbolMapReader.of(configuration, other2, columnName, columnNameTxn, symbolCount);
-                        closeSymbolMapReader = true;
-
-                        // get hold of the local symbol map writer
-                        SymbolMapWriter symbolMapWriter = (SymbolMapWriter) symbolMapWriters.getQuick(colIdx);
-                        for (int symKey = 0; symKey < detachedSymbolCount; symKey++) {
-                            // for each symbol in the union of both local and detached
-                            CharSequence sym = symKey < symbolCount ? symbolMapReader.valueOf(symKey) : null;
-                            CharSequence dsym = detachedSymbolMapReader.valueOf(symKey);
-                            if (!Chars.equals(sym, dsym)) {
-                                detachedSymColIndexRemap.add(symKey);
-                                detachedSymColIndexRemap.add(symbolMapWriter.put(dsym));
-                            }
-                        }
-
-                        int remapSize = detachedSymColIndexRemap.size();
-                        if (remapSize > 0) {
-                            other2.of(other).parent$();
-                            String[] tmp = other2.toString().split("" + Files.SEPARATOR);
-                            String partitionName = tmp[tmp.length - 1];
-                            int partitionIndex = detachedTxReader.getPartitionIndex(timestamp);
-                            other2.parent$();
-                            detachedSymbolColumnIndexer.of(other2, configuration);
-                            detachedSymbolColumnIndexer.doReindex(
-                                    columnVersionWriter,
-                                    detachedMetadata.getWriterIndex(colIdx),
-                                    columnName,
-                                    partitionName,
-                                    -1L,
-                                    detachedTxReader.getPartitionSize(partitionIndex),
-                                    timestamp,
-                                    detachedMetadata.getIndexValueBlockCapacity(columnName)
-                            );
-                            for (int i = 0; i < remapSize; i += 2) {
-                                int symKey = detachedSymColIndexRemap.getQuick(i);
-                                int symNewKey = detachedSymColIndexRemap.getQuick(i + 1);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // remove _dm_ folder
-            if (-1 == ff.rmdir(other.trimTo(otherLen).slash$())) { // remove .detached/_dm_
-                LOG.error()
-                        .$("cannot remove [errno=").$(ff.errno())
-                        .$(", path=").$(detachedPath)
-                        .I$();
-            }
         } finally {
-            other.trimTo(rootLen);
-            if (closeDMetaReader) {
-                Misc.free(detachedMetadata);
-            }
-            if (closeDColumnVersionReader) {
-                Misc.free(detachedColumnVersionReader);
-            }
-            if (closeDTxReader) {
-                Misc.free(detachedTxReader);
-            }
-            if (closeDSymbolMapReader) {
-                Misc.free(detachedSymbolMapReader);
-            }
-            if (closeSymbolMapReader) {
-                Misc.free(symbolMapReader);
+            Misc.free(detachedColumnVersionReader);
+            // remove _cv
+            if (!ff.remove(other2)) {
+                LOG.error().$("cannot remove [errno=").$(ff.errno())
+                        .$(", path=").$(other2)
+                        .I$();
             }
         }
     }
@@ -1947,11 +1802,16 @@ public class TableWriter implements Closeable {
         // we have to uphold the effort and re-compute table size and its minTimestamp from
         // what remains on disk
 
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            columnVersionWriter.upsertColumnTop(timestamp, colIdx, -2L); // detached
+        }
+
         // find out if we are removing min partition
         long nextMinTimestamp = minTimestamp;
         if (timestamp == txWriter.getPartitionTimestamp(0)) {
             nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestamp(1));
         }
+
         txWriter.beginPartitionSizeUpdate();
         txWriter.removeAttachedPartitions(timestamp);
         txWriter.setMinTimestamp(nextMinTimestamp);
@@ -2542,11 +2402,7 @@ public class TableWriter implements Closeable {
         Misc.free(detachedPath);
         Misc.free(todoMem);
         Misc.free(detachedMetadata);
-        Misc.free(detachedTxReader);
         Misc.free(detachedColumnVersionReader);
-        Misc.free(detachedSymbolMapReader);
-        Misc.free(symbolMapReader);
-        Misc.free(detachedSymbolColumnIndexer);
         Misc.free(columnVersionWriter);
         updateOperator = Misc.free(updateOperator);
         Misc.free(o3ColumnTopSink);
