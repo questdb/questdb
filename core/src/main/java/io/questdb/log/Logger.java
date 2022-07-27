@@ -253,12 +253,14 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord error() {
-        return addTimestamp(xerror(), LogLevel.ERROR_HEADER);
+        // Same as errorW()
+        return addTimestamp(xErrorW(), LogLevel.ERROR_HEADER);
     }
 
     @Override
     public LogRecord critical() {
-        return addTimestamp(xcritical(), LogLevel.CRITICAL_HEADER);
+        // same as criticalW()
+        return addTimestamp(xCriticalW(), LogLevel.CRITICAL_HEADER);
     }
 
     @Override
@@ -293,17 +295,21 @@ class Logger implements LogRecord, Log {
 
     @Override
     public LogRecord advisory() {
-        return addTimestamp(xadvisory(), LogLevel.ADVISORY_HEADER);
+        // Same as advisoryW()
+        return addTimestamp(xAdvisoryW(), LogLevel.ADVISORY_HEADER);
     }
 
+    @Override
     public LogRecord xerror() {
         return next(errorSeq, errorRing, LogLevel.ERROR);
     }
 
+    @Override
     public LogRecord xcritical() {
         return next(criticalSeq, criticalRing, LogLevel.CRITICAL);
     }
 
+    @Override
     public LogRecord xinfo() {
         return next(infoSeq, infoRing, LogLevel.INFO);
     }
@@ -314,10 +320,12 @@ class Logger implements LogRecord, Log {
      *
      * @return log record API
      */
+    @Override
     public LogRecord xInfoW() {
         return nextWaiting(infoSeq, infoRing, LogLevel.INFO);
     }
 
+    @Override
     public LogRecord xdebug() {
         return next(debugSeq, debugRing, LogLevel.DEBUG);
     }
@@ -328,19 +336,25 @@ class Logger implements LogRecord, Log {
     }
 
     public LogRecord xAdvisoryW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.ADVISORY);
+        return nextWaiting(advisorySeq, advisoryRing, LogLevel.ADVISORY);
     }
 
+    @Override
     public LogRecord xDebugW() {
         return nextWaiting(infoSeq, infoRing, LogLevel.DEBUG);
     }
 
     public LogRecord xErrorW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.ERROR);
+        return nextWaiting(errorSeq, errorRing, LogLevel.ERROR);
     }
 
     public LogRecord xCriticalW() {
-        return nextWaiting(infoSeq, infoRing, LogLevel.CRITICAL);
+        return nextWaiting(criticalSeq, criticalRing, LogLevel.CRITICAL);
+    }
+
+    @Override
+    public Sequence getCriticalSequence() {
+        return criticalSeq;
     }
 
     private LogRecord addTimestamp(LogRecord rec, String level) {

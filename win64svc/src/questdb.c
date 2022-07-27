@@ -95,11 +95,16 @@ void buildJavaArgs(CONFIG *config) {
         strcat(classpath, "\\questdb.jar");
     }
 
-    // put together command line
-
-    char *args = malloc((strlen(javaOpts) + strlen(classpath) + strlen(mainClass) + strlen(config->dir) + 256) *
+    // put together command line, dir is x2 because we're including the path to `hs_err_pid`
+    // 512 is extra for the constant strings
+    char *args = malloc((strlen(javaOpts) + strlen(classpath) + strlen(mainClass) + strlen(config->dir)*2 + 512) *
                         sizeof(char));
     strcpy(args, javaOpts);
+    // quote the directory in case it contains spaces
+    strcat(args, " -XX:ErrorFile=\"");
+    strcat(args, config->dir);
+    strcat(args, "\\db\\");
+    strcat(args, "hs_err_pid+%p.log\" "); // crash file name
     if (!config->localRuntime) {
         strcat(args, " -p \"");
         strcat(args, classpath);

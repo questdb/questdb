@@ -160,6 +160,8 @@ public class IOURingImplTest {
                         Assert.assertTrue(ring.getCqeRes() > -1);
                     }
                     Assert.assertFalse(ring.nextCqe());
+                    Assert.assertEquals(-1, ring.getCqeId());
+                    Assert.assertEquals(-1, ring.getCqeRes());
                 }
             }
         });

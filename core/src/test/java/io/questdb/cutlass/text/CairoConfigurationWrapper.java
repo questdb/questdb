@@ -796,4 +796,9 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     public boolean isIOURingEnabled() {
         return conf.isIOURingEnabled();
     }
+
+    @Override
+    public int getMaxCrashFiles() {
+        return conf.getMaxCrashFiles();
+    }
 }
