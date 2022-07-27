@@ -1123,9 +1123,11 @@ public class KeyedAggregationTest extends AbstractGriffinTest {
     }
 
     private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        compiler.compile("create table tab as ( select cast(x as int) i, cast(x as date) dat, cast(x as timestamp) ts, cast(x as double) d, rnd_long256() l256  from long_sequence(1000));", sqlExecutionContext);
+        compiler.compile("create table tab as ( select cast(x as int) i, x as l, cast(x as date) dat, cast(x as timestamp) ts, cast(x as double) d, rnd_long256() l256  from long_sequence(1000));", sqlExecutionContext);
 
-        CompiledQuery query = compiler.compile("select count(*) cnt from (select i, count(*), min(i), avg(i), max(i), sum(i), " +
+        CompiledQuery query = compiler.compile("select count(*) cnt from " +
+                "(select i, count(*), min(i), avg(i), max(i), sum(i), " +
+                "min(l), avg(l), max(l), sum(l), " +
                 "min(dat), avg(dat), max(dat), sum(dat), " +
                 "min(ts), avg(ts), max(ts), sum(ts), " +
                 "min(d), avg(d), max(d), sum(d), nsum(d), ksum(d)," +
