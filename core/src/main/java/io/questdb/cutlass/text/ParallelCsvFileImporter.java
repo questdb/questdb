@@ -507,7 +507,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             final CharSequence partitionDirName = partition.name;
             try {
                 final long timestamp = PartitionBy.parsePartitionDirName(partitionDirName, partitionBy);
-                writer.attachPartition(timestamp);
+                writer.attachPartition(timestamp, false);
             } catch (CairoException e) {
                 throw TextImportException.instance(
                                 TextImportTask.PHASE_ATTACH_PARTITIONS, "could not attach [partition='")

@@ -41,15 +41,15 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short ADD_COLUMN = 1;
     public final static short DROP_PARTITION = 2;
     public final static short ATTACH_PARTITION = 3;
-    public final static short DETACH_PARTITION = 4;
-    public final static short ADD_INDEX = 5;
-    public final static short DROP_INDEX = 6;
-    public final static short ADD_SYMBOL_CACHE = 7;
-    public final static short REMOVE_SYMBOL_CACHE = 8;
-    public final static short DROP_COLUMN = 9;
-    public final static short RENAME_COLUMN = 10;
-    public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 11;
-    public final static short SET_PARAM_COMMIT_LAG = 12;
+    public final static short ADD_INDEX = 4;
+    public final static short DROP_INDEX = 5;
+    public final static short ADD_SYMBOL_CACHE = 6;
+    public final static short REMOVE_SYMBOL_CACHE = 7;
+    public final static short DROP_COLUMN = 8;
+    public final static short RENAME_COLUMN = 9;
+    public final static short SET_PARAM_MAX_UNCOMMITTED_ROWS = 10;
+    public final static short SET_PARAM_COMMIT_LAG = 11;
+    public final static short DETACH_PARTITION = 12;
 
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
 
