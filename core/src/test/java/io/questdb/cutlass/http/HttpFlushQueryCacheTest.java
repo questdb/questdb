@@ -35,9 +35,6 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.Timeout;
 
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
@@ -141,7 +138,7 @@ public class HttpFlushQueryCacheTest {
 
     private static void sendAndReceiveDdl(String rawDdl) throws InterruptedException {
         sendAndReceive(
-                "GET /query?query=" + urlEncodeQuery(rawDdl) + "&count=true HTTP/1.1\r\n" +
+                "GET /query?query=" + HttpUtils.urlEncodeQuery(rawDdl) + "&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -166,7 +163,7 @@ public class HttpFlushQueryCacheTest {
 
     private static void sendAndReceiveBasicSelect(String rawSelect, String expectedBody) throws InterruptedException {
         sendAndReceive(
-                "GET /query?query=" + urlEncodeQuery(rawSelect) + "&count=true HTTP/1.1\r\n" +
+                "GET /query?query=" + HttpUtils.urlEncodeQuery(rawSelect) + "&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -186,13 +183,5 @@ public class HttpFlushQueryCacheTest {
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         expectedBody
         );
-    }
-
-    private static String urlEncodeQuery(String query) {
-        try {
-            return URLEncoder.encode(query, StandardCharsets.UTF_8.toString());
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
-        }
     }
 }

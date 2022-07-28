@@ -408,6 +408,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean isStringAsTagSupported;
     private short floatDefaultColumnType;
     private short integerDefaultColumnType;
+    private final boolean walEnabledDefault;
 
     public PropServerConfiguration(
             String root,
@@ -424,6 +425,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
         this.maxFileNameLength = getInt(properties, env, PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 127);
+        this.walEnabledDefault = getBoolean(properties, env, PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, false);
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         if (new File(this.dbDirectory).isAbsolute()) {
@@ -2014,6 +2016,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getDefaultSymbolCapacity() {
             return defaultSymbolCapacity;
+        }
+
+        @Override
+        public boolean getWallEnabledDefault() {
+            return walEnabledDefault;
         }
 
         @Override

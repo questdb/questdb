@@ -98,7 +98,7 @@ public class CommitLagRetentionTest extends AbstractGriffinTest {
         TestUtils.assertSql(
                 compiler,
                 sqlExecutionContext,
-                "tables()",
+                "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
                 sink,
                 "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                         "1\tmy_table\ttimestamp\tDAY\t250000\t240000000\n"
