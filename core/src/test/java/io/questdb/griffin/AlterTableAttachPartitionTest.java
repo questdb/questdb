@@ -33,6 +33,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -43,6 +44,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     private final static Log LOG = LogFactory.getLog(AlterTableAttachPartitionTest.class);
     private final int DIR_MODE = configuration.getMkDirMode();
+
+    private final StringSink partitions = new StringSink();
+    private final StringSink partitionsIn = new StringSink();
 
     @Test
     public void testAttachActive2Partitions() throws Exception {
@@ -869,45 +873,33 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             int countAdjustment,
             String... partitionList
     ) throws SqlException, NumericException {
-        copyAttachPartition(src, dst, countAdjustment, false, partitionList);
-    }
-
-    private void copyAttachPartition(
-            TableModel src,
-            TableModel dst,
-            int countAdjustment,
-            boolean skipCopy,
-            String... partitionList
-    ) throws SqlException, NumericException {
-        StringBuilder partitions = new StringBuilder();
+        partitions.clear();
         for (int i = 0; i < partitionList.length; i++) {
             if (i > 0) {
-                partitions.append(",");
+                partitions.put(",");
             }
-            partitions.append("'");
-            partitions.append(partitionList[i]);
-            partitions.append("'");
+            partitions.put("'");
+            partitions.put(partitionList[i]);
+            partitions.put("'");
         }
 
-        int rowCount = readAllRows(dst.getName());
-
-        StringBuilder partitionsIn = new StringBuilder();
+        partitionsIn.clear();
         for (int i = 0; i < partitionList.length; i++) {
             if (i > 0) {
-                partitionsIn.append(" OR ");
+                partitionsIn.put(" OR ");
             }
-            partitionsIn.append("ts IN '");
-            partitionsIn.append(partitionList[i]);
-            partitionsIn.append("'");
+            partitionsIn.put("ts IN '");
+            partitionsIn.put(partitionList[i]);
+            partitionsIn.put("'");
         }
 
         String withClause = ", t1 as (select 1 as id, count() as cnt from " + src.getName() + " WHERE " + partitionsIn + ")\n";
 
-        if (!skipCopy) {
-            for (String partitionFolder : partitionList) {
-                copyPartitionToAttachable(src.getName(), partitionFolder, dst.getName(), partitionFolder);
-            }
+        for (String partitionFolder : partitionList) {
+            copyPartitionToAttachable(src.getName(), partitionFolder, dst.getName(), partitionFolder);
         }
+
+        int rowCount = readAllRows(dst.getName());
 
         // Alter table
         compile(
@@ -1047,7 +1039,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                 }
 
                 // second attempt without FilesFacade override should work ok
-                copyAttachPartition(src, dst, 0, true, "2020-01-01");
+                copyAttachPartition(src, dst, 0, "2020-01-01");
             }
         });
     }

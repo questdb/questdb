@@ -30,12 +30,17 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.*;
 
+import java.util.Set;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import static io.questdb.cairo.TableUtils.*;
@@ -928,6 +933,111 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         );
     }
 
+    @Test
+    @Ignore
+    public void testDetachAttachPartitionPingPongConcurrent() throws Throwable {
+        ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();
+        assertMemoryLeak(() -> {
+            String tableName = "tabPingPong";
+            try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
+                createPopulateTable(tab
+                                .timestamp("ts")
+                                .col("s1", ColumnType.SYMBOL).indexed(true, 32)
+                                .col("i", ColumnType.INT)
+                                .col("l", ColumnType.LONG)
+                                .col("s2", ColumnType.SYMBOL),
+                        10,
+                        "2022-06-01",
+                        3
+                );
+            }
+
+            CyclicBarrier start = new CyclicBarrier(2);
+            CountDownLatch end = new CountDownLatch(2);
+            AtomicBoolean isLive = new AtomicBoolean(true);
+            Set<Long> detachedPartitionTimestamps = new ConcurrentSkipListSet<>();
+            AtomicInteger detachedCount = new AtomicInteger();
+            AtomicInteger attachedCount = new AtomicInteger();
+            Rnd rnd = TestUtils.generateRandom();
+
+            Thread detThread = new Thread(() -> {
+                try {
+                    start.await();
+                    while (isLive.get()) {
+                        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                            long partitionTimestamp = (rnd.nextInt() % writer.getPartitionCount()) * Timestamps.DAY_MICROS;
+                            if (!detachedPartitionTimestamps.contains(partitionTimestamp)) {
+                                writer.detachPartition(partitionTimestamp);
+                                detachedPartitionTimestamps.add(partitionTimestamp);
+                                detachedCount.incrementAndGet();
+                                System.out.printf("detached: %d%n", partitionTimestamp);
+                            }
+                        } catch (Throwable e) {
+                            exceptions.add(e);
+                            TimeUnit.MILLISECONDS.sleep(rnd.nextLong(53L));
+                            LOG.error().$(e).$();
+                        }
+                    }
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    end.countDown();
+                }
+            });
+            detThread.start();
+
+            Thread aThread = new Thread(() -> {
+                try {
+                    start.await();
+                    while (isLive.get()) {
+                        try (TableWriter writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName, "test")) {
+                            long partitionTimestamp = (rnd.nextInt() % writer.getPartitionCount()) * Timestamps.DAY_MICROS;
+                            if (detachedPartitionTimestamps.contains(partitionTimestamp)) {
+                                renameDetachedToAttachable(tableName, partitionTimestamp);
+                                writer.attachPartition(partitionTimestamp);
+                                detachedPartitionTimestamps.add(partitionTimestamp);
+                                attachedCount.incrementAndGet();
+                                System.out.printf("attached: %d%n", partitionTimestamp);
+                            }
+                        } catch (Throwable e) {
+                            exceptions.add(e);
+                            TimeUnit.MILLISECONDS.sleep(rnd.nextLong(17L));
+                            LOG.error().$(e).$();
+                        }
+                    }
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    end.countDown();
+                }
+            });
+            aThread.start();
+
+            // give it 10 seconds
+            System.out.printf("Main thread is now waiting...%n");
+            long deadline = System.currentTimeMillis() + 3;
+            while (System.currentTimeMillis() < deadline) {
+                TimeUnit.MILLISECONDS.sleep(300L);
+            }
+            isLive.set(false);
+            end.await();
+            System.out.printf("Main thread is now completing...%n");
+
+            if (exceptions.size() != 0) {
+                Throwable ex = exceptions.poll();
+                ex.printStackTrace();
+//                throw new Exception(ex);
+            }
+
+            System.out.printf("detachedPartitionTimestamps: %s%n", detachedPartitionTimestamps);
+            System.out.printf("detachedCount: %d%n", detachedCount);
+            System.out.printf("attachedCount: %d%n", attachedCount);
+
+//            Assert.assertTrue(reloadCount.get() > totalColAddCount / 10);
+//            LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
+        });
+    }
+
     private void assertCannotCopyMeta(String tableName, int copyCallId) throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
@@ -1068,6 +1178,27 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
         for (String partition : partitions) {
             path.of(configuration.getDetachedRoot()).concat(tableName).concat(partition).put(DETACHED_DIR_MARKER).$();
             other.of(configuration.getDetachedRoot()).concat(tableName).concat(partition).put(ATTACHABLE_DIR_MARKER).$();
+            Assert.assertTrue(Files.rename(path, other) > -1);
+        }
+    }
+
+    private void renameDetachedToAttachable(String tableName, long... partitions) {
+        for (long partition : partitions) {
+            PartitionBy.setSinkForPartition(
+                    path.of(configuration.getDetachedRoot()).concat(tableName),
+                    PartitionBy.DAY,
+                    partition,
+                    false
+            );
+            path.put(DETACHED_DIR_MARKER).$();
+
+            PartitionBy.setSinkForPartition(
+                    other.of(configuration.getDetachedRoot()).concat(tableName),
+                    PartitionBy.DAY,
+                    partition,
+                    false
+            );
+            other.put(ATTACHABLE_DIR_MARKER).$();
             Assert.assertTrue(Files.rename(path, other) > -1);
         }
     }
