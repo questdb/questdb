@@ -27,6 +27,7 @@ package io.questdb.cutlass.text;
 import io.questdb.std.Mutable;
 
 public class TextImportRequestTask implements Mutable {
+    private String importId;
     private String tableName;
     private String fileName;
     private boolean headerFlag;
@@ -35,7 +36,8 @@ public class TextImportRequestTask implements Mutable {
     private String timestampFormat;
     private int partitionBy;
 
-    public void of(String tableName,
+    public void of(String importId,
+                   String tableName,
                    String fileName,
                    boolean headerFlag,
                    String timestampColumnName,
@@ -44,6 +46,7 @@ public class TextImportRequestTask implements Mutable {
                    int partition_by
     ) {
         this.clear();
+        this.importId = importId;
         this.tableName = tableName;
         this.fileName = fileName;
         this.headerFlag = headerFlag;
@@ -55,6 +58,7 @@ public class TextImportRequestTask implements Mutable {
 
     @Override
     public void clear() {
+        this.importId = null;
         this.tableName = null;
         this.fileName = null;
         this.headerFlag = false;
@@ -62,6 +66,10 @@ public class TextImportRequestTask implements Mutable {
         this.delimiter = 0;
         this.timestampFormat = null;
         this.partitionBy = -1;
+    }
+
+    public String getImportId() {
+        return importId;
     }
 
     public byte getDelimiter() {

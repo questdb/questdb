@@ -45,6 +45,7 @@ import static io.questdb.cutlass.text.ParallelCsvFileImporter.createTable;
 
 public class TextImportTask {
 
+    public static final byte NO_PHASE = -1;
     public static final byte PHASE_SETUP = 0;
     public static final byte PHASE_BOUNDARY_CHECK = 1;
     public static final byte PHASE_INDEXING = 2;
@@ -664,6 +665,8 @@ public class TextImportTask {
         private long chunkStart;
         private long chunkEnd;
         private long lineNumber;
+        private long lineCount;
+        private long errorCount;
         private CharSequence inputFileName;
         private CharSequence importRoot;
         private int index;
@@ -678,6 +681,8 @@ public class TextImportTask {
             this.chunkStart = -1;
             this.chunkEnd = -1;
             this.lineNumber = -1;
+            this.lineCount = 0;
+            this.errorCount = 0;
 
             this.index = -1;
             this.inputFileName = null;
@@ -740,6 +745,8 @@ public class TextImportTask {
                         circuitBreaker
                 );
                 indexer.index(chunkStart, chunkEnd, lineNumber, partitionKeysAndSizes, fileBufAddr, fileBufSize);
+                lineCount = indexer.getLineCount();
+                errorCount = indexer.getErrorCount();
             } catch (TextException e) {
                 if (indexer.isCancelled()) {
                     throw getCancelException();
@@ -750,12 +757,23 @@ public class TextImportTask {
                 indexer.clear();
             }
         }
+
+        public long getLineCount() {
+            return lineCount;
+        }
+
+        public long getErrorCount() {
+            return errorCount;
+        }
     }
 
     public class PhasePartitionImport {
         private final StringSink tableNameSink = new StringSink();
         private final LongList importedRows = new LongList();
         private final LongList offsets = new LongList();
+        private long rowsHandled;
+        private long rowsImported;
+        private long errors;
         private CairoEngine cairoEngine;
         private TableStructure targetTableStructure;
         private ObjList<TypeAdapter> types;
@@ -771,7 +789,6 @@ public class TextImportTask {
         private int timestampIndex;
         private TimestampAdapter timestampAdapter;
         private long offset;
-        private int errors;
         private DirectCharSink utf8Sink;
         private final TextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
 
@@ -788,10 +805,12 @@ public class TextImportTask {
             this.timestampIndex = -1;
             this.timestampAdapter = null;
 
-            this.errors = 0;
             this.offset = 0;
             this.importedRows.clear();
             this.tableNameSink.clear();
+            this.rowsHandled = 0;
+            this.rowsImported = 0;
+            this.errors = 0;
 
             this.utf8Sink = null;
         }
@@ -834,12 +853,13 @@ public class TextImportTask {
                 lexer.of(columnDelimiter);
                 lexer.setSkipLinesWithExtraValues(false);
 
+                long prevErrors;
                 try {
                     for (int i = lo; i < hi; i++) {
                         throwIfCancelled();
 
                         lexer.clear();
-                        errors = 0;
+                        prevErrors = errors;
 
                         final CharSequence name = partitions.getQuick(i).name;
                         path.of(importRoot).concat(name);
@@ -856,15 +876,18 @@ public class TextImportTask {
                                 tmpPath
                         );
 
-                        long imported = atomicity == Atomicity.SKIP_ROW ? lexer.getLineCount() - errors : lexer.getLineCount();
+                        long newErrors = errors - prevErrors;
+                        long imported = atomicity == Atomicity.SKIP_ROW ? lexer.getLineCount() - newErrors : lexer.getLineCount();
                         importedRows.add(i);
                         importedRows.add(imported);
+                        rowsHandled += lexer.getLineCount();
+                        rowsImported += imported;
 
                         LOG.info()
                                 .$("imported data [temp_table=").$(tableNameSink)
                                 .$(", partition=").$(name)
                                 .$(", lines=").$(lexer.getLineCount())
-                                .$(", errors=").$(errors)
+                                .$(", errors=").$(newErrors)
                                 .I$();
                     }
                 } finally {
@@ -1377,6 +1400,18 @@ public class TextImportTask {
                 ff.munmap(addr, size, MemoryTag.MMAP_PARALLEL_IMPORT);
             }
             mergeIndexes.clear();
+        }
+
+        public long getErrors() {
+            return errors;
+        }
+
+        public long getRowsHandled() {
+            return rowsHandled;
+        }
+
+        public long getRowsImported() {
+            return rowsImported;
         }
     }
 

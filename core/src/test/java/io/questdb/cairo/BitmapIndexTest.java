@@ -193,7 +193,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
-                return 100;
+                return 1;
             }
         };
         TestUtils.assertMemoryLeak(() -> {
@@ -228,7 +228,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
-                return 100;
+                return 1;
             }
         };
         TestUtils.assertMemoryLeak(() -> {
@@ -243,7 +243,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
-                return 100;
+                return 1;
             }
         };
         TestUtils.assertMemoryLeak(() -> {
@@ -260,7 +260,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
-                return 100;
+                return 1;
             }
         };
         TestUtils.assertMemoryLeak(() -> {
@@ -330,7 +330,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
-                return 400;
+                return 4;
             }
         };
         create(configuration, path.trimTo(plen), "x", 1024);
@@ -798,7 +798,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
-                return 100;
+                return 1;
             }
         };
 
@@ -892,7 +892,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
             public long getSpinLockTimeout() {
-                return 3000;
+                return 3;
             }
         };
 
