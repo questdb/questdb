@@ -675,7 +675,6 @@ public class TableWriter implements Closeable {
             }
 
             if (!ff.exists(path)) {
-                LOG.error().$("cannot attach missing partition [path=").$(detachedPath).I$();
                 return StatusCode.PARTITION_CANNOT_ATTACH_MISSING;
             }
 
