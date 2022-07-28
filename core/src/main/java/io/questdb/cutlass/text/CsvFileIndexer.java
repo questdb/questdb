@@ -120,9 +120,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
     //if set to true then ignore first line of input file 
     private boolean header;
     private long lastQuotePos = -1;
-    private long errorCount = 0;
+    private int errorCount = 0;
 
     private int fieldIndex;
+    private long lineNumber;
     private long lineCount;
     private boolean eol;
 
@@ -206,7 +207,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         long lineStartOffset = lastLineStart;
         long length = offset + ptr - lo - lastLineStart;
         if (length >= (1L << 16)) {
-            LOG.error().$("row exceeds maximum line length (65k) for parallel import [line=").$(lineCount)
+            LOG.error().$("row exceeds maximum line length (65k) for parallel import [line=").$(lineNumber)
                     .$(", length=").$(length).I$();
             errorCount++;
             return;
@@ -242,9 +243,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
             timestampValue = timestampAdapter.getTimestamp(timestampField);
         } catch (Exception e) {
             if (failOnTsError) {
-                throw TextException.$("could not parse timestamp [line=").put(lineCount).put(", column=").put(timestampIndex).put(']');
+                throw TextException.$("could not parse timestamp [line=").put(lineNumber).put(", column=").put(timestampIndex).put(']');
             } else {
-                LOG.error().$("could not parse timestamp [line=").$(lineCount).$(", column=").$(timestampIndex).I$();
+                LOG.error().$("could not parse timestamp [line=").$(lineNumber).$(", column=").$(timestampIndex).I$();
                 errorCount++;
             }
         }
@@ -339,6 +340,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         this.fieldIndex = 0;
         this.inQuote = false;
         this.delayedOutQuote = false;
+        this.lineNumber = 0;
         this.lineCount = 0;
         this.fieldRollBufCur = fieldRollBufPtr;
         this.useFieldRollBuf = false;
@@ -430,7 +432,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             rollBufferUnusable = false;
             clearRollBuffer(ptr);
             fieldIndex = 0;
-            lineCount++;
+            lineNumber++;
         }
     }
 
@@ -438,7 +440,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         if (requiredLength > fieldRollBufLen) {
             LOG.info()
                     .$("timestamp column value too long [path=").$(inputFileName)
-                    .$(", line=").$(lineCount)
+                    .$(", line=").$(lineNumber)
                     .$(", requiredLen=").$(requiredLength)
                     .$(", rollLimit=").$(fieldRollBufLen)
                     .$(']').$();
@@ -591,7 +593,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
             return;
         }
 
-        lineCount++;
+        lineNumber++;
         timestampValue = Long.MIN_VALUE;
     }
 
@@ -617,7 +619,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         long read;
 
         this.lastLineStart = offset;
-        this.lineCount = lineNumber;
+        this.lineNumber = lineNumber;
 
         try {
             do {
@@ -651,12 +653,21 @@ public class CsvFileIndexer implements Closeable, Mutable {
             closeSortBuffer();
         }
 
+        this.lineCount = this.lineNumber - lineNumber;
         LOG.info()
                 .$("finished chunk [chunkLo=").$(chunkLo)
                 .$(", chunkHi=").$(chunkHi)
-                .$(", lines=").$(lineCount - lineNumber)
+                .$(", lines=").$(lineCount)
                 .$(", errors=").$(errorCount)
                 .I$();
+    }
+
+    public int getErrorCount() {
+        return errorCount;
+    }
+
+    public long getLineCount() {
+        return lineCount;
     }
 
     private void closeSortBuffer() {

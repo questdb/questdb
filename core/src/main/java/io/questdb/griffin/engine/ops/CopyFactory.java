@@ -22,23 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.SingleValueRecordCursor;
 
-public class ShowMaxIdentifierLengthCursorFactory extends AbstractRecordCursorFactory {
+public class CopyFactory extends AbstractRecordCursorFactory {
     private final static GenericRecordMetadata METADATA = new GenericRecordMetadata();
-    private final static IntValueRecord RECORD = new IntValueRecord(63);
-    private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(RECORD);
+    private final StringValueRecord record = new StringValueRecord();
+    private final SingleValueRecordCursor cursor = new SingleValueRecordCursor(record);
 
-    public ShowMaxIdentifierLengthCursorFactory() {
+    public CopyFactory(String importId) {
         super(METADATA);
+        record.setValue(importId);
     }
 
     @Override
@@ -52,7 +54,30 @@ public class ShowMaxIdentifierLengthCursorFactory extends AbstractRecordCursorFa
         return false;
     }
 
+    private static class StringValueRecord implements Record {
+        private String value;
+
+        public void setValue(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public CharSequence getStr(int col) {
+            return value;
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            return getStr(col);
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            return value.length();
+        }
+    }
+
     static {
-        METADATA.add(new TableColumnMetadata("max_identifier_length", 1, ColumnType.INT));
+        METADATA.add(new TableColumnMetadata("id", 1, ColumnType.STRING));
     }
 }
