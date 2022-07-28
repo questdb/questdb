@@ -151,9 +151,15 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
 
     private boolean useParallelImport() {
         if (task.getTimestampColumnName() != null) {
+            LOG.info().$("Using ParallelImport strategy because COPY command contains a timestamp definition");
             return true;
         }
-        return existsTargetTableAndPartitioned();
+        if (existsTargetTableAndPartitioned()) {
+            LOG.info().$("Using ParallelImport strategy because the target table exists and is partitioned");
+            return true;
+        }
+        LOG.info().$("Using SerialImport strategy");
+        return false;
     }
 
     @Override

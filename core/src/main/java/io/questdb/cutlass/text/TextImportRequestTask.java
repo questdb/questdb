@@ -42,7 +42,7 @@ public class TextImportRequestTask implements Mutable {
                    String timestampColumnName,
                    byte delimiter,
                    String timestampFormat,
-                   int partition_by,
+                   int partitionBy,
                    int atomicity
     ) {
         this.clear();
@@ -52,7 +52,7 @@ public class TextImportRequestTask implements Mutable {
         this.timestampColumnName = timestampColumnName;
         this.delimiter = delimiter;
         this.timestampFormat = timestampFormat;
-        this.partitionBy = partition_by;
+        this.partitionBy = partitionBy;
         this.atomicity = atomicity;
     }
 
