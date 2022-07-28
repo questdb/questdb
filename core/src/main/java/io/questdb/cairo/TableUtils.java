@@ -886,10 +886,10 @@ public final class TableUtils {
      * Sets the path to the directory of a partition taking into account the timestamp,the partitioning scheme
      * and the partition version.
      *
-     * @param tablePath     Set to the root directory for a table, this will be updated to the root directory of the partition
-     * @param tableRootLen  trim to this length to go back to the root path of the table
-     * @param partitionBy   Partitioning scheme
-     * @param timestamp     A timestamp in the partition
+     * @param tablePath    Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param tableRootLen trim to this length to go back to the root path of the table
+     * @param partitionBy  Partitioning scheme
+     * @param timestamp    A timestamp in the partition
      */
     public static void setPathForPartition(
             Path tablePath,
@@ -1151,7 +1151,7 @@ public final class TableUtils {
         int plen = path.chop$().length();
         try {
             if (ff.exists(path.concat(columnName).put(FILE_SUFFIX_D).$())) {
-                final long fd = TableUtils.openRO(ff, path, LOG);
+                long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long fileSize = ff.length(fd);
                     long mappedMem = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
@@ -1159,7 +1159,6 @@ public final class TableUtils {
                         long minTimestamp;
                         long maxTimestamp = timestamp;
                         long size = 0L;
-
                         for (long ptr = mappedMem, hi = mappedMem + fileSize; ptr < hi; ptr += Long.BYTES) {
                             long ts = Unsafe.getUnsafe().getLong(ptr);
                             if (ts >= maxTimestamp) {
@@ -1181,9 +1180,10 @@ public final class TableUtils {
                 } finally {
                     ff.close(fd);
                 }
-            } else {
-                throw CairoException.instance(0).put("path does not exist [path=").put(path).put(']');
             }
+            return -1L; // does not exist
+        } catch (CairoException err) {
+            return -1L; // failed to open/mmap
         } finally {
             path.trimTo(plen);
         }

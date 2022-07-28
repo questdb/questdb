@@ -687,6 +687,10 @@ public class TableWriter implements Closeable {
             // find out lo, hi ranges of partition attached as well as size
             CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
             final long partitionSize = readPartitionSizeMinMax(ff, path, timestampCol, tempMem16b, timestamp);
+            if (partitionSize < 0L) {
+                return PARTITION_CANNOT_ATTACH_MISSING_COLUMN;
+            }
+
             long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
             long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + Long.BYTES);
             assert timestamp <= minPartitionTimestamp && minPartitionTimestamp <= maxPartitionTimestamp;
@@ -707,6 +711,7 @@ public class TableWriter implements Closeable {
 
             LOG.info().$("partition attached [path=").$(path).$(']').$();
             rollbackRename = false;
+
             return StatusCode.OK;
         } finally {
             if (rollbackRename) {
@@ -1694,9 +1699,6 @@ public class TableWriter implements Closeable {
             detachedMetadata.deferredInit(other2, ColumnType.VERSION);
             if (metadata.getId() != detachedMetadata.getId()) {
                 throw CairoException.detachedMetadataMismatch("table_id");
-            }
-            if (metadata.getTimestampIndex() != detachedMetadata.getTimestampIndex()) {
-                throw CairoException.detachedMetadataMismatch("timestamp_index");
             }
             // check column name, type and isIndexed
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {

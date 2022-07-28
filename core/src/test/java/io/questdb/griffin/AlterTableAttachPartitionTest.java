@@ -257,31 +257,32 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAttachPartitionBadOffsetForDesignatedTimestamp() throws Exception {
+    public void testAttachPartitionMissingColumnType() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src11", PartitionBy.DAY);
-                 TableModel dst = new TableModel(configuration, "dst11", PartitionBy.DAY)) {
+            try (TableModel src = new TableModel(configuration, "src", PartitionBy.DAY)) {
 
                 createPopulateTable(
                         src.col("l", ColumnType.LONG)
                                 .col("i", ColumnType.INT)
                                 .timestamp("ts"),
-                        10000,
-                        "2020-01-01",
-                        1);
+                        45000,
+                        "2020-01-09",
+                        2);
 
-                CairoTestUtils.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG));
-
-                copyPartitionToAttachable(src.getName(), "2020-01-01", dst.getName(), "2020-01-02");
-                try {
-                    String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'";
-                    compile(alterCommand, sqlExecutionContext);
-                    Assert.fail();
-                } catch (io.questdb.griffin.SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "[-100] Detached partition metadata [timestamp_index] is not compatible with current table metadata");
-                }
+                assertSchemaMismatch(src, "dst1", dst -> dst.col("str", ColumnType.STRING), "[-100] Detached partition metadata [missing_column: str]");
+                assertSchemaMismatch(src, "dst2", dst -> dst.col("sym", ColumnType.SYMBOL), "[-100] Detached partition metadata [missing_column: sym]");
+                assertSchemaMismatch(src, "dst3", dst -> dst.col("l1", ColumnType.LONG), "[-100] Detached partition metadata [missing_column: l1]");
+                assertSchemaMismatch(src, "dst4", dst -> dst.col("i1", ColumnType.INT), "[-100] Detached partition metadata [missing_column: i1]");
+                assertSchemaMismatch(src, "dst5", dst -> dst.col("b", ColumnType.BOOLEAN), "[-100] Detached partition metadata [missing_column: b]");
+                assertSchemaMismatch(src, "dst6", dst -> dst.col("db", ColumnType.DOUBLE), "[-100] Detached partition metadata [missing_column: db]");
+                assertSchemaMismatch(src, "dst7", dst -> dst.col("fl", ColumnType.FLOAT), "[-100] Detached partition metadata [missing_column: fl]");
+                assertSchemaMismatch(src, "dst8", dst -> dst.col("dt", ColumnType.DATE), "[-100] Detached partition metadata [missing_column: dt]");
+                assertSchemaMismatch(src, "dst9", dst -> dst.col("tss", ColumnType.TIMESTAMP), "[-100] Detached partition metadata [missing_column: tss]");
+                assertSchemaMismatch(src, "dst10", dst -> dst.col("l256", ColumnType.LONG256), "[-100] Detached partition metadata [missing_column: l256]");
+                assertSchemaMismatch(src, "dst11", dst -> dst.col("bin", ColumnType.BINARY), "[-100] Detached partition metadata [missing_column: bin]");
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("byt", ColumnType.BYTE), "[-100] Detached partition metadata [missing_column: byt]");
+                assertSchemaMismatch(src, "dst13", dst -> dst.col("chr", ColumnType.CHAR), "[-100] Detached partition metadata [missing_column: chr]");
+                assertSchemaMismatch(src, "dst14", dst -> dst.col("shrt", ColumnType.SHORT), "[-100] Detached partition metadata [missing_column: shrt]");
             }
         });
     }
@@ -685,14 +686,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             @Override
             public long openRO(LPSZ name) {
                 long fd = super.openRO(name);
-                if (Chars.contains(name, "ts") && counter.decrementAndGet() == 0) {
+                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     this.tsdFd = fd;
                 }
                 return fd;
             }
         };
 
-        testSqlFailedOnFsOperation(ff);
+        testSqlFailedOnFsOperation(ff, "PARTITION_CANNOT_ATTACH_MISSING_COLUMN");
     }
 
     @Test
@@ -708,7 +709,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [", "] could not open");
+        testSqlFailedOnFsOperation(ff, "PARTITION_CANNOT_ATTACH_MISSING_COLUMN");
     }
 
     @Test
@@ -717,14 +718,14 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         FilesFacadeImpl ff = new FilesFacadeImpl() {
             @Override
             public boolean exists(LPSZ name) {
-                if (Chars.contains(name, "ts") && counter.decrementAndGet() == 0) {
+                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return false;
                 }
                 return super.exists(name);
             }
         };
 
-        testSqlFailedOnFsOperation(ff);
+        testSqlFailedOnFsOperation(ff, "PARTITION_CANNOT_ATTACH_MISSING_COLUMN");
     }
 
     @Test
@@ -845,9 +846,9 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     private void assertSchemaMismatch(TableModel src, String dstTableName, AddColumn tm, String errorMessage) throws NumericException {
         try (TableModel dst = new TableModel(configuration, dstTableName, PartitionBy.DAY);
              Path path = new Path()) {
-            dst.timestamp("ts")
-                    .col("i", ColumnType.INT)
-                    .col("l", ColumnType.LONG);
+            dst.col("i", ColumnType.INT)
+                    .col("l", ColumnType.LONG)
+                    .timestamp("ts");
 
             tm.add(dst);
             CairoTestUtils.create(dst);
@@ -890,8 +891,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
         int rowCount = readAllRows(dst.getName());
 
-        String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST " + partitions + ";";
-
         StringBuilder partitionsIn = new StringBuilder();
         for (int i = 0; i < partitionList.length; i++) {
             if (i > 0) {
@@ -911,7 +910,10 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
 
         // Alter table
-        compile(alterCommand, sqlExecutionContext);
+        compile(
+                "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST " + partitions + ";",
+                sqlExecutionContext
+        );
 
         int newRowCount = readAllRows(dst.getName());
         Assert.assertTrue(newRowCount > rowCount);
@@ -1050,21 +1052,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         });
     }
 
-    private void writeToStrIndexFile(TableModel src, String columnFileName, long value, long offset) {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
-        long fd = -1;
-        long writeBuff = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        try (Path path = new Path()) {
-            // .i file
-            path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat(columnFileName).$();
-            fd = ff.openRW(path, CairoConfiguration.O_NONE);
-            Unsafe.getUnsafe().putLong(writeBuff, value);
-            ff.write(fd, writeBuff, Long.BYTES, offset);
-        } finally {
-            ff.close(fd);
-            Unsafe.free(writeBuff, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
 
     @FunctionalInterface
     private interface AddColumn {
