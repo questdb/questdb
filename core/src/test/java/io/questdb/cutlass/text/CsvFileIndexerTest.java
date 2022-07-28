@@ -192,7 +192,6 @@ public class CsvFileIndexerTest extends AbstractGriffinTest {
 
                 ObjList<IndexChunk> actualChunks = readIndexChunks(new File(inputWorkRoot));
                 Assert.assertEquals(list(chunks), actualChunks);
-
             } finally {
                 Unsafe.free(bufAddr, bufSize, MemoryTag.NATIVE_DEFAULT);
             }

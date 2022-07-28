@@ -665,6 +665,8 @@ public class TextImportTask {
         private long chunkStart;
         private long chunkEnd;
         private long lineNumber;
+        private long lineCount;
+        private int errorCount;
         private CharSequence inputFileName;
         private CharSequence importRoot;
         private int index;
@@ -679,6 +681,8 @@ public class TextImportTask {
             this.chunkStart = -1;
             this.chunkEnd = -1;
             this.lineNumber = -1;
+            this.lineCount = 0;
+            this.errorCount = 0;
 
             this.index = -1;
             this.inputFileName = null;
@@ -741,6 +745,8 @@ public class TextImportTask {
                         circuitBreaker
                 );
                 indexer.index(chunkStart, chunkEnd, lineNumber, partitionKeysAndSizes, fileBufAddr, fileBufSize);
+                lineCount = indexer.getLineCount();
+                errorCount = indexer.getErrorCount();
             } catch (TextException e) {
                 if (indexer.isCancelled()) {
                     throw getCancelException();
@@ -750,6 +756,14 @@ public class TextImportTask {
             } finally {
                 indexer.clear();
             }
+        }
+
+        public long getLineCount() {
+            return lineCount;
+        }
+
+        public int getErrorCount() {
+            return errorCount;
         }
     }
 

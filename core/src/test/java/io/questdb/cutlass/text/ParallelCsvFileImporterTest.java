@@ -783,6 +783,28 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testImportNoRowsCsv() throws Exception {
+        executeWithPool(4, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
+            try (ParallelCsvFileImporter indexer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
+                indexer.setMinChunkSize(10);
+                indexer.of(
+                        "t",
+                        "test-quotes-header-only.csv",
+                        PartitionBy.MONTH,
+                        (byte) ',',
+                        "ts",
+                        "yyyy-MM-ddTHH:mm:ss.SSSSSSZ",
+                        true,
+                        null
+                );
+                indexer.process();
+            } catch (TextImportException e) {
+                MatcherAssert.assertThat(e.getMessage(), containsString("No rows in input file to import."));
+            }
+        });
+    }
+
+    @Test
     public void testImportCsvIntoExistingTableWithColumnReorder() throws Exception {
         executeWithPool(16, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
             compiler.compile("create table t ( ts timestamp, line string, description string, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
@@ -941,7 +963,7 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 indexer.process();
                 Assert.fail();
             } catch (TextImportException e) {
-                Assert.assertEquals("No partitions to merge and load found. Possible reasons: timestamp format mismatch or no rows in input file.", e.getMessage());
+                Assert.assertEquals("All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).", e.getMessage());
             }
         });
     }
