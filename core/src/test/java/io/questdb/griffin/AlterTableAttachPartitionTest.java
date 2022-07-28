@@ -693,7 +693,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [2] could not mmap");
+        testSqlFailedOnFsOperation(ff, "srcMap", "dstMap", "could not mmap");
     }
 
     @Test
@@ -709,7 +709,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [2] could not open read-only");
+        testSqlFailedOnFsOperation(ff, "srcTs", "dstTs", "could not open read-only");
     }
 
     @Test
@@ -725,7 +725,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [0] path does not exist");
+        testSqlFailedOnFsOperation(ff, "srcTs2", "dstTs2", "path does not exist");
     }
 
     @Test
@@ -741,7 +741,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "PARTITION_FOLDER_CANNOT_RENAME");
+        testSqlFailedOnFsOperation(ff, "srcRen", "dstRen", "PARTITION_FOLDER_CANNOT_RENAME");
     }
 
     @Test
@@ -1018,11 +1018,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         }
     }
 
-    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, String... errorContains) throws Exception {
+    private void testSqlFailedOnFsOperation(FilesFacadeImpl ff, String srcTableName, String dstTableName, String... errorContains) throws Exception {
         assertMemoryLeak(ff, () -> {
             try (
-                    TableModel src = new TableModel(configuration, "src", PartitionBy.DAY);
-                    TableModel dst = new TableModel(configuration, "dst", PartitionBy.DAY)
+                    TableModel src = new TableModel(configuration, srcTableName, PartitionBy.DAY);
+                    TableModel dst = new TableModel(configuration, dstTableName, PartitionBy.DAY)
             ) {
 
                 createPopulateTable(
