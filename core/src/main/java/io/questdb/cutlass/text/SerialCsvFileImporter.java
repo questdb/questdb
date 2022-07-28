@@ -51,8 +51,6 @@ public final class SerialCsvFileImporter implements Closeable {
     private boolean isHeaderFlag;
     private ParallelCsvFileImporter.PhaseStatusReporter statusReporter;
     private ExecutionCircuitBreaker circuitBreaker;
-    private int partitionBy;
-    private CharSequence timestampColumn;
     private int atomicity;
 
     public SerialCsvFileImporter(CairoEngine engine) {
@@ -71,11 +69,9 @@ public final class SerialCsvFileImporter implements Closeable {
         textLoader = Misc.free(textLoader);
     }
 
-    public void of(String tableName, String fileName, int partitionBy, CharSequence timestampColumn, boolean isHeaderFlag, int atomicity, ExecutionCircuitBreaker circuitBreaker) {
+    public void of(String tableName, String fileName, boolean isHeaderFlag, int atomicity, ExecutionCircuitBreaker circuitBreaker) {
         this.tableName = tableName;
         this.fileName = fileName;
-        this.partitionBy = partitionBy;
-        this.timestampColumn = timestampColumn;
         this.isHeaderFlag = isHeaderFlag;
         this.atomicity = atomicity;
         this.circuitBreaker = circuitBreaker;
@@ -132,7 +128,6 @@ public final class SerialCsvFileImporter implements Closeable {
     }
 
     private void setupTextLoaderFromModel() {
-        // todo: this is a copy&paste from SqlCompiler!
         textLoader.clear();
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
         // todo: configure the following
@@ -140,8 +135,6 @@ public final class SerialCsvFileImporter implements Closeable {
         //   - we should be able to skip X rows from top, dodgy headers etc.
 
         textLoader.configureDestination(tableName, false, false,
-                atomicity != -1 ? atomicity : Atomicity.SKIP_ROW,
-                partitionBy < 0 ? PartitionBy.NONE : partitionBy,
-                timestampColumn);
+                atomicity != -1 ? atomicity : Atomicity.SKIP_ROW, PartitionBy.NONE,null);
     }
 }

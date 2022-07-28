@@ -187,8 +187,6 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                     serialImporter.of(
                             task.getTableName(),
                             task.getFileName(),
-                            task.getPartitionBy(),
-                            task.getTimestampColumnName(),
                             task.isHeaderFlag(),
                             task.getAtomicity(),
                             textImportExecutionContext.getCircuitBreaker()
