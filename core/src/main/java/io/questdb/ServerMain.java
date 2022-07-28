@@ -54,7 +54,6 @@ import java.io.*;
 import java.net.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -304,9 +303,8 @@ public class ServerMain {
                 LogFactory.INSTANCE.flushJobsAndClose();
             }));
         } catch (NetworkError e) {
-            log.errorW().$((Sinkable) e).$();
-            System.err.println(e.getMessage());//prints error synchronously
-            LockSupport.parkNanos(10000000L);
+            log.error().$((Sinkable) e).$();
+            LogFactory.INSTANCE.flushJobsAndClose();
             System.exit(55);
         }
     }
@@ -555,7 +553,15 @@ public class ServerMain {
         }
         setPublicVersion(publicDir, thisVersion);
         copyConfResource(dir, false, buffer, "conf/date.formats", log);
-        copyConfResource(dir, true, buffer, "conf/mime.types", log);
+        try {
+            copyConfResource(dir, true, buffer, "conf/mime.types", log);
+        } catch (IOException exception) {
+            // conf can be read-only, this is not critical
+            if (exception.getMessage() == null ||
+                    (!exception.getMessage().contains("Read-only file system") && !exception.getMessage().contains("Permission denied"))) {
+                throw exception;
+            }
+        }
         copyConfResource(dir, false, buffer, "conf/server.conf", log);
         copyConfResource(dir, false, buffer, "conf/log.conf", log);
     }
