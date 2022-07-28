@@ -2154,6 +2154,7 @@ public class SqlCompiler implements Closeable {
 
     @NotNull
     private CompiledQuery executeCopy(SqlExecutionContext executionContext, CopyModel executionModel) throws SqlException {
+        executionContext.getCairoSecurityContext().checkWritePermission();
         if (!executionModel.isCancel() && Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
             setupTextLoaderFromModel(executionModel);
             return compiledQuery.ofCopyRemote(textLoader);

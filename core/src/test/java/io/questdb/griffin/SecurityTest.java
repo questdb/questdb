@@ -41,6 +41,7 @@ import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SecurityTest extends AbstractGriffinTest {
@@ -53,6 +54,7 @@ public class SecurityTest extends AbstractGriffinTest {
 
     @BeforeClass
     public static void setUpReadOnlyExecutionContext() {
+        inputRoot = new File(".").getAbsolutePath();
         CairoConfiguration readOnlyConfiguration = new DefaultCairoConfiguration(root) {
             @Override
             public int getSqlJoinMetadataMaxResizes() {
@@ -93,6 +95,7 @@ public class SecurityTest extends AbstractGriffinTest {
             public long getSqlSortLightValuePageSize() {
                 return 1024;
             }
+
         };
         memoryRestrictedEngine = new CairoEngine(readOnlyConfiguration);
         SqlExecutionCircuitBreaker dummyCircuitBreaker = new SqlExecutionCircuitBreaker() {
@@ -311,6 +314,18 @@ public class SecurityTest extends AbstractGriffinTest {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
             assertQuery("count\n0\n", "select count() from balances", null, false, true);
+        });
+    }
+
+    @Test
+    public void testCopyDeniedOnNoWriteAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                compiler.compile("copy testDisallowCopySerial from '/src/test/resources/csv/test-alltypes.csv' with header true", readOnlyExecutionContext);
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("permission denied"));
+            }
         });
     }
 

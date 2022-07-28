@@ -30,6 +30,7 @@ import org.junit.rules.TemporaryFolder;
 import org.postgresql.PGProperty;
 import org.postgresql.util.PSQLException;
 
+import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -50,6 +51,11 @@ public class PGSecurityTest extends BasePGTest {
     };
     @ClassRule
     public static TemporaryFolder backup = new TemporaryFolder();
+
+    @BeforeClass
+    public static void init() {
+        inputRoot = new File(".").getAbsolutePath();
+    }
 
     @Test
     public void testDisallowAddNewColumn() throws Exception {
@@ -85,6 +91,13 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             compiler.compile("create table src (ts TIMESTAMP)", sqlExecutionContext);
             assertQueryDisallowed("drop table src");
+        });
+    }
+
+    @Test
+    public void testDisallowCopy() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQueryDisallowed("copy testDisallowCopySerial from '/src/test/resources/csv/test-alltypes.csv' with header true");
         });
     }
 
@@ -249,6 +262,7 @@ public class PGSecurityTest extends BasePGTest {
     private void assertQueryDisallowed(String query) throws Exception {
         try {
             executeWithPg(query);
+            Os.sleep(1000000);
             fail("Query '" + query + "' must fail in the read-only mode!");
         } catch (PSQLException e) {
             assertContains(e.getMessage(), "Write permission denied");
