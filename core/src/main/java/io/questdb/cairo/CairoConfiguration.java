@@ -122,6 +122,8 @@ public interface CairoConfiguration {
 
     int getDefaultSymbolCapacity();
 
+    boolean getWallEnabledDefault();
+
     int getDoubleToStrCastScale();
 
     int getFileOperationRetryCount();

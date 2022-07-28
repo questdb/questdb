@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.cast.CastCharToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.CopyFactory;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -110,6 +111,7 @@ public class SqlCompiler implements Closeable {
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final IndexBuilder rebuildIndex = new IndexBuilder();
     private final VacuumColumnVersions vacuumColumnVersions;
+    private final StringSink importIdSink = new StringSink();
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
@@ -117,6 +119,7 @@ public class SqlCompiler implements Closeable {
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
+
     // Exposed for embedded API users.
     public SqlCompiler(CairoEngine engine) {
         this(engine, null, null);
@@ -1900,7 +1903,8 @@ public class SqlCompiler implements Closeable {
         return rowCount;
     }
 
-    private void executeCopy0(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
+    @Nullable
+    private RecordCursorFactory executeCopy0(SqlExecutionContext executionContext, CopyModel model) throws SqlException {
         try {
             int workerCount = executionContext.getWorkerCount();
             ExpressionNode fileNameNode = model.getFileName();
@@ -1912,6 +1916,7 @@ public class SqlCompiler implements Closeable {
 
                 if (model.isCancel()) {
                     addTextImportRequest(model, null);
+                    return null;
                 } else {
                     if (model.getTimestampFormat() == null) {
                         model.setTimestampFormat("yyyy-MM-ddTHH:mm:ss.SSSUUUZ");
@@ -1919,9 +1924,11 @@ public class SqlCompiler implements Closeable {
                     if (model.getDelimiter() < 0) {
                         model.setDelimiter((byte) ',');
                     }
-                    addTextImportRequest(model, fileName);
+                    long importId = addTextImportRequest(model, fileName);
+                    importIdSink.clear();
+                    Numbers.appendHex(importIdSink, importId, true);
+                    return new CopyFactory(importIdSink.toString());
                 }
-                return;
             }
 
             if (model.getTimestampColumnName() != null ||
@@ -1970,28 +1977,36 @@ public class SqlCompiler implements Closeable {
                 Unsafe.free(buf, len, MemoryTag.NATIVE_DEFAULT);
             }
             LOG.info().$("copied").$();
+            return null;
         } catch (TextImportException | TextException e) {
             LOG.error().$((Throwable) e).$();
             throw SqlException.$(0, e.getMessage());
         }
     }
 
-    private void addTextImportRequest(CopyModel model, @Nullable CharSequence fileName) throws SqlException {
+    private long addTextImportRequest(CopyModel model, @Nullable CharSequence fileName) throws SqlException {
 
         final RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
         final MPSequence textImportRequestPubSeq = messageBus.getTextImportRequestPubSeq();
         final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
         final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
-        final CharSequence tableName = GenericLexer.unquote(model.getTableName().token);
 
         boolean isActive = textImportExecutionContext.isActive();
         if (model.isCancel()) {
             // The cancellation is based on the best effort, so we don't worry about potential races with imports.
             if (isActive) {
-                if (textImportExecutionContext.equalsActiveTableName(tableName)) {
+                long importId;
+                try {
+                    final CharSequence idString = GenericLexer.unquote(model.getTarget().token);
+                    importId = Numbers.parseHexLong(idString);
+                } catch (NumericException e) {
+                    throw SqlException.$(0, "Provided id has invalid format.");
+                }
+                if (textImportExecutionContext.sameAsActiveImportId(importId)) {
                     circuitBreaker.cancel();
+                    return -1;
                 } else {
-                    throw SqlException.$(0, "Active import is on different table.");
+                    throw SqlException.$(0, "Active import has different id.");
                 }
             } else {
                 throw SqlException.$(0, "No active import to cancel.");
@@ -2000,10 +2015,16 @@ public class SqlCompiler implements Closeable {
             if (!isActive) {
                 long processingCursor = textImportRequestPubSeq.next();
                 if (processingCursor > -1) {
-                    final TextImportRequestTask task = textImportRequestQueue.get(processingCursor);
-
                     assert fileName != null;
-                    task.of(Objects.toString(tableName, null),
+
+                    final TextImportRequestTask task = textImportRequestQueue.get(processingCursor);
+                    final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
+
+                    long importId = textImportExecutionContext.assignActiveImportId();
+                    importIdSink.clear();
+                    Numbers.appendHex(importIdSink, importId, true);
+                    task.of(importIdSink.toString(),
+                            Objects.toString(tableName, null),
                             Objects.toString(fileName, null),
                             model.isHeader(),
                             Objects.toString(model.getTimestampColumnName(), null),
@@ -2012,8 +2033,8 @@ public class SqlCompiler implements Closeable {
                             model.getPartitionBy());
 
                     circuitBreaker.reset();
-                    textImportExecutionContext.setActiveTableName(tableName);
                     textImportRequestPubSeq.done(processingCursor);
+                    return importId;
                 } else {
                     throw SqlException.$(0, "Unable to process the import request. Another import request may be in progress.");
                 }
@@ -2225,11 +2246,12 @@ public class SqlCompiler implements Closeable {
     @NotNull
     private CompiledQuery executeCopy(SqlExecutionContext executionContext, CopyModel executionModel) throws SqlException {
         if (!executionModel.isCancel() && Chars.equalsLowerCaseAscii(executionModel.getFileName().token, "stdin")) {
+            // no-op implementation
             setupTextLoaderFromModel(executionModel);
             return compiledQuery.ofCopyRemote(textLoader);
         }
-        executeCopy0(executionContext, executionModel);
-        return compiledQuery.ofCopyLocal();
+        RecordCursorFactory copyFactory = executeCopy0(executionContext, executionModel);
+        return compiledQuery.ofCopyLocal(copyFactory);
     }
 
     private CompiledQuery executeWithRetries(
@@ -2726,7 +2748,7 @@ public class SqlCompiler implements Closeable {
         //   - what happens when data row errors out, max errors may be?
         //   - we should be able to skip X rows from top, dodgy headers etc.
 
-        textLoader.configureDestination(model.getTableName().token, false, false,
+        textLoader.configureDestination(model.getTarget().token, false, false,
                 model.getAtomicity() != -1 ? model.getAtomicity() : Atomicity.SKIP_ROW,
                 model.getPartitionBy() < 0 ? PartitionBy.NONE : model.getPartitionBy(),
                 model.getTimestampColumnName());
@@ -3201,6 +3223,11 @@ public class SqlCompiler implements Closeable {
         @Override
         public long getCommitLag() {
             return model.getCommitLag();
+        }
+
+        @Override
+        public boolean isWallEnabled() {
+            return model.isWallEnabled();
         }
 
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {

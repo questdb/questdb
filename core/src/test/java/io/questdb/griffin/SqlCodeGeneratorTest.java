@@ -7174,7 +7174,7 @@ public class SqlCodeGeneratorTest extends AbstractGriffinTest {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "tables()",
+                            "select id,name,designatedTimestamp,partitionBy,maxUncommittedRows,commitLag from tables()",
                             sink,
                             "id\tname\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\tcommitLag\n" +
                                     "1\tпривет от штиблет\t\tNONE\t1000\t0\n"

@@ -266,6 +266,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getWallEnabledDefault() {
+        return false;
+    }
+
+    @Override
     public int getDoubleToStrCastScale() {
         return Numbers.MAX_SCALE;
     }

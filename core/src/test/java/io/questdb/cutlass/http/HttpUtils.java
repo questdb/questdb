@@ -22,50 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.cutlass.http;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 
-class SingleValueRecordCursor implements RecordCursor {
-    private final Record record;
-    private int remaining = 1;
+public final class HttpUtils {
 
-    public SingleValueRecordCursor(Record record) {
-        this.record = record;
+    private HttpUtils() {
     }
 
-    @Override
-    public void close() {
-    }
-
-    @Override
-    public Record getRecord() {
-        return record;
-    }
-
-    @Override
-    public boolean hasNext() {
-        return remaining-- > 0;
-    }
-
-    @Override
-    public Record getRecordB() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void recordAt(Record record, long atRowId) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void toTop() {
-        remaining = 1;
-    }
-
-    @Override
-    public long size() {
-        return 1;
+    public static String urlEncodeQuery(String query) {
+        try {
+            return URLEncoder.encode(query, StandardCharsets.UTF_8.toString());
+        } catch (UnsupportedEncodingException e) {
+            throw new RuntimeException(e);
+        }
     }
 }
