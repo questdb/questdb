@@ -271,41 +271,19 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             long partitionTimestamp = longList.getQuick(i);
             try {
                 StatusCode statusCode = tableWriter.attachPartition(partitionTimestamp);
-                switch (statusCode) {
-                    case OK:
-                        break;
-                    case PARTITION_CANNOT_ATTACH_MISSING:
-                        throw putPartitionName(
-                                SqlException.$(tableNamePosition, "attach partition failed, folder '"),
-                                tableWriter.getPartitionBy(),
-                                partitionTimestamp)
-                                .put("' does not exist");
-                    case PARTITION_EMPTY:
-                        throw putPartitionName(
-                                SqlException.$(tableNamePosition, "failed to attach partition '"),
-                                tableWriter.getPartitionBy(),
-                                partitionTimestamp)
-                                .put("', data does not correspond to the partition folder or partition is empty");
-                    case PARTITION_ALREADY_ATTACHED:
-                        throw putPartitionName(
-                                SqlException.$(tableNamePosition, "failed to attach partition '"),
-                                tableWriter.getPartitionBy(),
-                                partitionTimestamp)
-                                .put("', partition already attached to the table");
-                    default:
-                        throw putPartitionName(
-                                SqlException.$(tableNamePosition, "attach partition  '"),
-                                tableWriter.getPartitionBy(),
-                                partitionTimestamp)
-                                .put(statusCode.name());
+                if (statusCode != StatusCode.OK) {
+                    throw putPartitionName(
+                            SqlException.$(tableNamePosition, "failed to attach partition '"),
+                            tableWriter.getPartitionBy(),
+                            partitionTimestamp
+                    ).put("': ").put(statusCode.name());
                 }
             } catch (CairoException e) {
-                LOG.error().$("failed to drop partition [table=").$(tableName)
-                        .$(",ts=").$ts(partitionTimestamp)
-                        .$(",errno=").$(e.getErrno())
-                        .$(",error=").$(e.getFlyweightMessage())
+                LOG.error().$("failed to attach partition [table=").$(tableName)
+                        .$(", ts=").$ts(partitionTimestamp)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", error=").$(e.getFlyweightMessage())
                         .I$();
-
                 throw e;
             }
         }
@@ -313,16 +291,25 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void applyDetachPartition(TableWriter tableWriter) throws SqlException {
         for (int i = 0, n = longList.size(); i < n; i++) {
-            long timestamp = longList.getQuick(i);
-            StatusCode statusCode = tableWriter.detachPartition(timestamp);
-            if (StatusCode.OK != statusCode) {
-                throw putPartitionName(
-                        SqlException.$(tableNamePosition, "could not detach [statusCode=").put(statusCode.name())
-                                .put(", table=").put(tableName)
-                                .put(", partition='"),
-                        tableWriter.getPartitionBy(),
-                        timestamp
-                ).put("']");
+            long partitionTimestamp = longList.getQuick(i);
+            try {
+                StatusCode statusCode = tableWriter.detachPartition(partitionTimestamp);
+                if (StatusCode.OK != statusCode) {
+                    throw putPartitionName(
+                            SqlException.$(tableNamePosition, "could not detach [statusCode=").put(statusCode.name())
+                                    .put(", table=").put(tableName)
+                                    .put(", partition='"),
+                            tableWriter.getPartitionBy(),
+                            partitionTimestamp
+                    ).put("']");
+                }
+            } catch (CairoException e) {
+                LOG.error().$("failed to detach partition [table=").$(tableName)
+                        .$(", ts=").$ts(partitionTimestamp)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", error=").$(e.getFlyweightMessage())
+                        .I$();
+                throw e;
             }
         }
     }

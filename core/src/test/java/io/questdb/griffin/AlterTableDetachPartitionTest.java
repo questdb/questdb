@@ -382,7 +382,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", sqlExecutionContext);
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'",
-                        "attach partition failed, folder '2022-06-01' does not exist"
+                        "failed to attach partition '2022-06-01': PARTITION_CANNOT_ATTACH_MISSING"
                 );
             }
         });
@@ -621,7 +621,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 renameDetachedToAttachable(tableName, timestampDay);
                 assertFailure(
                         "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
-                        "failed to attach partition '2022-06-01', partition already attached to the table"
+                        "failed to attach partition '2022-06-01': PARTITION_ALREADY_ATTACHED"
                 );
                 assertContent(expected, tableName);
             }

@@ -230,7 +230,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[24] attach partition failed, folder '2020-01-01' does not exist", e.getMessage());
+                    Assert.assertEquals("[24] failed to attach partition '2020-01-01': PARTITION_CANNOT_ATTACH_MISSING", e.getMessage());
                 }
             }
         });
@@ -250,7 +250,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[25] attach partition failed, folder '2020-01-01' does not exist", e.getMessage());
+                    Assert.assertEquals("[25] failed to attach partition '2020-01-01': PARTITION_CANNOT_ATTACH_MISSING", e.getMessage());
                 }
             }
         });
@@ -662,7 +662,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     compile(alterCommand, sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
-                    Assert.assertEquals("[25] failed to attach partition '2020-01-09', partition already attached to the table", e.getMessage());
+                    Assert.assertEquals("[25] failed to attach partition '2020-01-09': PARTITION_ALREADY_ATTACHED", e.getMessage());
                 }
             }
         });
@@ -741,7 +741,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: ", " File system error on trying to rename [");
+        testSqlFailedOnFsOperation(ff, "PARTITION_FOLDER_CANNOT_RENAME");
     }
 
     @Test

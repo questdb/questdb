@@ -59,7 +59,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
 
-import static io.questdb.cairo.StatusCode.*;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -642,7 +641,7 @@ public class TableWriter implements Closeable {
         if (txWriter.attachedPartitionsContains(timestamp)) {
             LOG.info().$("partition is already attached [path=").$(path).$(']').$();
             // TODO: potentially we can merge with existing data
-            return PARTITION_ALREADY_ATTACHED;
+            return StatusCode.PARTITION_ALREADY_ATTACHED;
         }
 
         if (inTransaction()) {
@@ -666,29 +665,25 @@ public class TableWriter implements Closeable {
                     checkDetachedMetadata(timestamp);
 
                     if (ff.rename(detachedPath, path) == Files.FILES_RENAME_OK) {
-                        LOG.info().$("renamed partition dir: ").$(detachedPath).$(" to ").$(path).$();
+                        LOG.info().$("renamed partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                         rollbackRename = true;
                     } else {
-                        throw CairoException.instance(ff.errno())
-                                .put("File system error on trying to rename [from=")
-                                .put(detachedPath)
-                                .put(", to=")
-                                .put(path)
-                                .put(']');
+                        LOG.error().$("cannot rename [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
+                        return StatusCode.PARTITION_FOLDER_CANNOT_RENAME;
                     }
                 }
             }
 
             if (!ff.exists(path)) {
-                LOG.error().$("cannot attach missing partition [path=").$(detachedPath).$(']').$();
-                return PARTITION_CANNOT_ATTACH_MISSING;
+                LOG.error().$("cannot attach missing partition [path=").$(detachedPath).I$();
+                return StatusCode.PARTITION_CANNOT_ATTACH_MISSING;
             }
 
             // find out lo, hi ranges of partition attached as well as size
             CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
             final long partitionSize = readPartitionSizeMinMax(ff, path, timestampCol, tempMem16b, timestamp);
             if (partitionSize < 0L) {
-                return PARTITION_CANNOT_ATTACH_MISSING_COLUMN;
+                return StatusCode.PARTITION_CANNOT_ATTACH_MISSING_COLUMN;
             }
 
             long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
@@ -740,17 +735,17 @@ public class TableWriter implements Closeable {
 
         timestamp = getPartitionLo(timestamp);
         if (timestamp < getPartitionLo(minTimestamp) || timestamp > maxTimestamp) {
-            return PARTITION_EMPTY;
+            return StatusCode.PARTITION_EMPTY;
         }
 
         int partitionIndex = txWriter.getPartitionIndex(timestamp);
         if (partitionIndex == -1) {
             assert !txWriter.attachedPartitionsContains(timestamp);
-            return PARTITION_ALREADY_DETACHED;
+            return StatusCode.PARTITION_ALREADY_DETACHED;
         }
 
         if (timestamp == getPartitionLo(maxTimestamp)) {
-            return PARTITION_IS_ACTIVE;
+            return StatusCode.PARTITION_IS_ACTIVE;
         }
 
         if (inTransaction()) {
@@ -786,7 +781,7 @@ public class TableWriter implements Closeable {
                             .$(detachedPath)
                             .$(']')
                             .$();
-                    return PARTITION_DETACHED_FOLDER_CANNOT_CREATE;
+                    return StatusCode.PARTITION_DETACHED_FOLDER_CANNOT_CREATE;
                 }
             }
             setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, false);
@@ -798,7 +793,7 @@ public class TableWriter implements Closeable {
                         .$(detachedPath)
                         .$(']')
                         .$();
-                return PARTITION_ALREADY_DETACHED;
+                return StatusCode.PARTITION_ALREADY_DETACHED;
             }
 
             // rename partition folder to partition.detached

@@ -1182,7 +1182,8 @@ public final class TableUtils {
                 }
             }
             return -1L; // does not exist
-        } catch (CairoException err) {
+        } catch (Throwable err) {
+            LOG.error().$("failed to calculate partition size: ").$(err).$();
             return -1L; // failed to open/mmap
         } finally {
             path.trimTo(plen);
