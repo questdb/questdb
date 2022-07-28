@@ -1693,12 +1693,15 @@ public class TableWriter implements Closeable {
             if (metadata.getId() != detachedMetadata.getId()) {
                 throw CairoException.detachedMetadataMismatch("table_id");
             }
+            if (metadata.getTimestampIndex() != detachedMetadata.getTimestampIndex()) {
+                throw CairoException.detachedMetadataMismatch("timestamp_index");
+            }
             // check column name, type and isIndexed
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                 String columnName = metadata.getColumnName(colIdx);
                 int detColIdx = detachedMetadata.getColumnIndexQuiet(columnName);
                 if (detColIdx == -1) {
-                    throw CairoException.detachedMetadataMismatch("missing_column: " + columnName);
+                    throw CairoException.detachedMetadataMismatch("missing_column=" + columnName);
                 }
                 if (metadata.getColumnType(colIdx) != detachedMetadata.getColumnType(detColIdx)) {
                     throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "type");

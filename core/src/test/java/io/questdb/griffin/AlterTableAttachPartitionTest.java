@@ -273,82 +273,54 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-09",
                         2);
 
-                assertSchemaMismatch(src, "dst1", dst -> dst.col("str", ColumnType.STRING), "[-100] Detached partition metadata [missing_column: str]");
-                assertSchemaMismatch(src, "dst2", dst -> dst.col("sym", ColumnType.SYMBOL), "[-100] Detached partition metadata [missing_column: sym]");
-                assertSchemaMismatch(src, "dst3", dst -> dst.col("l1", ColumnType.LONG), "[-100] Detached partition metadata [missing_column: l1]");
-                assertSchemaMismatch(src, "dst4", dst -> dst.col("i1", ColumnType.INT), "[-100] Detached partition metadata [missing_column: i1]");
-                assertSchemaMismatch(src, "dst5", dst -> dst.col("b", ColumnType.BOOLEAN), "[-100] Detached partition metadata [missing_column: b]");
-                assertSchemaMismatch(src, "dst6", dst -> dst.col("db", ColumnType.DOUBLE), "[-100] Detached partition metadata [missing_column: db]");
-                assertSchemaMismatch(src, "dst7", dst -> dst.col("fl", ColumnType.FLOAT), "[-100] Detached partition metadata [missing_column: fl]");
-                assertSchemaMismatch(src, "dst8", dst -> dst.col("dt", ColumnType.DATE), "[-100] Detached partition metadata [missing_column: dt]");
-                assertSchemaMismatch(src, "dst9", dst -> dst.col("tss", ColumnType.TIMESTAMP), "[-100] Detached partition metadata [missing_column: tss]");
-                assertSchemaMismatch(src, "dst10", dst -> dst.col("l256", ColumnType.LONG256), "[-100] Detached partition metadata [missing_column: l256]");
-                assertSchemaMismatch(src, "dst11", dst -> dst.col("bin", ColumnType.BINARY), "[-100] Detached partition metadata [missing_column: bin]");
-                assertSchemaMismatch(src, "dst12", dst -> dst.col("byt", ColumnType.BYTE), "[-100] Detached partition metadata [missing_column: byt]");
-                assertSchemaMismatch(src, "dst13", dst -> dst.col("chr", ColumnType.CHAR), "[-100] Detached partition metadata [missing_column: chr]");
-                assertSchemaMismatch(src, "dst14", dst -> dst.col("shrt", ColumnType.SHORT), "[-100] Detached partition metadata [missing_column: shrt]");
+                assertSchemaMismatch(src, "dst1", dst -> dst.col("str", ColumnType.STRING), "[-100] Detached partition metadata [missing_column=str]");
+                assertSchemaMismatch(src, "dst2", dst -> dst.col("sym", ColumnType.SYMBOL), "[-100] Detached partition metadata [missing_column=sym]");
+                assertSchemaMismatch(src, "dst3", dst -> dst.col("l1", ColumnType.LONG), "[-100] Detached partition metadata [missing_column=l1]");
+                assertSchemaMismatch(src, "dst4", dst -> dst.col("i1", ColumnType.INT), "[-100] Detached partition metadata [missing_column=i1]");
+                assertSchemaMismatch(src, "dst5", dst -> dst.col("b", ColumnType.BOOLEAN), "[-100] Detached partition metadata [missing_column=b]");
+                assertSchemaMismatch(src, "dst6", dst -> dst.col("db", ColumnType.DOUBLE), "[-100] Detached partition metadata [missing_column=db]");
+                assertSchemaMismatch(src, "dst7", dst -> dst.col("fl", ColumnType.FLOAT), "[-100] Detached partition metadata [missing_column=fl]");
+                assertSchemaMismatch(src, "dst8", dst -> dst.col("dt", ColumnType.DATE), "[-100] Detached partition metadata [missing_column=dt]");
+                assertSchemaMismatch(src, "dst9", dst -> dst.col("tss", ColumnType.TIMESTAMP), "[-100] Detached partition metadata [missing_column=tss]");
+                assertSchemaMismatch(src, "dst10", dst -> dst.col("l256", ColumnType.LONG256), "[-100] Detached partition metadata [missing_column=l256]");
+                assertSchemaMismatch(src, "dst11", dst -> dst.col("bin", ColumnType.BINARY), "[-100] Detached partition metadata [missing_column=bin]");
+                assertSchemaMismatch(src, "dst12", dst -> dst.col("byt", ColumnType.BYTE), "[-100] Detached partition metadata [missing_column=byt]");
+                assertSchemaMismatch(src, "dst13", dst -> dst.col("chr", ColumnType.CHAR), "[-100] Detached partition metadata [missing_column=chr]");
+                assertSchemaMismatch(src, "dst14", dst -> dst.col("shrt", ColumnType.SHORT), "[-100] Detached partition metadata [missing_column=shrt]");
             }
         });
     }
 
     @Test
-    public void testAttachPartitionStringColNoIndex() throws Exception {
+    public void testAttachPartitionSymbolColNoIndex() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src15", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
+                        src.col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
-                                .col("str", ColumnType.LONG),
+                                .timestamp("ts")
+                                .col("str", ColumnType.SYMBOL).indexed(true, 256),
                         10000,
                         "2020-01-01",
                         10);
 
-                assertSchemaMismatch(src, "dst15", dst -> dst.col("str", ColumnType.STRING),
-                        "[-100] Detached column [index=3, name=str, attribute=type] does not match current table metadata"
+                assertSchemaMismatch(src, "dst15", dst -> dst.col("str", ColumnType.SYMBOL),
+                        "[-100] Detached column [index=3, name=str, attribute=is_indexed] does not match current table metadata"
                 );
             }
         });
     }
 
     @Test
-    public void testAttachPartitionStringIndexFileTooSmall() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src16", PartitionBy.DAY)) {
-
-                createPopulateTable(
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("sh", ColumnType.SHORT),
-                        45000,
-                        "2020-01-09",
-                        2);
-
-                FilesFacade ff = FilesFacadeImpl.INSTANCE;
-                try (Path path = new Path()) {
-                    // .i file
-                    path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat("sh.i").$();
-                    ff.touch(path);
-                }
-
-                assertSchemaMismatch(src, "dst16", dst -> dst.col("sh", ColumnType.STRING),
-                        "[-100] Detached column [index=3, name=sh, attribute=type] does not match current table metadata"
-                );
-            }
-        });
-    }
-
-    @Test
-    public void testAttachPartitionSymbolFileTooSmall() throws Exception {
+    public void testAttachPartitionTypeMismatch() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src18", PartitionBy.DAY)) {
 
                 createPopulateTable(
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
+                        src.col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
+                                .timestamp("ts")
                                 .col("sh", ColumnType.SHORT),
                         45000,
                         "2020-01-09",
@@ -384,7 +356,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "-100] Detached partition metadata [missing_column: ts1] is not compatible with current table metadata"
+                            "-100] Detached partition metadata [missing_column=ts1] is not compatible with current table metadata"
                     );
                 }
             }
@@ -405,27 +377,6 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         assertSchemaMatch(dst -> dst.col("byt", ColumnType.BYTE));
         assertSchemaMatch(dst -> dst.col("ch", ColumnType.CHAR));
         assertSchemaMatch(dst -> dst.col("sh", ColumnType.SHORT));
-    }
-
-    @Test
-    public void testAttachPartitionWrongFixedColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            try (TableModel src = new TableModel(configuration, "src20", PartitionBy.DAY)) {
-
-                createPopulateTable(
-                        src.timestamp("ts")
-                                .col("i", ColumnType.INT)
-                                .col("l", ColumnType.LONG)
-                                .col("sh", ColumnType.SHORT),
-                        45000,
-                        "2020-01-09",
-                        2);
-
-                assertSchemaMismatch(src, "dst20", dst -> dst.col("sh", ColumnType.LONG),
-                        "[-100] Detached column [index=3, name=sh, attribute=type] does not match current table metadata"
-                );
-            }
-        });
     }
 
     @Test
@@ -560,7 +511,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(),
-                            "[-100] Detached partition metadata [missing_column: s] is not compatible with current table metadata"
+                            "[-100] Detached partition metadata [missing_column=s] is not compatible with current table metadata"
                     );
                 }
             }

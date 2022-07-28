@@ -333,14 +333,14 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         return this;
     }
 
-    public Path parent$() {
-        return parent().$();
-    }
-
     public Path parent() {
-        if (len > 1) {
+        if (len > 0) {
             int idx = len - 1;
-            if (charAt(idx) == Files.SEPARATOR) {
+            char last = charAt(idx);
+            if (last == Files.SEPARATOR || last == '\0') {
+                if (idx < 2) {
+                    return this;
+                }
                 idx--;
             }
             while (idx > 0 && charAt(idx) != Files.SEPARATOR) {

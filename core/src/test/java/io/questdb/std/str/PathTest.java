@@ -157,11 +157,14 @@ public class PathTest {
                 Path path = new Path();
                 Path expected = new Path()
         ) {
-            expected.trimTo(0).concat("A").concat("B").concat("C").$();
+            Assert.assertEquals("", path.parent().toString());
+            Assert.assertEquals("" + Files.SEPARATOR, path.put(Files.SEPARATOR).parent().toString());
+
+            expected.concat("A").concat("B").concat("C").$();
             path.of(expected).concat("D").$();
-            Assert.assertEquals(expected.toString(), path.parent$().toString());
+            Assert.assertEquals(expected.toString(), path.parent().toString());
             path.of(expected).concat("D").slash$();
-            Assert.assertEquals(expected.toString(), path.parent$().toString());
+            Assert.assertEquals(expected.toString(), path.parent().toString());
         }
     }
 }

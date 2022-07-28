@@ -803,6 +803,27 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testDetachAttachPartitionBrokenMetadataTimestampIndex() throws Exception {
+        assertFailedAttachBecauseOfMetadata(
+                1,
+                "tabBrokenTimestampIdx",
+                "tabBrokenTimestampIdx2",
+                brokenMeta -> brokenMeta
+                        .col("i", ColumnType.INT)
+                        .col("l", ColumnType.LONG)
+                        .timestamp("ts"),
+                "insert into tabBrokenTimestampIdx2 " +
+                        "select " +
+                        "cast(x as int) i, " +
+                        "x l, " +
+                        "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts " +
+                        "from long_sequence(100))",
+                "ALTER TABLE tabBrokenTimestampIdx2 ADD COLUMN s SHORT",
+                "[-100] Detached partition metadata [timestamp_index] is not compatible with current table metadata"
+        );
+    }
+
+    @Test
     public void testDetachAttachPartitionBrokenMetadataStructureVersion() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "tabBrokenStructureVersion";
@@ -1015,8 +1036,8 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
             });
             attThread.start();
 
-            // give it 10 seconds
-            long deadline = System.currentTimeMillis() + 3000;
+            // give it 2 seconds
+            long deadline = System.currentTimeMillis() + 2000;
             while (System.currentTimeMillis() < deadline) {
                 TimeUnit.MILLISECONDS.sleep(300L);
             }
