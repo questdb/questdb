@@ -783,7 +783,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     fail("PSQLException should be thrown");
                 }
                 catch (PSQLException e){
-                    assertEquals("ERROR: failed to attach partition '2020', partition already attached to the table\n  Position: 203", e.getMessage());
+                    assertEquals("ERROR: failed to attach partition '2020': PARTITION_ALREADY_ATTACHED\n" +
+                            "  Position: 203", e.getMessage());
                 }
             }
         });

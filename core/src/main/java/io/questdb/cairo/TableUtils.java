@@ -1151,7 +1151,7 @@ public final class TableUtils {
         int plen = path.chop$().length();
         try {
             if (ff.exists(path.concat(columnName).put(FILE_SUFFIX_D).$())) {
-                long fd = TableUtils.openRO(ff, path, LOG);
+                final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     long fileSize = ff.length(fd);
                     long mappedMem = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
@@ -1159,6 +1159,7 @@ public final class TableUtils {
                         long minTimestamp;
                         long maxTimestamp = timestamp;
                         long size = 0L;
+
                         for (long ptr = mappedMem, hi = mappedMem + fileSize; ptr < hi; ptr += Long.BYTES) {
                             long ts = Unsafe.getUnsafe().getLong(ptr);
                             if (ts >= maxTimestamp) {
@@ -1180,11 +1181,9 @@ public final class TableUtils {
                 } finally {
                     ff.close(fd);
                 }
+            } else {
+                throw CairoException.instance(0).put("path does not exist [path=").put(path).put(']');
             }
-            return -1L; // does not exist
-        } catch (Throwable err) {
-            LOG.error().$("failed to calculate partition size: ").$(err).$();
-            return -1L; // failed to open/mmap
         } finally {
             path.trimTo(plen);
         }

@@ -693,7 +693,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "PARTITION_CANNOT_ATTACH_MISSING_COLUMN");
+        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [2] could not mmap");
     }
 
     @Test
@@ -709,7 +709,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "PARTITION_CANNOT_ATTACH_MISSING_COLUMN");
+        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [2] could not open read-only");
     }
 
     @Test
@@ -725,7 +725,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "PARTITION_CANNOT_ATTACH_MISSING_COLUMN");
+        testSqlFailedOnFsOperation(ff, "table 'dst' could not be altered: [0] path does not exist");
     }
 
     @Test

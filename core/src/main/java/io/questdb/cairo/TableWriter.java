@@ -682,31 +682,27 @@ public class TableWriter implements Closeable {
             // find out lo, hi ranges of partition attached as well as size
             CharSequence timestampCol = metadata.getColumnQuick(metadata.getTimestampIndex()).getName();
             final long partitionSize = readPartitionSizeMinMax(ff, path, timestampCol, tempMem16b, timestamp);
-            if (partitionSize < 0L) {
-                return StatusCode.PARTITION_CANNOT_ATTACH_MISSING_COLUMN;
+            if (partitionSize > 0L) {
+                long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
+                long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + Long.BYTES);
+                assert timestamp <= minPartitionTimestamp && minPartitionTimestamp <= maxPartitionTimestamp;
+
+                long nextMinTimestamp = Math.min(minPartitionTimestamp, txWriter.getMinTimestamp());
+                long nextMaxTimestamp = Math.max(maxPartitionTimestamp, txWriter.getMaxTimestamp());
+                boolean appendPartitionAttached = size() == 0 || getPartitionLo(nextMaxTimestamp) > getPartitionLo(txWriter.getMaxTimestamp());
+
+                txWriter.beginPartitionSizeUpdate();
+                txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, -1L);
+                txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
+                txWriter.bumpTruncateVersion();
+                txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
+                if (appendPartitionAttached) {
+                    freeColumns(true);
+                    configureAppendPosition();
+                }
+                LOG.info().$("partition attached [path=").$(path).$(']').$();
+                rollbackRename = false;
             }
-
-            long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
-            long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + Long.BYTES);
-            assert timestamp <= minPartitionTimestamp && minPartitionTimestamp <= maxPartitionTimestamp;
-
-            long nextMinTimestamp = Math.min(minPartitionTimestamp, txWriter.getMinTimestamp());
-            long nextMaxTimestamp = Math.max(maxPartitionTimestamp, txWriter.getMaxTimestamp());
-            boolean appendPartitionAttached = size() == 0 || getPartitionLo(nextMaxTimestamp) > getPartitionLo(txWriter.getMaxTimestamp());
-
-            txWriter.beginPartitionSizeUpdate();
-            txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, -1L);
-            txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
-            txWriter.bumpTruncateVersion();
-            txWriter.commit(defaultCommitMode, denseSymbolMapWriters);
-            if (appendPartitionAttached) {
-                freeColumns(true);
-                configureAppendPosition();
-            }
-
-            LOG.info().$("partition attached [path=").$(path).$(']').$();
-            rollbackRename = false;
-
             return StatusCode.OK;
         } finally {
             if (rollbackRename) {
