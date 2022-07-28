@@ -79,14 +79,15 @@ public final class SerialCsvFileImporter implements Closeable {
     }
 
     public void process() throws TextImportException {
-        long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_PARALLEL_IMPORT);
+        long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
         setupTextLoaderFromModel();
         path.of(sqlCopyInputRoot).concat(fileName).$();
         long fd = ff.openRO(path);
         try {
-            statusReporter.report(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, TextImportTask.STATUS_STARTED, null, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN);
+            updateImportStatus(TextImportTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
+            statusReporter.report(TextImportTask.PHASE_PARTITION_IMPORT, TextImportTask.STATUS_STARTED, null, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
             if (fd == -1) {
-                throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
+                throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
             }
 
             long fileLen = ff.length(fd);
@@ -97,8 +98,6 @@ public final class SerialCsvFileImporter implements Closeable {
                 textLoader.parse(buf, buf + n, securityContext);
                 textLoader.setState(TextLoader.LOAD_DATA);
                 int read;
-                statusReporter.report(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, TextImportTask.STATUS_FINISHED, null, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
-                statusReporter.report(TextImportTask.PHASE_PARTITION_IMPORT, TextImportTask.STATUS_STARTED, null, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
                 while (n < fileLen) {
                     if (circuitBreaker.checkIfTripped()) {
                         TextImportException ex = TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT, "import was cancelled");
@@ -113,16 +112,25 @@ public final class SerialCsvFileImporter implements Closeable {
                     n += read;
                 }
                 textLoader.wrapUp();
-                statusReporter.report(TextImportTask.PHASE_PARTITION_IMPORT, TextImportTask.STATUS_FINISHED, null, 0, 0, 0);
+                statusReporter.report(TextImportTask.PHASE_PARTITION_IMPORT, TextImportTask.STATUS_FINISHED, null,
+                        Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
+                updateImportStatus(TextImportTask.STATUS_FINISHED, textLoader.getParsedLineCount(), textLoader.getWrittenLineCount(), textLoader.getErrorLineCount());
             }
         } finally {
             if (fd != -1) {
                 ff.close(fd);
             }
             textLoader.clear();
-            Unsafe.free(buf, sqlCopyBufferSize, MemoryTag.NATIVE_PARALLEL_IMPORT);
+            Unsafe.free(buf, sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
         }
     }
+
+    public void updateImportStatus(byte status, long rowsHandled, long rowsImported, long errors) {
+        if (this.statusReporter != null) {
+            this.statusReporter.report(TextImportTask.NO_PHASE, status, null, rowsHandled, rowsImported, errors);
+        }
+    }
+
 
     public void setStatusReporter(ParallelCsvFileImporter.PhaseStatusReporter reporter) {
         this.statusReporter = reporter;
@@ -131,10 +139,6 @@ public final class SerialCsvFileImporter implements Closeable {
     private void setupTextLoaderFromModel() {
         textLoader.clear();
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        // todo: configure the following
-        //   - what happens when data row errors out, max errors may be?
-        //   - we should be able to skip X rows from top, dodgy headers etc.
-
         textLoader.configureDestination(tableName, false, false,
                 atomicity != -1 ? atomicity : Atomicity.SKIP_ROW, PartitionBy.NONE,null);
     }

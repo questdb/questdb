@@ -787,7 +787,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         final int textAnalysisMaxLines = configuration.getTextConfiguration().getTextAnalysisMaxLines();
         int len = configuration.getSqlCopyBufferSize();
-        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_PARALLEL_IMPORT);
+        long buf = Unsafe.malloc(len, MemoryTag.NATIVE_IMPORT);
 
         try (TextLexer lexer = new TextLexer(configuration.getTextConfiguration())) {
             long n = ff.read(fd, buf, len, 0);
@@ -828,7 +828,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         } catch (TextException e) {
             throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, e.getFlyweightMessage());
         } finally {
-            Unsafe.free(buf, len, MemoryTag.NATIVE_PARALLEL_IMPORT);
+            Unsafe.free(buf, len, MemoryTag.NATIVE_IMPORT);
         }
     }
 
