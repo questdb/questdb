@@ -831,6 +831,9 @@ public class TableWriter implements Closeable {
             }
             if (statusCode == StatusCode.OK) {
                 // all good, commit
+                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                    columnVersionWriter.upsertColumnTop(timestamp, colIdx, -1L);
+                }
                 commitDetachPartition(timestamp, minTimestamp);
             } else {
                 if (copiedDetachedMeta) {
@@ -1791,10 +1794,6 @@ public class TableWriter implements Closeable {
         // we have to uphold the effort and re-compute table size and its minTimestamp from
         // what remains on disk
 
-        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-            columnVersionWriter.upsertColumnTop(timestamp, colIdx, -1L);
-        }
-
         // find out if we are removing min partition
         long nextMinTimestamp = minTimestamp;
         if (timestamp == txWriter.getPartitionTimestamp(0)) {
@@ -2387,15 +2386,15 @@ public class TableWriter implements Closeable {
         Misc.free(ddlMem);
         Misc.free(indexMem);
         Misc.free(other);
+        Misc.free(todoMem);
         Misc.free(other2);
         Misc.free(detachedPath);
-        Misc.free(todoMem);
         Misc.free(detachedMetadata);
         Misc.free(detachedColumnVersionReader);
         Misc.free(columnVersionWriter);
-        updateOperator = Misc.free(updateOperator);
         Misc.free(o3ColumnTopSink);
         Misc.free(commandQueue);
+        updateOperator = Misc.free(updateOperator);
         dropIndexOperator = Misc.free(dropIndexOperator);
         freeColumns(truncate & !distressed);
         try {
