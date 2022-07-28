@@ -125,7 +125,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private byte phase = TextImportTask.PHASE_SETUP;
     private CharSequence errorMessage;
     //incremented in phase 2
-    private long indexedLines;
+    private long linesIndexed;
     //row stats are incremented in phase 3
     private long rowsHandled;
     private long rowsImported;
@@ -244,7 +244,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         textMetadataDetector.clear();
         otherToTimestampAdapterPool.clear();
         partitions.clear();
-        indexedLines = 0;
+        linesIndexed = 0;
         rowsHandled = 0;
         rowsImported = 0;
         errors = 0;
@@ -579,7 +579,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         final TextImportTask.PhaseIndexing phaseIndexing = task.getBuildPartitionIndexStage();
         final LongList keys = phaseIndexing.getPartitionKeysAndSizes();
         this.partitionKeysAndSizes.add(keys);
-        this.indexedLines += phaseIndexing.getLineCount();
+        this.linesIndexed += phaseIndexing.getLineCount();
         this.phaseErrors += phaseIndexing.getErrorCount();
 
     }
@@ -991,7 +991,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void phasePartitionImport() throws TextImportException {
         if (partitions.size() == 0) {
-            if (indexedLines > 0) {
+            if (linesIndexed > 0) {
                 throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT,
                         "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).");
             } else {
