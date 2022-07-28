@@ -874,30 +874,25 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             String... partitionList
     ) throws SqlException, NumericException {
         partitions.clear();
-        for (int i = 0; i < partitionList.length; i++) {
-            if (i > 0) {
-                partitions.put(",");
-            }
-            partitions.put("'");
-            partitions.put(partitionList[i]);
-            partitions.put("'");
-        }
-
         partitionsIn.clear();
         for (int i = 0; i < partitionList.length; i++) {
+            String partition = partitionList[i];
             if (i > 0) {
+                partitions.put(",");
                 partitionsIn.put(" OR ");
             }
+            partitions.put("'");
+            partitions.put(partition);
+            partitions.put("'");
+
             partitionsIn.put("ts IN '");
-            partitionsIn.put(partitionList[i]);
+            partitionsIn.put(partition);
             partitionsIn.put("'");
+
+            copyPartitionToAttachable(src.getName(), partition, dst.getName(), partition);
         }
 
         String withClause = ", t1 as (select 1 as id, count() as cnt from " + src.getName() + " WHERE " + partitionsIn + ")\n";
-
-        for (String partitionFolder : partitionList) {
-            copyPartitionToAttachable(src.getName(), partitionFolder, dst.getName(), partitionFolder);
-        }
 
         int rowCount = readAllRows(dst.getName());
 
@@ -962,11 +957,11 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                      .put(TableUtils.ATTACHABLE_DIR_MARKER)
                      .slash$()
         ) {
-            copyDirectory(original, attachable);
-
             if (!Files.exists(attachable)) {
                 Assert.assertEquals(0, Files.mkdirs(attachable, 509));
             }
+
+            copyDirectory(original, attachable);
 
             // copy _meta
             Files.copy(
