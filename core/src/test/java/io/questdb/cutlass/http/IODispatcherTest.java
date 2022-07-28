@@ -6337,7 +6337,7 @@ public class IODispatcherTest {
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .run((engine) -> {
-                    final String copyQuery = "copy test from '/src/test/resources/csv/test-numeric-headers.csv' with parallel header true";
+                    final String copyQuery = "copy test from '/src/test/resources/csv/test-numeric-headers.csv' with header true";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
                             "GET /query?query=" + HttpUtils.urlEncodeQuery(copyQuery) + "&count=true HTTP/1.1\r\n" +
@@ -6359,8 +6359,8 @@ public class IODispatcherTest {
                                     "Content-Type: application/json; charset=utf-8\r\n" +
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
-                                    "bc\r\n" +
-                                    "{\"query\":\"copy test from '/src/test/resources/csv/test-numeric-headers.csv' with parallel header true\",\"columns\":[{\"name\":\"id\",\"type\":\"STRING\"}],\"dataset\":[[\"0000000000000000\"]],\"count\":1}\r\n" +
+                                    "b3\r\n" +
+                                    "{\"query\":\"copy test from '/src/test/resources/csv/test-numeric-headers.csv' with header true\",\"columns\":[{\"name\":\"id\",\"type\":\"STRING\"}],\"dataset\":[[\"0000000000000000\"]],\"count\":1}\r\n" +
                                     "00\r\n\r\n",
                             1,
                             0,

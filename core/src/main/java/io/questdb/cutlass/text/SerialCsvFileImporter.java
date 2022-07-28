@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -83,7 +84,7 @@ public final class SerialCsvFileImporter implements Closeable {
         path.of(sqlCopyInputRoot).concat(fileName).$();
         long fd = ff.openRO(path);
         try {
-            statusReporter.report(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, TextImportTask.STATUS_STARTED, null);
+            statusReporter.report(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, TextImportTask.STATUS_STARTED, null, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN);
             if (fd == -1) {
                 throw TextImportException.instance(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
             }
@@ -96,8 +97,8 @@ public final class SerialCsvFileImporter implements Closeable {
                 textLoader.parse(buf, buf + n, securityContext);
                 textLoader.setState(TextLoader.LOAD_DATA);
                 int read;
-                statusReporter.report(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, TextImportTask.STATUS_FINISHED, null);
-                statusReporter.report(TextImportTask.PHASE_PARTITION_IMPORT, TextImportTask.STATUS_STARTED, null);
+                statusReporter.report(TextImportTask.PHASE_ANALYZE_FILE_STRUCTURE, TextImportTask.STATUS_FINISHED, null, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
+                statusReporter.report(TextImportTask.PHASE_PARTITION_IMPORT, TextImportTask.STATUS_STARTED, null, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
                 while (n < fileLen) {
                     if (circuitBreaker.checkIfTripped()) {
                         TextImportException ex = TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT, "import was cancelled");
@@ -112,7 +113,7 @@ public final class SerialCsvFileImporter implements Closeable {
                     n += read;
                 }
                 textLoader.wrapUp();
-                statusReporter.report(TextImportTask.PHASE_PARTITION_IMPORT, TextImportTask.STATUS_FINISHED, null);
+                statusReporter.report(TextImportTask.PHASE_PARTITION_IMPORT, TextImportTask.STATUS_FINISHED, null, 0, 0, 0);
             }
         } finally {
             if (fd != -1) {

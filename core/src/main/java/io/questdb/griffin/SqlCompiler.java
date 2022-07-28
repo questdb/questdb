@@ -1920,10 +1920,10 @@ public class SqlCompiler implements Closeable {
         final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
         final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
 
-        boolean isActive = textImportExecutionContext.isActive();
+        long inProgressImportId = textImportExecutionContext.getCurrentImportId();
         if (model.isCancel()) {
             // The cancellation is based on the best effort, so we don't worry about potential races with imports.
-            if (isActive) {
+            if (inProgressImportId != TextImportExecutionContext.NO_IMPORT_ACTIVE) {
                 long importId;
                 try {
                     final CharSequence idString = GenericLexer.unquote(model.getTarget().token);
@@ -1941,7 +1941,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(0, "No active import to cancel.");
             }
         } else {
-            if (!isActive) {
+            if (inProgressImportId == TextImportExecutionContext.NO_IMPORT_ACTIVE) {
                 long processingCursor = textImportRequestPubSeq.next();
                 if (processingCursor > -1) {
                     assert fileName != null;
@@ -1969,7 +1969,9 @@ public class SqlCompiler implements Closeable {
                     throw SqlException.$(0, "Unable to process the import request. Another import request may be in progress.");
                 }
             } else {
-                throw SqlException.$(0, "Another import request is in progress. Current table name = " + tableName);
+                importIdSink.clear();
+                Numbers.appendHex(importIdSink, inProgressImportId, true);
+                throw SqlException.$(0, "Another import request is in progress. Import ID in progress = ").put(importIdSink);
             }
         }
     }

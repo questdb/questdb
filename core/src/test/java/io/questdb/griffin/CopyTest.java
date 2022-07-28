@@ -373,7 +373,7 @@ public class CopyTest extends AbstractGriffinTest {
     @Test
     public void testParallelCopyLogTableStats() throws Exception {
         ParallelCopyRunnable stmt = () -> compiler.compile(
-                "copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+                "copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ",
                 sqlExecutionContext
         );
@@ -427,7 +427,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         ParallelCopyRunnable test = () -> assertQuery("message\n" +
                         "partition by unit must be set when importing to new table\n",
-                "select message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
+                "select message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log",
                 null,
                 true
         );
@@ -523,7 +523,7 @@ public class CopyTest extends AbstractGriffinTest {
     public void testParallelCopyCancelThrowsExceptionOnInvalidImportId() throws Exception {
         assertMemoryLeak(() -> {
             // we need to have an active import in place before the cancellation attempt
-            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with parallel header true timestamp 'ts' delimiter ',' " +
+            compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
             try {
@@ -614,6 +614,7 @@ public class CopyTest extends AbstractGriffinTest {
             Assert.fail();
         }
 
+        drainProcessingQueue();
         drainProcessingQueue();
         assertQuery("status\nCANCELLED\n",
                 "select status from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
