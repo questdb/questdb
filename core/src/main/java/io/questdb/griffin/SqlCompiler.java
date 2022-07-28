@@ -3201,6 +3201,11 @@ public class SqlCompiler implements Closeable {
             return model.getCommitLag();
         }
 
+        @Override
+        public boolean isWallEnabled() {
+            return model.isWallEnabled();
+        }
+
         TableStructureAdapter of(CreateTableModel model, RecordMetadata metadata, IntIntHashMap typeCast) {
             if (model.getTimestampIndex() != -1) {
                 timestampIndex = model.getTimestampIndex();
