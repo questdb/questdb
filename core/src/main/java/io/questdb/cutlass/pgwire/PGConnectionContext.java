@@ -170,6 +170,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private TypesAndSelect typesAndSelect = null;
     private TypesAndInsert typesAndInsert = null;
     private TypesAndUpdate typesAndUpdate = null;
+    private boolean typesAndSelectIsCached = true;
     private boolean typesAndUpdateIsCached = false;
     private long fd;
     private CharSequence queryText;
@@ -315,6 +316,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         completed = true;
         clearCursorAndFactory();
         totalReceived = 0;
+        typesAndSelectIsCached = true;
         typesAndUpdateIsCached = false;
         statementTimeout = -1L;
         circuitBreaker.resetMaxTimeToDefault();
@@ -1046,16 +1048,20 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void clearCursorAndFactory() {
         resumeProcessor = null;
         currentCursor = Misc.free(currentCursor);
-        // do not free factory, it will be cached
+        // do not free factory, we may cache it
         currentFactory = null;
         // we resumed the cursor send the typeAndSelect will be null
         // we do not want to overwrite cache entries and potentially
         // leak memory
         if (typesAndSelect != null) {
-            typesAndSelectCache.put(queryText, typesAndSelect);
-            // clear selectAndTypes so that context doesn't accidentally
-            // free the factory when context finishes abnormally
-            this.typesAndSelect = null;
+            if (typesAndSelectIsCached) {
+                typesAndSelectCache.put(queryText, typesAndSelect);
+                // clear selectAndTypes so that context doesn't accidentally
+                // free the factory when context finishes abnormally
+                this.typesAndSelect = null;
+            } else {
+                this.typesAndSelect = Misc.free(this.typesAndSelect);
+            }
         }
 
         if (typesAndUpdate != null) {
@@ -1961,7 +1967,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.COPY_LOCAL:
-                // uncached
+                final RecordCursorFactory factory = cq.getRecordCursorFactory();
+                // factory is null in the COPY 'id' CANCEL; case
+                if (factory != null) {
+                    // this query is non-cacheable
+                    typesAndSelectIsCached = false;
+                    typesAndSelect = typesAndSelectPool.pop();
+                    typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
+                }
                 queryTag = TAG_COPY;
                 break;
             case CompiledQuery.SET:

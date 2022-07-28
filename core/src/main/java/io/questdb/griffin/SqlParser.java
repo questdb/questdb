@@ -435,7 +435,7 @@ public final class SqlParser {
         if (isCancelKeyword(tok)) {
             CopyModel model = copyModelPool.next();
             model.setCancel(true);
-            model.setTableName(tableName);
+            model.setTarget(tableName);
             return model;
         }
 
@@ -446,7 +446,7 @@ public final class SqlParser {
             }
 
             CopyModel model = copyModelPool.next();
-            model.setTableName(tableName);
+            model.setTarget(tableName);
             model.setFileName(fileName);
 
             tok = optTok(lexer);

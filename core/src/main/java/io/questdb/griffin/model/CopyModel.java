@@ -31,7 +31,7 @@ import io.questdb.std.str.CharSink;
 
 public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<CopyModel> FACTORY = CopyModel::new;
-    private ExpressionNode tableName;
+    private ExpressionNode target; // holds table name (new import) or import id (cancel model)
     private ExpressionNode fileName;
     private boolean header;
 
@@ -47,7 +47,7 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
 
     @Override
     public void clear() {
-        tableName = null;
+        target = null;
         fileName = null;
         header = false;
         cancel = false;
@@ -99,16 +99,16 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return ExecutionModel.COPY;
     }
 
-    public ExpressionNode getTableName() {
-        return tableName;
+    public ExpressionNode getTarget() {
+        return target;
     }
 
     public void setPartitionBy(int partitionBy) {
         this.partitionBy = partitionBy;
     }
 
-    public void setTableName(ExpressionNode tableName) {
-        this.tableName = tableName;
+    public void setTarget(ExpressionNode tableName) {
+        this.target = tableName;
     }
 
     public boolean isHeader() {

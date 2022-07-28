@@ -24,32 +24,42 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.std.Chars;
-import io.questdb.std.str.StringSink;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 public class TextImportExecutionContext {
     private final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker();
-    // Access is synchronized on the context instance.
-    private final StringSink activeTableName = new StringSink();
+    private final AtomicLong activeImportId = new AtomicLong(-1);
+    // Important assumption: We never access the rnd concurrently, so no need for additional synchronization.
+    private final Rnd rnd;
+
+    public TextImportExecutionContext(CairoConfiguration configuration) {
+        MicrosecondClock clock = configuration.getMicrosecondClock();
+        this.rnd = new Rnd(clock.getTicks(), clock.getTicks());
+    }
 
     public AtomicBooleanCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
     }
 
-    public synchronized boolean isActive() {
-        return activeTableName.length() > 0;
+    public boolean isActive() {
+        return activeImportId.get() > -1;
     }
 
-    public synchronized boolean equalsActiveTableName(CharSequence tableName) {
-        return Chars.equalsNc(activeTableName, tableName);
+    public boolean sameAsActiveImportId(long importId) {
+        return activeImportId.get() == importId;
     }
 
-    public synchronized void setActiveTableName(CharSequence tableName) {
-        activeTableName.clear();
-        activeTableName.put(tableName);
+    public void resetActiveImportId() {
+        activeImportId.set(-1);
     }
 
-    public synchronized void resetActiveTableName() {
-        activeTableName.clear();
+    public long assignActiveImportId() {
+        long nextId = rnd.nextPositiveLong();
+        activeImportId.set(nextId);
+        return nextId;
     }
 }
