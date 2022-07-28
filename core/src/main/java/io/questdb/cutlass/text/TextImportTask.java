@@ -666,7 +666,7 @@ public class TextImportTask {
         private long chunkEnd;
         private long lineNumber;
         private long lineCount;
-        private int errorCount;
+        private long errorCount;
         private CharSequence inputFileName;
         private CharSequence importRoot;
         private int index;
@@ -762,7 +762,7 @@ public class TextImportTask {
             return lineCount;
         }
 
-        public int getErrorCount() {
+        public long getErrorCount() {
             return errorCount;
         }
     }
@@ -771,9 +771,9 @@ public class TextImportTask {
         private final StringSink tableNameSink = new StringSink();
         private final LongList importedRows = new LongList();
         private final LongList offsets = new LongList();
-        private int rowsHandled;
-        private int rowsImported;
-        private int errors;
+        private long rowsHandled;
+        private long rowsImported;
+        private long errors;
         private CairoEngine cairoEngine;
         private TableStructure targetTableStructure;
         private ObjList<TypeAdapter> types;
@@ -853,7 +853,7 @@ public class TextImportTask {
                 lexer.of(columnDelimiter);
                 lexer.setSkipLinesWithExtraValues(false);
 
-                int prevErrors;
+                long prevErrors;
                 try {
                     for (int i = lo; i < hi; i++) {
                         throwIfCancelled();
@@ -876,7 +876,7 @@ public class TextImportTask {
                                 tmpPath
                         );
 
-                        int newErrors = errors - prevErrors;
+                        long newErrors = errors - prevErrors;
                         long imported = atomicity == Atomicity.SKIP_ROW ? lexer.getLineCount() - newErrors : lexer.getLineCount();
                         importedRows.add(i);
                         importedRows.add(imported);
@@ -1402,15 +1402,15 @@ public class TextImportTask {
             mergeIndexes.clear();
         }
 
-        public int getErrors() {
+        public long getErrors() {
             return errors;
         }
 
-        public int getRowsHandled() {
+        public long getRowsHandled() {
             return rowsHandled;
         }
 
-        public int getRowsImported() {
+        public long getRowsImported() {
             return rowsImported;
         }
     }

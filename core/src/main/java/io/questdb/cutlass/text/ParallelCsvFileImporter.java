@@ -129,8 +129,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     //row stats are incremented in phase 3
     private long rowsHandled;
     private long rowsImported;
-    private int errors;
-    private int phaseErrors;
+    private long errors;
+    private long phaseErrors;
     private final Consumer<TextImportTask> checkStatusRef = this::updateStatus;
     private final Consumer<TextImportTask> collectChunkStatsRef = this::collectChunkStats;
     private final Consumer<TextImportTask> collectDataImportStatsRef = this::collectDataImportStats;
@@ -432,7 +432,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.statusReporter = reporter;
     }
 
-    public void updateImportStatus(byte status, long rowsHandled, long rowsImported, int errors) {
+    public void updateImportStatus(byte status, long rowsHandled, long rowsImported, long errors) {
         if (this.statusReporter != null) {
             this.statusReporter.report(TextImportTask.NO_PHASE, status, null, rowsHandled, rowsImported, errors);
         }
@@ -581,7 +581,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.partitionKeysAndSizes.add(keys);
         this.linesIndexed += phaseIndexing.getLineCount();
         this.phaseErrors += phaseIndexing.getErrorCount();
-
+        this.errors += phaseIndexing.getErrorCount();
     }
 
     private void collectStub(final TextImportTask task) {
@@ -1424,7 +1424,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     @FunctionalInterface
     public interface PhaseStatusReporter {
-        void report(byte phase, byte status, @Nullable final CharSequence msg, long rowsHandled, long rowsImported, int errors);
+        void report(byte phase, byte status, @Nullable final CharSequence msg, long rowsHandled, long rowsImported, long errors);
     }
 
     static class PartitionInfo {

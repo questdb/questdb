@@ -89,7 +89,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         "message string," + // 6
                         "rows_handled long," + // 7
                         "rows_imported long," + // 8
-                        "errors int" + // 9
+                        "errors long" + // 9
                         ") timestamp(ts) partition by DAY",
                 sqlExecutionContext
         );
@@ -167,7 +167,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             final CharSequence msg,
             long rowsHandled,
             long rowsImported,
-            int errors
+            long errors
     ) {
         if (writer != null) {
             try {
@@ -180,7 +180,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 row.putStr(6, msg);
                 row.putLong(7, rowsHandled);
                 row.putLong(8, rowsImported);
-                row.putInt(9, errors);
+                row.putLong(9, errors);
                 row.append();
                 writer.commit();
             } catch (Throwable th) {

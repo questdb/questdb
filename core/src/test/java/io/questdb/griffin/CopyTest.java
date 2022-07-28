@@ -62,8 +62,8 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testSequentialCopyDoesntAcceptNewKeywords() {
-        assertFailsWith("copy x from 'somefile.csv' with partition by HOUR ;");
-        assertFailsWith("copy x from 'somefile.csv' with timestamp 'ts' ;");
+        assertFailsWith("copy x from 'somefile.csv' with partition by HOUR;");
+        assertFailsWith("copy x from 'somefile.csv' with timestamp 'ts';");
         assertFailsWith("copy x from 'somefile.csv' with format 'XYZ';");
     }
 
