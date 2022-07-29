@@ -933,7 +933,7 @@ public final class TableUtils {
         }
     }
 
-    public static void validate(
+    public static void validateMeta(
             MemoryMR metaMem,
             LowerCaseCharSequenceIntHashMap nameIndex,
             int expectedVersion

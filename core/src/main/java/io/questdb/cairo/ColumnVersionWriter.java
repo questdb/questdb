@@ -93,6 +93,14 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
+    public void remove(long partitionTimestamp, int columnIndex) {
+        int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
+        if (recordIndex >= 0) {
+            getCachedList().removeIndexBlock(recordIndex, BLOCK_SIZE);
+            hasChanges = true;
+        }
+    }
+
     public void truncate() {
         LongList cachedList = getCachedList();
         if (cachedList.size() > 0) {

@@ -87,7 +87,8 @@ public class TableWriter implements Closeable {
     private final Path other2;
     private final Path detachedPath;
     private final int detachedRootLen;
-    private final TableReaderMetadata detachedMetadata;
+    private MemoryMR detachedMetaMem;
+    private TableWriterMetadata detachedMetadata;
     private ColumnVersionReader detachedColumnVersionReader;
     private final LongList rowValueIsNotNull = new LongList();
     private final Row regularRow = new RowImpl();
@@ -237,7 +238,6 @@ public class TableWriter implements Closeable {
         this.other2 = new Path();
         this.detachedPath = new Path().of(configuration.getDetachedRoot()).concat(tableName);
         this.detachedRootLen = detachedPath.length();
-        this.detachedMetadata = new TableReaderMetadata(ff);
         try {
             if (lock) {
                 lock();
@@ -838,9 +838,6 @@ public class TableWriter implements Closeable {
             }
             if (statusCode == StatusCode.OK) {
                 // all good, commit
-                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-                    columnVersionWriter.upsertColumnTop(timestamp, colIdx, -1L);
-                }
                 commitDetachPartition(timestamp, minTimestamp);
             } else {
                 if (copiedDetachedMeta) {
@@ -1697,7 +1694,11 @@ public class TableWriter implements Closeable {
             return;
         }
         try {
-            detachedMetadata.deferredInit(other2, ColumnType.VERSION);
+            if (detachedMetaMem == null) {
+                detachedMetaMem = Vm.getMRInstance();
+                openMetaFile(ff, other2.parent(), other2.length(), detachedMetaMem);
+                detachedMetadata = new TableWriterMetadata(detachedMetaMem);
+            }
             if (metadata.getId() != detachedMetadata.getId()) {
                 throw CairoException.detachedMetadataMismatch("table_id");
             }
@@ -1705,46 +1706,43 @@ public class TableWriter implements Closeable {
                 throw CairoException.detachedMetadataMismatch("timestamp_index");
             }
             // check column name, type and isIndexed
-            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            boolean colsMismatch = false;
+            for (int i = 0; i < columnCount; i++) {
+                int colIdx = metadata.getWriterIndex(i);
                 String columnName = metadata.getColumnName(colIdx);
                 int detColIdx = detachedMetadata.getColumnIndexQuiet(columnName);
                 if (detColIdx == -1) {
                     throw CairoException.detachedMetadataMismatch("missing_column=" + columnName);
                 }
-                if (metadata.getColumnType(colIdx) != detachedMetadata.getColumnType(detColIdx)) {
-                    throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "type");
+                detColIdx = detachedMetadata.getWriterIndex(detColIdx);
+                int colType = metadata.getColumnType(colIdx);
+                int detColType = detachedMetadata.getColumnType(detColIdx);
+                if (colType != detColType) {
+                    if (colType == -detColType) { // a column was deleted
+                        if (colType < detColType) {
+                            // column does not exist in table, but does in attaching
+                            // TODO: delete the column from attaching
+                        } else {
+                            // column was added to the table, and does not exist in attaching
+                            // TODO: the column does not exist in attaching, have to add it and
+                            //  set column tops to the max of the partition
+                        }
+                        colsMismatch = true;
+                    } else {
+                        throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "type");
+                    }
                 }
                 if (metadata.isColumnIndexed(colIdx) != detachedMetadata.isColumnIndexed(detColIdx)) {
                     throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "is_indexed");
                 }
             }
-            // structural changes mean columns may have been removed
-            if (metadata.getStructureVersion() != detachedMetadata.getStructureVersion()) {
-                for (int i = 0, limit = detachedMetadata.getColumnCount(); i < limit; i++) {
-                    String columnName = detachedMetadata.getColumnName(i);
-                    if (metadata.getColumnIndexQuiet(columnName) == -1) {
-                        ff.walk(detachedPath, (pUtf8NameZ, type) -> {
-                            if (type == Files.DT_FILE) {
-                                fileNameSink.clear();
-                                Chars.utf8DecodeZ(pUtf8NameZ, fileNameSink);
-                                int len = fileNameSink.length();
-                                int dotIdx = len - 1;
-                                while (dotIdx > 0 && fileNameSink.charAt(dotIdx) != '.') {
-                                    dotIdx--;
-                                }
-                                if (dotIdx > 0) {
-                                    CharSequence cn = fileNameSink.subSequence(0, dotIdx);
-                                    if (Chars.equals(cn, columnName)) {
-                                        other2.parent().concat(fileNameSink).$();
-                                        if (!ff.remove(other2)) {
-                                            LOG.info().$("failed to remove [path=").$(other2).I$();
-                                        }
-                                    }
-                                }
-                            }
-                        });
-                    }
+            // check structure version
+            if (colsMismatch) {
+                if (metadata.getStructureVersion() == detachedMetadata.getStructureVersion()) {
+                    throw CairoException.detachedMetadataMismatch("structure_version should be different");
                 }
+            } else if (metadata.getStructureVersion() != detachedMetadata.getStructureVersion()) {
+                throw CairoException.detachedMetadataMismatch("structure_version");
             }
         } finally {
             Misc.free(detachedMetadata);
@@ -1803,6 +1801,10 @@ public class TableWriter implements Closeable {
         // attempts to tidy up metadata with logical partition delete
         // we have to uphold the effort and re-compute table size and its minTimestamp from
         // what remains on disk
+
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            columnVersionWriter.remove(timestamp, colIdx);
+        }
 
         // find out if we are removing min partition
         long nextMinTimestamp = minTimestamp;
@@ -2590,6 +2592,7 @@ public class TableWriter implements Closeable {
         Misc.free(todoMem);
         Misc.free(other2);
         Misc.free(detachedPath);
+        Misc.free(detachedMetaMem);
         Misc.free(detachedMetadata);
         Misc.free(detachedColumnVersionReader);
         Misc.free(columnVersionWriter);
@@ -5506,7 +5509,7 @@ public class TableWriter implements Closeable {
                 }
                 metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 validationMap.clear();
-                validate(metaMem, validationMap, ColumnType.VERSION);
+                validateMeta(metaMem, validationMap, ColumnType.VERSION);
             } finally {
                 metaMem.close();
                 path.trimTo(rootLen);

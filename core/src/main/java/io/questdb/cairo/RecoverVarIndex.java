@@ -50,7 +50,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
         long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, columnWriterIndex);
         long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
 
-        if (columnTop < 0L) {
+        if (columnTop == -1L) {
             LOG.info().$("not rebuilding column ").$(columnName).$(" in partition ").$ts(partitionTimestamp).$(", column not added to partition").$();
             return;
         }

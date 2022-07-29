@@ -35,7 +35,9 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,13 +49,30 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
 
     private final StringSink partitions = new StringSink();
     private final StringSink partitionsIn = new StringSink();
+    private Path path;
+    private Path other;
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        other = new Path();
+        path = new Path();
+    }
+
+    @Override
+    @After
+    public void tearDown() {
+        super.tearDown();
+        path = Misc.free(path);
+        other = Misc.free(other);
+    }
 
     @Test
     public void testAttachActive2Partitions() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src1", PartitionBy.DAY);
                  TableModel dst = new TableModel(configuration, "dst1", PartitionBy.DAY)) {
-
                 createPopulateTable(
                         src.timestamp("ts")
                                 .col("i", ColumnType.INT)
@@ -322,6 +341,33 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testAttachPartitionStringColIndexMessedNotInOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src44", PartitionBy.DAY)) {
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts")
+                                .col("str", ColumnType.STRING),
+                        10000,
+                        "2020-01-01",
+                        10);
+
+                long value = 0L;
+                writeToStrIndexFile(src, "str.i", value, 16L);
+
+                assertSchemaMismatch(
+                        src,
+                        "dst44",
+                        dst -> dst.col("str", ColumnType.STRING),
+                        "Variable size column has invalid data address value"
+                );
+            }
+        });
+    }
+
+
+    @Test
     public void testAttachPartitionStringColIndexMessedOffsetOutsideFileBounds() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src15", PartitionBy.DAY)) {
@@ -347,7 +393,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     @Test
-    public void testAttachPartitionTypeMismatch() throws Exception {
+    public void testAttachPartitionColumnChangedTypeAndMetaShouldMismatch() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src18", PartitionBy.DAY)) {
 
@@ -360,8 +406,8 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         "2020-01-09",
                         2);
 
-                assertSchemaMismatch(src, "dst18", dst -> dst.col("sh", ColumnType.SYMBOL),
-                        "[-100] Detached column [index=3, name=sh, attribute=type] does not match current table metadata"
+                assertSchemaMismatch(src, "dst18", dst -> dst.col("sh", -1 * ColumnType.SHORT),
+                        "[-100] Detached partition metadata [structure_version should be different]"
                 );
             }
         });
@@ -371,28 +417,25 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     public void testAttachPartitionStringIndexFileTooSmall() throws Exception {
         assertMemoryLeak(() -> {
             try (TableModel src = new TableModel(configuration, "src33", PartitionBy.DAY)) {
-
                 createPopulateTable(
                         src.col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
                                 .timestamp("ts")
-                                .col("sh", ColumnType.SHORT),
+                                .col("sh", ColumnType.STRING),
                         45000,
                         "2020-01-09",
                         2);
 
-                FilesFacade ff = FilesFacadeImpl.INSTANCE;
-                try (Path path = new Path()) {
-                    // .i file
-                    path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat("sh.i").$();
-                    ff.touch(path);
-                }
+                path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat("sh.i").$();
+                long fd = Files.openRW(path);
+                Files.truncate(fd, Files.length(fd) / 4);
+                Files.close(fd);
 
                 assertSchemaMismatch(
                         src,
                         "dst33",
                         dst -> dst.col("sh", ColumnType.STRING),
-                        "[-100] Detached column [index=3, name=sh, attribute=type] does not match current table metadata"
+                        "Column file is too small"
                 );
             }
         });
@@ -446,16 +489,22 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         src.col("i", ColumnType.INT)
                                 .col("l", ColumnType.LONG)
                                 .timestamp("ts")
-                                .col("sh", ColumnType.SHORT),
+                                .col("sh", ColumnType.SYMBOL),
                         45000,
                         "2020-01-09",
                         2);
+
+                // .v file
+                path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat("sh.v").$();
+                long fd = Files.openRW(path);
+                Files.truncate(fd, Files.length(fd) / 2);
+                Files.close(fd);
 
                 assertSchemaMismatch(
                         src,
                         "dst35",
                         dst -> dst.col("sh", ColumnType.SYMBOL),
-                        "[-100] Detached column [index=3, name=sh, attribute=type] does not match current table metadata"
+                        "Symbol file does not match symbol column"
                 );
             }
         });
@@ -505,6 +554,34 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         assertSchemaMatch(dst -> dst.col("byt", ColumnType.BYTE));
         assertSchemaMatch(dst -> dst.col("ch", ColumnType.CHAR));
         assertSchemaMatch(dst -> dst.col("sh", ColumnType.SHORT));
+    }
+
+    @Test
+    public void testAttachPartitionWrongFixedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TableModel src = new TableModel(configuration, "src55", PartitionBy.DAY)) {
+
+                createPopulateTable(
+                        src.col("l", ColumnType.LONG)
+                                .col("i", ColumnType.INT)
+                                .timestamp("ts")
+                                .col("sh", ColumnType.SHORT),
+                        45000,
+                        "2020-01-09",
+                        2);
+
+                // .d file
+                path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat("sh.d").$();
+                long fd = Files.openRW(path);
+                Files.truncate(fd, Files.length(fd) / 2);
+                Files.close(fd);
+                assertSchemaMismatch(
+                        src,
+                        "dst55", dst -> dst.col("sh", ColumnType.SHORT),
+                        "Column file is too small"
+                );
+            }
+        });
     }
 
     @Test
@@ -745,12 +822,13 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
                         10);
 
                 compile("alter table dst drop partition list '2020-01-09'");
-                FilesFacade ff = FilesFacadeImpl.INSTANCE;
-                try (Path path = new Path()) {
-                    // remove .k
-                    path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat("s").put(".k").$();
-                    ff.remove(path);
-                }
+
+                // remove .k
+                Assert.assertTrue(Files.remove(path
+                        .of(configuration.getRoot()).concat(src.getName())
+                        .concat("2020-01-09").concat("s")
+                        .put(".k")
+                        .$()));
 
                 try {
                     copyAttachPartition(src, dst, 9000, "2020-01-09");
@@ -969,8 +1047,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
     }
 
     private void assertSchemaMismatch(TableModel src, String dstTableName, AddColumn tm, String errorMessage) throws NumericException {
-        try (TableModel dst = new TableModel(configuration, dstTableName, PartitionBy.DAY);
-             Path path = new Path()) {
+        try (TableModel dst = new TableModel(configuration, dstTableName, PartitionBy.DAY)) {
             dst.col("i", ColumnType.INT)
                     .col("l", ColumnType.LONG)
                     .timestamp("ts");
@@ -984,7 +1061,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
             }
-            Files.rmdir(path.concat(root).concat(dstTableName).concat("2020-01-09").put(TableUtils.DETACHED_DIR_MARKER).$());
+            Files.rmdir(path.of(root).concat(dstTableName).concat("2020-01-09").put(TableUtils.DETACHED_DIR_MARKER).$());
         }
     }
 
@@ -1164,7 +1241,7 @@ public class AlterTableAttachPartitionTest extends AbstractGriffinTest {
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
         long fd = -1;
         long writeBuff = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-        try (Path path = new Path()) {
+        try {
             // .i file
             path.of(configuration.getRoot()).concat(src.getName()).concat("2020-01-09").concat(columnFileName).$();
             fd = ff.openRW(path, CairoConfiguration.O_NONE);

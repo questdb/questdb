@@ -572,7 +572,7 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
     @Test
     public void testAttachWillFailIfThePartitionWasRecreated() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = "tabTimeTravel";
+            String tableName = "tabTimeTravel2";
             try (TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY)) {
                 String timestampDay = "2022-06-01";
                 createPopulateTable(tab
@@ -899,8 +899,10 @@ public class AlterTableDetachPartitionTest extends AbstractGriffinTest {
                 renameDetachedToAttachable(tableName, "2022-06-02");
 
                 // attempt to reattach
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-02'");
-                assertContent(expected, tableName);
+                assertFailure(
+                        "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-02'",
+                        "[-100] Detached partition metadata [structure_version] is not compatible with current table metadata"
+                );
             }
         });
     }
