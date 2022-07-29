@@ -31,7 +31,6 @@ import io.questdb.mp.*;
 import io.questdb.tasks.*;
 
 import java.io.IOException;
-import java.util.concurrent.locks.Lock;
 
 public class MessageBusStub implements MessageBus {
     @Override
@@ -261,6 +260,21 @@ public class MessageBusStub implements MessageBus {
 
     @Override
     public Sequence getTextImportRequestSubSeq() {
+        return null;
+    }
+
+    @Override
+    public RingQueue<WalTxnNotificationTask> getWalTxnNotificationQueue() {
+        return null;
+    }
+
+    @Override
+    public Sequence getWalTxnNotificationPubSequence() {
+        return null;
+    }
+
+    @Override
+    public Sequence getWalTxnNotificationSubSequence() {
         return null;
     }
 }
