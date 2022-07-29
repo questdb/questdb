@@ -3508,6 +3508,8 @@ nodejs code:
             } catch (SQLException e) {
                 TestUtils.assertContains(e.getMessage(), "Active import has different id.");
             }
+        } finally {
+            TestUtils.drainTextImportJobQueue(engine);
         }
     }
 

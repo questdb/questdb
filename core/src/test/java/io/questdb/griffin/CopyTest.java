@@ -32,6 +32,7 @@ import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Os;
+import io.questdb.test.tools.TestUtils;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
@@ -774,7 +775,7 @@ public class CopyTest extends AbstractGriffinTest {
                 MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Provided id has invalid format."));
             }
 
-            drainProcessingQueue();
+            TestUtils.drainTextImportJobQueue(engine);
         });
     }
 
@@ -801,14 +802,6 @@ public class CopyTest extends AbstractGriffinTest {
         inputWorkRoot = inputWorkRootTmp;
     }
 
-    private void drainProcessingQueue() throws Exception {
-        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
-            while (processingJob.run(0)) {
-                Os.pause();
-            }
-        }
-    }
-
     @Test
     public void testSerialCopyCancelChecksTableName() throws Exception {
         // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
@@ -830,7 +823,7 @@ public class CopyTest extends AbstractGriffinTest {
             Assert.fail();
         }
 
-        drainProcessingQueue();
+        TestUtils.drainTextImportJobQueue(engine);
         assertQuery("status\nCANCELLED\n",
                 "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
@@ -856,7 +849,7 @@ public class CopyTest extends AbstractGriffinTest {
             Assert.fail();
         }
 
-        drainProcessingQueue();
+        TestUtils.drainTextImportJobQueue(engine);
         assertQuery("status\nCANCELLED\n",
                 "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
@@ -883,7 +876,7 @@ public class CopyTest extends AbstractGriffinTest {
             Assert.fail();
         }
 
-        drainProcessingQueue();
+        TestUtils.drainTextImportJobQueue(engine);
         assertQuery("status\nCANCELLED\n",
                 "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
@@ -950,7 +943,7 @@ public class CopyTest extends AbstractGriffinTest {
                 test.run();
                 processingThread.join();
             }
-            drainProcessingQueue();
+            TestUtils.drainTextImportJobQueue(engine);
         });
     }
 

@@ -1024,6 +1024,14 @@ public final class TestUtils {
         void run() throws Exception;
     }
 
+    public static void drainTextImportJobQueue(CairoEngine engine) throws Exception {
+        try (TextImportRequestJob processingJob = new TextImportRequestJob(engine, 1, null)) {
+            while (processingJob.run(0)) {
+                Os.pause();
+            }
+        }
+    }
+
     public static void runWithTextImportRequestJob(CairoEngine engine, LeakProneCode task) throws Exception {
         WorkerPoolConfiguration config = new WorkerPoolAwareConfiguration() {
             @Override
