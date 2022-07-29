@@ -811,7 +811,7 @@ public class WalWriter implements Closeable {
         }
 
         @Override
-        public void putLong128(int columnIndex, long hi, long lo) {
+        public void putLong128BigEndian(int columnIndex, long hi, long lo) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);

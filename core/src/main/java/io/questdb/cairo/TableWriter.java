@@ -5659,7 +5659,7 @@ public class TableWriter implements Closeable {
 
         void putLong(int columnIndex, long value);
 
-        void putLong128(int columnIndex, long first, long second);
+        void putLong128BigEndian(int columnIndex, long first, long second);
 
         void putLong256(int columnIndex, long l0, long l1, long l2, long l3);
 
@@ -5790,7 +5790,7 @@ public class TableWriter implements Closeable {
         }
 
         @Override
-        public void putLong128(int columnIndex, long hi, long lo) {
+        public void putLong128BigEndian(int columnIndex, long hi, long lo) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);
