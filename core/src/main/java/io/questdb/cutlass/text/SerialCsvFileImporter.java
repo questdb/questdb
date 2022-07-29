@@ -41,9 +41,9 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 public final class SerialCsvFileImporter implements Closeable {
-    private final int sqlCopyBufferSize;
     private final CharSequence sqlCopyInputRoot;
     private final FilesFacade ff;
+    private final CairoEngine cairoEngine;
     private Path path;
     private final CairoSecurityContext securityContext;
     private TextLoader textLoader;
@@ -54,14 +54,14 @@ public final class SerialCsvFileImporter implements Closeable {
     private ExecutionCircuitBreaker circuitBreaker;
     private int atomicity;
 
-    public SerialCsvFileImporter(CairoEngine engine) {
-        CairoConfiguration configuration = engine.getConfiguration();
-        this.sqlCopyBufferSize = configuration.getSqlCopyBufferSize();
+    public SerialCsvFileImporter(CairoEngine cairoEngine) {
+        CairoConfiguration configuration = cairoEngine.getConfiguration();
         this.sqlCopyInputRoot = configuration.getSqlCopyInputRoot();
         this.path = new Path();
         this.ff = configuration.getFilesFacade();
-        this.textLoader = new TextLoader(engine);
+        this.textLoader = new TextLoader(cairoEngine);
         this.securityContext = AllowAllCairoSecurityContext.INSTANCE;
+        this.cairoEngine = cairoEngine;
     }
 
     @Override
@@ -79,15 +79,15 @@ public final class SerialCsvFileImporter implements Closeable {
     }
 
     public void process() throws TextImportException {
+        updateImportStatus(TextImportTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
+        int sqlCopyBufferSize = cairoEngine.getConfiguration().getSqlCopyBufferSize();
         long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
         setupTextLoaderFromModel();
         path.of(sqlCopyInputRoot).concat(fileName).$();
         long fd = ff.openRO(path);
         try {
-            updateImportStatus(TextImportTask.STATUS_STARTED, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
-            statusReporter.report(TextImportTask.PHASE_PARTITION_IMPORT, TextImportTask.STATUS_STARTED, null, Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
             if (fd == -1) {
-                throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
+                throw TextImportException.instance(TextImportTask.NO_PHASE, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
             }
 
             long fileLen = ff.length(fd);
@@ -100,20 +100,18 @@ public final class SerialCsvFileImporter implements Closeable {
                 int read;
                 while (n < fileLen) {
                     if (circuitBreaker.checkIfTripped()) {
-                        TextImportException ex = TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT, "import was cancelled");
+                        TextImportException ex = TextImportException.instance(TextImportTask.NO_PHASE, "import was cancelled");
                         ex.setCancelled(true);
                         throw ex;
                     }
                     read = (int) ff.read(fd, buf, sqlCopyBufferSize, n);
                     if (read < 1) {
-                        throw TextImportException.instance(TextImportTask.PHASE_PARTITION_IMPORT, "could not read file [errno=").put(ff.errno()).put(']');
+                        throw TextImportException.instance(TextImportTask.NO_PHASE, "could not read file [errno=").put(ff.errno()).put(']');
                     }
                     textLoader.parse(buf, buf + read, securityContext);
                     n += read;
                 }
                 textLoader.wrapUp();
-                statusReporter.report(TextImportTask.PHASE_PARTITION_IMPORT, TextImportTask.STATUS_FINISHED, null,
-                        Numbers.LONG_NaN, Numbers.LONG_NaN, 0);
                 updateImportStatus(TextImportTask.STATUS_FINISHED, textLoader.getParsedLineCount(), textLoader.getWrittenLineCount(), textLoader.getErrorLineCount());
             }
         } finally {

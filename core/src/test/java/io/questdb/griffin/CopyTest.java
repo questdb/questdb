@@ -152,6 +152,12 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testCopyWithSmallBuffer() throws Exception {
+        sqlCopyBufferSize = 1024;
+        testSimpleCopy();
+    }
+
+    @Test
     public void testSimpleCopy() throws Exception {
         CopyRunnable insert = () -> {
             compiler.compile("copy x from '/src/test/resources/csv/test-import.csv'", sqlExecutionContext);
@@ -416,8 +422,6 @@ public class CopyTest extends AbstractGriffinTest {
 
         CopyRunnable test = () -> assertQuery("stage\tstatus\trows_handled\trows_imported\terrors\n" +
                         "\tSTARTED\tNaN\tNaN\t0\n" +
-                        "PARTITION_IMPORT\tSTARTED\tNaN\tNaN\t0\n" +
-                        "PARTITION_IMPORT\tFINISHED\tNaN\tNaN\t0\n" +
                         "\tFINISHED\t1000\t1000\t0\n",
                 "select stage, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log",
                 null,
