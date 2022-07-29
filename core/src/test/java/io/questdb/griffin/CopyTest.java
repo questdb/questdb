@@ -153,7 +153,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testSimpleCopy() throws Exception {
-        ParallelCopyRunnable insert = () -> {
+        CopyRunnable insert = () -> {
             compiler.compile("copy x from '/src/test/resources/csv/test-import.csv'", sqlExecutionContext);
         };
 
@@ -288,7 +288,7 @@ public class CopyTest extends AbstractGriffinTest {
                 "CMP1\t6\t6607\t0.0829047034494579\t2015-05-12T19:15:09.000Z\t2015-05-12T19:15:09.000Z\t2015-05-12T00:00:00.000Z\t1685\tfalse\t88274174\n" +
                 "CMP2\t8\t1049\t9.39520388608798\t2015-05-13T19:15:09.000Z\t2015-05-13T19:15:09.000Z\t2015-05-13T00:00:00.000Z\t7164\ttrue\t49001539\n";
 
-            ParallelCopyRunnable assertion = () -> {
+            CopyRunnable assertion = () -> {
                 assertQuery(
                         expected,
                         "x",
@@ -301,7 +301,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testSimpleCopyForceHeader() throws Exception {
-        ParallelCopyRunnable insert = () -> {
+        CopyRunnable insert = () -> {
             compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header true", sqlExecutionContext);
         };
 
@@ -310,7 +310,7 @@ public class CopyTest extends AbstractGriffinTest {
                 "CDE\tbb\tb\tsentence 1\n" +
                 "sentence 2\t12\n";
 
-        ParallelCopyRunnable assertion = () -> {
+        CopyRunnable assertion = () -> {
             assertQuery(
                     expected,
                     "x",
@@ -323,7 +323,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testSimpleCopyForceHeader2() throws Exception {
-        ParallelCopyRunnable insert = () -> {
+        CopyRunnable insert = () -> {
             compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header false", sqlExecutionContext);
         };
 
@@ -333,7 +333,7 @@ public class CopyTest extends AbstractGriffinTest {
                 "CDE\tbb\tb\tsentence 1\n" +
                 "sentence 2\t12\n";
 
-        ParallelCopyRunnable assertion = () -> {
+        CopyRunnable assertion = () -> {
             assertQuery(
                     expected,
                     "x",
@@ -346,39 +346,39 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testParallelCopyIntoExistingTable() throws Exception {
-        ParallelCopyRunnable stmt = () -> {
+        CopyRunnable stmt = () -> {
             compiler.compile("create table x ( ts timestamp, line symbol, description symbol, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
             compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error SKIP_ROW; ", sqlExecutionContext);
         };
 
-        ParallelCopyRunnable test = this::assertQuotesTableContent;
+        CopyRunnable test = this::assertQuotesTableContent;
 
         testParallelCopy(stmt, test);
     }
 
     @Test
     public void testParallelCopyIntoNewTable() throws Exception {
-        ParallelCopyRunnable stmt = () -> compiler.compile(
+        CopyRunnable stmt = () -> compiler.compile(
                 "copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ",
                 sqlExecutionContext
         );
 
-        ParallelCopyRunnable test = this::assertQuotesTableContent;
+        CopyRunnable test = this::assertQuotesTableContent;
 
         testParallelCopy(stmt, test);
     }
 
     @Test
     public void testParallelCopyLogTableStats() throws Exception {
-        ParallelCopyRunnable stmt = () -> compiler.compile(
+        CopyRunnable stmt = () -> compiler.compile(
                 "copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                         "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ",
                 sqlExecutionContext
         );
 
-        ParallelCopyRunnable test = () -> assertQuery("stage\tstatus\trows_handled\trows_imported\terrors\n" +
+        CopyRunnable test = () -> assertQuery("stage\tstatus\trows_handled\trows_imported\terrors\n" +
                         "\tSTARTED\tNaN\tNaN\t0\n" +
                         "ANALYZE_FILE_STRUCTURE\tSTARTED\tNaN\tNaN\t0\n" +
                         "ANALYZE_FILE_STRUCTURE\tFINISHED\tNaN\tNaN\t0\n" +
@@ -412,20 +412,20 @@ public class CopyTest extends AbstractGriffinTest {
         Assume.assumeTrue(configuration.getIOURingFacade().isAvailable());
         ioURingEnabled = false;
 
-        ParallelCopyRunnable stmt = () -> compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+        CopyRunnable stmt = () -> compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT; ", sqlExecutionContext);
 
-        ParallelCopyRunnable test = this::assertQuotesTableContent;
+        CopyRunnable test = this::assertQuotesTableContent;
 
         testParallelCopy(stmt, test);
     }
 
     @Test
     public void testParallelCopyThrowsExceptionWhenValidationFails() throws Exception {
-        ParallelCopyRunnable stmt = () -> compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+        CopyRunnable stmt = () -> compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT; ", sqlExecutionContext);
 
-        ParallelCopyRunnable test = () -> assertQuery("message\n" +
+        CopyRunnable test = () -> assertQuery("message\n" +
                         "partition by unit must be set when importing to new table\n",
                 "select message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log",
                 null,
@@ -545,10 +545,10 @@ public class CopyTest extends AbstractGriffinTest {
         inputRoot = new File(".").getAbsolutePath();
         inputWorkRoot = temp.getRoot().getAbsolutePath();
 
-        ParallelCopyRunnable stmt = () -> compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+        CopyRunnable stmt = () -> compiler.compile("copy dbRoot from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                 "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' on error ABORT partition by day; ", sqlExecutionContext);
 
-        ParallelCopyRunnable test = () -> assertQuery("message\ncannot remove work dir because it points to one of main instance directories\n",
+        CopyRunnable test = () -> assertQuery("message\ncannot remove work dir because it points to one of main instance directories\n",
                 "select left(message, 76) message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
                 null,
                 true
@@ -667,7 +667,7 @@ public class CopyTest extends AbstractGriffinTest {
         }
     }
 
-    private void testParallelCopy(ParallelCopyRunnable statement, ParallelCopyRunnable test) throws Exception {
+    private void testParallelCopy(CopyRunnable statement, CopyRunnable test) throws Exception {
         assertMemoryLeak(() -> {
             CountDownLatch processed = new CountDownLatch(1);
 
@@ -687,7 +687,7 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @FunctionalInterface
-    interface ParallelCopyRunnable {
+    interface CopyRunnable {
         void run() throws Exception;
     }
 }
