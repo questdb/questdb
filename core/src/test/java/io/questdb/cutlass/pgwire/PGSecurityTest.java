@@ -262,7 +262,6 @@ public class PGSecurityTest extends BasePGTest {
     private void assertQueryDisallowed(String query) throws Exception {
         try {
             executeWithPg(query);
-            Os.sleep(1000000);
             fail("Query '" + query + "' must fail in the read-only mode!");
         } catch (PSQLException e) {
             assertContains(e.getMessage(), "Write permission denied");
