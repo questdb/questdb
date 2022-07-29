@@ -78,7 +78,7 @@ public class AddIndexTest extends AbstractGriffinTest {
     @Test
     public void testAddIndexToColumnWithTop2() throws Exception {
         assertMemoryLeak(() -> {
-            int rowCount = (int)configuration.getDataAppendPageSize() / Integer.BYTES + 1;
+            int rowCount = (int) configuration.getDataAppendPageSize() / Integer.BYTES + 1;
             compiler.compile(
                     "create table trades as (\n" +
                             "    select \n" +
