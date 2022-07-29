@@ -1893,7 +1893,8 @@ public class SqlCompiler implements Closeable {
                     addTextImportRequest(model, null);
                     return null;
                 } else {
-                    if (model.getTimestampColumnName() == null && (model.getPartitionBy() != -1 || model.getTimestampFormat() != null)) {
+                    if (model.getTimestampColumnName() == null &&
+                            ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE) || model.getTimestampFormat() != null)) {
                         throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
                     }
                     if (model.getTimestampFormat() == null) {

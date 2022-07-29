@@ -119,7 +119,6 @@ public final class SerialCsvFileImporter implements Closeable {
                 for (int i = 0, size = columnErrorCounts.size(); i < size; i++) {
                     errorCount += columnErrorCounts.get(i);
                 }
-
                 updateImportStatus(TextImportTask.STATUS_FINISHED, textLoader.getParsedLineCount(), textLoader.getWrittenLineCount(), errorCount);
             }
         } finally {

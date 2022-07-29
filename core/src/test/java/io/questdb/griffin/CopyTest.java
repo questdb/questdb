@@ -485,9 +485,46 @@ public class CopyTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testNonExistingFile() throws Exception {
+        CopyRunnable insert = () -> {
+            compiler.compile("copy x from '/src/test/resources/csv/does-not-exist.csv'", sqlExecutionContext);
+        };
+
+        CopyRunnable assertion = () -> {
+            assertQuery("status\nFAILED\n",
+                    "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
+                    null,
+                    true );
+        };
+        testCopy(insert, assertion);
+    }
+
+    @Test
     public void testSimpleCopyForceHeader() throws Exception {
         CopyRunnable insert = () -> {
             compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header true", sqlExecutionContext);
+        };
+
+        final String expected = "type\tvalue\tactive\tdesc\t_1\n" +
+                "ABC\txy\ta\tbrown fox jumped over the fence\t10\n" +
+                "CDE\tbb\tb\tsentence 1\n" +
+                "sentence 2\t12\n";
+
+        CopyRunnable assertion = () -> {
+            assertQuery(
+                    expected,
+                    "x",
+                    null,
+                    true
+            );
+        };
+        testCopy(insert, assertion);
+    }
+
+    @Test
+    public void testNoTimestampAndPartitionByNone() throws Exception {
+        CopyRunnable insert = () -> {
+            compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header true partition by NONE", sqlExecutionContext);
         };
 
         final String expected = "type\tvalue\tactive\tdesc\t_1\n" +
@@ -770,6 +807,34 @@ public class CopyTest extends AbstractGriffinTest {
                 Os.pause();
             }
         }
+    }
+
+    @Test
+    public void testSerialCopyCancelChecksTableName() throws Exception {
+        // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
+        sqlCopyBufferSize = 1024;
+        String importId = runAndFetchImportId("copy x from '/src/test/resources/csv/test-import.csv' with header true delimiter ',' " +
+                "on error ABORT;");
+
+        // this one should be rejected
+        try {
+            compiler.compile("copy 'ffffffffffffffff' cancel", sqlExecutionContext);
+            Assert.fail();
+        } catch (Exception e) {
+            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Active import has different id."));
+        }
+        // this one should succeed
+        try {
+            compiler.compile("copy '" + importId + "' cancel", sqlExecutionContext);
+        } catch (Exception e) {
+            Assert.fail();
+        }
+
+        drainProcessingQueue();
+        assertQuery("status\nCANCELLED\n",
+                "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
+                null,
+                true );
     }
 
     @Test
