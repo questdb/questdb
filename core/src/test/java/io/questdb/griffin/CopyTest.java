@@ -44,8 +44,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 
-import static org.hamcrest.CoreMatchers.containsString;
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.*;
 
 public class CopyTest extends AbstractGriffinTest {
@@ -186,9 +184,7 @@ public class CopyTest extends AbstractGriffinTest {
         // because "(099)889-776" cannot be stored in a string.
 
         sqlCopyBufferSize = 1024;
-        CopyRunnable insert = () -> {
-            compiler.compile("copy x from '/src/test/resources/csv/test-import.csv'", sqlExecutionContext);
-        };
+        CopyRunnable insert = () -> compiler.compile("copy x from '/src/test/resources/csv/test-import.csv'", sqlExecutionContext);
         final String expected = "StrSym\tIntSym\tInt_Col\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
                 "CMP1\t1\t6992\t2.12060110410675\t2015-01-05T19:15:09.000Z\t2015-01-05T19:15:09.000Z\t2015-01-05T00:00:00.000Z\t6992\ttrue\t4952743\n" +
                 "CMP2\t2\t8014\t5.18098710570484\t2015-01-06T19:15:09.000Z\t2015-01-06T19:15:09.000Z\t2015-01-06T00:00:00.000Z\t8014\tfalse\t10918770\n" +
@@ -339,9 +335,7 @@ public class CopyTest extends AbstractGriffinTest {
 
     @Test
     public void testSimpleCopy() throws Exception {
-        CopyRunnable insert = () -> {
-            compiler.compile("copy x from '/src/test/resources/csv/test-import.csv'", sqlExecutionContext);
-        };
+        CopyRunnable insert = () -> compiler.compile("copy x from '/src/test/resources/csv/test-import.csv'", sqlExecutionContext);
 
         final String expected = "StrSym\tIntSym\tInt_Col\tDoubleCol\tIsoDate\tFmt1Date\tFmt2Date\tPhone\tboolean\tlong\n" +
                 "CMP1\t1\t6992\t2.12060110410675\t2015-01-05T19:15:09.000Z\t2015-01-05T19:15:09.000Z\t2015-01-05T00:00:00.000Z\t6992\ttrue\t4952743\n" +
@@ -474,81 +468,65 @@ public class CopyTest extends AbstractGriffinTest {
                 "CMP1\t6\t6607\t0.0829047034494579\t2015-05-12T19:15:09.000Z\t2015-05-12T19:15:09.000Z\t2015-05-12T00:00:00.000Z\t1685\tfalse\t88274174\n" +
                 "CMP2\t8\t1049\t9.39520388608798\t2015-05-13T19:15:09.000Z\t2015-05-13T19:15:09.000Z\t2015-05-13T00:00:00.000Z\t7164\ttrue\t49001539\n";
 
-            CopyRunnable assertion = () -> {
-                assertQuery(
-                        expected,
-                        "x",
-                        null,
-                        true
-                );
-            };
+            CopyRunnable assertion = () -> assertQuery(
+                    expected,
+                    "x",
+                    null,
+                    true
+            );
             testCopy(insert, assertion);
     }
 
     @Test
     public void testNonExistingFile() throws Exception {
-        CopyRunnable insert = () -> {
-            compiler.compile("copy x from '/src/test/resources/csv/does-not-exist.csv'", sqlExecutionContext);
-        };
+        CopyRunnable insert = () -> compiler.compile("copy x from '/src/test/resources/csv/does-not-exist.csv'", sqlExecutionContext);
 
-        CopyRunnable assertion = () -> {
-            assertQuery("status\nFAILED\n",
-                    "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
-                    null,
-                    true );
-        };
+        CopyRunnable assertion = () -> assertQuery("status\nFAILED\n",
+                "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
+                null,
+                true );
         testCopy(insert, assertion);
     }
 
     @Test
     public void testSimpleCopyForceHeader() throws Exception {
-        CopyRunnable insert = () -> {
-            compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header true", sqlExecutionContext);
-        };
+        CopyRunnable insert = () -> compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header true", sqlExecutionContext);
 
         final String expected = "type\tvalue\tactive\tdesc\t_1\n" +
                 "ABC\txy\ta\tbrown fox jumped over the fence\t10\n" +
                 "CDE\tbb\tb\tsentence 1\n" +
                 "sentence 2\t12\n";
 
-        CopyRunnable assertion = () -> {
-            assertQuery(
-                    expected,
-                    "x",
-                    null,
-                    true
-            );
-        };
+        CopyRunnable assertion = () -> assertQuery(
+                expected,
+                "x",
+                null,
+                true
+        );
         testCopy(insert, assertion);
     }
 
     @Test
     public void testNoTimestampAndPartitionByNone() throws Exception {
-        CopyRunnable insert = () -> {
-            compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header true partition by NONE", sqlExecutionContext);
-        };
+        CopyRunnable insert = () -> compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header true partition by NONE", sqlExecutionContext);
 
         final String expected = "type\tvalue\tactive\tdesc\t_1\n" +
                 "ABC\txy\ta\tbrown fox jumped over the fence\t10\n" +
                 "CDE\tbb\tb\tsentence 1\n" +
                 "sentence 2\t12\n";
 
-        CopyRunnable assertion = () -> {
-            assertQuery(
-                    expected,
-                    "x",
-                    null,
-                    true
-            );
-        };
+        CopyRunnable assertion = () -> assertQuery(
+                expected,
+                "x",
+                null,
+                true
+        );
         testCopy(insert, assertion);
     }
 
     @Test
     public void testSimpleCopyForceHeader2() throws Exception {
-        CopyRunnable insert = () -> {
-            compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header false", sqlExecutionContext);
-        };
+        CopyRunnable insert = () -> compiler.compile("copy x from '/src/test/resources/csv/test-numeric-headers.csv' with header false", sqlExecutionContext);
 
         final String expected = "f0\tf1\tf2\tf3\tf4\n" +
                 "type\tvalue\tactive\tdesc\t1\n" +
@@ -556,14 +534,12 @@ public class CopyTest extends AbstractGriffinTest {
                 "CDE\tbb\tb\tsentence 1\n" +
                 "sentence 2\t12\n";
 
-        CopyRunnable assertion = () -> {
-            assertQuery(
-                    expected,
-                    "x",
-                    null,
-                    true
-            );
-        };
+        CopyRunnable assertion = () -> assertQuery(
+                expected,
+                "x",
+                null,
+                true
+        );
         testCopy(insert, assertion);
     }
 
