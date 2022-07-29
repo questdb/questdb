@@ -72,7 +72,7 @@ public class CopyTest extends AbstractGriffinTest {
             compiler.compile(sql, sqlExecutionContext);
             Assert.fail();
         } catch (SqlException e) {
-            assertThat(e.getMessage(), containsString("invalid option used for import without a designated timestamp (format or partition by)"));
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid option used for import without a designated timestamp (format or partition by)");
         }
     }
 
@@ -813,15 +813,12 @@ public class CopyTest extends AbstractGriffinTest {
         try {
             compiler.compile("copy 'ffffffffffffffff' cancel", sqlExecutionContext);
             Assert.fail();
-        } catch (Exception e) {
-            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Active import has different id."));
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "Active import has different id.");
         }
+
         // this one should succeed
-        try {
-            compiler.compile("copy '" + importId + "' cancel", sqlExecutionContext);
-        } catch (Exception e) {
-            Assert.fail();
-        }
+        compiler.compile("copy '" + importId + "' cancel", sqlExecutionContext);
 
         TestUtils.drainTextImportJobQueue(engine);
         assertQuery("status\nCANCELLED\n",
@@ -839,15 +836,12 @@ public class CopyTest extends AbstractGriffinTest {
         try {
             compiler.compile("copy 'ffffffffffffffff' cancel", sqlExecutionContext);
             Assert.fail();
-        } catch (Exception e) {
-            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Active import has different id."));
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "Active import has different id.");
         }
+
         // this one should succeed
-        try {
-            compiler.compile("copy '" + importId + "' cancel", sqlExecutionContext);
-        } catch (Exception e) {
-            Assert.fail();
-        }
+        compiler.compile("copy '" + importId + "' cancel", sqlExecutionContext);
 
         TestUtils.drainTextImportJobQueue(engine);
         assertQuery("status\nCANCELLED\n",
@@ -866,15 +860,12 @@ public class CopyTest extends AbstractGriffinTest {
             compiler.compile("copy x from '/src/test/resources/csv/test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
                     "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
             Assert.fail();
-        } catch (Exception e) {
-            MatcherAssert.assertThat(e.getMessage(), CoreMatchers.containsString("Another import request is in progress"));
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "Another import request is in progress");
         }
+
         // cancel request should succeed
-        try {
-            compiler.compile("copy '" + importId + "' cancel", sqlExecutionContext);
-        } catch (Exception e) {
-            Assert.fail();
-        }
+        compiler.compile("copy '" + importId + "' cancel", sqlExecutionContext);
 
         TestUtils.drainTextImportJobQueue(engine);
         assertQuery("status\nCANCELLED\n",

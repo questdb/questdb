@@ -283,7 +283,7 @@ public class TextImportTask {
         } catch (TextImportException e) {
             this.status = STATUS_CANCELLED;
             this.errorMessage = e.getMessage();
-            LOG.error().$("Import cancelled in ").$(getPhaseNameLowerCase(e.getPhase())).$(" phase.").$();
+            LOG.error().$("Import cancelled [phase=").$(getPhaseNameLowerCase(e.getPhase())).I$();
             return false;
         } catch (Throwable t) {
             LOG.error()

@@ -323,8 +323,8 @@ public class SecurityTest extends AbstractGriffinTest {
             try {
                 compiler.compile("copy testDisallowCopySerial from '/src/test/resources/csv/test-alltypes.csv' with header true", readOnlyExecutionContext);
                 Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("permission denied"));
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.toString(), "permission denied");
             }
         });
     }

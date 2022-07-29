@@ -1928,8 +1928,14 @@ public class SqlCompiler implements Closeable {
             }
             long importId;
             try {
-                final CharSequence idString = GenericLexer.unquote(model.getTarget().token);
-                importId = Numbers.parseHexLong(idString);
+                CharSequence idString = model.getTarget().token;
+                int start = 0;
+                int end = idString.length();
+                if (Chars.isQuoted(idString)) {
+                    start = 1;
+                    end--;
+                }
+                importId = Numbers.parseHexLong(idString, start, end);
             } catch (NumericException e) {
                 throw SqlException.$(0, "Provided id has invalid format.");
             }
@@ -1973,7 +1979,7 @@ public class SqlCompiler implements Closeable {
                 throw SqlException.$(0, "Another import request is in progress. ")
                         .put("[activeImportId=")
                         .put(importIdSink)
-                        .put("]");
+                        .put(']');
             }
         }
     }

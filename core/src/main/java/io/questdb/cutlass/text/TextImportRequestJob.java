@@ -132,15 +132,6 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private boolean existsTargetTableAndPartitioned() {
-        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, task.getTableName()) != TableUtils.TABLE_EXISTS) {
-            return false;
-        }
-        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), task.getTableName())) {
-            return reader.getPartitionedBy() != PartitionBy.NONE;
-        }
-    }
-
     private boolean useParallelImport() {
         String ts = task.getTimestampColumnName();
         String name = task.getTableName();
@@ -149,8 +140,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
             return true;
         }
         if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, name) != TableUtils.TABLE_EXISTS) {
-            LOG.info().$("Target table does not exist. Using SerialImport strategy. [table=").$(name)
-                    .$(", timestamp=null").I$();
+            LOG.info().$("Target table does not exist. Using SerialImport strategy. [table=").$(name).I$();
             return false;
         }
         try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), task.getTableName())) {

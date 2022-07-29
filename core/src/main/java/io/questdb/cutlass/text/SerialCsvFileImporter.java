@@ -26,10 +26,14 @@ package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoSecurityContext;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -42,6 +46,7 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 public final class SerialCsvFileImporter implements Closeable {
+    private static final Log LOG = LogFactory.getLog(SerialCsvFileImporter.class);
     private final CharSequence sqlCopyInputRoot;
     private final FilesFacade ff;
     private final CairoEngine cairoEngine;
@@ -85,12 +90,9 @@ public final class SerialCsvFileImporter implements Closeable {
         long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
         setupTextLoaderFromModel();
         path.of(sqlCopyInputRoot).concat(fileName).$();
-        long fd = ff.openRO(path);
+        long fd = -1;
         try {
-            if (fd == -1) {
-                throw TextImportException.instance(TextImportTask.NO_PHASE, "could not open file [errno=").put(Os.errno()).put(", path=").put(path).put(']');
-            }
-
+            fd = TableUtils.openRO(ff, path, LOG);
             long fileLen = ff.length(fd);
             long n = ff.read(fd, buf, sqlCopyBufferSize, 0);
             if (n > 0) {
@@ -121,6 +123,8 @@ public final class SerialCsvFileImporter implements Closeable {
                 }
                 updateImportStatus(TextImportTask.STATUS_FINISHED, textLoader.getParsedLineCount(), textLoader.getWrittenLineCount(), errorCount);
             }
+        } catch (CairoException e) {
+            throw TextImportException.instance(TextImportTask.NO_PHASE, e.getFlyweightMessage(), e.getErrno());
         } finally {
             if (fd != -1) {
                 ff.close(fd);
