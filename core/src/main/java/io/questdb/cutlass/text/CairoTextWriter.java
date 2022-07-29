@@ -174,7 +174,10 @@ public class CairoTextWriter implements Closeable, Mutable {
                 if (i == timestampIndex || dbcs.length() == 0) {
                     continue;
                 }
-                if (onField(line, dbcs, w, i)) return;
+                if (onField(line, dbcs, w, i)) {
+
+                    return;
+                }
             }
             w.append();
             checkMaxAndCommitLag();

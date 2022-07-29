@@ -31,6 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -112,7 +113,14 @@ public final class SerialCsvFileImporter implements Closeable {
                     n += read;
                 }
                 textLoader.wrapUp();
-                updateImportStatus(TextImportTask.STATUS_FINISHED, textLoader.getParsedLineCount(), textLoader.getWrittenLineCount(), textLoader.getErrorLineCount());
+
+                long errorCount = textLoader.getErrorLineCount();
+                LongList columnErrorCounts = textLoader.getColumnErrorCounts();
+                for (int i = 0, size = columnErrorCounts.size(); i < size; i++) {
+                    errorCount += columnErrorCounts.get(i);
+                }
+
+                updateImportStatus(TextImportTask.STATUS_FINISHED, textLoader.getParsedLineCount(), textLoader.getWrittenLineCount(), errorCount);
             }
         } finally {
             if (fd != -1) {
