@@ -531,7 +531,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.CeilFloatFunctionFactory,
 //                  floor()
             io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory,
-            io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory,            
+            io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory,
 //                  case conditional statement
             io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory,
@@ -602,6 +602,8 @@ open module io.questdb {
 //          left/right
             io.questdb.griffin.engine.functions.str.LeftFunctionFactory,
             io.questdb.griffin.engine.functions.str.RightFunctionFactory,
+            // substring
+            io.questdb.griffin.engine.functions.str.SubStringFunctionFactory,
 
             // analytic functions
             io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory,

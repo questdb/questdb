@@ -44,7 +44,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -78,7 +77,6 @@ import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
-import static io.questdb.std.Numbers.hexDigits;
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static org.junit.Assert.*;
 
@@ -103,7 +101,7 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
-//this looks like the same script as the preparedStatementHex()
+    //this looks like the same script as the preparedStatementHex()
     public void testAllParamsHex() throws Exception {
         final String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -3469,13 +3467,39 @@ nodejs code:
 
             copyStatement.execute();
 
-            try (final PreparedStatement selectStatement = connection.prepareStatement("select * FROM testLocalCopyFrom");
+            try (final PreparedStatement selectStatement = connection.prepareStatement("select * from testLocalCopyFrom");
                  final ResultSet rs = selectStatement.executeQuery()) {
                 sink.clear();
                 assertResultSet("type[VARCHAR],value[VARCHAR],active[VARCHAR],desc[VARCHAR],_1[INTEGER]\n"
                         + "ABC,xy,a,brown fox jumped over the fence,10\n"
                         + "CDE,bb,b,sentence 1\n"
                         + "sentence 2,12\n", sink, rs);
+            }
+        }
+    }
+
+    @Test
+    public void testLocalParallelCopyFrom() throws Exception {
+        try (final PGWireServer ignored = createPGServer(1);
+             final Connection connection = getConnection(false, true);
+             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with parallel header true")) {
+
+            String importId;
+            try (final ResultSet rs = copyStatement.executeQuery()) {
+                Assert.assertTrue(rs.next());
+                importId = rs.getString("id");
+            }
+
+            try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + importId + "' cancel")) {
+                // Cancel should always succeed since we don't have text import jobs running here.
+                cancelStatement.execute();
+            }
+
+            try (final PreparedStatement incorrectCancelStatement = connection.prepareStatement("copy 'ffffffffffffffff' cancel")) {
+                incorrectCancelStatement.execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "Active import has different id.");
             }
         }
     }
@@ -4551,7 +4575,7 @@ nodejs code:
         assertMemoryLeak(() -> {
             compiler.compile("create table tab as (select rnd_double() d from long_sequence(10000000))", sqlExecutionContext);
             try (
-                    final PGWireServer ignored = createPGServer(1, Timestamps.SECOND_MICROS);
+                    final PGWireServer ignored = createPGServer(1, Timestamps.SECOND_MILLIS);
                     final Connection connection = getConnection(false, true);
                     final PreparedStatement statement = connection.prepareStatement("select * from tab order by d")
             ) {
@@ -4878,15 +4902,15 @@ nodejs code:
     @Test
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 1_000_000;
-            writerAsyncCommandMaxTimeout = 30_000_000;
+            writerAsyncCommandBusyWaitTimeout = 1_000;
+            writerAsyncCommandMaxTimeout = 30_000;
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new FilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         queryStartedCountDown.await();
-                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout());
                     }
                     return super.openRW(name, opts);
                 }
@@ -4905,7 +4929,8 @@ nodejs code:
                 public long openRW(LPSZ name, long opts) {
                     if (Chars.endsWith(name, "_meta.swp")) {
                         queryStartedCountDown.await();
-                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() / 1000);
+                        // wait for twice the time to allow busy wait to time out
+                        Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() * 2);
                     }
                     return super.openRW(name, opts);
                 }
@@ -4933,7 +4958,7 @@ nodejs code:
 
     @Test
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 10_000_000;
+        writerAsyncCommandBusyWaitTimeout = 10_000;
         assertMemoryLeak(() -> testAddColumnBusyWriter(true, new SOCountDownLatch()));
     }
 

@@ -159,7 +159,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private long recvBufferReadOffset = 0;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
-    private long statementTimeoutMs = -1L;
+    private long statementTimeout = -1L;
     private RecordCursor currentCursor = null;
     private RecordCursorFactory currentFactory = null;
     // these references are held by context only for a period of processing single request
@@ -170,6 +170,7 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private TypesAndSelect typesAndSelect = null;
     private TypesAndInsert typesAndInsert = null;
     private TypesAndUpdate typesAndUpdate = null;
+    private boolean typesAndSelectIsCached = true;
     private boolean typesAndUpdateIsCached = false;
     private long fd;
     private CharSequence queryText;
@@ -315,8 +316,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
         completed = true;
         clearCursorAndFactory();
         totalReceived = 0;
+        typesAndSelectIsCached = true;
         typesAndUpdateIsCached = false;
-        statementTimeoutMs = -1L;
+        statementTimeout = -1L;
         circuitBreaker.resetMaxTimeToDefault();
     }
 
@@ -1046,16 +1048,20 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
     private void clearCursorAndFactory() {
         resumeProcessor = null;
         currentCursor = Misc.free(currentCursor);
-        // do not free factory, it will be cached
+        // do not free factory, we may cache it
         currentFactory = null;
         // we resumed the cursor send the typeAndSelect will be null
         // we do not want to overwrite cache entries and potentially
         // leak memory
         if (typesAndSelect != null) {
-            typesAndSelectCache.put(queryText, typesAndSelect);
-            // clear selectAndTypes so that context doesn't accidentally
-            // free the factory when context finishes abnormally
-            this.typesAndSelect = null;
+            if (typesAndSelectIsCached) {
+                typesAndSelectCache.put(queryText, typesAndSelect);
+                // clear selectAndTypes so that context doesn't accidentally
+                // free the factory when context finishes abnormally
+                this.typesAndSelect = null;
+            } else {
+                this.typesAndSelect = Misc.free(this.typesAndSelect);
+            }
         }
 
         if (typesAndUpdate != null) {
@@ -1352,20 +1358,20 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
             op.withContext(sqlExecutionContext);
             pendingWriters.valueAt(index).getUpdateOperator().executeUpdate(sqlExecutionContext, op);
         } else {
-            if (statementTimeoutMs > 0) {
-                circuitBreaker.setMaxTime(statementTimeoutMs);
+            if (statementTimeout > 0) {
+                circuitBreaker.setTimeout(statementTimeout);
             }
 
             // execute against writer from the engine, or async
             try (OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, tempSequence)) {
-                if (statementTimeoutMs > 0) {
-                    if (fut.await(statementTimeoutMs * 1000L) != QUERY_COMPLETE) {
+                if (statementTimeout > 0) {
+                    if (fut.await(statementTimeout) != QUERY_COMPLETE) {
                         // Timeout
                         if (op.isWriterClosePending()) {
                             // Writer has not tried to execute the command
                             freeUpdateCommand(op);
                         }
-                        throw SqlException.$(0, "UPDATE query timeout ").put(statementTimeoutMs).put(" ms");
+                        throw SqlException.$(0, "UPDATE query timeout ").put(statementTimeout).put(" ms");
                     }
                 } else {
                     // Default timeouts, can be different for select and update part
@@ -1961,7 +1967,14 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                 rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.COPY_LOCAL:
-                // uncached
+                final RecordCursorFactory factory = cq.getRecordCursorFactory();
+                // factory is null in the COPY 'id' CANCEL; case
+                if (factory != null) {
+                    // this query is non-cacheable
+                    typesAndSelectIsCached = false;
+                    typesAndSelect = typesAndSelectPool.pop();
+                    typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
+                }
                 queryTag = TAG_COPY;
                 break;
             case CompiledQuery.SET:
@@ -2127,9 +2140,9 @@ public class PGConnectionContext implements IOContext, Mutable, WriterSource {
                         dbcs.of(valueLo, valueHi);
                         if (Chars.startsWith(dbcs, "-c statement_timeout=")) {
                             try {
-                                this.statementTimeoutMs = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
-                                if (this.statementTimeoutMs > 0) {
-                                    circuitBreaker.setMaxTime(statementTimeoutMs);
+                                this.statementTimeout = Numbers.parseLong(dbcs.of(valueLo + "-c statement_timeout=".length(), valueHi));
+                                if (this.statementTimeout > 0) {
+                                    circuitBreaker.setTimeout(statementTimeout);
                                 }
                             } catch (NumericException ex) {
                                 parsed = false;

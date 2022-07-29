@@ -155,8 +155,8 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     @Test
     public void testUpdateWithQueryTimeout() throws Exception {
         assertMemoryLeak(() -> {
-            writerAsyncCommandBusyWaitTimeout = 20_000_000L; // On in CI Windows updates are particularly slow
-            writerAsyncCommandMaxTimeout = 90_000_000L;
+            writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
+            writerAsyncCommandMaxTimeout = 90_000L;
             try (PGWireServer ignore1 = createPGServer(1)) {
                 try (final Connection connection = getConnection(false, true)) {
                     PreparedStatement create = connection.prepareStatement("create table testUpdateTimeout as" +
@@ -269,9 +269,9 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     }
 
     private void testConcurrency(int numOfWriters, int numOfReaders, int numOfUpdates, PartitionMode partitionMode) throws Exception {
-        writerAsyncCommandBusyWaitTimeout = 20_000_000L; // On in CI Windows updates are particularly slow
-        writerAsyncCommandMaxTimeout = 90_000_000L;
-        spinLockTimeoutUs = 20_000_000L;
+        writerAsyncCommandBusyWaitTimeout = 20_000L; // On in CI Windows updates are particularly slow
+        writerAsyncCommandMaxTimeout = 90_000L;
+        spinLockTimeout = 20_000L;
         assertMemoryLeak(() -> {
             CyclicBarrier barrier = new CyclicBarrier(numOfWriters + numOfReaders);
             ConcurrentLinkedQueue<Throwable> exceptions = new ConcurrentLinkedQueue<>();

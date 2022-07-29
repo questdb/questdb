@@ -31,16 +31,65 @@ import io.questdb.std.str.CharSink;
 
 public class CopyModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<CopyModel> FACTORY = CopyModel::new;
-    private ExpressionNode tableName;
+    private ExpressionNode target; // holds table name (new import) or import id (cancel model)
     private ExpressionNode fileName;
     private boolean header;
 
+    private boolean parallel;
+    private boolean cancel;
+    private CharSequence timestampFormat;
+    private CharSequence timestampColumnName;
+    private int partitionBy;
+    private byte delimiter;
+    private int atomicity;
+
+    public CopyModel() {
+    }
+
     @Override
     public void clear() {
+        target = null;
+        fileName = null;
+        header = false;
+        parallel = false;
+        cancel = false;
+        timestampFormat = null;
+        timestampColumnName = null;
+        partitionBy = -1;
+        delimiter = -1;
+        atomicity = -1;
+    }
+
+    public int getAtomicity() {
+        return atomicity;
+    }
+
+    public byte getDelimiter() {
+        return delimiter;
     }
 
     public ExpressionNode getFileName() {
         return fileName;
+    }
+
+    public int getPartitionBy() {
+        return partitionBy;
+    }
+
+    public CharSequence getTimestampColumnName() {
+        return timestampColumnName;
+    }
+
+    public CharSequence getTimestampFormat() {
+        return timestampFormat;
+    }
+
+    public void setAtomicity(int atomicity) {
+        this.atomicity = atomicity;
+    }
+
+    public void setDelimiter(byte delimiter) {
+        this.delimiter = delimiter;
     }
 
     public void setFileName(ExpressionNode fileName) {
@@ -52,12 +101,16 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return ExecutionModel.COPY;
     }
 
-    public ExpressionNode getTableName() {
-        return tableName;
+    public ExpressionNode getTarget() {
+        return target;
     }
 
-    public void setTableName(ExpressionNode tableName) {
-        this.tableName = tableName;
+    public void setPartitionBy(int partitionBy) {
+        this.partitionBy = partitionBy;
+    }
+
+    public void setTarget(ExpressionNode tableName) {
+        this.target = tableName;
     }
 
     public boolean isHeader() {
@@ -68,8 +121,31 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         this.header = header;
     }
 
+    public void setParallel(boolean parallel) {
+        this.parallel = parallel;
+    }
+
+    public void setCancel(boolean cancel) {
+        this.cancel = cancel;
+    }
+
+    public void setTimestampColumnName(CharSequence timestampColumn) {
+        this.timestampColumnName = timestampColumn;
+    }
+
+    public void setTimestampFormat(CharSequence timestampFormat) {
+        this.timestampFormat = timestampFormat;
+    }
+
     @Override
     public void toSink(CharSink sink) {
+    }
 
+    public boolean isParallel() {
+        return parallel;
+    }
+
+    public boolean isCancel() {
+        return cancel;
     }
 }

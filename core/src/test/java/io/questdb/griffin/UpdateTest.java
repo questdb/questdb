@@ -2211,12 +2211,12 @@ public class UpdateTest extends AbstractGriffinTest {
                 barrier.await(); // update is on writer async cmd queue
 
                 if (errorMsg == null) {
-                    fut.await(10 * Timestamps.SECOND_MICROS); // 10 seconds timeout
+                    fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
                     Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                     Assert.assertEquals(2, fut.getAffectedRowsCount());
                 } else {
                     try {
-                        fut.await(10 * Timestamps.SECOND_MICROS); // 10 seconds timeout
+                        fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
                         Assert.fail("Expected exception missing");
                     } catch (ReaderOutOfDateException | SqlException e) {
                         Assert.assertEquals(errorMsg, e.getMessage());

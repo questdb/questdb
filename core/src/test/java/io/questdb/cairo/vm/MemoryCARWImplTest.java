@@ -25,6 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ConversionException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TestRecord;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -470,7 +471,7 @@ public class MemoryCARWImplTest {
             try {
                 mem.putLong256(padded);
                 Assert.fail();
-            } catch (CairoException ex) {
+            } catch (ConversionException ex) {
                 Assert.assertTrue(ex.getMessage().contains("invalid long256"));
                 Assert.assertTrue(ex.getMessage().contains(padded));
             }

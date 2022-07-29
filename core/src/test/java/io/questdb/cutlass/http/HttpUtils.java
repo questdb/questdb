@@ -22,19 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cutlass.http;
 
-public interface IOUringFacade {
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 
-    boolean isAvailable();
+public final class HttpUtils {
 
-    long create(int capacity);
+    private HttpUtils() {
+    }
 
-    void close(long ptr);
-
-    int submit(long ptr);
-
-    int submitAndWait(long ptr, int waitNr);
-
-    int errno();
+    public static String urlEncodeQuery(String query) {
+        try {
+            return URLEncoder.encode(query, StandardCharsets.UTF_8.toString());
+        } catch (UnsupportedEncodingException e) {
+            throw new RuntimeException(e);
+        }
+    }
 }

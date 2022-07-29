@@ -388,7 +388,7 @@ public class ContinuousMemoryMTest extends AbstractCairoTest {
         withMem((rwMem, roMem) -> {
             final int N = 10_000_000;
             for (int i = 0; i < N; i++) {
-                rwMem.putLong128(rnd.nextLong(), rnd.nextLong());
+                rwMem.putLong128BigEndian(rnd.nextLong(), rnd.nextLong());
             }
 
             roMem.extend(rwMem.size());

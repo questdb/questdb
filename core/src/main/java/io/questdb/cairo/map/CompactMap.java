@@ -477,8 +477,8 @@ public class CompactMap implements Map {
         }
 
         @Override
-        public void putLong128(long hi, long lo) {
-            entries.putLong128(hi, lo);
+        public void putLong128BigEndian(long hi, long lo) {
+            entries.putLong128BigEndian(hi, lo);
         }
 
         @Override

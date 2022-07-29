@@ -58,6 +58,11 @@ public class SymbolAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
+        write(row, column, value, utf8Sink);
+    }
+
+    @Override
+    public void write(TableWriter.Row row, int column, DirectByteCharSequence value, DirectCharSink utf8Sink) throws Exception {
         utf8Sink.clear();
         TextUtil.utf8DecodeEscConsecutiveQuotes(value.getLo(), value.getHi(), utf8Sink);
         row.putSym(column, utf8Sink);

@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -80,5 +81,10 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("MinDouble(").put(arg).put(')');
     }
 }

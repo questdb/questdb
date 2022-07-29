@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
-import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ConversionException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
@@ -91,12 +91,11 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         Unsafe.getUnsafe().putLong(appendAddressFor(Long.BYTES), value);
     }
 
-    default void putLong128(long hi, long lo) {
-        // Write as little endian 128 bit,
-        // e.g. write LO then HI
+    @Override
+    default void putLongLong(long l0, long l1) {
         long addr = appendAddressFor(16);
-        Unsafe.getUnsafe().putLong(addr, lo);
-        Unsafe.getUnsafe().putLong(addr + 8, hi);
+        Unsafe.getUnsafe().putLong(addr, l0);
+        Unsafe.getUnsafe().putLong(addr + 8, l1);
     }
 
     default void putLong256(long l0, long l1, long l2, long l3) {
@@ -230,7 +229,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         try {
             Long256FromCharSequenceDecoder.decode(hexString, start, end, acceptor);
         } catch (NumericException e) {
-            throw CairoException.instance(0).put("invalid long256 [hex=").put(hexString).put(']');
+            throw ConversionException.instance("invalid long256 [hex=").put(hexString).put(']');
         }
     }
 
@@ -245,6 +244,4 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         Chars.copyStrChars(value, pos, len, addr + Integer.BYTES);
         return getAppendOffset();
     }
-
-    void replacePage(long address, long size);
 }

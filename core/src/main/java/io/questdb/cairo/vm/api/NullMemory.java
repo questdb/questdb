@@ -132,7 +132,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void putLong128(long hi, long lo) {
+    public void putLongLong(long l0, long l1) {
         throw new UnsupportedOperationException();
     }
 
@@ -345,10 +345,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     @Override
     public long putStrUnsafe(CharSequence value, int pos, int len) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void replacePage(long address, long size) {
     }
 
     @Override

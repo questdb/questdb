@@ -1,0 +1,3 @@
+line,d,txt,ts
+"line1",111.11,"some text spanning two lines","2022-05-10T11:52:00.000Z"
+line2,2.2,single line with empty quoted ts,""

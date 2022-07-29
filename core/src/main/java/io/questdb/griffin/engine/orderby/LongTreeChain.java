@@ -56,7 +56,7 @@ public class LongTreeChain extends AbstractRedBlackTree {
 
     private long appendValue(long value, long prevValueOffset) {
         final long offset = valueChain.getAppendOffset();
-        valueChain.putLong128(prevValueOffset, value);
+        valueChain.putLongLong(value, prevValueOffset);
         return offset;
     }
 

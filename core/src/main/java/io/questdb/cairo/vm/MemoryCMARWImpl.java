@@ -233,14 +233,6 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void replacePage(long address, long size) {
-        long appendOffset = getAppendOffset();
-        this.pageAddress = this.appendAddress = address;
-        this.lim = pageAddress + size;
-        jumpTo(appendOffset);
-    }
-
-    @Override
     public void setTruncateSize(long size) {
         jumpTo(size);
     }

@@ -26,6 +26,8 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cutlass.text.TextImportRequestTask;
+import io.questdb.cutlass.text.TextImportTask;
 import io.questdb.mp.*;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -82,6 +84,15 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnPurgeTask> columnPurgeQueue;
     private final SCSequence columnPurgeSubSeq;
     private final MPSequence columnPurgePubSeq;
+
+    private final RingQueue<TextImportTask> textImportQueue;
+    private final SPSequence textImportPubSeq;
+    private final MCSequence textImportSubSeq;
+    private final SCSequence textImportColSeq;
+    private final RingQueue<TextImportRequestTask> textImportRequestQueue;
+    private final MPSequence textImportRequestPubSeq;
+    private final SCSequence textImportRequestSubSeq;
+
     private final RingQueue<WalTxnNotificationTask> walTxnNotificationQueue;
     private final Sequence walTxnNotificationPubSequence;
     private final Sequence walTxnNotificationSubSequence;
@@ -155,11 +166,6 @@ public class MessageBusImpl implements MessageBus {
         pageFrameReduceSubSeq = new MCSequence[pageFrameReduceShardCount];
         pageFrameCollectFanOut = new FanOut[pageFrameReduceShardCount];
 
-        walTxnNotificationQueue = new RingQueue<>(WalTxnNotificationTask::new,256);
-        walTxnNotificationPubSequence = new MPSequence(walTxnNotificationQueue.getCycle());
-        walTxnNotificationSubSequence = new MCSequence(walTxnNotificationQueue.getCycle());
-        walTxnNotificationPubSequence.then(walTxnNotificationSubSequence).then(walTxnNotificationPubSequence);
-
         int reduceQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
         for (int i = 0; i < pageFrameReduceShardCount; i++) {
             final RingQueue<PageFrameReduceTask> queue = new RingQueue<PageFrameReduceTask>(
@@ -177,6 +183,23 @@ public class MessageBusImpl implements MessageBus {
             pageFrameReduceSubSeq[i] = reduceSubSeq;
             pageFrameCollectFanOut[i] = collectFanOut;
         }
+
+        this.textImportQueue = new RingQueue<>(TextImportTask::new, configuration.getSqlCopyQueueCapacity());
+        this.textImportPubSeq = new SPSequence(textImportQueue.getCycle());
+        this.textImportSubSeq = new MCSequence(textImportQueue.getCycle());
+        this.textImportColSeq = new SCSequence();
+        textImportPubSeq.then(textImportSubSeq).then(textImportColSeq).then(textImportPubSeq);
+
+        // We allow only a single parallel import to be in-flight, hence queue size of 1.
+        this.textImportRequestQueue = new RingQueue<>(TextImportRequestTask::new, 1);
+        this.textImportRequestPubSeq = new MPSequence(textImportRequestQueue.getCycle());
+        this.textImportRequestSubSeq = new SCSequence();
+        textImportRequestPubSeq.then(textImportRequestSubSeq).then(textImportRequestPubSeq);
+
+        walTxnNotificationQueue = new RingQueue<>(WalTxnNotificationTask::new,256);
+        walTxnNotificationPubSequence = new MPSequence(walTxnNotificationQueue.getCycle());
+        walTxnNotificationSubSequence = new MCSequence(walTxnNotificationQueue.getCycle());
+        walTxnNotificationPubSequence.then(walTxnNotificationSubSequence).then(walTxnNotificationPubSequence);
     }
 
     @Override
@@ -374,6 +397,41 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public FanOut getQueryCacheEventFanOut() {
         return queryCacheEventSubSeq;
+    }
+
+    @Override
+    public RingQueue<TextImportTask> getTextImportQueue() {
+        return textImportQueue;
+    }
+
+    @Override
+    public Sequence getTextImportPubSeq() {
+        return textImportPubSeq;
+    }
+
+    @Override
+    public Sequence getTextImportSubSeq() {
+        return textImportSubSeq;
+    }
+
+    @Override
+    public SCSequence getTextImportColSeq() {
+        return textImportColSeq;
+    }
+
+    @Override
+    public RingQueue<TextImportRequestTask> getTextImportRequestQueue() {
+        return textImportRequestQueue;
+    }
+
+    @Override
+    public MPSequence getTextImportRequestPubSeq() {
+        return textImportRequestPubSeq;
+    }
+
+    @Override
+    public Sequence getTextImportRequestSubSeq() {
+        return textImportRequestSubSeq;
     }
 
     @Override

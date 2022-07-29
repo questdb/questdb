@@ -559,7 +559,7 @@ public class FastMap implements Map {
         }
 
         @Override
-        public void putLong128(long hi, long lo) {
+        public void putLong128BigEndian(long hi, long lo) {
             checkSize(16);
             Unsafe.getUnsafe().putLong(appendAddress, lo);
             Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);

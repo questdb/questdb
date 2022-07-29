@@ -198,4 +198,9 @@ public class TableModel implements TableStructure, Closeable {
     public long getCommitLag() {
         return configuration.getCommitLag();
     }
+
+    @Override
+    public boolean isWallEnabled() {
+        return configuration.getWallEnabledDefault();
+    }
 }

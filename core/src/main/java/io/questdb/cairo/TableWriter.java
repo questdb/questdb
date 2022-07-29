@@ -579,6 +579,10 @@ public class TableWriter implements Closeable {
     }
 
     public int attachPartition(long timestamp) {
+        return attachPartition(timestamp, true);
+    }
+
+    public int attachPartition(long timestamp, boolean validateDataFiles) {
         // Partitioned table must have a timestamp
         // SQL compiler will check that table is partitioned
         assert metadata.getTimestampIndex() > -1;
@@ -597,7 +601,7 @@ public class TableWriter implements Closeable {
                 other.put(DETACHED_DIR_MARKER);
 
                 if (ff.exists(other.$())) {
-                    if (ff.rename(other, path)) {
+                    if (ff.rename(other, path) == Files.FILES_RENAME_OK) {
                         rollbackRename = true;
                         LOG.info().$("moved partition dir: ").$(other).$(" to ").$(path).$();
                     } else {
@@ -616,8 +620,9 @@ public class TableWriter implements Closeable {
                                 .$(",partition=").$ts(timestamp).I$();
                         commit();
                     }
-
-                    attachPartitionCheckFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
+                    if (validateDataFiles) {
+                        attachPartitionCheckFilesMatchMetadata(ff, path, getMetadata(), partitionSize);
+                    }
                     long minPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b);
                     long maxPartitionTimestamp = Unsafe.getUnsafe().getLong(tempMem16b + 8);
 
@@ -651,7 +656,7 @@ public class TableWriter implements Closeable {
             if (rollbackRename) {
                 // rename back to .detached
                 // otherwise it can be deleted on writer re-open
-                if (ff.rename(path.$(), other.$())) {
+                if (ff.rename(path.$(), other.$()) == Files.FILES_RENAME_OK) {
                     LOG.info().$("moved partition dir after failed attach attempt: ").$(path).$(" to ").$(other).$();
                 } else {
                     LOG.info().$("file system error on trying to rename partition folder [errno=").$(ff.errno())
@@ -870,12 +875,20 @@ public class TableWriter implements Closeable {
         return txWriter.unsafeGetRawMemorySize();
     }
 
+    public long getRowCount() {
+        return txWriter.getRowCount();
+    }
+
     public long getStructureVersion() {
         return txWriter.getStructureVersion();
     }
 
     public int getSymbolIndexNoTransientCountUpdate(int columnIndex, CharSequence symValue) {
         return symbolMapWriters.getQuick(columnIndex).put(symValue, SymbolValueCountCollector.NOOP);
+    }
+
+    public MapWriter getSymbolMapWriter(int columnIndex) {
+        return symbolMapWriters.getQuick(columnIndex);
     }
 
     public String getTableName() {
@@ -1749,7 +1762,7 @@ public class TableWriter implements Closeable {
 
     private static void renameFileOrLog(FilesFacade ff, LPSZ name, LPSZ to) {
         if (ff.exists(name)) {
-            if (ff.rename(name, to)) {
+            if (ff.rename(name, to) == Files.FILES_RENAME_OK) {
                 LOG.info().$("renamed: ").$(name).$();
             } else {
                 LOG.error().$("cannot rename: ").utf8(name).$(" [errno=").$(ff.errno()).$(']').$();
@@ -1810,7 +1823,7 @@ public class TableWriter implements Closeable {
                 nullers.add(() -> mem1.putLong(Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG128:
-                nullers.add(() -> mem1.putLong128(Numbers.LONG_NaN, Numbers.LONG_NaN));
+                nullers.add(() -> mem1.putLong128BigEndian(Numbers.LONG_NaN, Numbers.LONG_NaN));
                 break;
             case ColumnType.LONG256:
                 nullers.add(() -> mem1.putLong256(Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN, Numbers.LONG_NaN));
@@ -1915,25 +1928,6 @@ public class TableWriter implements Closeable {
         return index;
     }
 
-    private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int denseSymbolIndex, IntList symbolMap) {
-        final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
-        symbolMap.setPos(symbolMapDiff.getSize());
-
-        // This is defensive coding. It validates that all the symbols used in WAL are set in SymbolMapDiff
-        symbolMap.setAll(symbolMapDiff.getSize(), -1);
-        final MapWriter mapWriter = denseSymbolMapWriters.get(denseSymbolIndex);
-        boolean identical = true;
-
-        SymbolMapDiffEntry entry;
-        while ((entry = symbolMapDiff.nextEntry()) != null) {
-            final CharSequence symbolValue = entry.getSymbol();
-            final int newKey = mapWriter.put(symbolValue);
-            identical &= newKey == entry.getKey();
-            symbolMap.setQuick(entry.getKey() - cleanSymbolCount, newKey);
-        }
-        return identical;
-    }
-
     private void attachPartitionCheckFilesMatchFixedColumn(FilesFacade ff, Path path, int columnType, long partitionSize, String columnName, long columnNameTxn) {
         TableUtils.dFile(path, columnName, columnNameTxn);
         if (ff.exists(path.$())) {
@@ -2023,7 +2017,7 @@ public class TableWriter implements Closeable {
 
                 long mappedAddr = mapRO(ff, indexFd, expectedFileSize, MemoryTag.MMAP_DEFAULT);
                 try {
-                    long prevDataAddress = dataLength - 4;
+                    long prevDataAddress = dataLength;
                     for (long offset = partitionSize * typeSize; offset >= 0; offset -= typeSize) {
                         long dataAddress = Unsafe.getUnsafe().getLong(mappedAddr + offset);
                         if (dataAddress < 0 || dataAddress > dataLength) {
@@ -2035,7 +2029,7 @@ public class TableWriter implements Closeable {
                         }
 
                         // Check that addresses are monotonic
-                        if (dataAddress >= prevDataAddress) {
+                        if (dataAddress > prevDataAddress) {
                             throw CairoException.instance(0).put("Variable size column has invalid data address value [path=").put(path)
                                     .put(", indexOffset=").put(offset)
                                     .put(", dataAddress=").put(dataAddress)
@@ -2091,7 +2085,7 @@ public class TableWriter implements Closeable {
                             .put(']');
                 }
                 int minKey = Vect.minInt(address, partitionSize);
-                if (minKey < 0) {
+                if (minKey != SymbolTable.VALUE_IS_NULL && minKey < 0) {
                     throw CairoException.instance(0)
                             .put("Symbol file does not match symbol column, invalid key [file=")
                             .put(path)
@@ -2450,6 +2444,7 @@ public class TableWriter implements Closeable {
         ddlMem.putInt(metaMem.getInt(META_OFFSET_MAX_UNCOMMITTED_ROWS));
         ddlMem.putLong(metaMem.getLong(META_OFFSET_COMMIT_LAG));
         ddlMem.putLong(txWriter.getStructureVersion() + 1);
+        ddlMem.putInt(metaMem.getInt(META_OFFSET_WAL_ENABLED));
         metadata.setStructureVersion(txWriter.getStructureVersion() + 1);
     }
 
@@ -2512,6 +2507,25 @@ public class TableWriter implements Closeable {
         );
         denseSymbolMapWriters.add(w);
         symbolMapWriters.extendAndSet(columnCount, w);
+    }
+
+    private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int denseSymbolIndex, IntList symbolMap) {
+        final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
+        symbolMap.setPos(symbolMapDiff.getSize());
+
+        // This is defensive coding. It validates that all the symbols used in WAL are set in SymbolMapDiff
+        symbolMap.setAll(symbolMapDiff.getSize(), -1);
+        final MapWriter mapWriter = denseSymbolMapWriters.get(denseSymbolIndex);
+        boolean identical = true;
+
+        SymbolMapDiffEntry entry;
+        while ((entry = symbolMapDiff.nextEntry()) != null) {
+            final CharSequence symbolValue = entry.getSymbol();
+            final int newKey = mapWriter.put(symbolValue);
+            identical &= newKey == entry.getKey();
+            symbolMap.setQuick(entry.getKey() - cleanSymbolCount, newKey);
+        }
+        return identical;
     }
 
     private void doClose(boolean truncate) {
@@ -2826,6 +2840,74 @@ public class TableWriter implements Closeable {
 
         if (this.lockFd == -1L) {
             throw CairoException.instance(ff.errno()).put("Cannot lock table: ").put(path.$());
+        }
+    }
+
+    private void mmapWalColumn(Path walPath, int timestampIndex, long rowLo, long rowHi) {
+        walMappedColumns.clear();
+        int walPathLen = walPath.length();
+        final int columnCount = metadata.getColumnCount();
+
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            int type = metadata.getColumnType(columnIndex);
+            o3RowCount = rowHi - rowLo;
+            if (type > 0) {
+                int sizeBitsPow2 = ColumnType.pow2SizeOf(type);
+                if (columnIndex == timestampIndex) {
+                    sizeBitsPow2 += 1;
+                }
+
+                if (!ColumnType.isVariableLength(type)) {
+                    MemoryCMOR primary = walColumnMemoryPool.pop();
+
+                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                    primary.ofOffset(
+                            configuration.getFilesFacade(),
+                            walPath,
+                            rowLo << sizeBitsPow2,
+                            rowHi << sizeBitsPow2,
+                            MemoryTag.MMAP_TABLE_WRITER,
+                            CairoConfiguration.O_NONE
+                    );
+                    walPath.trimTo(walPathLen);
+
+                    walMappedColumns.add(primary);
+                    walMappedColumns.add(null);
+                } else {
+                    sizeBitsPow2 = 3;
+                    MemoryCMOR fixed = walColumnMemoryPool.pop();
+                    MemoryCMOR var = walColumnMemoryPool.pop();
+
+                    iFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                    fixed.ofOffset(
+                            configuration.getFilesFacade(),
+                            walPath,
+                            rowLo << sizeBitsPow2,
+                            (rowHi + 1) << sizeBitsPow2,
+                            MemoryTag.MMAP_TABLE_WRITER,
+                            CairoConfiguration.O_NONE
+                    );
+                    walPath.trimTo(walPathLen);
+
+                    long varOffset = fixed.getLong(rowLo << sizeBitsPow2);
+                    long varLen = fixed.getLong(rowHi << sizeBitsPow2) - varOffset;
+                    dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                    var.ofOffset(
+                            configuration.getFilesFacade(),
+                            walPath,
+                            varOffset,
+                            varOffset + varLen,
+                            MemoryTag.MMAP_TABLE_WRITER,
+                            CairoConfiguration.O_NONE
+                    );
+                    walPath.trimTo(walPathLen);
+
+                    walMappedColumns.add(var);
+                    walMappedColumns.add(fixed);
+                }
+            } else {
+                walMappedColumns.add(null);
+            }
         }
     }
 
@@ -3357,7 +3439,7 @@ public class TableWriter implements Closeable {
                 long ts = Unsafe.getUnsafe().getLong(address + alignedExtraLen + (n << shl));
                 // putLong128(hi, lo)
                 // written in memory as lo then hi
-                o3TimestampMem.putLong128(o3RowCount + n, ts);
+                o3TimestampMem.putLongLong(ts, o3RowCount + n);
             }
 
             if (locallyMapped) {
@@ -3808,7 +3890,7 @@ public class TableWriter implements Closeable {
     private void o3TimestampSetter(long timestamp) {
         // putLong128(hi, lo)
         // written in memory as lo then hi
-        o3TimestampMem.putLong128(getO3RowCount0(), timestamp);
+        o3TimestampMem.putLongLong(timestamp, getO3RowCount0());
     }
 
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
@@ -4826,7 +4908,7 @@ public class TableWriter implements Closeable {
                     continue;
                 }
 
-                if (!ff.rename(path, other)) {
+                if (ff.rename(path, other) != Files.FILES_RENAME_OK) {
                     LOG.info().$("cannot rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).$(']').$();
                     index++;
                     continue;
@@ -4951,7 +5033,7 @@ public class TableWriter implements Closeable {
                         Path other = Path.getThreadLocal2(path.trimTo(p).$());
                         TableUtils.oldPartitionName(other, getTxn());
                         if (ff.exists(other.$())) {
-                            if (!ff.rename(other, path)) {
+                            if (ff.rename(other, path) != Files.FILES_RENAME_OK) {
                                 LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).$(']').$();
                                 throw new CairoError("could not restore directory, see log for details");
                             } else {
@@ -4970,7 +5052,7 @@ public class TableWriter implements Closeable {
                         Path other = Path.getThreadLocal2(path);
                         TableUtils.oldPartitionName(other, getTxn());
                         if (ff.exists(other.$())) {
-                            if (!ff.rename(other, path)) {
+                            if (ff.rename(other, path) != Files.FILES_RENAME_OK) {
                                 LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).$(']').$();
                                 throw new CairoError("could not restore directory, see log for details");
                             } else {
@@ -5034,7 +5116,7 @@ public class TableWriter implements Closeable {
                     throw CairoException.instance(ff.errno()).put("Repair failed. Cannot replace ").put(other);
                 }
 
-                if (!ff.rename(path, other)) {
+                if (ff.rename(path, other) != Files.FILES_RENAME_OK) {
                     throw CairoException.instance(ff.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);
                 }
             }
@@ -5658,7 +5740,7 @@ public class TableWriter implements Closeable {
 
         void putLong(int columnIndex, long value);
 
-        void putLong128(int columnIndex, long first, long second);
+        void putLong128BigEndian(int columnIndex, long first, long second);
 
         void putLong256(int columnIndex, long l0, long l1, long l2, long l3);
 
@@ -5789,7 +5871,7 @@ public class TableWriter implements Closeable {
         }
 
         @Override
-        public void putLong128(int columnIndex, long hi, long lo) {
+        public void putLong128BigEndian(int columnIndex, long hi, long lo) {
             MemoryA primaryColumn = getPrimaryColumn(columnIndex);
             primaryColumn.putLong(lo);
             primaryColumn.putLong(hi);

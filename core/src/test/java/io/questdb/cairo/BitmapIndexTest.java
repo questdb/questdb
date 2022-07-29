@@ -192,8 +192,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardCursorTimeout() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
-                return 100;
+            public long getSpinLockTimeout() {
+                return 1;
             }
         };
         TestUtils.assertMemoryLeak(() -> {
@@ -227,8 +227,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardReaderConstructorBadSequence() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
-                return 100;
+            public long getSpinLockTimeout() {
+                return 1;
             }
         };
         TestUtils.assertMemoryLeak(() -> {
@@ -242,8 +242,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardReaderConstructorBadSig() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
-                return 100;
+            public long getSpinLockTimeout() {
+                return 1;
             }
         };
         TestUtils.assertMemoryLeak(() -> {
@@ -259,8 +259,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardReaderConstructorFileTooSmall() throws Exception {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
-                return 100;
+            public long getSpinLockTimeout() {
+                return 1;
             }
         };
         TestUtils.assertMemoryLeak(() -> {
@@ -329,8 +329,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testBackwardReaderKeyUpdateFail() {
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
-                return 400;
+            public long getSpinLockTimeout() {
+                return 4;
             }
         };
         create(configuration, path.trimTo(plen), "x", 1024);
@@ -797,8 +797,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testForwardCursorTimeout() throws Exception {
         CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
-                return 100;
+            public long getSpinLockTimeout() {
+                return 1;
             }
         };
 
@@ -891,8 +891,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root) {
             @Override
-            public long getSpinLockTimeoutUs() {
-                return 3000;
+            public long getSpinLockTimeout() {
+                return 3;
             }
         };
 

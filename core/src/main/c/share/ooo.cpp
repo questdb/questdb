@@ -157,7 +157,7 @@ inline void radix_shuffle(uint64_t* counts, int64_t* src, int64_t* dest, uint64_
 #endif
 
 template<typename T>
-void radix_sort_long_index_asc_in_place(const T *array, uint64_t size, T *cpy) {
+void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
     rscounts_t counts;
     memset(&counts, 0, 256 * 8 * sizeof(uint64_t));
     uint64_t o8 = 0, o7 = 0, o6 = 0, o5 = 0, o4 = 0, o3 = 0, o2 = 0, o1 = 0;
@@ -531,20 +531,18 @@ Java_io_questdb_std_Vect_sort3LongAscInPlace(JNIEnv *env, jclass cl, jlong pLong
     quick_sort_long_index_asc_in_place<long_3x>(reinterpret_cast<long_3x *>(pLong), 0, count - 1);
 }
 
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_mergeLongIndexesAsc(JAVA_STATIC, jlong pIndexStructArray, jint cnt) {
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_mergeLongIndexesAscInner(JAVA_STATIC, jlong pIndexStructArray, jint cnt, jlong mergedIndex) {
     // prepare merge entries
     // they need to have mutable current position "pos" in index
 
-    if (cnt < 1) {
-        return 0;
+    if (cnt < 2) {
+        return;
     }
 
     auto count = static_cast<uint32_t>(cnt);
     const java_index_entry_t *java_entries = reinterpret_cast<java_index_entry_t *>(pIndexStructArray);
-    if (count == 1) {
-        return reinterpret_cast<jlong>(java_entries[0].index);
-    }
+    auto * merged_index = reinterpret_cast<index_t *>(mergedIndex);
 
     uint32_t size = ceil_pow_2(count);
     index_entry_t entries[size];
@@ -563,10 +561,8 @@ Java_io_questdb_std_Vect_mergeLongIndexesAsc(JAVA_STATIC, jlong pIndexStructArra
             entries[i].size = -1;
         }
     }
-    //this piece allocates memory for merged_index that doesn't show up in stats
-    auto *merged_index = reinterpret_cast<index_t *>(malloc(merged_index_size * sizeof(index_t)));
+
     k_way_merge_long_index(entries, size, size - count, merged_index);
-    return reinterpret_cast<jlong>(merged_index);
 }
 
 JNIEXPORT jlong JNICALL

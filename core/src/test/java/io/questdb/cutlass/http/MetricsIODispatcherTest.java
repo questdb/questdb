@@ -30,6 +30,9 @@ import io.questdb.std.str.CharSink;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.Timeout;
+
+import java.util.concurrent.TimeUnit;
 
 public class MetricsIODispatcherTest {
 
@@ -43,6 +46,12 @@ public class MetricsIODispatcherTest {
 
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     @Test
     public void testPrometheusTextFormat() throws Exception {
