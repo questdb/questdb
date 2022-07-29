@@ -42,13 +42,13 @@ public class CastCharToBooleanFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastCharToBooleanFunction(args.getQuick(0));
     }
 
-    private static class Func extends BooleanFunction implements UnaryFunction {
+    public static class CastCharToBooleanFunction extends BooleanFunction implements UnaryFunction {
         private final Function arg;
 
-        public Func(Function arg) {
+        public CastCharToBooleanFunction(Function arg) {
             this.arg = arg;
         }
 

@@ -31,6 +31,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -40,16 +41,15 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public class GroupByRecordCursorFactory implements RecordCursorFactory {
+public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final RecordCursorFactory base;
     private final Map dataMap;
     private final VirtualFunctionSkewedSymbolRecordCursor cursor;
     private final ObjList<Function> recordFunctions;
     private final ObjList<GroupByFunction> groupByFunctions;
-    private final RecordSink mapSink;
     // this sink is used to copy recordKeyMap keys to dataMap
-    private final RecordMetadata metadata;
+    private final RecordSink mapSink;
 
     public GroupByRecordCursorFactory(
             CairoConfiguration configuration,
@@ -62,12 +62,12 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions
     ) {
+        super(groupByMetadata);
         // sink will be storing record columns to map key
         try {
             this.dataMap = MapFactory.createMap(configuration, keyTypes, valueTypes);
             this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
             this.base = base;
-            this.metadata = groupByMetadata;
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
             this.cursor = new VirtualFunctionSkewedSymbolRecordCursor(recordFunctions);
@@ -78,7 +78,7 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         Misc.freeObjList(recordFunctions);
         Misc.free(dataMap);
         Misc.free(base);
@@ -111,11 +111,6 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -123,5 +118,14 @@ public class GroupByRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean usesCompiledFilter() {
         return base.usesCompiledFilter();
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("GroupByRecord");
+        sink.meta("vectorized").val(false);
+        sink.attr("groupByFunctions").val(groupByFunctions);
+        sink.attr("recordFunctions").val(recordFunctions);
+        sink.child(base);
     }
 }

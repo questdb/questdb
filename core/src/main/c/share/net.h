@@ -58,7 +58,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_configureNonBlocking
  * Method:    connect
  * Signature: (JJ)J
  */
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_connect
+JNIEXPORT jint JNICALL Java_io_questdb_network_Net_connect
         (JNIEnv *, jclass, jlong, jlong);
 
 /*
@@ -71,10 +71,10 @@ JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeMsgHeaders
 
 /*
  * Class:     com_questdb_network_Net
- * Method:    freeSockAddr
+ * Method:    freeSockAddr0
  * Signature: (J)V
  */
-JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeSockAddr
+JNIEXPORT void JNICALL Java_io_questdb_network_Net_freeSockAddr0
         (JNIEnv *, jclass, jlong);
 
 /*
@@ -239,10 +239,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_setReusePort
 
 /*
  * Class:     com_questdb_network_Net
- * Method:    sockaddr
+ * Method:    sockaddr0
  * Signature: (II)J
  */
-JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_sockaddr
+JNIEXPORT jlong JNICALL Java_io_questdb_network_Net_sockaddr0
         (JNIEnv *, jclass, jint, jint);
 
 /*

@@ -44,6 +44,7 @@ import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.hamcrest.CoreMatchers.is;
 
@@ -79,6 +80,57 @@ public class LogFactoryTest {
             assertEnabled(logger.debug());
             assertEnabled(logger.advisory());
         }
+    }
+
+    @Test
+    public void testFlushJobsAndClose() {
+        System.setProperty(LogFactory.CONFIG_SYSTEM_PROPERTY, "/test-log.conf");
+
+        final int messageCount = 20;
+        AtomicInteger counter = new AtomicInteger();
+        try (LogFactory factory = new LogFactory()) {
+            factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> new LogWriter() {
+                @Override
+                public void bindProperties(LogFactory factory) {
+                }
+
+                @Override
+                public boolean run(int workerId) {
+                    long cursor = seq.next();
+                    if (cursor > -1) {
+                        counter.incrementAndGet();
+                        seq.done(cursor);
+                        Os.pause();
+                        return true;
+                    }
+                    Os.pause();
+                    return false;
+                }
+            }));
+
+            // Misbehaving Logger
+            factory.add(new LogWriterConfig(LogLevel.CRITICAL, (ring, seq, level) -> new LogWriter() {
+                @Override
+                public void bindProperties(LogFactory factory) {
+                }
+
+                @Override
+                public boolean run(int workerId) {
+                    throw new UnsupportedOperationException();
+                }
+            }));
+
+            factory.bind();
+            factory.startThread();
+
+            Log logger1 = factory.create("com.questdb.x.y");
+            for (int i = 0; i < messageCount; i++) {
+                logger1.criticalW().$("test ").$(i).$();
+            }
+
+            factory.flushJobsAndClose();
+        }
+        Assert.assertEquals(messageCount, counter.get());
     }
 
     @Test
@@ -630,6 +682,21 @@ public class LogFactoryTest {
         testCustomLogIsCreated(false);
     }
 
+    private static void assertEnabled(LogRecord r) {
+        Assert.assertTrue(r.isEnabled());
+        r.$();
+    }
+
+    private static void assertDisabled(LogRecord r) {
+        Assert.assertFalse(r.isEnabled());
+        r.$();
+    }
+
+    private void assertFileLength(String file) {
+        long len = new File(file).length();
+        Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
+    }
+
     private void testCustomLogIsCreated(boolean isCreated) throws IOException {
         try (LogFactory factory = new LogFactory()) {
             File logConfDir = Paths.get(temp.getRoot().getPath(), "conf").toFile();
@@ -651,21 +718,6 @@ public class LogFactoryTest {
             File logFile = Paths.get(temp.getRoot().getPath(), "log\\test.log").toFile();
             MatcherAssert.assertThat(logFile.getAbsolutePath(), logFile.exists(), is(isCreated));
         }
-    }
-
-    private static void assertEnabled(LogRecord r) {
-        Assert.assertTrue(r.isEnabled());
-        r.$();
-    }
-
-    private static void assertDisabled(LogRecord r) {
-        Assert.assertFalse(r.isEnabled());
-        r.$();
-    }
-
-    private void assertFileLength(String file) {
-        long len = new File(file).length();
-        Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
     }
 
     private void testRollOnDate(
@@ -742,22 +794,21 @@ public class LogFactoryTest {
     }
 
     private static class TestMicrosecondClock implements MicrosecondClock {
-        private final long base;
         private final long start;
         private final long speed;
         private final long limit;
+        private long k;
 
         public TestMicrosecondClock(long start, long speed, long limit) {
-            this.base = Os.currentTimeMicros();
             this.start = start;
             this.speed = speed;
             this.limit = limit - 1;
+            this.k = 0;
         }
 
         @Override
         public long getTicks() {
-            long wall = Os.currentTimeMicros();
-            return Math.min((wall - base) * speed + start, limit);
+            return Math.min(start + (k++) * speed, limit);
         }
     }
 }

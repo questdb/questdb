@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
 
 import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.atomic.LongAdder;
@@ -74,11 +75,11 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
         } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Long.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Long.BYTES, valueOffset);
         }
     }
 
@@ -147,5 +148,10 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     @Override
     public boolean isReadThreadSafe() {
         return false;
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("AvgLongVector(").put(columnIndex).put(')');
     }
 }

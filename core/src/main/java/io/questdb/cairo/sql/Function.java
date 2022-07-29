@@ -30,11 +30,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
+import io.questdb.std.Sinkable;
 import io.questdb.std.str.CharSink;
 
 import java.io.Closeable;
 
-public interface Function extends Closeable, StatefulAtom {
+public interface Function extends Closeable, StatefulAtom, Sinkable {
 
     static void init(
             ObjList<? extends Function> args,
@@ -46,12 +47,22 @@ public interface Function extends Closeable, StatefulAtom {
         }
     }
 
-    @Override
-    default void close() {
+    static void initNc(
+            ObjList<? extends Function> args,
+            SymbolTableSource symbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (args != null) {
+            init(args, symbolTableSource, executionContext);
+        }
     }
 
-    default boolean supportsRandomAccess() {
-        return true;
+    default void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default void close() {
     }
 
     int getArrayLength();
@@ -72,6 +83,14 @@ public interface Function extends Closeable, StatefulAtom {
 
     float getFloat(Record rec);
 
+    byte getGeoByte(Record rec);
+
+    int getGeoInt(Record rec);
+
+    long getGeoLong(Record rec);
+
+    short getGeoShort(Record rec);
+
     int getInt(Record rec);
 
     long getLong(Record rec);
@@ -82,16 +101,16 @@ public interface Function extends Closeable, StatefulAtom {
 
     Long256 getLong256B(Record rec);
 
-    // when function returns factory it becomes factory
-    // on other words this is not a tear-away instance
-    RecordCursorFactory getRecordCursorFactory();
+    default RecordMetadata getMetadata() {
+        return null;
+    }
 
     // function returns a record of values
     Record getRecord(Record rec);
 
-    default RecordMetadata getMetadata() {
-        return null;
-    }
+    // when function returns factory it becomes factory
+    // on other words this is not a tear-away instance
+    RecordCursorFactory getRecordCursorFactory();
 
     short getShort(Record rec);
 
@@ -117,23 +136,7 @@ public interface Function extends Closeable, StatefulAtom {
 
     long getTimestamp(Record rec);
 
-    byte getGeoByte(Record rec);
-
-    short getGeoShort(Record rec);
-
-    int getGeoInt(Record rec);
-
-    long getGeoLong(Record rec);
-
     int getType();
-
-    default boolean isUndefined() {
-        return getType() == ColumnType.UNDEFINED;
-    }
-
-    default void assignType(int type, BindVariableService bindVariableService) throws SqlException {
-        throw new UnsupportedOperationException();
-    }
 
     default boolean isConstant() {
         return false;
@@ -143,20 +146,34 @@ public interface Function extends Closeable, StatefulAtom {
         return false;
     }
 
-    // If function is constant for query, e.g. record independent
-    // For example now() and bind variables are Runtime Constants
-    default boolean isRuntimeConstant() {
-        return false;
-    }
-
     /**
      * Returns true if the function and all of its children functions are thread-safe
      * and, thus, can be called concurrently, false - otherwise. Used as a hint for
      * parallel SQL filters runtime, thus this method makes sense only for functions
      * that are allowed in a filter (WHERE clause).
      */
-    boolean isReadThreadSafe();
+    default boolean isReadThreadSafe() {
+        return false;
+    }
+
+    // If function is constant for query, e.g. record independent
+    // For example now() and bind variables are Runtime Constants
+    default boolean isRuntimeConstant() {
+        return false;
+    }
+
+    default boolean isUndefined() {
+        return getType() == ColumnType.UNDEFINED;
+    }
+
+    default boolean supportsRandomAccess() {
+        return true;
+    }
 
     default void toTop() {
+    }
+
+    default void toSink(CharSink sink) {
+        sink.put(getClass().getName());
     }
 }

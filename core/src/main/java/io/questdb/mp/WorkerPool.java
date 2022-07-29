@@ -61,7 +61,7 @@ public class WorkerPool {
         this.poolName = configuration.getPoolName();
         this.yieldThreshold = configuration.getYieldThreshold();
         this.sleepThreshold = configuration.getSleepThreshold();
-        this.sleepMs = configuration.getSleepMs();
+        this.sleepMs = configuration.getSleepTimeout();
         this.metrics = metrics;
 
         assert workerAffinity.length == workerCount;

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -77,7 +78,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     @Override
-    public void close() {
+    protected void _close() {
         Misc.free(filter);
         Misc.free(dataFrameCursorFactory);
     }
@@ -119,6 +120,15 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         sink.put("{\"name\":\"DataFrameRecordCursorFactory\", \"cursorFactory\":");
         dataFrameCursorFactory.toSink(sink);
         sink.put('}');
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("DataFrameRecordCursorFactory");
+        if (filter != null) {
+            sink.attr("filter").val(filter);
+        }
+        sink.child(dataFrameCursorFactory);
     }
 
     public boolean hasDescendingOrder() {

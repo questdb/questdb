@@ -27,16 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.security.CairoSecurityContextImpl;
-import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.mp.SCSequence;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -48,7 +41,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.function.Consumer;
 
 public class UpdateTest extends AbstractGriffinTest {
-    private final SCSequence eventSubSequence = new SCSequence();
 
     @Test
     public void testInsertAfterFailedUpdate() throws Exception {
@@ -205,6 +197,63 @@ public class UpdateTest extends AbstractGriffinTest {
                                     "\t1970-01-01T04:00:00.000000Z\t5\n"
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolIndexRebuiltOnColumnWithTopOverwrittenInO3() throws Exception {
+        assertMemoryLeak(() -> {
+            // Fill every second min from 00:00 to 02:30
+            compiler.compile(
+                    "create table symInd as" +
+                            " (select " +
+                            "timestamp_sequence(0, 2*60*1000000L) ts," +
+                            " x" +
+                            " from long_sequence(75)" +
+                            ") timestamp(ts) Partition by hour", sqlExecutionContext);
+
+            // Add indexed column in last partition
+            compile("alter table symInd add column sym_index symbol index");
+
+            // More data in order
+            compiler.compile(
+                    "insert into symInd " +
+                            " select " +
+                            " timestamp_sequence('1970-01-01T02:30', 60*1000000L) ts," +
+                            " x," +
+                            " cast(x as symbol)" +
+                            " from long_sequence(45)", sqlExecutionContext
+            );
+
+            // O3 data in the first partition
+            compiler.compile(
+                    "insert into symInd " +
+                            " select " +
+                            " timestamp_sequence(1, 2 * 60*1000000L) ts," +
+                            " x," +
+                            " cast(x as symbol)" +
+                            " from long_sequence(20)", sqlExecutionContext
+            );
+
+            // Update column to itself. Should rebuild whole index
+            executeUpdate("update symInd set sym_index = sym_index");
+
+            assertSql(
+                    "select count(), min(ts), max(ts) from symInd where sym_index = null",
+                    "count\tmin\tmax\n" +
+                            "75\t1970-01-01T00:00:00.000000Z\t1970-01-01T02:28:00.000000Z\n"
+            );
+
+            for (int i = 0; i < 60; i += 10) {
+                // Index is updated
+                TestUtils.assertSqlCursors(
+                        compiler,
+                        sqlExecutionContext,
+                        "symInd where (sym_index || '') = '" + i + "'",
+                        "symInd where sym_index = '" + i + "'",
+                        LOG
+                );
             }
         });
     }
@@ -517,6 +566,37 @@ public class UpdateTest extends AbstractGriffinTest {
                     "1970-01-08T10:40:00.000000Z\t00000000 e0 b0 e9 98 f7 67 62 28 60 b0 ec 0b 92\t13\t00000000 24 bc 2e 60 6a 1c 0b 20 a2 86 89 37 11 2c\n" +
                     "1970-01-08T16:40:00.000000Z\t\t14\t\n" +
                     "1970-01-08T22:40:00.000000Z\t00000000 e4 35 e4 3a dc 5c 65 ff 27 67 77\t15\t00000000 52 d0 29 26 c5 aa da 18 ce 5f b2\n");
+        });
+    }
+
+    @Test
+    public void testUpdateBoolean() throws Exception {
+        assertMemoryLeak(() -> {
+            compiler.compile(
+                    "create table up as" +
+                            " (select timestamp_sequence(0, 1000000) ts," +
+                            " cast(x as int) xint," +
+                            " cast(x as boolean) xbool" +
+                            " from long_sequence(5))" +
+                            " timestamp(ts) partition by DAY",
+                    sqlExecutionContext
+            );
+
+            assertSql("up", "ts\txint\txbool\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\ttrue\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\tfalse\n" +
+                    "1970-01-01T00:00:02.000000Z\t3\tfalse\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\tfalse\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\tfalse\n");
+
+            executeUpdate("UPDATE up SET xbool = true WHERE xint > 2");
+
+            assertSql("up", "ts\txint\txbool\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\ttrue\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\tfalse\n" +
+                    "1970-01-01T00:00:02.000000Z\t3\ttrue\n" +
+                    "1970-01-01T00:00:03.000000Z\t4\ttrue\n" +
+                    "1970-01-01T00:00:04.000000Z\t5\ttrue\n");
         });
     }
 
@@ -1914,14 +1994,7 @@ public class UpdateTest extends AbstractGriffinTest {
     }
 
     private void executeUpdate(String query) throws SqlException {
-        CompiledQuery cq = compiler.compile(query, sqlExecutionContext);
-        Assert.assertEquals(CompiledQuery.UPDATE, cq.getType());
-        try (
-                UpdateOperation op = cq.getUpdateOperation();
-                OperationFuture fut = cq.getDispatcher().execute(op, sqlExecutionContext, eventSubSequence)
-        ) {
-            fut.await();
-        }
+        executeOperation(query, CompiledQuery.UPDATE, CompiledQuery::getUpdateOperation);
     }
 
     private void executeUpdateFails(String sql, int position, String reason) {
@@ -2138,12 +2211,12 @@ public class UpdateTest extends AbstractGriffinTest {
                 barrier.await(); // update is on writer async cmd queue
 
                 if (errorMsg == null) {
-                    fut.await(10 * Timestamps.SECOND_MICROS); // 10 seconds timeout
+                    fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
                     Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
                     Assert.assertEquals(2, fut.getAffectedRowsCount());
                 } else {
                     try {
-                        fut.await(10 * Timestamps.SECOND_MICROS); // 10 seconds timeout
+                        fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
                         Assert.fail("Expected exception missing");
                     } catch (ReaderOutOfDateException | SqlException e) {
                         Assert.assertEquals(errorMsg, e.getMessage());

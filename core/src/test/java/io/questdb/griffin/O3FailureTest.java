@@ -56,7 +56,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenIndexFailure = new FilesFacadeImpl() {
         @Override
         public long openRW(LPSZ name, long opts) {
-            if (Chars.endsWith(name, "1970-01-02" + Files.SEPARATOR + "sym.v") && counter.decrementAndGet() == 0) {
+            if (Chars.endsWith(name, Files.SEPARATOR + "sym.v") && Chars.contains(name, "1970-01-02") && counter.decrementAndGet() == 0 ) {
                 return -1;
             }
             return super.openRW(name, opts);
@@ -66,7 +66,7 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenFailure = new FilesFacadeImpl() {
         @Override
         public long openRW(LPSZ name, long opts) {
-            if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "ts.d") && counter.decrementAndGet() == 0)) {
+            if (!fixFailure.get() || (Chars.endsWith(name, Files.SEPARATOR + "ts.d") && Chars.contains(name, "1970-01-06") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
             }
@@ -1685,7 +1685,8 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext,
                 "x",
                 "(y union all z) order by ts",
-                LOG
+                LOG,
+                true
         );
 
         TestUtils.printSql(

@@ -27,22 +27,13 @@ package io.questdb.cairo;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
-import io.questdb.griffin.engine.table.LongTreeSet;
 import io.questdb.mp.Job;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.LongList;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.CyclicBarrier;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.fail;
 
@@ -151,62 +142,11 @@ public class CairoEngineTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNextTableId() {
-        try (
-                CairoEngine engine = new CairoEngine(configuration);
-                CairoEngine engineB = new CairoEngine(configuration)
-        ) {
-
-            final LongList listA = new LongList();
-            final LongList listB = new LongList();
-            final CyclicBarrier startBarrier = new CyclicBarrier(2);
-            final SOCountDownLatch haltLatch = new SOCountDownLatch();
-            haltLatch.setCount(1);
-            final AtomicInteger errors = new AtomicInteger();
-
-            new Thread(() -> {
-                try {
-                    startBarrier.await();
-                    for (int i = 0; i < 100; i++) {
-                        listA.add(engine.getNextTableId());
-                    }
-                    haltLatch.countDown();
-                } catch (InterruptedException | BrokenBarrierException e) {
-                    e.printStackTrace();
-                    errors.incrementAndGet();
-                }
-            }).start();
-
-            try {
-                startBarrier.await();
-                for (int i = 0; i < 100; i++) {
-                    listB.add(engineB.getNextTableId());
-                }
-            } catch (InterruptedException | BrokenBarrierException e) {
-                e.printStackTrace();
-                errors.incrementAndGet();
-            }
-
-            haltLatch.await();
-
-            try (LongTreeSet set = new LongTreeSet(4 * 2048, Integer.MAX_VALUE)) {
-                // add both arrays to the set and asset that there are no duplicates
-                for (int i = 0, n = listA.size(); i < n; i++) {
-                    Assert.assertTrue(set.put(listA.getQuick(i)));
-                }
-                for (int i = 0, n = listB.size(); i < n; i++) {
-                    Assert.assertTrue(set.put(listB.getQuick(i)));
-                }
-            }
-        }
-    }
-
-    @Test
     public void testRemoveExisting() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             createX();
 
-            spinLockTimeoutUs = 1000;
+            spinLockTimeout = 1;
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 assertReader(engine, "x");
                 assertWriter(engine, "x");
@@ -343,8 +283,10 @@ public class CairoEngineTest extends AbstractCairoTest {
                 int counter = 1;
 
                 @Override
-                public boolean rename(LPSZ from, LPSZ to) {
-                    return counter-- <= 0 && super.rename(from, to);
+                public int rename(LPSZ from, LPSZ to) {
+                    return counter-- <= 0
+                            && super.rename(from, to) == Files.FILES_RENAME_OK ? Files.FILES_RENAME_OK
+                            : Files.FILES_RENAME_ERR_OTHER;
                 }
 
                 @Override

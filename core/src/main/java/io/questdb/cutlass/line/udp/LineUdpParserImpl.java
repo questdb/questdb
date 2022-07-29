@@ -76,7 +76,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private TableWriter writer;
     private final LineEndParser MY_LINE_END = this::appendRow;
     private RecordMetadata metadata;
-    private int columnCount;
     private int columnIndex;
     private long columnName;
     private int columnType;
@@ -90,6 +89,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final FieldValueParser MY_TAG_VALUE = this::parseTagValue;
     private final FieldValueParser MY_FIELD_VALUE = this::parseFieldValue;
     private final FieldValueParser MY_NEW_FIELD_VALUE = this::parseFieldValueNewTable;
+    private final boolean autoCreateNewTables;
+    private final boolean autoCreateNewColumns;
 
     public LineUdpParserImpl(
             CairoEngine engine,
@@ -104,6 +105,8 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
         defaultFloatColumnType = udpConfiguration.getDefaultColumnTypeForFloat();
         defaultIntegerColumnType = udpConfiguration.getDefaultColumnTypeForInteger();
+        this.autoCreateNewTables = udpConfiguration.getAutoCreateNewTables();
+        this.autoCreateNewColumns = udpConfiguration.getAutoCreateNewColumns();
     }
 
     @Override
@@ -183,7 +186,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         TableWriter writer = engine.getWriter(cairoSecurityContext, cache.get(tableName), WRITER_LOCK_REASON);
         this.writer = writer;
         this.metadata = writer.getMetadata();
-        this.columnCount = metadata.getColumnCount();
         writerCache.valueAtQuick(cacheEntryIndex).writer = writer;
 
         final int columnCount = columnNameType.size() / 2;
@@ -268,7 +270,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private void createState(CacheEntry entry) {
         writer = entry.writer;
         metadata = writer.getMetadata();
-        columnCount = metadata.getColumnCount();
         switchModeToAppend();
     }
 
@@ -292,6 +293,16 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                         cacheWriter(entry, token);
                         break;
                     case TABLE_DOES_NOT_EXIST:
+                        if (!autoCreateNewTables) {
+                            throw CairoException.instance(0)
+                                    .put("table does not exist, creating new tables is disabled [table=").put(token)
+                                    .put(']');
+                        }
+                        if (!autoCreateNewColumns) {
+                            throw CairoException.instance(0)
+                                    .put("table does not exist, cannot create table, creating new columns is disabled [table=").put(token)
+                                    .put(']');
+                        }
                         tableName = token.getCacheAddress();
                         if (onLineEnd != MY_NEW_LINE_END) {
                             onLineEnd = MY_NEW_LINE_END;
@@ -319,12 +330,19 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         columnIndex = metadata.getColumnIndexQuiet(token);
         if (columnIndex > -1) {
             columnType = metadata.getColumnType(columnIndex);
-        } else {
+        }
+
+        if (columnIndex < 0 || columnType < 0) {
             prepareNewColumn(token);
         }
     }
 
     private void parseFieldNameNewTable(CachedCharSequence token) {
+        if (!TableUtils.isValidColumnName(token, udpConfiguration.getMaxFileNameLength())) {
+            LOG.error().$("invalid column name [columnName=").$(token).I$();
+            switchModeToSkipLine();
+            return;
+        }
         columnNameType.add(token.getCacheAddress());
     }
 
@@ -429,11 +447,18 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             }
         } else {
             CharSequence colNameAsChars = cache.get(columnName);
-            if (TableUtils.isValidColumnName(colNameAsChars, udpConfiguration.getMaxFileNameLength())) {
+            if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameAsChars, udpConfiguration.getMaxFileNameLength())) {
                 writer.addColumn(colNameAsChars, valueType);
-                columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
+                // Writer index can be different from column count, it keeps deleted columns in metadata
+                int columnIndex = writer.getColumnIndex(colNameAsChars);
+                columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
                 columnValues.add(value.getCacheAddress());
                 geoHashBitsSizeByColIdx.add(0);
+            } else if (!autoCreateNewColumns) {
+                throw CairoException.instance(0)
+                        .put("column does not exist, creating new columns is disabled [table=").put(writer.getTableName())
+                        .put(", columnName=").put(colNameAsChars)
+                        .put(']');
             } else {
                 LOG.error().$("invalid column name [table=").$(writer.getTableName())
                         .$(", columnName=").$(colNameAsChars)
@@ -604,6 +629,11 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         @Override
         public long getCommitLag() {
             return configuration.getCommitLag();
+        }
+
+        @Override
+        public boolean isWallEnabled() {
+            return configuration.getWallEnabledDefault();
         }
 
         TableStructureAdapter of(CharSequenceCache cache) {

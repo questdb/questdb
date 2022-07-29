@@ -77,11 +77,11 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
-    public void aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
         if (valueAddress == 0) {
-            distinctFunc.run(pRosti, keyAddress, valueAddressSize / (4 * Long.BYTES));
+            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / (4 * Long.BYTES));
         } else {
-            keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / (4 * Long.BYTES), valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / (4 * Long.BYTES), valueOffset);
         }
     }
 

@@ -183,7 +183,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
 
         MapValue value = key.createValue();
         if (!value.isNew()) {
-            throw CairoException.instance(0).put("Duplicate column [name=").put(columnName).put(", tableAlias=").put(tableAlias).put(']');
+            throw CairoException.duplicateColumn(columnName, tableAlias);
         }
 
         value.putLong(0, columnCount++);

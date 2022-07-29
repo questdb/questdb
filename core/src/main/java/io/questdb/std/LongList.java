@@ -26,12 +26,13 @@ package io.questdb.std;
 
 import io.questdb.cairo.BinarySearch;
 import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.TestOnly;
 
-import java.util.Arrays;
+import java.util.*;
 
-public class LongList implements Mutable, LongVec {
+public class LongList implements Mutable, LongVec, Sinkable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final long DEFAULT_NO_ENTRY_VALUE = -1;
+    private static final long DEFAULT_NO_ENTRY_VALUE = -1L;
     private final long noEntryValue;
     private long[] data;
     private int pos = 0;
@@ -54,6 +55,13 @@ public class LongList implements Mutable, LongVec {
         setPos(other.size());
         System.arraycopy(other.data, 0, this.data, 0, pos);
         this.noEntryValue = other.noEntryValue;
+    }
+
+    public LongList(long[] other) {
+        this.data = new long[other.length];
+        setPos(other.length);
+        System.arraycopy(other, 0, this.data, 0, pos);
+        this.noEntryValue = DEFAULT_NO_ENTRY_VALUE;
     }
 
     public void add(long value) {
@@ -181,6 +189,29 @@ public class LongList implements Mutable, LongVec {
                 scanDownBlock(shl, value, low, high + 1);
     }
 
+    @TestOnly
+    public void shuffle(Rnd rnd, int sh) {
+        // sh is a power of 2 to indicate number of
+        // values stored per virtual "slot". E.g. if
+        // we store two values at a time, we want to shuffle pairs
+        int size = size() >> sh;
+        for (int i = size; i > 1; i--) {
+            swap(i - 1, rnd.nextInt(i), sh);
+        }
+    }
+
+    public void swap(int i, int j, int shl) {
+        int k = 1 << shl;
+        for (int k1 = 0; k1 < k; k1++) {
+            final int ii = (i << shl) + k1;
+            final int ji = (j << shl) + k1;
+            final long jv = getQuick(ji);
+            setQuick(ji, getQuick(ii));
+            setQuick(ii, jv);
+        }
+    }
+
+
     public void clear() {
         pos = 0;
     }
@@ -267,7 +298,9 @@ public class LongList implements Mutable, LongVec {
 
     @Override
     public LongVec newInstance() {
-        return new LongList(size());
+        LongList newList = new LongList(size());
+        newList.setPos(pos);
+        return newList;
     }
 
     /**
@@ -291,21 +324,25 @@ public class LongList implements Mutable, LongVec {
         return this == that || that instanceof LongList && equals((LongList) that);
     }
 
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put('[');
+        for (int i = 0, k = pos; i < k; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            sink.put(get(i));
+        }
+        sink.put(']');
+    }
+
     /**
      * {@inheritDoc}
      */
     @Override
     public String toString() {
         final CharSink sb = Misc.getThreadLocalBuilder();
-
-        sb.put('[');
-        for (int i = 0, k = pos; i < k; i++) {
-            if (i > 0) {
-                sb.put(',');
-            }
-            sb.put(get(i));
-        }
-        sb.put(']');
+        toSink(sb);
         return sb.toString();
     }
 
@@ -406,17 +443,18 @@ public class LongList implements Mutable, LongVec {
     }
 
     private boolean equals(LongList that) {
-        if (this.pos == that.pos) {
-            for (int i = 0, n = pos; i < n; i++) {
-                long lhs = this.getQuick(i);
-                if (lhs == noEntryValue) {
-                    return that.getQuick(i) == noEntryValue;
-                } else if (lhs == that.getQuick(i)) {
-                    return true;
-                }
+        if (this.pos != that.pos) {
+            return false;
+        }
+        if (this.noEntryValue != that.noEntryValue) {
+            return false;
+        }
+        for (int i = 0, n = pos; i < n; i++) {
+            if (this.getQuick(i) != that.getQuick(i)) {
+                return false;
             }
         }
-        return false;
+        return true;
     }
 
     public int indexOf(long o) {

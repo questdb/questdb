@@ -122,7 +122,7 @@ public class CompactMapTest extends AbstractCairoTest {
 
         valueTypes.add(ColumnType.LONG);
 
-        // These are default FastMap configuration for a join
+        // These are default CompactMap configuration for a join
         try (CompactMap map = new CompactMap(4194304, keyTypes, valueTypes, 2097152, 0.5, 2147483647, 10000)) {
             for (int i = 0; i < 40_000_000; i++) {
                 MapKey key = map.withKey();
@@ -256,7 +256,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 new SingleColumnType(ColumnType.LONG),
                 12,
                 loadFactor,
-                new MockHash(),
+                MockHash::new,
                 1,
                 Integer.MAX_VALUE)) {
             MapKey key;
@@ -423,8 +423,14 @@ public class CompactMapTest extends AbstractCairoTest {
         // To make hash consistent we will assume that first character of
         // string is always a number and this number will be hash code of string.
         class MockHash implements CompactMap.HashFunction {
+            MemoryR mem;
+
+            public MockHash(MemoryR mem) {
+                this.mem = mem;
+            }
+
             @Override
-            public long hash(MemoryR mem, long offset, long size) {
+            public long hash(long offset, long size) {
                 // we have single key field, which is string
                 // the offset of string is 8 bytes for key cell + 4 bytes for string length, total is 12
                 char c = mem.getChar(offset + 12);
@@ -440,7 +446,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 1024 * 1024,
                 new SingleColumnType(ColumnType.STRING),
                 new SingleColumnType(ColumnType.LONG),
-                (long) (N * loadFactor), loadFactor, new MockHash(), 1, Integer.MAX_VALUE)) {
+                (long) (N * loadFactor), loadFactor, mem -> new MockHash(mem), 1, Integer.MAX_VALUE)) {
 
             // assert that key capacity is what we expect, otherwise this test would be useless
             Assert.assertEquals(N, map.getActualCapacity());
@@ -473,7 +479,7 @@ public class CompactMapTest extends AbstractCairoTest {
                 1024 * 1024,
                 new SingleColumnType(ColumnType.STRING),
                 new SingleColumnType(ColumnType.LONG),
-                (long) (N * loadFactor), loadFactor, new MockHash(), 1, Integer.MAX_VALUE)) {
+                (long) (N * loadFactor), loadFactor, MockHash::new, 1, Integer.MAX_VALUE)) {
 
             // assert that key capacity is what we expect, otherwise this test would be useless
             Assert.assertEquals(N, map.getActualCapacity());
@@ -854,8 +860,15 @@ public class CompactMapTest extends AbstractCairoTest {
     // This hash function will use first three characters as hash code
     // we need decent spread of hash codes making single character not enough
     private static class MockHash implements CompactMap.HashFunction {
+
+        MemoryR mem;
+
+        public MockHash(MemoryR mem) {
+            this.mem = mem;
+        }
+
         @Override
-        public long hash(MemoryR mem, long offset, long size) {
+        public long hash(long offset, long size) {
             // string begins after 8-byte cell for key value
             CharSequence cs = mem.getStr(offset + 8);
             try {

@@ -15,7 +15,7 @@
   </a>
 </p>
 
-English | [简体中文](./i18n/README.zh-cn.md) | [العربية](./i18n/README.ar-dz.md)
+English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.zh-hk.md) | [العربية](./i18n/README.ar-dz.md)
 
 # QuestDB
 
@@ -61,6 +61,9 @@ macOS users can use Homebrew:
 ```bash
 brew install questdb
 brew services start questdb
+
+questdb start // To start questdb
+questdb stop  // To stop questdb
 ```
 
 The [QuestDB downloads page](https://questdb.io/get-questdb/) provides direct

@@ -24,39 +24,60 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.network.NetworkError;
+import io.questdb.client.Sender;
+import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
+import io.questdb.network.NetworkFacadeImpl;
 
+/**
+ * LineTcpSender is for testing purposes only. It has error-prone API and comes with no API guarantees
+ * If you are looking for an ILP client for your application use {@link Sender} instead.
+ */
 public class LineTcpSender extends AbstractLineSender {
-    private static final Log LOG = LogFactory.getLog(LineTcpSender.class);
 
-    public LineTcpSender(int sendToIPv4Address, int sendToPort, int bufferCapacity) {
-        super(0, sendToIPv4Address, sendToPort, bufferCapacity, 0, LOG);
+    /**
+     * @deprecated use {@link #newSender(int, int, int)} instead.
+     * <br>
+     * IP address is encoded as <code>int</code> obtained via {@link io.questdb.network.Net#parseIPv4(CharSequence)}
+     *
+     * @param ip IP address of a server
+     * @param port port where a server is listening
+     * @param bufferCapacity capacity of an internal buffer in bytes
+     */
+    @Deprecated
+    public LineTcpSender(int ip, int port, int bufferCapacity) {
+        super(new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, ip, port, bufferCapacity * 2), bufferCapacity);
     }
 
-    @Override
-    protected long createSocket(int interfaceIPv4Address, int ttl, long sockaddr) throws NetworkError {
-        long fd = nf.socketTcp(true);
-        if (nf.connect(fd, sockaddr) != 0) {
-            throw NetworkError.instance(nf.errno(), "could not connect to ").ip(interfaceIPv4Address);
+    /**
+     * Create a new LineTcpSender.
+     * <br>
+     * IP address is encoded as <code>int</code> obtained via {@link io.questdb.network.Net#parseIPv4(CharSequence)}
+     * <br>
+     * This is meant to be used for testing only, it's not something most users want to use.
+     * See {@link Sender} instead
+     *
+     * @param ip IP address of a server
+     * @param port port where a server is listening
+     * @param bufferCapacity capacity of an internal buffer in bytes
+     * @return LineTcpSender instance of LineTcpSender
+     */
+    public static LineTcpSender newSender(int ip, int port, int bufferCapacity) {
+        PlainTcpLineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, ip, port, bufferCapacity * 2);
+        try {
+            return new LineTcpSender(channel, bufferCapacity);
+        } catch (Throwable t) {
+            channel.close();
+            throw t;
         }
-        int orgSndBufSz = nf.getSndBuf(fd);
-        nf.setSndBuf(fd, 2 * capacity);
-        int newSndBufSz = nf.getSndBuf(fd);
-        LOG.info().$("Send buffer size change from ").$(orgSndBufSz).$(" to ").$(newSndBufSz).$();
-        return fd;
     }
 
-    @Override
-    protected void sendToSocket(long fd, long lo, long sockaddr, int len) throws NetworkError {
-        if (nf.send(fd, lo, len) != len) {
-            throw NetworkError.instance(nf.errno()).put("send error");
-        }
+    public LineTcpSender(LineChannel channel, int bufferCapacity) {
+        super(channel, bufferCapacity);
     }
 
     @Override
     public void flush() {
+        validateNotClosed();
         sendAll();
     }
 

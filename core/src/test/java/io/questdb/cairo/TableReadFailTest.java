@@ -38,7 +38,7 @@ import org.junit.Test;
 public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testMetaFileCannotOpenConstructor() throws Exception {
-        spinLockTimeoutUs = 1000;
+        spinLockTimeout = 1;
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
@@ -53,7 +53,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
     @Test
     public void testMetaFileMissingConstructor() throws Exception {
-        spinLockTimeoutUs = 1000;
+        spinLockTimeout = 1;
         FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long openRO(LPSZ path) {
@@ -69,7 +69,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testReloadTimeout() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            spinLockTimeoutUs = 1000;
+            spinLockTimeout = 1;
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.NONE)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.LONG)
@@ -144,8 +144,8 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.close();
                 mem.close();
 
-                // make sure reload functions correctly
-                Assert.assertFalse(reader.reload());
+                // make sure reload functions correctly. Txn changed from 1 to 3, reload should return true
+                Assert.assertTrue(reader.reload());
 
                 try (TableWriter w = new TableWriter(configuration, "x", metrics)) {
                     // add more data
@@ -212,8 +212,8 @@ public class TableReadFailTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public long getSpinLockTimeoutUs() {
-                        return 1000;
+                    public long getSpinLockTimeout() {
+                        return 1;
                     }
                 }, "all");
                 Assert.fail();

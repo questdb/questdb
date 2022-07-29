@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
@@ -52,5 +53,11 @@ public class FullFwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
     @Override
     public int getOrder() {
         return ORDER_ASC;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("FullFwdDataFrame");
+        super.toPlan(sink);
     }
 }

@@ -40,10 +40,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
+import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectByteCharSequence;
@@ -92,7 +89,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.clock = configuration.getClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount);
         this.doubleScale = configuration.getDoubleScale();
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration());
+        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
     }
 
@@ -338,8 +335,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).$(']').$();
     }
 
-    private LogRecord error(TextQueryProcessorState state) {
-        return LOG.error().$('[').$(state.getFd()).$("] ");
+    private LogRecord critical(TextQueryProcessorState state) {
+        return LOG.critical().$('[').$(state.getFd()).$("] ");
     }
 
     protected void header(HttpChunkedResponseSocket socket, TextQueryProcessorState state, int status_code) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -369,7 +366,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             Throwable e,
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        error(state).$("Server error executing query ").utf8(state.query).$(e).$();
+        critical(state).$("Server error executing query ").utf8(state.query).$(e).$();
         // This is a critical error, so we treat it as an unhandled one.
         metrics.healthCheck().incrementUnhandledErrors();
         sendException(socket, 0, e.getMessage(), state);

@@ -54,16 +54,16 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
             sink.put(intFunc.getFloat(null), configuration.getFloatToStrCastScale());
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0), configuration.getFloatToStrCastScale());
+        return new CastFloatToStrFunction(args.getQuick(0), configuration.getFloatToStrCastScale());
     }
 
-    private static class Func extends StrFunction implements UnaryFunction {
+    public static class CastFloatToStrFunction extends StrFunction implements UnaryFunction {
         private final Function arg;
         private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final int scale;
 
-        public Func(Function arg, int scale) {
+        public CastFloatToStrFunction(Function arg, int scale) {
             this.arg = arg;
             this.scale = scale;
         }

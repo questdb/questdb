@@ -531,6 +531,12 @@ public class NumbersTest {
         String s8 = "-Infinity";
         Assert.assertEquals(Double.parseDouble(s8), Numbers.parseDouble(s8), 0.000000001);
 
+        String s10 = "2E+2";
+        Assert.assertEquals(Double.parseDouble(s10), Numbers.parseDouble(s10), 0.000000001);
+
+        String s11 = "2E+02";
+        Assert.assertEquals(Double.parseDouble(s11), Numbers.parseDouble(s11), 0.000000001);
+
     }
 
     @Test
@@ -899,5 +905,29 @@ public class NumbersTest {
         int expected = rnd.nextInt();
         int x = Numbers.bswap(expected);
         Assert.assertEquals(expected, Numbers.bswap(x));
+    }
+
+    @Test
+    public void testParseDoubleNegativeZero() throws NumericException {
+        double actual = Numbers.parseDouble("-0.0");
+
+        //check it's zero at all
+        Assert.assertEquals(0, actual, 0.0);
+
+        //check it's *negative* zero
+        double res = 1 / actual;
+        Assert.assertEquals(Double.NEGATIVE_INFINITY, res, 0.0);
+    }
+
+    @Test
+    public void testParseFloatNegativeZero() throws NumericException {
+        float actual = Numbers.parseFloat("-0.0");
+
+        //check it's zero at all
+        Assert.assertEquals(0, actual, 0.0);
+
+        //check it's *negative* zero
+        float res = 1 / actual;
+        Assert.assertEquals(Float.NEGATIVE_INFINITY, res, 0.0);
     }
 }

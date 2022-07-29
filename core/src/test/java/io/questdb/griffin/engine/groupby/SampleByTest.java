@@ -1596,6 +1596,38 @@ public class SampleByTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testIndexSampleByMonth() throws Exception {
+        assertQuery("k\ts\tlat\tlon\n",
+                "select k, s, last(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where s = 'b' " +
+                        "  and k >= cast(1388534400 * 1000000L as timestamp) " +
+                        "  and k <= cast(1655742718 * 1000000L as timestamp)" +
+                        "sample by 1M",
+                "create table xx (k timestamp, s symbol, lat double, lon double)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY",
+                "k",
+                false,
+                false,
+                true);
+
+        assertSampleByIndexQuery("k\ts\tlat\tlon\n" +
+                        "2014-01-01T00:00:00.000000Z\tb\t248.0\t123.7\n",
+                "select k, s, last(lat) lat, last(lon) lon " +
+                        "from xx " +
+                        "where s = 'b' " +
+                        "  and k >= cast(1388534400 * 1000000L as timestamp) " +
+                        "  and k <= cast(1655742718 * 1000000L as timestamp)" +
+                        "sample by 1M",
+                "insert into xx " +
+                        "values " +
+                        "    ('2014-01-01T00:00:00.000000Z', 'b', 245, 123.4)," +
+                        "    ('2014-01-01T00:05:00.000000Z', 'b', 246, 123.5)," +
+                        "    ('2014-01-01T00:10:00.000000Z', 'b', 247, 123.6)," +
+                        "    ('2014-01-01T00:15:00.000000Z', 'b', 248, 123.7);");
+    }
+
+    @Test
     public void testIndexSampleByMicro() throws Exception {
         sampleByIndexSearchPageSize = 256;
         assertSampleByIndexQuery(
@@ -2023,7 +2055,7 @@ public class SampleByTest extends AbstractGriffinTest {
             compile("alter table xx add dt date", sqlExecutionContext);
         });
 
-        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tlf1\tff1\tlf11\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tk\ts\n" +
+        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tll1\tff1\tlf1\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tk\ts\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:28:00.000000Z\t\t\t\t\t1970-01-01T00:00:00.000000Z\tb\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:30:00.000000Z\t1970-01-01T00:58:00.000000Z\t\t\t\t\t1970-01-01T00:30:00.000000Z\tb\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T01:00:00.000000Z\t1970-01-01T01:28:00.000000Z\t\t\t\t\t1970-01-01T01:00:00.000000Z\tb\n" +
@@ -2035,7 +2067,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "241\t269\tS\tL\t141\t169\t220.5000\t234.5000\t302.5\t372.5\tc3\tc3\t41\t69\t41\t69\t1970-01-01T04:00:00.000000Z\t1970-01-01T04:28:00.000000Z\t1970-01-01T00:00:00.000041Z\t1970-01-01T00:00:00.000069Z\t1970-01-01T00:00:00.041Z\t1970-01-01T00:00:00.069Z\t1970-01-01T04:00:00.000000Z\tb\n" +
                         "271\t299\tO\tN\t171\t199\t235.5000\t249.5000\t377.5\t447.5\ta1\tc3\t71\t99\t71\t99\t1970-01-01T04:30:00.000000Z\t1970-01-01T04:58:00.000000Z\t1970-01-01T00:00:00.000071Z\t1970-01-01T00:00:00.000099Z\t1970-01-01T00:00:00.071Z\t1970-01-01T00:00:00.099Z\t1970-01-01T04:30:00.000000Z\tb\n",
                 "select first(i1) fi1, last(i1) li1, first(c1) fc1, " +
-                        "last(c1) lc1, first(l1) fl1, last(l1) lf1, first(f1) ff1, last(f1) lf1, " +
+                        "last(c1) lc1, first(l1) fl1, last(l1) ll1, first(f1) ff1, last(f1) lf1, " +
                         "first(d1) fd1, last(d1) ld1, first(s1) fs1, last(s1) ls1, first(ss1) fss1, " +
                         "last(ss1) lss1, first(b1) fb1, last(b1) lb1, first(k) fk, last(k) lk, first(t1) ft1, " +
                         "last(t1) lt1, first(dt) fdt, last(dt) ldt, k, s\n" +
@@ -2102,7 +2134,7 @@ public class SampleByTest extends AbstractGriffinTest {
             compile("alter table xx add ge8 geohash(9c)", sqlExecutionContext);
         });
 
-        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tlf1\tff1\tlf11\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tfge1\tlge1\tfge2\tlge2\tfge4\tlge4\tfge8\tlge8\tk\ts\n" +
+        assertSampleByIndexQuery("fi1\tli1\tfc1\tlc1\tfl1\tll1\tff1\tlf1\tfd1\tld1\tfs1\tls1\tfss1\tlss1\tfb1\tlb1\tfk\tlk\tft1\tlt1\tfdt\tldt\tfge1\tlge1\tfge2\tlge2\tfge4\tlge4\tfge8\tlge8\tk\ts\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:28:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t1970-01-01T00:00:00.000000Z\tb\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T00:30:00.000000Z\t1970-01-01T00:58:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t1970-01-01T00:30:00.000000Z\tb\n" +
                         "NaN\tNaN\t\t\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t\t\t0\t0\t0\t0\t1970-01-01T01:00:00.000000Z\t1970-01-01T01:28:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t1970-01-01T01:00:00.000000Z\tb\n" +
@@ -2114,7 +2146,7 @@ public class SampleByTest extends AbstractGriffinTest {
                         "241\t269\tJ\tR\t141\t169\t220.5000\t234.5000\t302.5\t372.5\t\tc3\t41\t69\t41\t69\t1970-01-01T04:00:00.000000Z\t1970-01-01T04:28:00.000000Z\t1970-01-01T00:00:00.000041Z\t1970-01-01T00:00:00.000069Z\t1970-01-01T00:00:00.041Z\t1970-01-01T00:00:00.069Z\t100\t001\tj8\tky\teuqer\twrv33\t791pjxsej\trzyp6xy6d\t1970-01-01T04:00:00.000000Z\tb\n" +
                         "271\t299\tR\tR\t171\t199\t235.5000\t249.5000\t377.5\t447.5\t\tc3\t71\t99\t71\t99\t1970-01-01T04:30:00.000000Z\t1970-01-01T04:58:00.000000Z\t1970-01-01T00:00:00.000071Z\t1970-01-01T00:00:00.000099Z\t1970-01-01T00:00:00.071Z\t1970-01-01T00:00:00.099Z\t001\t011\tby\tm1\t0rhez\t711s8\t57tv8npyb\t0prb8tpgj\t1970-01-01T04:30:00.000000Z\tb\n",
                 "select first(i1) fi1, last(i1) li1, first(c1) fc1, " +
-                        "last(c1) lc1, first(l1) fl1, last(l1) lf1, first(f1) ff1, last(f1) lf1, " +
+                        "last(c1) lc1, first(l1) fl1, last(l1) ll1, first(f1) ff1, last(f1) lf1, " +
                         "first(d1) fd1, last(d1) ld1, first(s1) fs1, last(s1) ls1, first(ss1) fss1, " +
                         "last(ss1) lss1, first(b1) fb1, last(b1) lb1, first(k) fk, last(k) lk, first(t1) ft1, " +
                         "last(t1) lt1, first(dt) fdt, last(dt) ldt, " +

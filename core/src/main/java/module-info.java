@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory;
 import io.questdb.griffin.engine.functions.math.*;
 
 open module io.questdb {
@@ -92,6 +93,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.join;
     exports io.questdb.griffin.engine.ops;
     exports io.questdb.cairo.sql.async;
+    exports io.questdb.client;
 
     provides FunctionFactory with
             // test functions
@@ -527,7 +529,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.CeilFloatFunctionFactory,
 //                  floor()
             io.questdb.griffin.engine.functions.math.FloorDoubleFunctionFactory,
-            io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory,            
+            io.questdb.griffin.engine.functions.math.FloorFloatFunctionFactory,
 //                  case conditional statement
             io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory,
             io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory,
@@ -564,10 +566,11 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.ProcCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.RangeCatalogueFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.TableMetadataCursorFactory,
+            io.questdb.griffin.engine.functions.catalogue.TableListFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.SimulateCrashFunctionFactory,
 
 //            PostgreSQL advisory locks functions
             io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll,
@@ -584,6 +587,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory,
             io.questdb.griffin.engine.functions.table.TouchTableFunctionFactory,
+            io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory,
 
             // first
             io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory,
@@ -596,6 +600,8 @@ open module io.questdb {
 //          left/right
             io.questdb.griffin.engine.functions.str.LeftFunctionFactory,
             io.questdb.griffin.engine.functions.str.RightFunctionFactory,
+            // substring
+            io.questdb.griffin.engine.functions.str.SubStringFunctionFactory,
 
             // analytic functions
             io.questdb.griffin.engine.functions.analytic.RowNumberFunctionFactory,

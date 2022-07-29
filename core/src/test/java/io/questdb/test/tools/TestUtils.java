@@ -85,8 +85,15 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnect(NetworkFacade nf, long fd, long ilpSockAddr) {
-        long rc = nf.connect(fd, ilpSockAddr);
+    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
+        long rc = connectAddrInfo(fd, sockAddrInfo);
+        if (rc != 0) {
+            Assert.fail("could not connect, errno=" + Os.errno());
+        }
+    }
+
+    public static void assertConnect(NetworkFacade nf, long fd, long pSockAddr) {
+        long rc = nf.connect(fd, pSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());
         }
@@ -104,8 +111,8 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
-    public static void assertEquals(RecordCursor cursorExpected, RecordMetadata metadataExpected, RecordCursor cursorActual, RecordMetadata metadataActual) {
-        assertEquals(metadataExpected, metadataActual);
+    public static void assertEquals(RecordCursor cursorExpected, RecordMetadata metadataExpected, RecordCursor cursorActual, RecordMetadata metadataActual, boolean symbolsAsStrings) {
+        assertEquals(metadataExpected, metadataActual, symbolsAsStrings);
         Record r = cursorExpected.getRecord();
         Record l = cursorActual.getRecord();
         long rowIndex = 0;
@@ -139,7 +146,9 @@ public final class TestUtils {
                             Assert.assertEquals(r.getGeoInt(i), l.getGeoInt(i));
                             break;
                         case ColumnType.STRING:
-                            TestUtils.assertEquals(r.getStr(i), l.getStr(i));
+                            CharSequence actual = symbolsAsStrings && ColumnType.isSymbol(metadataActual.getColumnType(i)) ? l.getSym(i) : l.getStr(i);
+                            CharSequence expected = r.getStr(i);
+                            TestUtils.assertEquals(expected, actual);
                             break;
                         case ColumnType.SYMBOL:
                             Assert.assertEquals(r.getSym(i), l.getSym(i));
@@ -443,6 +452,13 @@ public final class TestUtils {
         Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
         long fileCount = Files.getOpenFileCount();
         Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
+
+        int addrInfoCount = Net.getAllocatedAddrInfoCount();
+        Assert.assertTrue("Initial allocated addrinfo count should be >= 0", addrInfoCount >= 0);
+
+        int sockAddrCount = Net.getAllocatedSockAddrCount();
+        Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
+
         runnable.run();
         Path.clearThreadLocals();
         if (fileCount != Files.getOpenFileCount()) {
@@ -461,6 +477,18 @@ public final class TestUtils {
                 }
             }
             Assert.assertEquals(mem, memAfter);
+        }
+
+        int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();
+        Assert.assertTrue(addrInfoCountAfter > -1);
+        if (addrInfoCount != addrInfoCountAfter) {
+            Assert.fail("AddrInfo allocation count before the test: " + addrInfoCount + ", after the test: " + addrInfoCountAfter);
+        }
+
+        int sockAddrCountAfter = Net.getAllocatedSockAddrCount();
+        Assert.assertTrue(sockAddrCountAfter > -1);
+        if (sockAddrCount != sockAddrCountAfter) {
+            Assert.fail("SockAddr allocation count before the test: " + sockAddrCount + ", after the test: " + sockAddrCountAfter);
         }
     }
 
@@ -491,11 +519,15 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual, Log log) throws SqlException {
+        assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, false);
+    }
+
+    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expected, String actual, Log log, boolean symbolsAsStrings) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()) {
                 try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)) {
                     try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
-                        assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata());
+                        assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), symbolsAsStrings);
                     }
                 } catch (AssertionError e) {
                     log.error().$(e).$();
@@ -549,6 +581,11 @@ public final class TestUtils {
     public static long connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
         return Net.connect(fd, sockAddr);
+    }
+
+    public static long connectAddrInfo(long fd, long sockAddrInfo) {
+        Assert.assertTrue(fd > -1);
+        return Net.connectAddrInfo(fd, sockAddrInfo);
     }
 
     public static void copyDirectory(Path src, Path dst, int dirMode) {
@@ -734,7 +771,6 @@ public final class TestUtils {
     public static Rnd generateRandom() {
         long s0 = System.nanoTime();
         long s1 = System.currentTimeMillis();
-        System.out.println("random seed " + s0 + ", " + s1);
         return new Rnd(s0, s1);
     }
 
@@ -968,11 +1004,15 @@ public final class TestUtils {
                 Long.toHexString(expected.getLong3());
     }
 
-    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual) {
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean symbolsAsStrings) {
         Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
             Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
-            Assert.assertEquals("Column type " + i, metadataExpected.getColumnType(i), metadataActual.getColumnType(i));
+            int columnType1 = metadataExpected.getColumnType(i);
+            columnType1 = symbolsAsStrings && ColumnType.isSymbol(columnType1) ? ColumnType.STRING : columnType1;
+            int columnType2 = metadataActual.getColumnType(i);
+            columnType2 = symbolsAsStrings && ColumnType.isSymbol(columnType2) ? ColumnType.STRING : columnType2;
+            Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
     }
 

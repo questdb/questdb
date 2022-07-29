@@ -41,7 +41,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final FilesFacade ff;
     private final TableWriter purgeLogWriter;
     private final String updateCompleteColumnName;
-    private final LongList completedRecordIds = new LongList();
+    private final LongList completedRowIds = new LongList();
     private final MicrosecondClock microClock;
     private final int updateCompleteColumnWriterIndex;
     private TxnScoreboard txnScoreboard;
@@ -93,7 +93,7 @@ public class ColumnPurgeOperator implements Closeable {
     public boolean purge(ColumnPurgeTask task) {
         try {
             boolean done = purge0(task, true);
-            setCompletionTimestamp(completedRecordIds, microClock.getTicks());
+            setCompletionTimestamp(completedRowIds, microClock.getTicks());
             return done;
         } catch (Throwable ex) {
             // Can be some IO exception
@@ -186,12 +186,12 @@ public class ColumnPurgeOperator implements Closeable {
         boolean setupScoreboard = useLocalScoreboard;
 
         try {
-            completedRecordIds.clear();
+            completedRowIds.clear();
             for (int i = 0, n = updatedColumnInfo.size(); i < n; i += ColumnPurgeTask.BLOCK_SIZE) {
-                final long columnVersion = updatedColumnInfo.getQuick(i);
-                final long partitionTimestamp = updatedColumnInfo.getQuick(i + 1);
-                final long partitionTxnName = updatedColumnInfo.getQuick(i + 2);
-                final long updateRecordId = updatedColumnInfo.getQuick(i + 3);
+                final long columnVersion = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_COLUMN_VERSION);
+                final long partitionTimestamp = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP);
+                final long partitionTxnName = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN);
+                final long updateRowId = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID);
 
                 setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
                 int pathTrimToPartition = path.length();
@@ -205,12 +205,12 @@ public class ColumnPurgeOperator implements Closeable {
                         path.trimTo(pathTrimToPartition);
                         TableUtils.iFile(path, task.getColumnName(), columnVersion);
                         if (!ff.exists(path)) {
-                            completedRecordIds.add(updateRecordId);
+                            completedRowIds.add(updateRowId);
                             continue;
                         }
                     } else {
                         // Files already deleted, move to the next partition
-                        completedRecordIds.add(updateRecordId);
+                        completedRowIds.add(updateRowId);
                         continue;
                     }
                 }
@@ -277,7 +277,7 @@ public class ColumnPurgeOperator implements Closeable {
                         continue;
                     }
                 }
-                completedRecordIds.add(updateRecordId);
+                completedRowIds.add(updateRowId);
             }
         } finally {
             if (useLocalScoreboard) {

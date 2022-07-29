@@ -1565,13 +1565,16 @@ public class TableReaderTest extends AbstractCairoTest {
 
             writerThread.join();
             readerThread.join();
+
+            if (exceptions.size() != 0) {
+                Throwable ex = exceptions.poll();
+                ex.printStackTrace();
+                throw new Exception(ex);
+            }
+
             Assert.assertTrue(reloadCount.get() > totalColAddCount / 10);
             LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
         });
-
-        if (exceptions.size() != 0) {
-            throw exceptions.poll();
-        }
     }
 
     @Test
@@ -1845,6 +1848,33 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReaderGoesToPoolWhenCommitHappen() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = "testReaderGoesToPoolWhenCommitHappen";
+            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("l", ColumnType.LONG)) {
+                CairoTestUtils.create(model);
+            }
+
+            int rowCount = 10;
+            try (TableWriter writer = new TableWriter(configuration, tableName, metrics)) {
+                try (TableReader ignore = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                    for (int i = 0; i < rowCount; i++) {
+                        TableWriter.Row row = writer.newRow();
+                        row.putLong(0, i);
+                        row.append();
+                    }
+                    writer.commit();
+                }
+            }
+
+            try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
+                Assert.assertEquals(rowCount, reader.size());
+            }
+        });
+
+    }
+
+    @Test
     public void testLong256WriterReOpen() throws Exception {
         // we had a bug where size of LONG256 column was incorrectly defined
         // this caused TableWriter to incorrectly calculate append position in constructor
@@ -1910,7 +1940,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testMetadataFileDoesNotExist() throws Exception {
         String tableName = "testMetadataFileDoesNotExist";
         createTable(tableName, PartitionBy.HOUR);
-        spinLockTimeoutUs = 10000;
+        spinLockTimeout = 10;
         AtomicInteger openCount = new AtomicInteger(1000);
 
         assertMemoryLeak(() -> {
@@ -1947,7 +1977,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testMetadataFileDoesNotExist2() throws Exception {
         String tableName = "testMetadataFileDoesNotExist";
         createTable(tableName, PartitionBy.HOUR);
-        spinLockTimeoutUs = 10000;
+        spinLockTimeout = 10;
         AtomicInteger openCount = new AtomicInteger(1000);
 
         assertMemoryLeak(() -> {
@@ -2002,7 +2032,7 @@ public class TableReaderTest extends AbstractCairoTest {
     public void testMetadataVersionDoesNotMatch() throws Exception {
         String tableName = "testMetadataVersionDoesNotMatch";
         createTable(tableName, PartitionBy.HOUR);
-        spinLockTimeoutUs = 10000;
+        spinLockTimeout = 10;
 
         assertMemoryLeak(() -> {
             try (TableReader reader = engine.getReader(AllowAllCairoSecurityContext.INSTANCE, tableName)) {
@@ -3088,10 +3118,10 @@ public class TableReaderTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public boolean rename(LPSZ name, LPSZ to) {
+                public int rename(LPSZ name, LPSZ to) {
                     if (Chars.endsWith(name, "b.i") || Chars.endsWith(name, "b.d")) {
                         counter++;
-                        return false;
+                        return Files.FILES_RENAME_ERR_OTHER;
                     }
                     return super.rename(name, to);
                 }

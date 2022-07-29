@@ -433,7 +433,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             FloatingSequence next = csPool.next();
             next.lo = _lo + start;
             next.hi = _lo + end;
-            assert next.lo < next.hi;
+            assert next.lo <= next.hi;
             return next;
         }
 

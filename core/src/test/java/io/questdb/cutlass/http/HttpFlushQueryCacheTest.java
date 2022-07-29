@@ -33,14 +33,19 @@ import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.junit.rules.Timeout;
 
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class HttpFlushQueryCacheTest {
+
+    @Rule
+    public Timeout timeout = Timeout.builder()
+            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
+            .withLookingForStuckThread(true)
+            .build();
 
     private static final String JSON_DDL_RESPONSE = "0d\r\n" +
             "{\"ddl\":\"OK\"}\n\r\n" +
@@ -91,7 +96,7 @@ public class HttpFlushQueryCacheTest {
 
             // We need to wait until HTTP workers process the message. To do so, we simply try to
             // publish another query flush event. Since we set the queue size to 1, we're able to
-            // publish only when all consumers (PG Wire workers) have processed the previous event.
+            // publish only when all consumers (HTTP workers) have processed the previous event.
             Assert.assertEquals(1, engine.getConfiguration().getQueryCacheEventQueueCapacity());
             final MPSequence pubSeq = engine.getMessageBus().getQueryCacheEventPubSeq();
             pubSeq.waitForNext();
@@ -133,7 +138,7 @@ public class HttpFlushQueryCacheTest {
 
     private static void sendAndReceiveDdl(String rawDdl) throws InterruptedException {
         sendAndReceive(
-                "GET /query?query=" + urlEncodeQuery(rawDdl) + "&count=true HTTP/1.1\r\n" +
+                "GET /query?query=" + HttpUtils.urlEncodeQuery(rawDdl) + "&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -158,7 +163,7 @@ public class HttpFlushQueryCacheTest {
 
     private static void sendAndReceiveBasicSelect(String rawSelect, String expectedBody) throws InterruptedException {
         sendAndReceive(
-                "GET /query?query=" + urlEncodeQuery(rawSelect) + "&count=true HTTP/1.1\r\n" +
+                "GET /query?query=" + HttpUtils.urlEncodeQuery(rawSelect) + "&count=true HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -178,13 +183,5 @@ public class HttpFlushQueryCacheTest {
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         expectedBody
         );
-    }
-
-    private static String urlEncodeQuery(String query) {
-        try {
-            return URLEncoder.encode(query, StandardCharsets.UTF_8.toString());
-        } catch (UnsupportedEncodingException e) {
-            throw new RuntimeException(e);
-        }
     }
 }

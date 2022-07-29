@@ -22,12 +22,10 @@ docker push questdb/questdb:6.0.0-linux-amd64
 
 - Java 11 64-bit
 - Maven 3
-- Node.js 12 / NPM 6
 
 ```script
 java --version
 mvn --version
-node --version
 ```
 
 ### Maven commands

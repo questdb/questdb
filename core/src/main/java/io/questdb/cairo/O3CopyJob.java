@@ -1136,7 +1136,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
     private static void updateIndex(long dstFixAddr, long dstFixSize, BitmapIndexWriter w, long row, long rowAdjust) {
         w.rollbackConditionally(row + rowAdjust);
-        final long count = dstFixSize / Integer.BYTES - rowAdjust;
+        final long count = dstFixSize / Integer.BYTES;
         for (; row < count; row++) {
             w.add(TableUtils.toIndexKey(Unsafe.getUnsafe().getInt(dstFixAddr + row * Integer.BYTES)), row + rowAdjust);
         }

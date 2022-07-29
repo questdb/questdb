@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MinTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
@@ -76,5 +77,10 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public long getTimestamp(Record rec) {
         return rec.getTimestamp(valueIndex);
+    }
+
+    @Override
+    public void toSink(CharSink sink) {
+        sink.put("MinTimestamp(").put(arg).put(')');
     }
 }

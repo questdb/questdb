@@ -27,6 +27,7 @@ package io.questdb.griffin.model;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 
@@ -46,21 +47,25 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private int maxUncommittedRows;
     private long commitLag;
     private boolean ignoreIfExists = false;
+    private boolean walEnabled;
 
     private CreateTableModel() {
     }
 
-    public boolean addColumn(CharSequence name, int type, int symbolCapacity, long columnHash) {
-        if (columnNameIndexMap.put(name, columnNames.size())) {
-            columnNames.add(Chars.toString(name));
-            columnBits.add(
-                    Numbers.encodeLowHighInts(type, symbolCapacity),
-                    Numbers.encodeLowHighInts(COLUMN_FLAG_CACHED, 0)
-            );
-            columnHashes.add(columnHash);
-            return true;
+    public void addColumn(CharSequence name, int type, int symbolCapacity, long columnHash) throws SqlException {
+        addColumn(0, name, type, symbolCapacity, columnHash);
+    }
+
+    public void addColumn(int position, CharSequence name, int type, int symbolCapacity, long columnHash) throws SqlException {
+        if (!columnNameIndexMap.put(name, columnNames.size())) {
+            throw SqlException.duplicateColumn(position, name);
         }
-        return false;
+        columnNames.add(Chars.toString(name));
+        columnBits.add(
+                Numbers.encodeLowHighInts(type, symbolCapacity),
+                Numbers.encodeLowHighInts(COLUMN_FLAG_CACHED, 0)
+        );
+        columnHashes.add(columnHash);
     }
 
     public boolean addColumnCastModel(ColumnCastModel model) {
@@ -77,11 +82,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
             columnBits.setQuick(last, Numbers.encodeLowHighInts(getLowAt(last) & ~COLUMN_FLAG_CACHED, getHighAt(last)));
         }
         return this;
-    }
-
-    @Override
-    public long getColumnHash(int columnIndex) {
-        return columnHashes.get(columnIndex);
     }
 
     @Override
@@ -115,6 +115,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     @Override
     public int getColumnType(int index) {
         return getLowAt(index * 2);
+    }
+
+    @Override
+    public long getColumnHash(int columnIndex) {
+        return columnHashes.get(columnIndex);
     }
 
     @Override
@@ -162,6 +167,33 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     @Override
     public int getTimestampIndex() {
         return timestamp == null ? -1 : getColumnIndex(timestamp.token);
+    }
+
+    @Override
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
+        this.maxUncommittedRows = maxUncommittedRows;
+    }
+
+    @Override
+    public long getCommitLag() {
+        return commitLag;
+    }
+
+    @Override
+    public boolean isWallEnabled() {
+        return walEnabled;
+    }
+
+    public void setWalEnabled(boolean walEnabled) {
+        this.walEnabled = walEnabled;
+    }
+
+    public void setCommitLag(long micros) {
+        this.commitLag = micros;
     }
 
     public int getColumnIndex(CharSequence columnName) {
@@ -322,23 +354,5 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         } else {
             columnBits.setQuick(index, Numbers.encodeLowHighInts(flags & ~COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
         }
-    }
-
-    @Override
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
-    }
-
-    public void setMaxUncommittedRows(int maxUncommittedRows) {
-        this.maxUncommittedRows = maxUncommittedRows;
-    }
-
-    @Override
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public void setCommitLag(long micros) {
-        this.commitLag = micros;
     }
 }

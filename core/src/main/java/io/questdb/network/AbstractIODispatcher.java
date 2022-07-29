@@ -263,6 +263,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
         if (context == null || context.invalid()) {
             return;
         }
+
         final long fd = context.getFd();
         LOG.info()
                 .$("disconnected [ip=").$ip(nf.getPeerIP(fd))

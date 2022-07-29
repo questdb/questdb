@@ -56,6 +56,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
         adapterReferences.extendAndSet(ColumnType.BINARY, ConcatFunctionFactory::sinkBin);
         adapterReferences.extendAndSet(ColumnType.DATE, ConcatFunctionFactory::sinkDate);
         adapterReferences.extendAndSet(ColumnType.TIMESTAMP, ConcatFunctionFactory::sinkTimestamp);
+        adapterReferences.extendAndSet(ColumnType.NULL, ConcatFunctionFactory::sinkNull);
     }
 
     private static void sinkLong(CharSink sink, Function function, Record record) {
@@ -113,6 +114,10 @@ public class ConcatFunctionFactory implements FunctionFactory {
 
     private static void sinkStr(CharSink sink, Function function, Record record) {
         function.getStr(record, sink);
+    }
+
+    private static void sinkNull(CharSink sink, Function function, Record record) {
+        // ignore nulls
     }
 
     @Override

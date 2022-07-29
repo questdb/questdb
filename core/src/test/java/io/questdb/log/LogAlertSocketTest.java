@@ -25,6 +25,7 @@
 package io.questdb.log;
 
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.Sequence;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.Misc;
@@ -224,7 +225,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             final NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public long connect(long fd, long sockaddr) {
+                public int connect(long fd, long pSockaddr) {
                     return -1;
                 }
             };
@@ -394,7 +395,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public long connect(long fd, long sockaddr) {
+                public int connect(long fd, long pSockaddr) {
                     return -1;
                 }
             };
@@ -412,7 +413,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public long connect(long fd, long sockaddr) {
+                public int connect(long fd, long pSockaddr) {
                     return -1;
                 }
             };
@@ -432,7 +433,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public long connect(long fd, long sockaddr) {
+                public int connect(long fd, long pSockaddr) {
                     return -1;
                 }
             };
@@ -502,11 +503,6 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public boolean isDebugEnabled() {
-            return false;
-        }
-
-        @Override
         public LogRecord xerror() {
             throw new UnsupportedOperationException();
         }
@@ -538,6 +534,11 @@ public class LogAlertSocketTest {
 
         @Override
         public LogRecord xadvisory() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Sequence getCriticalSequence() {
             throw new UnsupportedOperationException();
         }
     }

@@ -454,7 +454,6 @@ public class HttpResponseSink implements Closeable, Mutable {
                 escapeSpace(c);
             } else {
                 switch (c) {
-                    case '/':
                     case '\"':
                     case '\\':
                         put('\\');
@@ -473,8 +472,6 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         private void escapeSpace(char c) {
             switch (c) {
-                case '\0':
-                    break;
                 case '\b':
                     put("\\b");
                     break;
@@ -491,7 +488,9 @@ public class HttpResponseSink implements Closeable, Mutable {
                     put("\\t");
                     break;
                 default:
-                    put(c);
+                    put("\\u00");
+                    put(c >> 4);
+                    put(Numbers.hexDigits[c & 15]);
                     break;
             }
         }

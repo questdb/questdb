@@ -35,6 +35,15 @@ public class FilesFacadeImpl implements FilesFacade {
     private long mapPageSize = 0;
 
     @Override
+    public boolean allocate(long fd, long size) {
+        // do not bother allocating on Windows because mmap() will try to allocate regardless
+        if (Os.type != Os.WINDOWS) {
+            return Files.allocate(fd, size);
+        }
+        return true;
+    }
+
+    @Override
     public long append(long fd, long buf, int len) {
         return Files.append(fd, buf, len);
     }
@@ -65,8 +74,16 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public void findClose(long findPtr) {
-        Files.findClose(findPtr);
+    public void fadvise(long fd, long offset, long len, int advise) {
+        Files.fadvise(fd, offset, len, advise);
+    }
+
+    @Override
+    public long findClose(long findPtr) {
+        if (findPtr != 0) {
+            Files.findClose(findPtr);
+        }
+        return 0;
     }
 
     @Override
@@ -98,23 +115,13 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long getLastModified(LPSZ path) {
-        return Files.getLastModified(path);
-    }
-
-    @Override
-    public int msync(long addr, long len, boolean async) {
-        return Files.msync(addr, len, async);
-    }
-
-    @Override
     public int fsync(long fd) {
         return Files.fsync(fd);
     }
 
     @Override
-    public int sync() {
-        return Files.sync();
+    public long getLastModified(LPSZ path) {
+        return Files.getLastModified(path);
     }
 
     @Override
@@ -133,6 +140,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long getPageSize() {
         return Files.PAGE_SIZE;
+    }
+
+    @Override
+    public int hardLink(LPSZ src, LPSZ hardLink) {
+        return Files.hardLink(src, hardLink);
     }
 
     @Override
@@ -199,6 +211,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public int msync(long addr, long len, boolean async) {
+        return Files.msync(addr, len, async);
+    }
+
+    @Override
     public void munmap(long address, long size, int memoryTag) {
         Files.munmap(address, size, memoryTag);
     }
@@ -209,6 +226,15 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long openCleanRW(LPSZ name, long size) {
+        // Open files and if file exists, try exclusively lock it
+        // If exclusive lock worked the file will be cleaned and allocated to the given size
+        // Shared lock will be left on the file which will be removed when file descriptor is closed
+        // If file did not exist, it will be allocated to the size and shared lock set
+        return Files.openCleanRW(name, size);
+    }
+
+    @Override
     public long openRO(LPSZ name) {
         return Files.openRO(name);
     }
@@ -216,15 +242,6 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long openRW(LPSZ name, long opts) {
         return Files.openRW(name, opts);
-    }
-
-    @Override
-    public long openCleanRW(LPSZ name, long size) {
-        // Open files and if file exists, try exclusively lock it
-        // If exclusive lock worked the file will be cleaned and allocated to the given size
-        // Shared lock will be left on the file which will be removed when file descriptor is closed
-        // If file did not exist, it will be allocated to the size and shared lock set
-        return Files.openCleanRW(name, size);
     }
 
     @Override
@@ -243,13 +260,18 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean rename(LPSZ from, LPSZ to) {
+    public int rename(LPSZ from, LPSZ to) {
         return Files.rename(from, to);
     }
 
     @Override
     public int rmdir(Path name) {
         return Files.rmdir(name);
+    }
+
+    @Override
+    public int sync() {
+        return Files.sync();
     }
 
     @Override
@@ -260,32 +282,6 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean truncate(long fd, long size) {
         return Files.truncate(fd, size);
-    }
-
-    @Override
-    public boolean allocate(long fd, long size) {
-        if (Os.type != Os.WINDOWS) {
-            return Files.allocate(fd, size);
-        }
-        return true;
-    }
-
-    @Override
-    public long write(long fd, long address, long len, long offset) {
-        return Files.write(fd, address, len, offset);
-    }
-
-    private long computeMapPageSize() {
-        long pageSize = getPageSize();
-        long mapPageSize = pageSize * pageSize;
-        if (mapPageSize < pageSize || mapPageSize > _16M) {
-            if (_16M % pageSize == 0) {
-                return _16M;
-            }
-            return pageSize;
-        } else {
-            return mapPageSize;
-        }
     }
 
     public void walk(Path path, FindVisitor func) {
@@ -308,6 +304,24 @@ public class FilesFacadeImpl implements FilesFacade {
             } finally {
                 findClose(p);
             }
+        }
+    }
+
+    @Override
+    public long write(long fd, long address, long len, long offset) {
+        return Files.write(fd, address, len, offset);
+    }
+
+    private long computeMapPageSize() {
+        long pageSize = getPageSize();
+        long mapPageSize = pageSize * pageSize;
+        if (mapPageSize < pageSize || mapPageSize > _16M) {
+            if (_16M % pageSize == 0) {
+                return _16M;
+            }
+            return pageSize;
+        } else {
+            return mapPageSize;
         }
     }
 }

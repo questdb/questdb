@@ -58,7 +58,8 @@ class MonthTimestampSampler implements TimestampSampler {
         int m = Timestamps.getMonthOfYear(value, y, leap);
         // target month
         int nextMonth = ((m - 1) / monthCount) * monthCount + 1;
-        return toMicros(y, leap, startDay, nextMonth, startHour, startMin, startSec, startMillis, startMicros);
+        int d = startDay > 0 ? startDay : 1;
+        return toMicros(y, leap, d, nextMonth, startHour, startMin, startSec, startMillis, startMicros);
     }
 
     @Override
@@ -95,12 +96,16 @@ class MonthTimestampSampler implements TimestampSampler {
             }
         }
         int _d = startDay;
-        int maxDay = Timestamps.getDaysPerMonth(_m, Timestamps.isLeapYear(_y));
-        if (_d > maxDay) {
-            _d = maxDay;
+        if (startDay == 0) {
+            _d = 1;
+        } else {
+            int maxDay = Timestamps.getDaysPerMonth(_m, Timestamps.isLeapYear(_y));
+            if (_d > maxDay) {
+                _d = maxDay;
+            }
         }
-        return Timestamps.toMicros(_y, _m, _d) +
-                startHour * Timestamps.HOUR_MICROS
+        return Timestamps.toMicros(_y, _m, _d)
+                + startHour * Timestamps.HOUR_MICROS
                 + startMin * Timestamps.MINUTE_MICROS
                 + startSec * Timestamps.SECOND_MICROS
                 + startMillis * Timestamps.MILLI_MICROS

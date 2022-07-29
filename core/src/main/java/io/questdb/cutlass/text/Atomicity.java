@@ -28,4 +28,8 @@ public final class Atomicity {
     public static final int SKIP_ALL = 0;
     public static final int SKIP_ROW = 1;
     public static final int SKIP_COL = 2;
+
+    public static boolean isValid(int atomicity) {
+        return atomicity >= SKIP_ALL && atomicity <= SKIP_COL;
+    }
 }

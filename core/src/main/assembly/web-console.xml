@@ -30,7 +30,7 @@
     <includeBaseDirectory>false</includeBaseDirectory>
     <fileSets>
         <fileSet>
-            <directory>../ui/dist</directory>
+            <directory>${project.build.outputDirectory}/site/package/dist/</directory>
             <includes>
                 <include>**/*</include>
             </includes>
@@ -44,7 +44,7 @@
         </fileSet>
         <!-- font files are included separately to avoid corrupting them due to lineEnding -->
         <fileSet>
-            <directory>../ui/dist</directory>
+            <directory>${project.build.outputDirectory}/site/package/dist/</directory>
             <includes>
                 <include>**/*.woff</include>
                 <include>**/*.ttf</include>

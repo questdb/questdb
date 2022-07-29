@@ -31,9 +31,13 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.text.TextImportJob;
+import io.questdb.cutlass.text.TextImportRequestJob;
 import io.questdb.griffin.DatabaseSnapshotAgent;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.engine.groupby.vect.GroupByJob;
+import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -42,13 +46,14 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkError;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.Dates;
+import io.questdb.std.str.NativeLPSZ;
 import io.questdb.std.str.Path;
 import sun.misc.Signal;
 
 import java.io.*;
 import java.net.*;
 import java.util.*;
-import java.util.concurrent.locks.LockSupport;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -184,6 +189,8 @@ public class ServerMain {
             metrics = Metrics.disabled();
         }
 
+        reportCrashFiles(configuration.getCairoConfiguration(), log);
+
         final WorkerPool workerPool = new WorkerPool(configuration.getWorkerPoolConfiguration(), metrics);
         final FunctionFactoryCache functionFactoryCache = new FunctionFactoryCache(
                 configuration.getCairoConfiguration(),
@@ -191,7 +198,6 @@ public class ServerMain {
         );
         final ObjList<Closeable> instancesToClean = new ObjList<>();
 
-        LogFactory.configureFromSystemProperties(workerPool);
         final CairoEngine cairoEngine = new CairoEngine(configuration.getCairoConfiguration(), metrics);
         workerPool.assign(cairoEngine.getEngineMaintenanceJob());
         instancesToClean.add(cairoEngine);
@@ -218,6 +224,23 @@ public class ServerMain {
 
         try {
             initQuestDb(workerPool, cairoEngine, log);
+
+            // Register jobs that help parallel execution of queries and column indexing.
+            workerPool.assign(new ColumnIndexerJob(cairoEngine.getMessageBus()));
+            workerPool.assign(new GroupByJob(cairoEngine.getMessageBus()));
+            workerPool.assign(new LatestByAllIndexedJob(cairoEngine.getMessageBus()));
+            TextImportJob.assignToPool(cairoEngine.getMessageBus(), workerPool);
+
+            if (configuration.getCairoConfiguration().getSqlCopyInputRoot() != null) {
+                final TextImportRequestJob textImportRequestJob = new TextImportRequestJob(
+                        cairoEngine,
+                        // save CPU resources for collecting and processing jobs
+                        Math.max(1, workerPool.getWorkerCount() - 2),
+                        functionFactoryCache
+                );
+                workerPool.assign(textImportRequestJob);
+                workerPool.freeOnHalt(textImportRequestJob);
+            }
 
             instancesToClean.add(createHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
             instancesToClean.add(createMinHttpServer(workerPool, log, cairoEngine, functionFactoryCache, snapshotAgent, metrics));
@@ -277,10 +300,11 @@ public class ServerMain {
                 System.err.println(new Date() + " QuestDB is shutting down");
                 shutdownQuestDb(workerPool, instancesToClean);
                 System.err.println(new Date() + " QuestDB is down");
+                LogFactory.INSTANCE.flushJobsAndClose();
             }));
         } catch (NetworkError e) {
-            log.errorW().$((Sinkable) e).$();
-            LockSupport.parkNanos(10000000L);
+            log.error().$((Sinkable) e).$();
+            LogFactory.INSTANCE.flushJobsAndClose();
             System.exit(55);
         }
     }
@@ -308,7 +332,56 @@ public class ServerMain {
             new ServerMain(args);
         } catch (ServerConfigurationException sce) {
             System.err.println(sce.getMessage());
+            LogFactory.INSTANCE.flushJobsAndClose();
             System.exit(1);
+        }
+    }
+
+    static void reportCrashFiles(CairoConfiguration configuration, Log log) {
+        final CharSequence dbRoot = configuration.getRoot();
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int maxFiles = configuration.getMaxCrashFiles();
+
+        NativeLPSZ name = new NativeLPSZ();
+        try (
+                Path path = new Path().of(dbRoot).slash$();
+                Path other = new Path().of(dbRoot).slash$()
+        ) {
+            int plen = path.length();
+            AtomicInteger counter = new AtomicInteger(0);
+            FilesFacadeImpl.INSTANCE.iterateDir(
+                    path,
+                    (pUtf8NameZ, type) -> {
+                        if (Files.notDots(pUtf8NameZ)) {
+                            name.of(pUtf8NameZ);
+                            if (Chars.startsWith(name, configuration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
+
+                                path.trimTo(plen).concat(pUtf8NameZ).$();
+
+                                boolean shouldRename = false;
+                                do {
+                                    other.trimTo(plen).concat(configuration.getArchivedCrashFilePrefix()).put(counter.getAndIncrement()).put(".log").$();
+                                    if (!ff.exists(other)) {
+                                        shouldRename = counter.get() <= maxFiles;
+                                        break;
+                                    }
+                                } while (counter.get() < maxFiles);
+
+                                if (shouldRename && ff.rename(path, other) == 0) {
+                                    log.criticalW().$("found crash file [path=").$(other).I$();
+                                } else {
+                                    log.criticalW()
+                                            .$("could not rename crash file [path=").$(path)
+                                            .$(", errno=").$(ff.errno())
+                                            .$(", index=").$(counter.get())
+                                            .$(", max=").$(maxFiles)
+                                            .I$();
+                                }
+
+                            }
+                        }
+                    }
+            );
         }
     }
 
@@ -409,7 +482,7 @@ public class ServerMain {
 
     //made package level for testing only
     static void extractSite(BuildInformation buildInformation, String dir, Log log) throws IOException {
-        final String publicZip = "/io/questdb/site/public.zip";
+        final String publicZip = PUBLIC_ZIP;
         final String publicDir = dir + "/public";
         final byte[] buffer = new byte[1024 * 1024];
         URL resource = ServerMain.class.getResource(publicZip);
@@ -480,7 +553,15 @@ public class ServerMain {
         }
         setPublicVersion(publicDir, thisVersion);
         copyConfResource(dir, false, buffer, "conf/date.formats", log);
-        copyConfResource(dir, true, buffer, "conf/mime.types", log);
+        try {
+            copyConfResource(dir, true, buffer, "conf/mime.types", log);
+        } catch (IOException exception) {
+            // conf can be read-only, this is not critical
+            if (exception.getMessage() == null ||
+                    (!exception.getMessage().contains("Read-only file system") && !exception.getMessage().contains("Permission denied"))) {
+                throw exception;
+            }
+        }
         copyConfResource(dir, false, buffer, "conf/server.conf", log);
         copyConfResource(dir, false, buffer, "conf/log.conf", log);
     }
@@ -552,6 +633,7 @@ public class ServerMain {
     }
 
     protected static void shutdownQuestDb(final WorkerPool workerPool, final ObjList<? extends Closeable> instancesToClean) {
+        ShutdownFlag.INSTANCE.shutdown();
         workerPool.halt();
         Misc.freeObjList(instancesToClean);
     }

@@ -33,9 +33,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
-import java.io.Closeable;
-
-public class SymbolColumnIndexer implements ColumnIndexer, Closeable, Mutable {
+public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     private static final long SEQUENCE_OFFSET;
     private final BitmapIndexWriter writer = new BitmapIndexWriter();

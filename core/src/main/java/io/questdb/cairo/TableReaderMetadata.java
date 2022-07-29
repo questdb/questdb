@@ -44,6 +44,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
     private long commitLag;
     private long structureVersion;
     private MemoryMR transitionMeta;
+    private boolean walEnabled;
 
     public TableReaderMetadata(FilesFacade ff) {
         this.path = new Path();
@@ -55,7 +56,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
 
     public TableReaderMetadata(FilesFacade ff, Path path) {
         this(ff);
-        of(path, ColumnType.VERSION);
+        deferredInit(path, ColumnType.VERSION);
     }
 
     public void applyTransitionIndex() {
@@ -75,6 +76,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
         this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
         this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
+        this.walEnabled = metaMem.getInt(TableUtils.META_OFFSET_WAL_ENABLED) > 0;
         long offset = TableUtils.getColumnNameOffset(columnCount);
 
         int shiftLeft = 0, existingIndex = 0;
@@ -139,15 +141,8 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         }
     }
 
-    public void dumpTo(MemoryMA mem) {
-        // Since _meta files are immutable and get updated with a single atomic rename
-        // operation replacing the old file with the new one, it's ok to clone the metadata
-        // by copying metaMem's contents. Even if _meta file was already replaced, the file
-        // should be still kept on disk until inode's ref counter is above zero.
-        long len = ff.length(metaMem.getFd());
-        for (long p = 0; p < len; p++) {
-            mem.putByte(metaMem.getByte(p));
-        }
+    public void clear() {
+        Misc.free(metaMem);
     }
 
     @Override
@@ -175,36 +170,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
         return TableUtils.createTransitionIndex(transitionMeta, this);
     }
 
-    @Override
-    public int getColumnCount() {
-        return columnCount;
-    }
-
-    public long getCommitLag() {
-        return commitLag;
-    }
-
-    public int getId() {
-        return tableId;
-    }
-
-    public int getMaxUncommittedRows() {
-        return maxUncommittedRows;
-    }
-
-    public int getPartitionBy() {
-        return partitionBy;
-    }
-
-    public long getStructureVersion() {
-        return structureVersion;
-    }
-
-    public int getVersion() {
-        return version;
-    }
-
-    public TableReaderMetadata of(Path path, int expectedVersion) {
+    public TableReaderMetadata deferredInit(Path path, int expectedVersion) {
         this.path.of(path).$();
         try {
             this.metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
@@ -218,6 +184,7 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             this.maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
             this.commitLag = metaMem.getLong(TableUtils.META_OFFSET_COMMIT_LAG);
             this.structureVersion = metaMem.getLong(TableUtils.META_OFFSET_STRUCTURE_VERSION);
+            this.walEnabled = metaMem.getInt(TableUtils.META_OFFSET_WAL_ENABLED) > 0;
             this.columnMetadata.clear();
             long offset = TableUtils.getColumnNameOffset(columnCount);
             this.timestampIndex = -1;
@@ -252,5 +219,49 @@ public class TableReaderMetadata extends BaseRecordMetadata implements Closeable
             throw e;
         }
         return this;
+    }
+
+    public void dumpTo(MemoryMA mem) {
+        // Since _meta files are immutable and get updated with a single atomic rename
+        // operation replacing the old file with the new one, it's ok to clone the metadata
+        // by copying metaMem's contents. Even if _meta file was already replaced, the file
+        // should be still kept on disk until inode's ref counter is above zero.
+        long len = metaMem.size();
+        for (long p = 0; p < len; p++) {
+            mem.putByte(metaMem.getByte(p));
+        }
+    }
+
+    @Override
+    public int getColumnCount() {
+        return columnCount;
+    }
+
+    public long getCommitLag() {
+        return commitLag;
+    }
+
+    public int getId() {
+        return tableId;
+    }
+
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    public int getPartitionBy() {
+        return partitionBy;
+    }
+
+    public long getStructureVersion() {
+        return structureVersion;
+    }
+
+    public int getVersion() {
+        return version;
+    }
+
+    public boolean isWalEnabled() {
+        return walEnabled;
     }
 }
