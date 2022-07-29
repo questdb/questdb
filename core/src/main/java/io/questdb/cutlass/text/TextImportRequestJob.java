@@ -147,15 +147,24 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     }
 
     private boolean useParallelImport() {
-        if (task.getTimestampColumnName() != null) {
-            LOG.info().$("Using ParallelImport strategy because COPY command contains a timestamp definition");
+        String ts = task.getTimestampColumnName();
+        String name = task.getTableName();
+        if (ts != null) {
+            LOG.info().$("Using ParallelImport strategy. [table=").$(name).$(", timestamp=").$(ts).I$();
             return true;
         }
-        if (existsTargetTableAndPartitioned()) {
-            LOG.info().$("Using ParallelImport strategy because the target table exists and is partitioned");
-            return true;
+        if (engine.getStatus(sqlExecutionContext.getCairoSecurityContext(), path, name) != TableUtils.TABLE_EXISTS) {
+            LOG.info().$("Target table does not exist. Using SerialImport strategy. [table=").$(name)
+                    .$(", timestamp=null").I$();
+            return false;
         }
-        LOG.info().$("Using SerialImport strategy");
+        try (TableReader reader = engine.getReader(sqlExecutionContext.getCairoSecurityContext(), task.getTableName())) {
+            if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
+                LOG.info().$("Target table exist and is partitioned. Using ParallelImport strategy. [table=").$(name).I$();
+                return true;
+            }
+        }
+        LOG.info().$("Target table exist and is not partitioned. Using SerialImport strategy. [table=").$(name).I$();
         return false;
     }
 
