@@ -58,7 +58,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.Objects;
 import java.util.ServiceLoader;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -1951,15 +1950,17 @@ public class SqlCompiler implements Closeable {
                     long importId = textImportExecutionContext.assignActiveImportId();
                     importIdSink.clear();
                     Numbers.appendHex(importIdSink, importId, true);
-                    task.of(importIdSink.toString(),
-                            Objects.toString(tableName, null),
-                            Objects.toString(fileName, null),
+                    task.of(
+                            Chars.toString(importIdSink),
+                            Chars.toString(tableName),
+                            Chars.toString(fileName),
                             model.isHeader(),
-                            Objects.toString(model.getTimestampColumnName(), null),
+                            Chars.toString(model.getTimestampColumnName()),
                             model.getDelimiter(),
-                            Objects.toString(model.getTimestampFormat(), null),
+                            Chars.toString(model.getTimestampFormat()),
                             model.getPartitionBy(),
-                            model.getAtomicity());
+                            model.getAtomicity()
+                    );
 
                     circuitBreaker.reset();
                     textImportRequestPubSeq.done(processingCursor);

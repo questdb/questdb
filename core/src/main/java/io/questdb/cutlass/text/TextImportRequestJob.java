@@ -44,6 +44,9 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 import java.io.IOException;
 
+import static io.questdb.cutlass.text.TextImportTask.getPhaseNameLowerCase;
+import static io.questdb.cutlass.text.TextImportTask.getStatusName;
+
 public class TextImportRequestJob extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(TextImportRequestJob.class);
 
@@ -235,9 +238,18 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                 row.append();
                 writer.commit();
             } catch (Throwable th) {
-                LOG.error().$("error saving to parallel import log table, unable to insert")
-                        .$(", releasing writer and stopping log table updates [table=").$(statusTableName)
-                        .$(", error=").$(th)
+                LOG.error()
+                        .$("could not update status table [importId=").$(task.getImportId())
+                        .$(", statusTableName=").$(statusTableName)
+                        .$(", tableName=").$(task.getTableName())
+                        .$(", fileName=").$(task.getFileName())
+                        .$(", phase=").$(getPhaseNameLowerCase(phase))
+                        .$(", status=").$(getStatusName(phase))
+                        .$(", msg=").$(msg)
+                        .$(", rowsHandled=").$(rowsHandled)
+                        .$(", rowsImported=").$(rowsImported)
+                        .$(", errors=").$(errors)
+                        .$(", error=`").$(th).$('`')
                         .I$();
                 writer = Misc.free(writer);
             }

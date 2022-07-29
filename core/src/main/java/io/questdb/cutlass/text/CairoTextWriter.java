@@ -175,7 +175,6 @@ public class CairoTextWriter implements Closeable, Mutable {
                     continue;
                 }
                 if (onField(line, dbcs, w, i)) {
-
                     return;
                 }
             }
