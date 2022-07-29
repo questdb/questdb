@@ -414,7 +414,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             }
         } catch (TextImportException e) {
             LOG.error()
-                    .$("could not import [phase=").$(TextImportTask.getPhaseName(e.getPhase()))
+                    .$("could not import [phase=").$(TextImportTask.getPhaseNameLowerCase(e.getPhase()))
                     .$(", ex=").$(e.getFlyweightMessage())
                     .I$();
             throw e;
@@ -550,7 +550,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void collectChunkStats(final TextImportTask task) {
         updateStatus(task);
-        final TextImportTask.PhaseBoundaryCheck phaseBoundaryCheck = task.getCountQuotesStage();
+        final TextImportTask.PhaseBoundaryCheck phaseBoundaryCheck = task.getCountQuotesPhase();
         final int chunkOffset = 5 * task.getChunkIndex();
         chunkStats.set(chunkOffset, phaseBoundaryCheck.getQuoteCount());
         chunkStats.set(chunkOffset + 1, phaseBoundaryCheck.getNewLineCountEven());
@@ -562,21 +562,21 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void collectDataImportStats(final TextImportTask task) {
         updateStatus(task);
 
-        final TextImportTask.PhasePartitionImport stage = task.getImportPartitionDataStage();
-        LongList rows = stage.getImportedRows();
+        final TextImportTask.PhasePartitionImport phase = task.getImportPartitionDataPhase();
+        LongList rows = phase.getImportedRows();
 
         for (int i = 0, n = rows.size(); i < n; i += 2) {
             partitions.get((int) rows.get(i)).importedRows = rows.get(i + 1);
         }
-        rowsHandled += stage.getRowsHandled();
-        rowsImported += stage.getRowsImported();
-        phaseErrors += stage.getErrors();
-        errors += stage.getErrors();
+        rowsHandled += phase.getRowsHandled();
+        rowsImported += phase.getRowsImported();
+        phaseErrors += phase.getErrors();
+        errors += phase.getErrors();
     }
 
     private void collectIndexStats(final TextImportTask task) {
         updateStatus(task);
-        final TextImportTask.PhaseIndexing phaseIndexing = task.getBuildPartitionIndexStage();
+        final TextImportTask.PhaseIndexing phaseIndexing = task.getBuildPartitionIndexPhase();
         final LongList keys = phaseIndexing.getPartitionKeysAndSizes();
         this.partitionKeysAndSizes.add(keys);
         this.linesIndexed += phaseIndexing.getLineCount();
@@ -926,7 +926,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         throwErrorIfNotOk();
         long endMs = getCurrentTimeMs();
         LOG.info()
-                .$("finished [phase=").$(phase)
+                .$("finished [phase=").$(TextImportTask.getPhaseNameLowerCase(phase))
                 .$(", file=`").$(inputFilePath)
                 .$("`, duration=").$((endMs - startMs) / 1000).$('s')
                 .$(", errors=").$(phaseErrors)
@@ -1057,7 +1057,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void phasePrologue(byte phase) {
         phaseErrors = 0;
-        LOG.info().$("started  [phase=").$(phase).$(", file=`").$(inputFilePath).$('`').$(", workerCount=").$(workerCount).I$();
+        LOG.info()
+                .$("started [phase=").$(TextImportTask.getPhaseNameLowerCase(phase))
+                .$(", file=`").$(inputFilePath).$('`')
+                .$(", workerCount=").$(workerCount)
+                .I$();
         updatePhaseStatus(phase, TextImportTask.STATUS_STARTED, null);
         startMs = getCurrentTimeMs();
     }

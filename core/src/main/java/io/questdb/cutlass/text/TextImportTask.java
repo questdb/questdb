@@ -57,6 +57,7 @@ public class TextImportTask {
     public static final byte PHASE_ATTACH_PARTITIONS = 8;
     public static final byte PHASE_ANALYZE_FILE_STRUCTURE = 9;
     public static final byte PHASE_CLEANUP = 10;
+
     public static final byte STATUS_STARTED = 0;
     public static final byte STATUS_FINISHED = 1;
     public static final byte STATUS_FAILED = 2;
@@ -64,6 +65,7 @@ public class TextImportTask {
 
     private static final Log LOG = LogFactory.getLog(TextImportTask.class);
     private static final IntObjHashMap<String> PHASE_NAME_MAP = new IntObjHashMap<>();
+    private static final IntObjHashMap<String> PHASE_NAME_LOWER_CASE_MAP = new IntObjHashMap<>();
     private static final IntObjHashMap<String> STATUS_NAME_MAP = new IntObjHashMap<>();
 
     private final PhaseBoundaryCheck phaseBoundaryCheck = new PhaseBoundaryCheck();
@@ -80,6 +82,10 @@ public class TextImportTask {
 
     public static String getPhaseName(byte phase) {
         return PHASE_NAME_MAP.get(phase);
+    }
+
+    public static String getPhaseNameLowerCase(byte phase) {
+        return PHASE_NAME_LOWER_CASE_MAP.get(phase);
     }
 
     public static String getStatusName(byte status) {
@@ -104,7 +110,7 @@ public class TextImportTask {
         }
     }
 
-    public PhaseIndexing getBuildPartitionIndexStage() {
+    public PhaseIndexing getBuildPartitionIndexPhase() {
         return phaseIndexing;
     }
 
@@ -116,7 +122,7 @@ public class TextImportTask {
         this.chunkIndex = chunkIndex;
     }
 
-    public PhaseBoundaryCheck getCountQuotesStage() {
+    public PhaseBoundaryCheck getCountQuotesPhase() {
         return phaseBoundaryCheck;
     }
 
@@ -124,7 +130,7 @@ public class TextImportTask {
         return errorMessage;
     }
 
-    public PhasePartitionImport getImportPartitionDataStage() {
+    public PhasePartitionImport getImportPartitionDataPhase() {
         return phasePartitionImport;
     }
 
@@ -250,7 +256,7 @@ public class TextImportTask {
             Path p2
     ) {
         try {
-            LOG.debug().$("starting [phase=").$(getPhaseName(phase)).$(",index=").$(chunkIndex).I$();
+            LOG.debug().$("starting [phase=").$(getPhaseNameLowerCase(phase)).$(",index=").$(chunkIndex).I$();
 
             this.status = STATUS_STARTED;
             this.errorMessage = null;
@@ -273,15 +279,15 @@ public class TextImportTask {
                 throw TextException.$("Unexpected phase ").put(phase);
             }
 
-            LOG.debug().$("finished [phase=").$(getPhaseName(phase)).$(",index=").$(chunkIndex).I$();
+            LOG.debug().$("finished [phase=").$(getPhaseNameLowerCase(phase)).$(",index=").$(chunkIndex).I$();
         } catch (TextImportException e) {
             this.status = STATUS_CANCELLED;
             this.errorMessage = e.getMessage();
-            LOG.error().$("Import cancelled in ").$(getPhaseName(e.getPhase())).$(" phase.").$();
+            LOG.error().$("Import cancelled in ").$(getPhaseNameLowerCase(e.getPhase())).$(" phase.").$();
             return false;
         } catch (Throwable t) {
             LOG.error()
-                    .$("could not import [phase=").$(getPhaseName(phase))
+                    .$("could not import [phase=").$(getPhaseNameLowerCase(phase))
                     .$(", ex=").$(t)
                     .I$();
             this.status = STATUS_FAILED;
@@ -1417,6 +1423,7 @@ public class TextImportTask {
 
     static {
         PHASE_NAME_MAP.put(PHASE_SETUP, "SETUP");
+        PHASE_NAME_LOWER_CASE_MAP.put(PHASE_SETUP, Chars.toLowerCaseAscii(PHASE_NAME_MAP.get(PHASE_SETUP)));
         PHASE_NAME_MAP.put(PHASE_BOUNDARY_CHECK, "BOUNDARY_CHECK");
         PHASE_NAME_MAP.put(PHASE_INDEXING, "INDEXING");
         PHASE_NAME_MAP.put(PHASE_PARTITION_IMPORT, "PARTITION_IMPORT");
@@ -1427,6 +1434,9 @@ public class TextImportTask {
         PHASE_NAME_MAP.put(PHASE_ATTACH_PARTITIONS, "ATTACH_PARTITIONS");
         PHASE_NAME_MAP.put(PHASE_ANALYZE_FILE_STRUCTURE, "ANALYZE_FILE_STRUCTURE");
         PHASE_NAME_MAP.put(PHASE_CLEANUP, "CLEANUP");
+
+        // generate lower case phase names map
+        PHASE_NAME_MAP.forEach((key, value) -> PHASE_NAME_LOWER_CASE_MAP.put(key, Chars.toLowerCaseAscii(value)));
 
         STATUS_NAME_MAP.put(STATUS_STARTED, "STARTED");
         STATUS_NAME_MAP.put(STATUS_FINISHED, "FINISHED");
