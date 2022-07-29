@@ -1914,34 +1914,32 @@ public class SqlCompiler implements Closeable {
     }
 
     private long addTextImportRequest(CopyModel model, @Nullable CharSequence fileName) throws SqlException {
-
         final RingQueue<TextImportRequestTask> textImportRequestQueue = messageBus.getTextImportRequestQueue();
         final MPSequence textImportRequestPubSeq = messageBus.getTextImportRequestPubSeq();
         final TextImportExecutionContext textImportExecutionContext = engine.getTextImportExecutionContext();
         final AtomicBooleanCircuitBreaker circuitBreaker = textImportExecutionContext.getCircuitBreaker();
 
-        long inProgressImportId = textImportExecutionContext.getCurrentImportId();
+        long inProgressImportId = textImportExecutionContext.getActiveImportId();
         if (model.isCancel()) {
             // The cancellation is based on the best effort, so we don't worry about potential races with imports.
-            if (inProgressImportId != TextImportExecutionContext.NO_IMPORT_ACTIVE) {
-                long importId;
-                try {
-                    final CharSequence idString = GenericLexer.unquote(model.getTarget().token);
-                    importId = Numbers.parseHexLong(idString);
-                } catch (NumericException e) {
-                    throw SqlException.$(0, "Provided id has invalid format.");
-                }
-                if (textImportExecutionContext.sameAsActiveImportId(importId)) {
-                    circuitBreaker.cancel();
-                    return -1;
-                } else {
-                    throw SqlException.$(0, "Active import has different id.");
-                }
-            } else {
+            if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
                 throw SqlException.$(0, "No active import to cancel.");
             }
+            long importId;
+            try {
+                final CharSequence idString = GenericLexer.unquote(model.getTarget().token);
+                importId = Numbers.parseHexLong(idString);
+            } catch (NumericException e) {
+                throw SqlException.$(0, "Provided id has invalid format.");
+            }
+            if (inProgressImportId == importId) {
+                circuitBreaker.cancel();
+                return -1;
+            } else {
+                throw SqlException.$(0, "Active import has different id.");
+            }
         } else {
-            if (inProgressImportId == TextImportExecutionContext.NO_IMPORT_ACTIVE) {
+            if (inProgressImportId == TextImportExecutionContext.INACTIVE) {
                 long processingCursor = textImportRequestPubSeq.next();
                 if (processingCursor > -1) {
                     assert fileName != null;
