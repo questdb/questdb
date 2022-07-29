@@ -427,7 +427,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         CopyRunnable test = () -> assertQuery("message\n" +
                         "partition by unit must be set when importing to new table\n",
-                "select message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log",
+                "select message from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
                 null,
                 true
         );
@@ -614,7 +614,6 @@ public class CopyTest extends AbstractGriffinTest {
             Assert.fail();
         }
 
-        drainProcessingQueue();
         drainProcessingQueue();
         assertQuery("status\nCANCELLED\n",
                 "select status from " + configuration.getSystemTableNamePrefix() + "parallel_text_import_log limit -1",
