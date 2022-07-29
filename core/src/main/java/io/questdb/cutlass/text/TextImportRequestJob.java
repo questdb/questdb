@@ -24,12 +24,7 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
@@ -93,7 +88,7 @@ public class TextImportRequestJob extends SynchronizedJob implements Closeable {
                         "id symbol, " + // 1
                         "table symbol, " + // 2
                         "file symbol, " + // 3
-                        "stage symbol, " + // 4
+                        "phase symbol, " + // 4
                         "status symbol, " + // 5
                         "message string," + // 6
                         "rows_handled long," + // 7

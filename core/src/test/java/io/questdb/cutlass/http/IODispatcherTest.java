@@ -6328,7 +6328,7 @@ public class IODispatcherTest {
     }
 
     @Test
-    public void testTextQueryParallelCopy() throws Exception {
+    public void testTextQueryCopyFrom() throws Exception {
         String copyInputRoot = new File(".").getAbsolutePath();
         new HttpQueryTestBuilder()
                 .withTempFolder(temp)

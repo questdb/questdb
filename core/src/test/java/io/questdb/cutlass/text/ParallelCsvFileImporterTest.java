@@ -695,9 +695,12 @@ public class ParallelCsvFileImporterTest extends AbstractGriffinTest {
                 " timestamp_sequence(0, 100000000000) ts," +
                 " rnd_symbol(5,4,4,3) table," +
                 " rnd_symbol(5,4,4,3) file," +
-                " rnd_symbol(5,4,4,3) stage," +
+                " rnd_symbol(5,4,4,3) phase," +
                 " rnd_symbol(5,4,4,3) status," +
-                " rnd_str(5,4,4,3) message" +
+                " rnd_str(5,4,4,3) message," +
+                " rnd_long() rows_handled," +
+                " rnd_long() rows_imported," +
+                " rnd_long() errors" +
                 " from" +
                 " long_sequence(" + daysToGenerate + ")" +
                 ") timestamp(ts) partition by DAY", sqlExecutionContext);

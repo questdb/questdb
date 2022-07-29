@@ -384,7 +384,7 @@ public class CopyTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-        CopyRunnable test = () -> assertQuery("stage\tstatus\trows_handled\trows_imported\terrors\n" +
+        CopyRunnable test = () -> assertQuery("phase\tstatus\trows_handled\trows_imported\terrors\n" +
                         "\tSTARTED\tNaN\tNaN\t0\n" +
                         "ANALYZE_FILE_STRUCTURE\tSTARTED\tNaN\tNaN\t0\n" +
                         "ANALYZE_FILE_STRUCTURE\tFINISHED\tNaN\tNaN\t0\n" +
@@ -404,7 +404,7 @@ public class CopyTest extends AbstractGriffinTest {
                         "ATTACH_PARTITIONS\tSTARTED\tNaN\tNaN\t0\n" +
                         "ATTACH_PARTITIONS\tFINISHED\tNaN\tNaN\t0\n" +
                         "\tFINISHED\t1000\t1000\t0\n",
-                "select stage, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log",
+                "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log",
                 null,
                 true,
                 true
@@ -420,10 +420,10 @@ public class CopyTest extends AbstractGriffinTest {
                 sqlExecutionContext
         );
 
-        CopyRunnable test = () -> assertQuery("stage\tstatus\trows_handled\trows_imported\terrors\n" +
+        CopyRunnable test = () -> assertQuery("phase\tstatus\trows_handled\trows_imported\terrors\n" +
                         "\tSTARTED\tNaN\tNaN\t0\n" +
                         "\tFINISHED\t1000\t1000\t0\n",
-                "select stage, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log",
+                "select phase, status, rows_handled, rows_imported, errors from " + configuration.getSystemTableNamePrefix() + "text_import_log",
                 null,
                 true,
                 true

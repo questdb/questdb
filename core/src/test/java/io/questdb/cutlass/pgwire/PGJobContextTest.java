@@ -3486,10 +3486,10 @@ nodejs code:
     }
 
     @Test
-    public void testLocalParallelCopyFrom() throws Exception {
+    public void testLocalCopyFromCancellation() throws Exception {
         try (final PGWireServer ignored = createPGServer(1);
              final Connection connection = getConnection(false, true);
-             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with parallel header true")) {
+             final PreparedStatement copyStatement = connection.prepareStatement("copy testLocalCopyFrom from '/src/test/resources/csv/test-numeric-headers.csv' with header true")) {
 
             String importId;
             try (final ResultSet rs = copyStatement.executeQuery()) {
