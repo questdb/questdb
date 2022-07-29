@@ -427,7 +427,7 @@ public class CopyTest extends AbstractGriffinTest {
 
         CopyRunnable test = () -> assertQuery("message\n" +
                         "partition by unit must be set when importing to new table\n",
-                "select message from " + configuration.getSystemTableNamePrefix() + "text_import_log",
+                "select message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true
         );
