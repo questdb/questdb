@@ -1969,7 +1969,10 @@ public class SqlCompiler implements Closeable {
             } else {
                 importIdSink.clear();
                 Numbers.appendHex(importIdSink, inProgressImportId, true);
-                throw SqlException.$(0, "Another import request is in progress. Import ID in progress = ").put(importIdSink);
+                throw SqlException.$(0, "Another import request is in progress. ")
+                        .put("[activeImportId=")
+                        .put(importIdSink)
+                        .put("]");
             }
         }
     }
